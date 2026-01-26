@@ -1,7 +1,10 @@
 import { ObjectId } from "mongodb";
 import { getDb } from "../_db.js";
+import { applyCors } from "../_cors.js";
 
 export default async function handler(req, res) {
+  if (applyCors(req, res)) return;
+
   try {
     const db = await getDb();
     const customersCol = db.collection("customers");
