@@ -6,7 +6,7 @@ async function handler(req, res) {
     const db = await getDb();
     const loansCol = db.collection("loans");
 
-    // ✅ GET /api/loans
+    // ---------- GET /api/loans ----------
     if (req.method === "GET") {
       const loans = await loansCol.find({}).sort({ createdAt: -1 }).toArray();
 
@@ -16,10 +16,9 @@ async function handler(req, res) {
       });
     }
 
-    // ✅ POST /api/loans  (CREATE)
+    // ---------- POST /api/loans ----------
     if (req.method === "POST") {
       const payload = req.body || {};
-
       const now = new Date().toISOString();
 
       const doc = {
@@ -30,9 +29,10 @@ async function handler(req, res) {
 
       const result = await loansCol.insertOne(doc);
 
+      // 🔥 THIS IS WHAT YOUR FRONTEND REQUIRES
       return res.status(201).json({
         success: true,
-        loanId: result.insertedId.toString(), // 🔥 THIS FIXES YOUR ERROR
+        loanId: result.insertedId.toString(),
         _id: result.insertedId.toString(),
         createdAt: now,
       });
