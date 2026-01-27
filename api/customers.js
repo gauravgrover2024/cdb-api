@@ -1,10 +1,8 @@
 import { ObjectId } from "mongodb";
 import { getDb } from "./_db.js";
-import { applyCors } from "./_cors.js";
+import withCors from "./_cors.js";
 
-export default async function handler(req, res) {
-  if (applyCors(req, res)) return;
-
+async function handler(req, res) {
   try {
     const db = await getDb();
     const customersCol = db.collection("customers");
@@ -23,7 +21,10 @@ export default async function handler(req, res) {
         .limit(limit)
         .toArray();
 
-      return res.status(200).json({ success: true, data: customers });
+      return res.status(200).json({
+        success: true,
+        data: customers,
+      });
     }
 
     // -----------------------------
@@ -31,7 +32,6 @@ export default async function handler(req, res) {
     // -----------------------------
     if (req.method === "POST") {
       const body = req.body || {};
-
       const now = new Date();
 
       const doc = {
@@ -44,20 +44,26 @@ export default async function handler(req, res) {
 
       return res.status(201).json({
         success: true,
-        data: { _id: result.insertedId, ...doc },
+        data: {
+          _id: result.insertedId,
+          ...doc,
+        },
       });
     }
 
     // -----------------------------
-    // PUT /api/customers?id=XXXX  (update)
-    // NOTE: CRA frontend will call /api/customers/:id
-    // But Vercel serverless does not support params in same file,
-    // so we will handle /api/customers/[id].js separately.
+    // Unsupported method
     // -----------------------------
     return res
       .status(405)
       .json({ success: false, error: "Method not allowed" });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    console.error("❌ /api/customers error:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Internal server error",
+    });
   }
 }
+
+export default withCors(handler);
