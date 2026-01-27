@@ -1,21 +1,16 @@
-import withCors from "../_cors.js";
 import { getDb } from "../_db.js";
+import withCors from "../_cors.js";
 
 async function handler(req, res) {
   try {
-    const { q = "" } = req.query;
-
-    if (!q || q.trim().length < 1) {
-      return res.status(200).json({
-        success: true,
-        data: [],
-      });
+    const { q } = req.query;
+    if (!q) {
+      return res.status(200).json({ success: true, data: [] });
     }
 
     const db = await getDb();
     const customersCol = db.collection("customers");
 
-    // 🔍 case-insensitive search
     const regex = new RegExp(q, "i");
 
     const customers = await customersCol
@@ -24,9 +19,10 @@ async function handler(req, res) {
           { customerName: regex },
           { primaryMobile: regex },
           { customerNumber: regex },
+          { email: regex },
         ],
       })
-      .limit(10)
+      .limit(20)
       .toArray();
 
     return res.status(200).json({
@@ -34,7 +30,7 @@ async function handler(req, res) {
       data: customers,
     });
   } catch (err) {
-    console.error("Customer search API error:", err);
+    console.error("Customer search error:", err);
     return res.status(500).json({
       success: false,
       error: err.message,
