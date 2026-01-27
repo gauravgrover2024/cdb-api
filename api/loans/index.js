@@ -17,23 +17,29 @@ async function handler(req, res) {
     }
 
     // ---------- POST /api/loans ----------
+    // ---------- POST /api/loans ----------
     if (req.method === "POST") {
       const payload = req.body || {};
       const now = new Date().toISOString();
 
-      const doc = {
+      const result = await loansCol.insertOne({
         ...payload,
+        loanId: null, // temp placeholder
         createdAt: now,
         updatedAt: now,
-      };
+      });
 
-      const result = await loansCol.insertOne(doc);
+      const loanId = result.insertedId.toString();
 
-      // 🔥 THIS IS WHAT YOUR FRONTEND REQUIRES
+      // 🔥 persist loanId inside the document
+      await loansCol.updateOne(
+        { _id: result.insertedId },
+        { $set: { loanId } },
+      );
+
       return res.status(201).json({
         success: true,
-        loanId: result.insertedId.toString(),
-        _id: result.insertedId.toString(),
+        loanId,
         createdAt: now,
       });
     }
