@@ -1,9 +1,7 @@
+import withCors from "../_cors.js";
 import { getDb } from "../_db.js";
-import { applyCors } from "../_cors.js";
 
-export default async function handler(req, res) {
-  if (applyCors(req, res)) return;
-
+async function handler(req, res) {
   try {
     const db = await getDb();
     const loansCol = db.collection("loans");
@@ -32,9 +30,10 @@ export default async function handler(req, res) {
       });
     }
 
-    return res
-      .status(405)
-      .json({ success: false, error: "Method not allowed" });
+    return res.status(405).json({
+      success: false,
+      error: "Method not allowed",
+    });
   } catch (err) {
     console.error("Loans API error:", err);
     return res.status(500).json({
@@ -43,3 +42,5 @@ export default async function handler(req, res) {
     });
   }
 }
+
+export default withCors(handler);

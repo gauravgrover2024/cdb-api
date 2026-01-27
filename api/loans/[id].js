@@ -1,10 +1,8 @@
+import withCors from "../_cors.js";
 import { getDb } from "../_db.js";
-import { applyCors } from "../_cors.js";
 import { ObjectId } from "mongodb";
 
-export default async function handler(req, res) {
-  if (applyCors(req, res)) return;
-
+async function handler(req, res) {
   try {
     const { id } = req.query;
 
@@ -43,9 +41,10 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true });
     }
 
-    return res
-      .status(405)
-      .json({ success: false, error: "Method not allowed" });
+    return res.status(405).json({
+      success: false,
+      error: "Method not allowed",
+    });
   } catch (err) {
     console.error("Loan ID API error:", err);
     return res.status(500).json({
@@ -54,3 +53,5 @@ export default async function handler(req, res) {
     });
   }
 }
+
+export default withCors(handler);
