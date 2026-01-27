@@ -6,7 +6,9 @@ async function handler(req, res) {
     const db = await getDb();
     const customersCol = db.collection("customers");
 
+    // -----------------------------
     // GET /api/customers
+    // -----------------------------
     if (req.method === "GET") {
       const customers = await customersCol
         .find({})
