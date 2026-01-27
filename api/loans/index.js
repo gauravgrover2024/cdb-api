@@ -17,21 +17,20 @@ async function handler(req, res) {
     }
 
     // ---------- POST /api/loans ----------
-    // ---------- POST /api/loans ----------
     if (req.method === "POST") {
       const payload = req.body || {};
       const now = new Date().toISOString();
 
+      // insert without loanId first
       const result = await loansCol.insertOne({
         ...payload,
-        loanId: null, // temp placeholder
         createdAt: now,
         updatedAt: now,
       });
 
       const loanId = result.insertedId.toString();
 
-      // 🔥 persist loanId inside the document
+      // 🔥 WRITE loanId back into document
       await loansCol.updateOne(
         { _id: result.insertedId },
         { $set: { loanId } },
