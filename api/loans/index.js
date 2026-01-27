@@ -1,13 +1,13 @@
-// api/loans/index.js
 import { getDb } from "../_db.js";
-import withCors from "../_cors.js";
+import { applyCors } from "../_cors.js";
 
-async function handler(req, res) {
+export default async function handler(req, res) {
+  if (applyCors(req, res)) return;
+
   try {
     const db = await getDb();
     const loansCol = db.collection("loans");
 
-    // ✅ GET /api/loans
     if (req.method === "GET") {
       const loans = await loansCol.find({}).sort({ createdAt: -1 }).toArray();
 
@@ -17,23 +17,18 @@ async function handler(req, res) {
       });
     }
 
-    // ✅ POST /api/loans
     if (req.method === "POST") {
-      const payload = req.body || {};
+      const payload = req.body;
 
-      const doc = {
+      const result = await loansCol.insertOne({
         ...payload,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        status: payload.status || "Pending",
-      };
-
-      const result = await loansCol.insertOne(doc);
+      });
 
       return res.status(201).json({
         success: true,
         loanId: result.insertedId.toString(),
-        createdAt: doc.createdAt,
       });
     }
 
@@ -44,9 +39,7 @@ async function handler(req, res) {
     console.error("Loans API error:", err);
     return res.status(500).json({
       success: false,
-      error: err.message || "Internal server error",
+      error: err.message,
     });
   }
 }
-
-export default withCors(handler);
