@@ -46,11 +46,17 @@ async function handler(req, res) {
     // PUT /api/loans/:id
     // ------------------------
     if (req.method === "PUT") {
+      const payload = { ...req.body };
+
+      // 🚫 NEVER allow _id to be updated
+      delete payload._id;
+      delete payload.loanId; // optional but safe
+
       await loansCol.updateOne(
         { _id },
         {
           $set: {
-            ...req.body,
+            ...payload,
             updatedAt: new Date().toISOString(),
           },
         },
