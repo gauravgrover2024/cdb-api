@@ -21,7 +21,7 @@ async function handler(req, res) {
       const payload = req.body || {};
       const now = new Date().toISOString();
 
-      // ❌ REMOVE loanId from payload completely
+      // 🔒 never trust frontend loanId
       delete payload.loanId;
 
       const doc = {
@@ -30,15 +30,19 @@ async function handler(req, res) {
         updatedAt: now,
       };
 
+      // 1️⃣ insert
       const result = await loansCol.insertOne(doc);
+
+      // 2️⃣ generate business loanId
       const loanId = result.insertedId.toString();
 
-      // ✅ BACKFILL loanId INTO SAME DOCUMENT
+      // 3️⃣ write it back into the same document
       await loansCol.updateOne(
         { _id: result.insertedId },
         { $set: { loanId } },
       );
 
+      // 4️⃣ respond
       return res.status(201).json({
         success: true,
         data: {
