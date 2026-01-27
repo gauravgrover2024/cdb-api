@@ -6,9 +6,6 @@ async function handler(req, res) {
     const db = await getDb();
     const customersCol = db.collection("customers");
 
-    // -----------------------------
-    // GET /api/customers
-    // -----------------------------
     if (req.method === "GET") {
       const customers = await customersCol
         .find({})
@@ -25,7 +22,7 @@ async function handler(req, res) {
       .status(405)
       .json({ success: false, error: "Method not allowed" });
   } catch (err) {
-    console.error("Customers API error:", err);
+    console.error("Customers list error:", err);
     return res.status(500).json({
       success: false,
       error: err.message,
