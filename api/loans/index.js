@@ -21,16 +21,19 @@ async function handler(req, res) {
       const payload = req.body || {};
       const now = new Date().toISOString();
 
-      // insert without loanId first
-      const result = await loansCol.insertOne({
+      // ❌ REMOVE loanId from payload completely
+      delete payload.loanId;
+
+      const doc = {
         ...payload,
         createdAt: now,
         updatedAt: now,
-      });
+      };
 
+      const result = await loansCol.insertOne(doc);
       const loanId = result.insertedId.toString();
 
-      // 🔥 WRITE loanId back into document
+      // ✅ BACKFILL loanId INTO SAME DOCUMENT
       await loansCol.updateOne(
         { _id: result.insertedId },
         { $set: { loanId } },
@@ -38,8 +41,11 @@ async function handler(req, res) {
 
       return res.status(201).json({
         success: true,
-        loanId,
-        createdAt: now,
+        data: {
+          loanId,
+          _id: loanId,
+          createdAt: now,
+        },
       });
     }
 
