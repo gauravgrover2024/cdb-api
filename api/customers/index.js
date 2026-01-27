@@ -6,16 +6,11 @@ async function handler(req, res) {
     const db = await getDb();
     const customersCol = db.collection("customers");
 
-    // ---------- GET /api/customers ----------
+    // GET /api/customers
     if (req.method === "GET") {
-      const limit = Math.min(parseInt(req.query.limit || "50", 10), 200);
-      const skip = Math.max(parseInt(req.query.skip || "0", 10), 0);
-
       const customers = await customersCol
         .find({})
         .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
         .toArray();
 
       return res.status(200).json({
@@ -24,12 +19,11 @@ async function handler(req, res) {
       });
     }
 
-    return res.status(405).json({
-      success: false,
-      error: "Method not allowed",
-    });
+    return res
+      .status(405)
+      .json({ success: false, error: "Method not allowed" });
   } catch (err) {
-    console.error("Customers index API error:", err);
+    console.error("Customers API error:", err);
     return res.status(500).json({
       success: false,
       error: err.message,
