@@ -2,6 +2,12 @@ import withCors from "../_cors.js";
 import { getDb } from "../_db.js";
 import { ObjectId } from "mongodb";
 
+/**
+ * /api/loans/:id
+ * GET    -> fetch loan for edit
+ * PUT    -> update loan
+ * DELETE -> delete loan
+ */
 async function handler(req, res) {
   try {
     const { id } = req.query;
@@ -17,28 +23,55 @@ async function handler(req, res) {
     const loansCol = db.collection("loans");
     const _id = new ObjectId(id);
 
+    // ------------------------
+    // GET /api/loans/:id
+    // ------------------------
     if (req.method === "GET") {
       const loan = await loansCol.findOne({ _id });
+
       if (!loan) {
         return res.status(404).json({
           success: false,
           error: "Loan not found",
         });
       }
-      return res.status(200).json(loan);
+
+      return res.status(200).json({
+        success: true,
+        data: loan,
+      });
     }
 
+    // ------------------------
+    // PUT /api/loans/:id
+    // ------------------------
     if (req.method === "PUT") {
       await loansCol.updateOne(
         { _id },
-        { $set: { ...req.body, updatedAt: new Date().toISOString() } },
+        {
+          $set: {
+            ...req.body,
+            updatedAt: new Date().toISOString(),
+          },
+        },
       );
-      return res.status(200).json({ success: true });
+
+      return res.status(200).json({
+        success: true,
+        data: { id },
+      });
     }
 
+    // ------------------------
+    // DELETE /api/loans/:id
+    // ------------------------
     if (req.method === "DELETE") {
       await loansCol.deleteOne({ _id });
-      return res.status(200).json({ success: true });
+
+      return res.status(200).json({
+        success: true,
+        data: { id },
+      });
     }
 
     return res.status(405).json({
