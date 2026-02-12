@@ -10,9 +10,15 @@ export async function getDb() {
   }
 
   if (!cachedClient) {
-    cachedClient = new MongoClient(uri);
+    cachedClient = new MongoClient(uri, {
+      dbName: "cdrive", // FORCE database explicitly
+    });
     await cachedClient.connect();
   }
 
-  return cachedClient.db("cdrive"); // ✅ Your DB name from screenshot
+  const db = cachedClient.db("cdrive");
+
+  console.log("Connected to DB:", db.databaseName);
+
+  return db;
 }
