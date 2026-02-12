@@ -8,11 +8,14 @@ async function handler(req, res) {
     const customersCol = db.collection("customers");
 
     // -----------------------------
-    // GET /api/customers  (list)
+    // GET /api/customers (paginated list)
     // -----------------------------
     if (req.method === "GET") {
-      const limit = Math.min(parseInt(req.query.limit || "50", 10), 200);
-      const skip = Math.max(parseInt(req.query.skip || "0", 10), 0);
+      const page = parseInt(req.query.page || "1", 10);
+      const limit = Math.min(parseInt(req.query.limit || "20", 10), 200);
+      const skip = (page - 1) * limit;
+
+      const total = await customersCol.countDocuments({});
 
       const customers = await customersCol
         .find({})
@@ -24,11 +27,14 @@ async function handler(req, res) {
       return res.status(200).json({
         success: true,
         data: customers,
+        total,
+        page,
+        limit,
       });
     }
 
     // -----------------------------
-    // POST /api/customers  (create)
+    // POST /api/customers (create)
     // -----------------------------
     if (req.method === "POST") {
       const body = req.body || {};
@@ -51,12 +57,10 @@ async function handler(req, res) {
       });
     }
 
-    // -----------------------------
-    // Unsupported method
-    // -----------------------------
-    return res
-      .status(405)
-      .json({ success: false, error: "Method not allowed" });
+    return res.status(405).json({
+      success: false,
+      error: "Method not allowed",
+    });
   } catch (err) {
     console.error("❌ /api/customers error:", err);
     return res.status(500).json({
