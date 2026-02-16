@@ -1,9 +1,31 @@
 {
-  "name": "cdb-api",
+  "name": "acillp-backend",
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "dev:watch": "node --watch src/server.js",
+    "data:import": "node src/seeder.js",
+    "vehicles:import": "node src/scripts/importVehicles.js",
+    "vehicles:clear": "node src/scripts/clearVehicles.js"
+  },
   "dependencies": {
-    "mongodb": "^6.3.0"
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^1.41.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "express-async-handler": "^1.2.0",
+    "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongodb": "^6.21.0",
+    "mongoose": "^9.2.1",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "multer-storage-cloudinary": "^4.0.0",
+    "xlsx": "^0.18.5"
   }
 }
