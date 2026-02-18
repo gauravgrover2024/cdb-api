@@ -24,11 +24,22 @@ const app = express();
 // Parse JSON
 app.use(express.json());
 
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173", // if you ever use Vite
+  "https://cdb-frontend-six.vercel.app",
+];
+
 /**
  * ✅ Manual CORS middleware — fixes all preflight issues
  */
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "http://localhost:3000");
+  const origin = req.headers.origin;
+
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin || "*");
+  }
+
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
