@@ -24,15 +24,15 @@ const app = express();
 // Parse JSON
 app.use(express.json());
 
+/**
+ * ✅ CORS for localhost + Vercel frontend
+ */
 const allowedOrigins = [
   "http://localhost:3000",
-  "http://localhost:5173", // if you ever use Vite
+  "http://localhost:5173",
   "https://cdb-frontend-six.vercel.app",
 ];
 
-/**
- * ✅ Manual CORS middleware — fixes all preflight issues
- */
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
