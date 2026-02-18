@@ -1,16 +1,8 @@
 import express from "express";
 import dotenv from "dotenv";
-import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import connectDB from "./config/db.js";
-
-dotenv.config();
-connectDB();
-
-dotenv.config();
-
-connectDB();
 
 import customerRoutes from "./routes/customerRoutes.js";
 import loanRoutes from "./routes/loanRoutes.js";
@@ -22,28 +14,39 @@ import vehicleRoutes from "./routes/vehicleRoutes.js";
 import showroomRoutes from "./routes/showroomRoutes.js";
 import channelRoutes from "./routes/channelRoutes.js";
 import bankRoutes from "./routes/bankRoutes.js";
+import quotationsRouter from "./routes/quotations.js";
+
+dotenv.config();
+connectDB();
 
 const app = express();
 
+// Parse JSON
 app.use(express.json());
 
+/**
+ * ✅ Manual CORS middleware — fixes all preflight issues
+ */
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "http://localhost:3000");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+
+  next();
+});
+
+// Security + logging
 app.use(
-  cors({
-    origin: [
-      "http://localhost:3000",
-      "http://127.0.0.1:3000",
-      "https://your-frontend-domain.vercel.app",
-    ],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
+  helmet({
+    crossOriginResourcePolicy: false,
+    crossOriginEmbedderPolicy: false,
   }),
 );
 
-// Handle preflight requests explicitly
-app.options("*", cors());
-
-app.use(helmet());
 app.use(morgan("dev"));
 
 // Routes
@@ -57,26 +60,25 @@ app.use("/api/upload", uploadRoutes);
 app.use("/api/vehicles", vehicleRoutes);
 app.use("/api/showrooms", showroomRoutes);
 app.use("/api/channels", channelRoutes);
+app.use("/api/quotations", quotationsRouter);
 
-// Health Check
+// Health check
 app.get("/", (req, res) => {
   res.send("API is running...");
 });
 
-// Not Found Middleware
+// Not found
 app.use((req, res, next) => {
   const error = new Error(`Not Found - ${req.originalUrl}`);
   res.status(404);
   next(error);
 });
 
-// Error Handling Middleware
+// Error handler
 app.use((err, req, res, next) => {
   const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
 
-  if (process.env.NODE_ENV !== "production") {
-    console.error(`[Error] ${req.method} ${req.url}:`, err.message);
-  }
+  console.error(`[Error] ${req.method} ${req.url}:`, err.message);
 
   res.status(statusCode).json({
     success: false,
@@ -85,8 +87,8 @@ app.use((err, req, res, next) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5050;
 
 app.listen(PORT, () => {
-  console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });

@@ -1,5 +1,5 @@
-import mongoose from 'mongoose';
-import dotenv from 'dotenv';
+import mongoose from "mongoose";
+import dotenv from "dotenv";
 
 dotenv.config();
 
@@ -11,7 +11,9 @@ const connectDB = async () => {
       // useUnifiedTopology: true,
     });
 
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    console.log(
+      `MongoDB Connected: ${conn.connection.host}, db: ${conn.connection.name}`,
+    );
   } catch (error) {
     console.error(`Error: ${error.message}`);
     process.exit(1);
