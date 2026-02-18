@@ -51,6 +51,7 @@ const QuotationSchema = new mongoose.Schema(
       onRoadBeforeDiscount: Number,
       totalDiscount: Number,
       netOnRoad: Number,
+      color: { type: String }, // <- here
     },
     scenarios: {
       A: {
