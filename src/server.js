@@ -15,6 +15,7 @@ import showroomRoutes from "./routes/showroomRoutes.js";
 import channelRoutes from "./routes/channelRoutes.js";
 import bankRoutes from "./routes/bankRoutes.js";
 import quotationsRouter from "./routes/quotations.js";
+import featuresRoutes from "./routes/featuresRoutes.js";
 
 dotenv.config();
 connectDB();
@@ -72,6 +73,7 @@ app.use("/api/vehicles", vehicleRoutes);
 app.use("/api/showrooms", showroomRoutes);
 app.use("/api/channels", channelRoutes);
 app.use("/api/quotations", quotationsRouter);
+app.use("/api/features", featuresRoutes);
 
 // Health check
 app.get("/", (req, res) => {
