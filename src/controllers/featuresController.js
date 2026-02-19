@@ -84,12 +84,25 @@ const normalizeValue = (val) => {
   return val;
 };
 
+// helper to derive a "normalized" variant name from features JSON
+// so "Ferrari 812 GTS" matches Vehicle variant "GTS"
+const normalizeVariantForJoin = (fv) => {
+  const make = (fv.make || "").trim().toLowerCase(); // ferrari
+  const model = (fv.model || "").trim().toLowerCase(); // 812
+  const variant = (fv.variant || "").trim().toLowerCase(); // "ferrari 812 gts"
+
+  const prefix = `${make} ${model} `;
+  if (variant.startsWith(prefix)) {
+    return variant.slice(prefix.length); // "gts"
+  }
+  return variant;
+};
+
 // @desc  Get combined variants with pricing + features
 // @route GET /api/features/variants-with-price
 // @access Public
 export const getVariantsWithPriceAndFeatures = asyncHandler(
   async (req, res) => {
-    // optional query params later (city, fuel, etc.)
     const { city } = req.query;
 
     const vehicleQuery = {};
@@ -101,7 +114,7 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
       variant: 1,
     });
 
-    // index vehicles by make+model+variant for join
+    // index vehicles by make|model|variant (vehicle side)
     const vehicleIndex = {};
     vehicles.forEach((v) => {
       const key = `${(v.make || "").trim().toLowerCase()}|${(v.model || "")
@@ -112,12 +125,13 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
     });
 
     const result = ALL_VARIANTS_FLAT.map((fv) => {
-      const key = `${(fv.make || "").trim().toLowerCase()}|${(fv.model || "")
-        .trim()
-        .toLowerCase()}|${(fv.variant || "").trim().toLowerCase()}`;
+      const makeKey = (fv.make || "").trim().toLowerCase();
+      const modelKey = (fv.model || "").trim().toLowerCase();
+      const variantKey = normalizeVariantForJoin(fv);
+
+      const key = `${makeKey}|${modelKey}|${variantKey}`;
 
       const candidates = vehicleIndex[key] || [];
-      // naive: pick first; you can refine with fuel/city if needed
       const vehicle = candidates[0] || null;
 
       const detail = DETAILS[fv.id];
@@ -139,6 +153,17 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
           value: normalizeValue(f.value),
         })),
       };
+    });
+
+    // sort within make+model by price for hierarchy
+    result.sort((a, b) => {
+      const keyA = `${a.make} ${a.model}`;
+      const keyB = `${b.make} ${b.model}`;
+      if (keyA !== keyB) return keyA.localeCompare(keyB);
+
+      const priceA = Number(a.exShowroom || a.onRoadPrice || 0);
+      const priceB = Number(b.exShowroom || b.onRoadPrice || 0);
+      return priceA - priceB;
     });
 
     res.json({ success: true, count: result.length, data: result });
