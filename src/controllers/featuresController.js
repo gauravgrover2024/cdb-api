@@ -130,7 +130,7 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
         fuel: fv.fuel,
         transmission: fv.transmission,
         tags: fv.tags || [],
-        price: vehicle?.exShowroom ?? null,
+        exShowroom: vehicle?.exShowroom ?? null,
         onRoadPrice: vehicle?.onRoadPrice ?? null,
         city: vehicle?.city ?? null,
         vehicleId: vehicle?._id ?? null,
