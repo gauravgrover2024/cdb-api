@@ -79,12 +79,7 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
     // 2) Load vehicles (pricing)
     const vehicleQuery = {};
     if (city) vehicleQuery.city = city;
-    const vehicles = await Vehicle.find(vehicleQuery).sort({
-      brand: 1,
-      make: 1,
-      model: 1,
-      variant: 1,
-    });
+    const vehicles = await Vehicle.find(vehicleQuery); // no .sort() here
 
     const result = vehicles
       .map((v) => {
