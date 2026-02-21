@@ -1,8 +1,9 @@
 // src/controllers/featuresController.js
 import asyncHandler from "express-async-handler";
 import Vehicle from "../models/Vehicle.js";
+import VehicleFeature from "../models/VehicleFeature.js";
 
-// Converts Mongo { "Category | Feature": "Yes" } → frontend array
+// Convert { "Category | Name": "Yes" } → [{category,name,value},...]
 const objectToFeaturesArray = (featuresObj) => {
   if (!featuresObj || typeof featuresObj !== "object") return [];
   return Object.entries(featuresObj).map(([fullKey, value]) => {
@@ -15,79 +16,111 @@ const objectToFeaturesArray = (featuresObj) => {
   });
 };
 
-// GET /api/features/details
+// @desc  Get all raw feature details (id = feature doc _id)
+// @route GET /api/features/details
 export const getFeatureDetails = asyncHandler(async (req, res) => {
-  const vehicles = await Vehicle.find({ features: { $exists: true, $ne: {} } });
+  const featureDocs = await VehicleFeature.find({});
   const details = {};
-  vehicles.forEach((v) => {
-    details[v._id.toString()] = {
-      id: v._id.toString(),
-      features: objectToFeaturesArray(v.features),
+  featureDocs.forEach((f) => {
+    details[f._id.toString()] = {
+      id: f._id.toString(),
+      features: objectToFeaturesArray(f.features),
     };
   });
   res.json(details);
 });
 
-// GET /api/features/variants
+// @desc  Get all feature variants (flattened)
+// @route GET /api/features/variants
 export const getFeatureVariants = asyncHandler(async (req, res) => {
-  const vehicles = await Vehicle.find({ features: { $exists: true, $ne: {} } });
-  const variants = vehicles.map((v) => ({
-    id: v._id.toString(),
-    make: v.brand || v.make || "Unknown",
-    model: v.model,
-    variant: v.variant,
-    fuel: v.fuel || v.fuel_type,
+  const featureDocs = await VehicleFeature.find({});
+  const variants = featureDocs.map((f) => ({
+    id: f._id.toString(),
+    make: f.brand,
+    model: f.model,
+    variant: f.variant,
+    fuel: null, // not stored here
     tags: [],
   }));
   res.json(variants);
 });
 
-// GET /api/features/variant/:id
+// @desc  Get one variant's feature details
+// @route GET /api/features/variant/:id
 export const getFeatureVariantById = asyncHandler(async (req, res) => {
-  const vehicle = await Vehicle.findById(req.params.id);
-  if (!vehicle?.features) {
+  const f = await VehicleFeature.findById(req.params.id);
+  if (!f) {
     res.status(404);
     throw new Error("Variant features not found");
   }
   res.json({
-    id: vehicle._id.toString(),
-    features: objectToFeaturesArray(vehicle.features),
+    id: f._id.toString(),
+    features: objectToFeaturesArray(f.features),
   });
 });
 
-// GET /api/features/variants-with-price (MAIN ENDPOINT)
+// @desc  Get combined variants with pricing + features
+// @route GET /api/features/variants-with-price
 export const getVariantsWithPriceAndFeatures = asyncHandler(
   async (req, res) => {
     const { city } = req.query;
 
-    // RELAXED: no features filter in Mongo query; we filter in JS
-    const query = {};
-    if (city) query.city = city;
+    // 1) Load all features
+    const featureDocs = await VehicleFeature.find({});
+    // index by brand|model|variant
+    const featureIndex = {};
+    featureDocs.forEach((f) => {
+      const key = `${(f.brand || "").trim().toLowerCase()}|${(f.model || "")
+        .trim()
+        .toLowerCase()}|${(f.variant || "").trim().toLowerCase()}`;
+      featureIndex[key] = f;
+    });
 
-    const vehicles = await Vehicle.find(query).sort({
+    // 2) Load vehicles (pricing)
+    const vehicleQuery = {};
+    if (city) vehicleQuery.city = city;
+    const vehicles = await Vehicle.find(vehicleQuery).sort({
+      brand: 1,
       make: 1,
       model: 1,
       variant: 1,
     });
 
     const result = vehicles
-      .filter((v) => v.features && Object.keys(v.features || {}).length > 0)
-      .map((v) => ({
-        id: v._id.toString(),
-        make: v.brand || v.make || "Unknown", // brand first (scraper), then make
-        model: v.model,
-        variant: v.variant,
-        fuel: v.fuel || v.fuel_type,
-        transmission: "Automatic", // fallback
-        tags: [],
-        exShowroom: v.ex_showroom || v.exShowroom,
-        onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
-        city: v.city,
-        vehicleId: v._id,
-        features: objectToFeaturesArray(v.features),
-      }));
+      .map((v) => {
+        const brand = v.brand || v.make;
+        const model = v.model;
+        const variant = v.variant;
 
-    // Original sorting
+        if (!brand || !model || !variant) return null;
+
+        const key = `${String(brand).trim().toLowerCase()}|${String(model)
+          .trim()
+          .toLowerCase()}|${String(variant).trim().toLowerCase()}`;
+
+        const f = featureIndex[key];
+        if (!f || !f.features || Object.keys(f.features).length === 0) {
+          return null; // skip vehicles with no features
+        }
+
+        return {
+          id: f._id.toString(),
+          make: brand,
+          model,
+          variant,
+          fuel: v.fuel || v.fuel_type || null,
+          transmission: "Automatic", // not in DB; placeholder
+          tags: [],
+          exShowroom: v.ex_showroom || v.exShowroom,
+          onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
+          city: v.city,
+          vehicleId: v._id,
+          features: objectToFeaturesArray(f.features),
+        };
+      })
+      .filter(Boolean);
+
+    // 3) Sort within make+model by price
     result.sort((a, b) => {
       const keyA = `${a.make} ${a.model}`;
       const keyB = `${b.make} ${b.model}`;
