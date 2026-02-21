@@ -16,13 +16,49 @@ const objectToFeaturesArray = (featuresObj) => {
   });
 };
 
-// Normalize model for vehicle side so "Audi A6" matches features model "A6"
-const normalizeModelForJoin = (brand, model) => {
-  if (!model) return "";
-  const b = (brand || "").trim().toLowerCase(); // "audi"
-  const m = String(model).trim().toLowerCase(); // "audi a6"
+// --- NORMALIZERS (same logic as checkFeaturesJoin.js) ---
+
+const normalizeBrandForJoin = (rawBrand) => {
+  if (!rawBrand) return "";
+  let b = String(rawBrand).trim().toLowerCase();
+
+  // "aston-martin" -> "aston martin", "land-rover" -> "land rover"
+  b = b.replace(/[-_]+/g, " ");
+
+  // collapse spaces
+  b = b.replace(/\s+/g, " ").trim();
+
+  return b;
+};
+
+const normalizeModelForJoin = (brand, rawModel) => {
+  if (!rawModel) return "";
+  let m = String(rawModel).trim().toLowerCase();
+  const b = normalizeBrandForJoin(brand);
+
+  // strip brand prefix: "aston martin db12" -> "db12"
   const prefix = b + " ";
-  return m.startsWith(prefix) ? m.slice(prefix.length) : m; // "a6"
+  if (m.startsWith(prefix)) {
+    m = m.slice(prefix.length);
+  }
+
+  // unify separators: "grand-vitara" -> "grand vitara"
+  m = m.replace(/[-_]+/g, " ");
+
+  // collapse spaces
+  m = m.replace(/\s+/g, " ").trim();
+
+  return m;
+};
+
+const normalizeVariantForJoin = (rawVariant) => {
+  if (!rawVariant) return "";
+  let v = String(rawVariant).trim().toLowerCase();
+
+  // just normalize whitespace so long names line up
+  v = v.replace(/\s+/g, " ").trim();
+
+  return v;
 };
 
 // Simple score so we prefer New-Delhi > Delhi > others when deduping
@@ -85,22 +121,19 @@ export const getFeatureVariantById = asyncHandler(async (req, res) => {
 // @access Public
 export const getVariantsWithPriceAndFeatures = asyncHandler(
   async (req, res) => {
-    // NOTE: we intentionally ignore city for deduped list,
-    // but keep city on the chosen representative vehicle.
-
-    // 1) Load all features and index by brand|model|variant (features side)
+    // 1) Load all features and index by normalized brand|model|variant
     const featureDocs = await VehicleFeature.find({});
     const featureIndex = {};
     featureDocs.forEach((f) => {
-      const brand = (f.brand || "").trim().toLowerCase();
-      const model = (f.model || "").trim().toLowerCase(); // e.g. "a6"
-      const variant = (f.variant || "").trim().toLowerCase();
-      const key = `${brand}|${model}|${variant}`;
+      const brandKey = normalizeBrandForJoin(f.brand);
+      const modelKey = normalizeModelForJoin(brandKey, f.model);
+      const variantKey = normalizeVariantForJoin(f.variant);
+      const key = `${brandKey}|${modelKey}|${variantKey}`;
       featureIndex[key] = f;
     });
 
     // 2) Load all vehicles (all cities)
-    const vehicles = await Vehicle.find({}); // no city filter here
+    const vehicles = await Vehicle.find({});
 
     // 3) Join and dedupe: one row per brand+model+variant (best city chosen)
     const byKey = new Map();
@@ -111,9 +144,9 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
       const variantRaw = v.variant;
       if (!brand || !modelRaw || !variantRaw) return;
 
-      const brandKey = String(brand).trim().toLowerCase();
-      const modelKey = normalizeModelForJoin(brand, modelRaw); // "Audi A6" -> "a6"
-      const variantKey = String(variantRaw).trim().toLowerCase();
+      const brandKey = normalizeBrandForJoin(brand);
+      const modelKey = normalizeModelForJoin(brandKey, modelRaw);
+      const variantKey = normalizeVariantForJoin(variantRaw);
 
       const joinKey = `${brandKey}|${modelKey}|${variantKey}`;
       const f = featureIndex[joinKey];
