@@ -16,8 +16,18 @@ const objectToFeaturesArray = (featuresObj) => {
   });
 };
 
+// Normalize model for vehicle side so "Audi A6" matches features model "A6"
+const normalizeModelForJoin = (brand, model) => {
+  if (!model) return "";
+  const b = (brand || "").trim().toLowerCase(); // "audi"
+  const m = String(model).trim().toLowerCase(); // "audi a6"
+  const prefix = b + " ";
+  return m.startsWith(prefix) ? m.slice(prefix.length) : m; // "a6"
+};
+
 // @desc  Get all raw feature details (id = feature doc _id)
 // @route GET /api/features/details
+// @access Public
 export const getFeatureDetails = asyncHandler(async (req, res) => {
   const featureDocs = await VehicleFeature.find({});
   const details = {};
@@ -32,6 +42,7 @@ export const getFeatureDetails = asyncHandler(async (req, res) => {
 
 // @desc  Get all feature variants (flattened)
 // @route GET /api/features/variants
+// @access Public
 export const getFeatureVariants = asyncHandler(async (req, res) => {
   const featureDocs = await VehicleFeature.find({});
   const variants = featureDocs.map((f) => ({
@@ -39,7 +50,7 @@ export const getFeatureVariants = asyncHandler(async (req, res) => {
     make: f.brand,
     model: f.model,
     variant: f.variant,
-    fuel: null, // not stored here
+    fuel: null,
     tags: [],
   }));
   res.json(variants);
@@ -47,6 +58,7 @@ export const getFeatureVariants = asyncHandler(async (req, res) => {
 
 // @desc  Get one variant's feature details
 // @route GET /api/features/variant/:id
+// @access Public
 export const getFeatureVariantById = asyncHandler(async (req, res) => {
   const f = await VehicleFeature.findById(req.params.id);
   if (!f) {
@@ -61,50 +73,56 @@ export const getFeatureVariantById = asyncHandler(async (req, res) => {
 
 // @desc  Get combined variants with pricing + features
 // @route GET /api/features/variants-with-price
+// @access Public
 export const getVariantsWithPriceAndFeatures = asyncHandler(
   async (req, res) => {
     const { city } = req.query;
 
-    // 1) Load all features
+    // 1) Load all features and index by brand|model|variant (features side)
     const featureDocs = await VehicleFeature.find({});
-    // index by brand|model|variant
     const featureIndex = {};
     featureDocs.forEach((f) => {
-      const key = `${(f.brand || "").trim().toLowerCase()}|${(f.model || "")
-        .trim()
-        .toLowerCase()}|${(f.variant || "").trim().toLowerCase()}`;
+      const brand = (f.brand || "").trim().toLowerCase();
+      const model = (f.model || "").trim().toLowerCase(); // e.g. "a6"
+      const variant = (f.variant || "").trim().toLowerCase();
+      const key = `${brand}|${model}|${variant}`;
       featureIndex[key] = f;
     });
 
-    // 2) Load vehicles (pricing)
+    // 2) Load vehicles (pricing side)
     const vehicleQuery = {};
     if (city) vehicleQuery.city = city;
-    const vehicles = await Vehicle.find(vehicleQuery); // no .sort() here
 
+    // No Mongo sort to avoid 32MB limit; we sort in JS later
+    const vehicles = await Vehicle.find(vehicleQuery);
+
+    // 3) Join vehicles with features
     const result = vehicles
       .map((v) => {
         const brand = v.brand || v.make;
-        const model = v.model;
-        const variant = v.variant;
+        const modelRaw = v.model;
+        const variantRaw = v.variant;
 
-        if (!brand || !model || !variant) return null;
+        if (!brand || !modelRaw || !variantRaw) return null;
 
-        const key = `${String(brand).trim().toLowerCase()}|${String(model)
-          .trim()
-          .toLowerCase()}|${String(variant).trim().toLowerCase()}`;
+        const brandKey = String(brand).trim().toLowerCase();
+        const modelKey = normalizeModelForJoin(brand, modelRaw); // "Audi A6" -> "a6"
+        const variantKey = String(variantRaw).trim().toLowerCase();
 
+        const key = `${brandKey}|${modelKey}|${variantKey}`;
         const f = featureIndex[key];
+
         if (!f || !f.features || Object.keys(f.features).length === 0) {
-          return null; // skip vehicles with no features
+          return null; // skip vehicles with no matched features
         }
 
         return {
-          id: f._id.toString(),
+          id: f._id.toString(), // feature doc id
           make: brand,
-          model,
-          variant,
+          model: modelRaw,
+          variant: variantRaw,
           fuel: v.fuel || v.fuel_type || null,
-          transmission: "Automatic", // not in DB; placeholder
+          transmission: "Automatic", // placeholder, unless you add real field
           tags: [],
           exShowroom: v.ex_showroom || v.exShowroom,
           onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
@@ -115,7 +133,7 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
       })
       .filter(Boolean);
 
-    // 3) Sort within make+model by price
+    // 4) Sort within make+model by price (same as earlier)
     result.sort((a, b) => {
       const keyA = `${a.make} ${a.model}`;
       const keyB = `${b.make} ${b.model}`;

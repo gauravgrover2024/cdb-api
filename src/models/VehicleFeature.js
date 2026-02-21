@@ -3,18 +3,18 @@ import mongoose from "mongoose";
 
 const vehicleFeatureSchema = mongoose.Schema(
   {
-    brand: { type: String, required: true }, // "Audi"
-    model: { type: String, required: true }, // "A6"
-    variant: { type: String, required: true }, // "Audi A6 45 TFSI Premium Plus"
+    brand: { type: String, required: true },
+    model: { type: String, required: true },
+    variant: { type: String, required: true },
     features: {
-      type: mongoose.Schema.Types.Mixed, // { "Comfort & Convenience | Power Steering": "Yes", ... }
+      type: mongoose.Schema.Types.Mixed,
       default: {},
     },
   },
   {
     timestamps: true,
     strict: false,
-    collection: "vehicle_features", // important: uses existing collection
+    collection: "vehicle_features",
   },
 );
 
