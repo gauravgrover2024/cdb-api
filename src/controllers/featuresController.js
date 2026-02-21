@@ -32,7 +32,7 @@ export const getFeatureVariants = asyncHandler(async (req, res) => {
   const vehicles = await Vehicle.find({ features: { $exists: true, $ne: {} } });
   const variants = vehicles.map((v) => ({
     id: v._id.toString(),
-    make: v.make,
+    make: v.brand || v.make || "Unknown",
     model: v.model,
     variant: v.variant,
     fuel: v.fuel || v.fuel_type,
@@ -69,7 +69,7 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
 
     const result = vehicles.map((v) => ({
       id: v._id.toString(),
-      make: v.make,
+      make: v.brand || v.make || v.make, // brand first (scraper), then make
       model: v.model,
       variant: v.variant,
       fuel: v.fuel || v.fuel_type,
