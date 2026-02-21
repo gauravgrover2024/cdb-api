@@ -1,3 +1,4 @@
+// src/controllers/featuresController.js
 import asyncHandler from "express-async-handler";
 import Vehicle from "../models/Vehicle.js";
 
@@ -58,7 +59,9 @@ export const getFeatureVariantById = asyncHandler(async (req, res) => {
 export const getVariantsWithPriceAndFeatures = asyncHandler(
   async (req, res) => {
     const { city } = req.query;
-    const query = { features: { $exists: true, $ne: {} } };
+
+    // RELAXED: no features filter in Mongo query; we filter in JS
+    const query = {};
     if (city) query.city = city;
 
     const vehicles = await Vehicle.find(query).sort({
@@ -67,20 +70,22 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
       variant: 1,
     });
 
-    const result = vehicles.map((v) => ({
-      id: v._id.toString(),
-      make: v.brand || v.make || v.make, // brand first (scraper), then make
-      model: v.model,
-      variant: v.variant,
-      fuel: v.fuel || v.fuel_type,
-      transmission: "Automatic", // fallback
-      tags: [],
-      exShowroom: v.ex_showroom || v.exShowroom,
-      onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
-      city: v.city,
-      vehicleId: v._id,
-      features: objectToFeaturesArray(v.features), // ← Magic conversion
-    }));
+    const result = vehicles
+      .filter((v) => v.features && Object.keys(v.features || {}).length > 0)
+      .map((v) => ({
+        id: v._id.toString(),
+        make: v.brand || v.make || "Unknown", // brand first (scraper), then make
+        model: v.model,
+        variant: v.variant,
+        fuel: v.fuel || v.fuel_type,
+        transmission: "Automatic", // fallback
+        tags: [],
+        exShowroom: v.ex_showroom || v.exShowroom,
+        onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
+        city: v.city,
+        vehicleId: v._id,
+        features: objectToFeaturesArray(v.features),
+      }));
 
     // Original sorting
     result.sort((a, b) => {
