@@ -1,31 +1,67 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const vehicleSchema = mongoose.Schema(
   {
-    make: { type: String, required: true },
-    model: { type: String, required: true },
-    variant: { type: String, required: true },
-    fuel: { type: String },
+    // Core identifiers
+    make: { type: String, required: true }, // "Audi", "Hyundai"
+    model: { type: String, required: true }, // "A6", "I20 N Line"
+    variant: { type: String, required: true }, // "Audi A6 45 TFSI Premium Plus"
+    fuel: { type: String }, // legacy
+    city: { type: String },
+
+    // Legacy pricing (keep for compat)
     exShowroom: { type: Number, default: 0 },
     rto: { type: Number, default: 0 },
     insurance: { type: Number, default: 0 },
     otherCharges: { type: Number, default: 0 },
     onRoadPrice: { type: Number, default: 0 },
-    city: { type: String },
-    status: { type: String, default: 'Active' },
-    isDiscontinued: { type: Boolean, default: false },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+    // NEW: Scraper pricelist fields
+    ex_showroom: { type: Number },
+    fuel_type: { type: String },
+    on_road_price_cardekho: { type: Number },
+    orp_without_accessories: { type: Number },
+    total_on_road_with_accessories: { type: Number },
+    other_tcsCharges: { type: String },
+    optional_totalAccessories: { type: Number },
+    optional_totalAccessoriesInRs: { type: String },
+    other_totalOtherCharges: { type: Number },
+    other_totalOtherChargesInRsFormat: { type: String },
+    raw_price_json: { type: mongoose.Schema.Types.Mixed },
+    variant_short: { type: String },
+    is_discontinued: { type: Boolean, default: false },
+    LastPriceChangeDate: { type: String },
+    LastSeenDate: { type: String },
+    scrape_timestamp: { type: String },
+
+    // NEW: Features from scraper (dynamic key-value)
+    features: {
+      type: mongoose.Schema.Types.Mixed, // "Comfort & Convenience | Power Steering": "Yes"
+      default: {},
+    },
+
+    // Other
+    status: { type: String, default: "Active" },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   {
     timestamps: true,
-    strict: false,
-  }
+    strict: false, // allows extra scraper fields
+  },
 );
 
-// Index for search and uniqueness
-vehicleSchema.index({ make: 1, model: 1, variant: 1, fuel: 1, city: 1 }, { unique: true });
-vehicleSchema.index({ make: 'text', model: 'text', variant: 'text', city: 'text' });
+// Indexes
+vehicleSchema.index(
+  { make: 1, model: 1, variant: 1, fuel: 1, city: 1 },
+  { unique: true },
+);
+vehicleSchema.index({
+  make: "text",
+  model: "text",
+  variant: "text",
+  city: "text",
+});
+vehicleSchema.index({ model: 1 });
 
-const Vehicle = mongoose.model('Vehicle', vehicleSchema);
-
+const Vehicle = mongoose.model("Vehicle", vehicleSchema);
 export default Vehicle;
