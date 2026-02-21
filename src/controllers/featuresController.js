@@ -25,6 +25,14 @@ const normalizeModelForJoin = (brand, model) => {
   return m.startsWith(prefix) ? m.slice(prefix.length) : m; // "a6"
 };
 
+// Simple score so we prefer New-Delhi > Delhi > others when deduping
+const scoreCity = (c) => {
+  const lc = (c || "").toLowerCase();
+  if (lc === "new-delhi" || lc === "new delhi") return 3;
+  if (lc === "delhi") return 2;
+  return 1;
+};
+
 // @desc  Get all raw feature details (id = feature doc _id)
 // @route GET /api/features/details
 // @access Public
@@ -72,11 +80,13 @@ export const getFeatureVariantById = asyncHandler(async (req, res) => {
 });
 
 // @desc  Get combined variants with pricing + features
+//        One row per brand+model+variant (features are not city specific)
 // @route GET /api/features/variants-with-price
 // @access Public
 export const getVariantsWithPriceAndFeatures = asyncHandler(
   async (req, res) => {
-    const { city } = req.query;
+    // NOTE: we intentionally ignore city for deduped list,
+    // but keep city on the chosen representative vehicle.
 
     // 1) Load all features and index by brand|model|variant (features side)
     const featureDocs = await VehicleFeature.find({});
@@ -89,51 +99,51 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
       featureIndex[key] = f;
     });
 
-    // 2) Load vehicles (pricing side)
-    const vehicleQuery = {};
-    if (city) vehicleQuery.city = city;
+    // 2) Load all vehicles (all cities)
+    const vehicles = await Vehicle.find({}); // no city filter here
 
-    // No Mongo sort to avoid 32MB limit; we sort in JS later
-    const vehicles = await Vehicle.find(vehicleQuery);
+    // 3) Join and dedupe: one row per brand+model+variant (best city chosen)
+    const byKey = new Map();
 
-    // 3) Join vehicles with features
-    const result = vehicles
-      .map((v) => {
-        const brand = v.brand || v.make;
-        const modelRaw = v.model;
-        const variantRaw = v.variant;
+    vehicles.forEach((v) => {
+      const brand = v.brand || v.make;
+      const modelRaw = v.model;
+      const variantRaw = v.variant;
+      if (!brand || !modelRaw || !variantRaw) return;
 
-        if (!brand || !modelRaw || !variantRaw) return null;
+      const brandKey = String(brand).trim().toLowerCase();
+      const modelKey = normalizeModelForJoin(brand, modelRaw); // "Audi A6" -> "a6"
+      const variantKey = String(variantRaw).trim().toLowerCase();
 
-        const brandKey = String(brand).trim().toLowerCase();
-        const modelKey = normalizeModelForJoin(brand, modelRaw); // "Audi A6" -> "a6"
-        const variantKey = String(variantRaw).trim().toLowerCase();
+      const joinKey = `${brandKey}|${modelKey}|${variantKey}`;
+      const f = featureIndex[joinKey];
+      if (!f || !f.features || Object.keys(f.features).length === 0) return;
 
-        const key = `${brandKey}|${modelKey}|${variantKey}`;
-        const f = featureIndex[key];
+      const outKey = joinKey; // dedupe key without city
+      const currentCity = v.city || "";
 
-        if (!f || !f.features || Object.keys(f.features).length === 0) {
-          return null; // skip vehicles with no matched features
-        }
-
-        return {
+      const existing = byKey.get(outKey);
+      if (!existing || scoreCity(currentCity) > scoreCity(existing.city)) {
+        byKey.set(outKey, {
           id: f._id.toString(), // feature doc id
           make: brand,
           model: modelRaw,
           variant: variantRaw,
           fuel: v.fuel || v.fuel_type || null,
-          transmission: "Automatic", // placeholder, unless you add real field
+          transmission: "Automatic", // placeholder unless you add real field
           tags: [],
           exShowroom: v.ex_showroom || v.exShowroom,
           onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
-          city: v.city,
+          city: currentCity, // best city we found for this variant
           vehicleId: v._id,
           features: objectToFeaturesArray(f.features),
-        };
-      })
-      .filter(Boolean);
+        });
+      }
+    });
 
-    // 4) Sort within make+model by price (same as earlier)
+    const result = Array.from(byKey.values());
+
+    // 4) Sort within make+model by price
     result.sort((a, b) => {
       const keyA = `${a.make} ${a.model}`;
       const keyB = `${b.make} ${b.model}`;
