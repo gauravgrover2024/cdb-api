@@ -1,23 +1,30 @@
 import mongoose from "mongoose";
-import dotenv from "dotenv";
 
-dotenv.config();
+let cached = global.mongoose;
+
+if (!cached) {
+  cached = global.mongoose = {
+    conn: null,
+    promise: null,
+  };
+}
 
 const connectDB = async () => {
-  try {
-    const conn = await mongoose.connect(process.env.MONGO_URI, {
-      // These options are no longer necessary in Mongoose 6+, but keeping for safety if older version
-      // useNewUrlParser: true,
-      // useUnifiedTopology: true,
-    });
-
-    console.log(
-      `MongoDB Connected: ${conn.connection.host}, db: ${conn.connection.name}`,
-    );
-  } catch (error) {
-    console.error(`Error: ${error.message}`);
-    process.exit(1);
+  if (cached.conn) {
+    return cached.conn;
   }
+
+  if (!cached.promise) {
+    cached.promise = mongoose.connect(process.env.MONGO_URI, {
+      bufferCommands: false,
+    });
+  }
+
+  cached.conn = await cached.promise;
+
+  console.log("MongoDB reused connection");
+
+  return cached.conn;
 };
 
 export default connectDB;
