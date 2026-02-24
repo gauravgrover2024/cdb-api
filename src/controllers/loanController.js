@@ -571,82 +571,48 @@ const ensureLinkedRecords = async (loanDoc) => {
   }
 };
 
-// @desc    Get all loans
+// @desc    Get loans with search + pagination
 // @route   GET /api/loans
 // @access  Public
 const getLoans = asyncHandler(async (req, res) => {
-  const pageSize = Number(req.query.limit) || 10000;
-  const skip = Number(req.query.skip) || 0;
+  const { search = "", skip = 0, limit = 50 } = req.query;
 
-  const count = await Loan.countDocuments({});
-  const loans = await Loan.find({})
-    .populate("customerId") // Populate customer data for dashboard
-    .sort({ createdAt: -1 })
-    .limit(pageSize)
-    .skip(skip);
+  const safeLimit = Math.min(Number(limit) || 50, 200); // cap at 200
+  const safeSkip = Number(skip) || 0;
 
-  // Check for data integrity issues
-  const loansWithoutCustomer = loans.filter((l) => !l.customerId);
-  const loansWithBrokenRef = loans.filter(
-    (l) => l.customerId && typeof l.customerId !== "object",
-  );
+  let query = {};
 
-  if (loansWithoutCustomer.length > 0) {
-    console.warn(
-      `⚠️ ${loansWithoutCustomer.length} orphaned loans:`,
-      loansWithoutCustomer.map((l) => l.loanId).join(", "),
-    );
+  if (search && String(search).trim()) {
+    const s = String(search).trim();
+    const regex = new RegExp(s, "i");
+
+    query = {
+      $or: [
+        { loanId: regex },
+        { customerName: regex },
+        { recordSource: regex },
+        { sourceName: regex },
+        { vehicleMake: regex },
+        { vehicleModel: regex },
+        { vehicleVariant: regex },
+      ],
+    };
   }
 
-  if (loansWithBrokenRef.length > 0) {
-    console.error(
-      `❌ ${loansWithBrokenRef.length} broken references:`,
-      loansWithBrokenRef.map((l) => l.loanId).join(", "),
-    );
-  }
-
-  // Merge customer data for dashboard view
-  const loansWithCustomer = loans.map((loan) => {
-    const loanObj = loan.toObject();
-
-    // Handle customer population
-    if (loanObj.customerId && typeof loanObj.customerId === "object") {
-      const customerData = loanObj.customerId;
-      const customerId = customerData._id;
-
-      // Merge customer fields into loan ONLY if loan field is empty/null
-      // Skip internal MongoDB fields
-      Object.keys(customerData).forEach((key) => {
-        if (
-          key === "_id" ||
-          key === "__v" ||
-          key === "createdAt" ||
-          key === "updatedAt" ||
-          key === "customerId"
-        ) {
-          return;
-        }
-        // Only fill if loan doesn't have this field or it's empty
-        if (
-          loanObj[key] === undefined ||
-          loanObj[key] === null ||
-          loanObj[key] === ""
-        ) {
-          loanObj[key] = customerData[key];
-        }
-      });
-
-      // Set customerId as scalar string for frontend
-      loanObj.customerId = customerId.toString();
-    }
-
-    return loanObj;
-  });
+  const [loans, total] = await Promise.all([
+    Loan.find(query)
+      .populate("customerId") // keep your existing populate
+      .sort({ createdAt: -1 })
+      .skip(safeSkip)
+      .limit(safeLimit),
+    Loan.countDocuments(query),
+  ]);
 
   res.json({
     success: true,
-    count,
-    data: loansWithCustomer,
+    total, // total matching loans (for pagination)
+    count: loans.length, // count in this page
+    data: loans,
   });
 });
 
