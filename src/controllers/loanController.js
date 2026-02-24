@@ -575,6 +575,8 @@ const ensureLinkedRecords = async (loanDoc) => {
 // @route   GET /api/loans
 // @access  Public
 const getLoans = asyncHandler(async (req, res) => {
+  console.log("getLoans req.query:", req.query);
+
   const { search = "", skip = 0, limit = 50 } = req.query;
 
   const safeLimit = Math.min(Number(limit) || 50, 200); // cap at 200
@@ -607,6 +609,8 @@ const getLoans = asyncHandler(async (req, res) => {
       .limit(safeLimit),
     Loan.countDocuments(query),
   ]);
+
+  console.log("getLoans result:", { count: data.length, total });
 
   res.json({
     success: true,
