@@ -577,11 +577,12 @@ const ensureLinkedRecords = async (loanDoc) => {
 const getLoans = asyncHandler(async (req, res) => {
   const { search = "", skip = 0, limit = 50 } = req.query;
 
-  const safeLimit = Math.min(Number(limit) || 50, 200); // cap at 200
+  const safeLimit = Math.min(Number(limit) || 50, 200);
   const safeSkip = Number(skip) || 0;
 
   let query = {};
 
+  // If search term present → filter
   if (search && String(search).trim()) {
     const s = String(search).trim();
     const regex = new RegExp(s, "i");
@@ -599,21 +600,15 @@ const getLoans = asyncHandler(async (req, res) => {
     };
   }
 
-  const [loans, total] = await Promise.all([
+  const [data, total] = await Promise.all([
     Loan.find(query)
-      .populate("customerId") // keep your existing populate
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, _id: -1 }) // latest first
       .skip(safeSkip)
       .limit(safeLimit),
     Loan.countDocuments(query),
   ]);
 
-  res.json({
-    success: true,
-    total, // total matching loans (for pagination)
-    count: loans.length, // count in this page
-    data: loans,
-  });
+  res.json({ data, total });
 });
 
 // @desc    Get loan by ID
