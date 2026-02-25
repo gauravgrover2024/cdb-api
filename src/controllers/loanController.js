@@ -575,7 +575,7 @@ const ensureLinkedRecords = async (loanDoc) => {
 // @route   GET /api/loans
 // @access  Public
 const getLoans = asyncHandler(async (req, res) => {
-  const { search = "", skip = 0, limit = 50 } = req.query;
+  const { search = "", skip = 0, limit = 200 } = req.query;
 
   const safeLimit = Math.min(Number(limit) || 50, 200);
   const safeSkip = Number(skip) || 0;

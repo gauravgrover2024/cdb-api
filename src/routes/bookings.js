@@ -12,6 +12,28 @@ async function generateBookingId() {
   return `BKG-${String(next).padStart(4, "0")}`;
 }
 
+// GET /api/bookings  -> list bookings with optional status filter
+router.get("/", async (req, res, next) => {
+  try {
+    const { status, limit = 200, skip = 0 } = req.query;
+
+    const query = {};
+    if (status) {
+      // keep exact status (e.g. "Open", "Cancelled", "Converted")
+      query.status = status;
+    }
+
+    const bookings = await Booking.find(query)
+      .sort({ createdAt: -1 })
+      .skip(Number(skip) || 0)
+      .limit(Number(limit) || 200);
+
+    res.json(bookings);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/bookings  -> create booking
 router.post("/", async (req, res, next) => {
   try {
