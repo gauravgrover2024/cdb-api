@@ -16,6 +16,7 @@ import channelRoutes from "./routes/channelRoutes.js";
 import bankRoutes from "./routes/bankRoutes.js";
 import quotationsRouter from "./routes/quotations.js";
 import featuresRoutes from "./routes/featuresRoutes.js";
+import bookingsRouter from "./routes/bookings.js";
 
 dotenv.config();
 connectDB();
@@ -86,6 +87,7 @@ app.use((req, res, next) => {
   res.status(404);
   next(error);
 });
+app.use("/api/bookings", bookingsRouter);
 
 // Error handler
 app.use((err, req, res, next) => {
