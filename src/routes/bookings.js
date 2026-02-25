@@ -1,103 +1,108 @@
 // backend/routes/bookings.js
 import express from "express";
+import Booking from "../models/Booking.js";
 
 const router = express.Router();
 
-// TEMP: in-memory store — replace with Mongo later
-const bookings = new Map();
-let counter = 1;
-
-const nextBookingId = () => `BKG-${String(counter++).padStart(4, "0")}`;
+// Generate bookingId like BKG-0001 using a counter in DB
+async function generateBookingId() {
+  // Count existing bookings and pad – simple but fine for now
+  const count = await Booking.countDocuments({});
+  const next = count + 1;
+  return `BKG-${String(next).padStart(4, "0")}`;
+}
 
 // POST /api/bookings  -> create booking
-router.post("/", (req, res) => {
-  const bookingId = nextBookingId();
-  const now = new Date().toISOString();
+router.post("/", async (req, res, next) => {
+  try {
+    const bookingId = await generateBookingId();
 
-  const booking = {
-    bookingId,
-    status: "Open",
-    createdAt: now,
-    updatedAt: now,
-    ...req.body,
-  };
+    const booking = await Booking.create({
+      bookingId,
+      status: "Open",
+      ...req.body,
+    });
 
-  bookings.set(bookingId, booking);
-  res.json(booking);
+    res.json(booking);
+  } catch (err) {
+    next(err);
+  }
 });
 
-// GET /api/bookings/:id  -> fetch a booking
-router.get("/:id", (req, res) => {
-  const booking = bookings.get(req.params.id);
-  if (!booking) {
-    return res.status(404).json({ message: "Booking not found" });
+// GET /api/bookings/:id  -> fetch a booking by bookingId
+router.get("/:id", async (req, res, next) => {
+  try {
+    const booking = await Booking.findOne({ bookingId: req.params.id });
+    if (!booking) {
+      res.status(404);
+      return res.json({ message: "Booking not found" });
+    }
+    res.json(booking);
+  } catch (err) {
+    next(err);
   }
-  res.json(booking);
 });
 
 // POST /api/bookings/:id/cancel  -> cancel booking
-router.post("/:id/cancel", (req, res) => {
-  const booking = bookings.get(req.params.id);
-  if (!booking) {
-    return res.status(404).json({ message: "Booking not found" });
+router.post("/:id/cancel", async (req, res, next) => {
+  try {
+    const booking = await Booking.findOne({ bookingId: req.params.id });
+    if (!booking) {
+      res.status(404);
+      return res.json({ message: "Booking not found" });
+    }
+
+    const { reason, remarks, cancelledAt } = req.body || {};
+    booking.status = "Cancelled";
+    booking.cancelReason = reason || booking.cancelReason;
+    booking.cancelRemarks = remarks || booking.cancelRemarks;
+    booking.cancelledAt = cancelledAt ? new Date(cancelledAt) : new Date();
+
+    await booking.save();
+    res.json(booking);
+  } catch (err) {
+    next(err);
   }
-
-  const { reason, remarks, cancelledAt } = req.body || {};
-  const now = new Date().toISOString();
-
-  const updated = {
-    ...booking,
-    status: "Cancelled",
-    cancelReason: reason || booking.cancelReason,
-    cancelRemarks: remarks || booking.cancelRemarks,
-    cancelledAt: cancelledAt || now,
-    updatedAt: now,
-  };
-
-  bookings.set(req.params.id, updated);
-  res.json(updated);
 });
 
-// POST /api/bookings/:id/merge-into-payment  -> stub
-router.post("/:id/merge-into-payment", (req, res) => {
-  const booking = bookings.get(req.params.id);
-  if (!booking) {
-    return res.status(404).json({ message: "Booking not found" });
+// POST /api/bookings/:id/merge-into-payment  -> stub merge
+router.post("/:id/merge-into-payment", async (req, res, next) => {
+  try {
+    const booking = await Booking.findOne({ bookingId: req.params.id });
+    if (!booking) {
+      res.status(404);
+      return res.json({ message: "Booking not found" });
+    }
+
+    booking.mergedIntoPaymentAt = new Date();
+    booking.linkedPaymentLoanId = booking.linkedLoanId || null;
+
+    await booking.save();
+    res.json(booking);
+  } catch (err) {
+    next(err);
   }
-
-  const now = new Date().toISOString();
-
-  const updated = {
-    ...booking,
-    mergedIntoPaymentAt: now,
-    linkedPaymentLoanId: booking.linkedLoanId || null,
-    updatedAt: now,
-  };
-
-  bookings.set(req.params.id, updated);
-  res.json(updated);
 });
 
-// POST /api/bookings/:id/create-loan  -> stub
-router.post("/:id/create-loan", (req, res) => {
-  const booking = bookings.get(req.params.id);
-  if (!booking) {
-    return res.status(404).json({ message: "Booking not found" });
+// POST /api/bookings/:id/create-loan  -> stub loan creation
+router.post("/:id/create-loan", async (req, res, next) => {
+  try {
+    const booking = await Booking.findOne({ bookingId: req.params.id });
+    if (!booking) {
+      res.status(404);
+      return res.json({ message: "Booking not found" });
+    }
+
+    const loanId = `LN-${booking.bookingId}`;
+
+    booking.linkedLoanId = loanId;
+    booking.status = "Converted";
+    await booking.save();
+
+    res.json({ loanId });
+  } catch (err) {
+    next(err);
   }
-
-  const loanId = `LN-${booking.bookingId}`;
-  const now = new Date().toISOString();
-
-  const updated = {
-    ...booking,
-    linkedLoanId: loanId,
-    status: "Converted",
-    updatedAt: now,
-  };
-
-  bookings.set(req.params.id, updated);
-
-  res.json({ loanId });
 });
 
 export default router;
