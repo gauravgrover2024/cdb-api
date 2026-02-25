@@ -1,18 +1,19 @@
-// routes/bookings.js
+// backend/routes/bookings.js
 import express from "express";
 
 const router = express.Router();
 
-// In-memory for now; replace with DB
+// TEMP: in-memory store — replace with Mongo later
 const bookings = new Map();
 let counter = 1;
 
-// POST /api/bookings
-router.post("/", (req, res) => {
-  const bookingId = `BKG-${String(counter).padStart(4, "0")}`;
-  counter += 1;
+const nextBookingId = () => `BKG-${String(counter++).padStart(4, "0")}`;
 
+// POST /api/bookings  -> create booking
+router.post("/", (req, res) => {
+  const bookingId = nextBookingId();
   const now = new Date().toISOString();
+
   const booking = {
     bookingId,
     status: "Open",
@@ -25,7 +26,7 @@ router.post("/", (req, res) => {
   res.json(booking);
 });
 
-// GET /api/bookings/:id
+// GET /api/bookings/:id  -> fetch a booking
 router.get("/:id", (req, res) => {
   const booking = bookings.get(req.params.id);
   if (!booking) {
@@ -34,7 +35,7 @@ router.get("/:id", (req, res) => {
   res.json(booking);
 });
 
-// POST /api/bookings/:id/cancel
+// POST /api/bookings/:id/cancel  -> cancel booking
 router.post("/:id/cancel", (req, res) => {
   const booking = bookings.get(req.params.id);
   if (!booking) {
@@ -42,54 +43,58 @@ router.post("/:id/cancel", (req, res) => {
   }
 
   const { reason, remarks, cancelledAt } = req.body || {};
+  const now = new Date().toISOString();
+
   const updated = {
     ...booking,
     status: "Cancelled",
     cancelReason: reason || booking.cancelReason,
     cancelRemarks: remarks || booking.cancelRemarks,
-    cancelledAt: cancelledAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    cancelledAt: cancelledAt || now,
+    updatedAt: now,
   };
 
   bookings.set(req.params.id, updated);
   res.json(updated);
 });
 
-// POST /api/bookings/:id/merge-into-payment
+// POST /api/bookings/:id/merge-into-payment  -> stub
 router.post("/:id/merge-into-payment", (req, res) => {
   const booking = bookings.get(req.params.id);
   if (!booking) {
     return res.status(404).json({ message: "Booking not found" });
   }
 
-  // TODO: actually create a showroom payment row in your payments collection
+  const now = new Date().toISOString();
+
   const updated = {
     ...booking,
+    mergedIntoPaymentAt: now,
     linkedPaymentLoanId: booking.linkedLoanId || null,
-    mergedIntoPaymentAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
   };
 
   bookings.set(req.params.id, updated);
   res.json(updated);
 });
 
-// POST /api/bookings/:id/create-loan
+// POST /api/bookings/:id/create-loan  -> stub
 router.post("/:id/create-loan", (req, res) => {
   const booking = bookings.get(req.params.id);
   if (!booking) {
     return res.status(404).json({ message: "Booking not found" });
   }
 
-  // TODO: actually create loan; for now fake one
   const loanId = `LN-${booking.bookingId}`;
+  const now = new Date().toISOString();
 
   const updated = {
     ...booking,
     linkedLoanId: loanId,
     status: "Converted",
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
   };
+
   bookings.set(req.params.id, updated);
 
   res.json({ loanId });

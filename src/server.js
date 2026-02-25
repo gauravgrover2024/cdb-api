@@ -75,6 +75,7 @@ app.use("/api/showrooms", showroomRoutes);
 app.use("/api/channels", channelRoutes);
 app.use("/api/quotations", quotationsRouter);
 app.use("/api/features", featuresRoutes);
+app.use("/api/bookings", bookingsRouter);
 
 // Health check
 app.get("/", (req, res) => {
@@ -87,7 +88,6 @@ app.use((req, res, next) => {
   res.status(404);
   next(error);
 });
-app.use("/api/bookings", bookingsRouter);
 
 // Error handler
 app.use((err, req, res, next) => {
