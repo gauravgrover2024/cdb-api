@@ -4,11 +4,13 @@ import Vehicle from '../models/Vehicle.js';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const trimLeading = (value, prefix) => {
   const source = String(value || '').trim();
   const leader = String(prefix || '').trim();
   if (!source || !leader) return source;
-  const escaped = leader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escaped = escapeRegex(leader);
   return source.replace(new RegExp(`^${escaped}\\s*`, 'i'), '').trim();
 };
 
@@ -19,6 +21,7 @@ const normalizeVehicleRecord = (doc) => {
   const rawVariant = String(raw.variant || '').trim();
   const model = trimLeading(rawModel, make) || rawModel;
   const variant =
+    trimLeading(rawVariant, `${make} ${rawModel}`.trim()) ||
     trimLeading(rawVariant, rawModel) ||
     trimLeading(rawVariant, `${make} ${model}`.trim()) ||
     trimLeading(rawVariant, make) ||
@@ -35,7 +38,7 @@ const normalizeVehicleRecord = (doc) => {
     fuel: raw.fuel || raw.fuel_type || '',
     fuel_type: raw.fuel_type || raw.fuel || '',
     exShowroom: Number(raw.exShowroom ?? raw.ex_showroom ?? 0),
-    onRoadPrice: Number(raw.onRoadPrice ?? raw.on_road_price_cardekho ?? 0),
+    onRoadPrice: Number(raw.onRoadPrice ?? raw.on_road_price_cardekho ?? raw.total_on_road_with_accessories ?? 0),
     insurance: Number(raw.insurance ?? 0),
     rto: Number(raw.rto ?? 0),
     otherCharges: Number(raw.otherCharges ?? raw.other_totalOtherCharges ?? 0),
@@ -69,9 +72,10 @@ const buildVehicleQuery = ({ q, city, fuel }) => {
     ];
   }
 
-  if (city) query.city = new RegExp(`^${String(city).trim()}$`, 'i');
+  if (city) query.city = new RegExp(`^${escapeRegex(String(city).trim())}$`, 'i');
   if (fuel) {
-    query.$or = [...(query.$or || []), { fuel: new RegExp(`^${String(fuel).trim()}$`, 'i') }, { fuel_type: new RegExp(`^${String(fuel).trim()}$`, 'i') }];
+    const fuelRegex = new RegExp(`^${escapeRegex(String(fuel).trim())}$`, 'i');
+    query.$and = [...(query.$and || []), { $or: [{ fuel: fuelRegex }, { fuel_type: fuelRegex }] }];
   }
 
   return query;
@@ -84,9 +88,11 @@ const sortVehicleRows = (rows) =>
     return [aa.make, aa.model, aa.variant].join('|').localeCompare([bb.make, bb.model, bb.variant].join('|'));
   });
 
-// @desc    Get all vehicles with search and filtering
-// @route   GET /api/vehicles
-// @access  Public
+const buildMakeRegex = (make) => new RegExp(`^${escapeRegex(String(make || '').trim())}$`, 'i');
+
+const findDocsForMake = async (make) =>
+  Vehicle.find({ $or: [{ make: buildMakeRegex(make) }, { brand: buildMakeRegex(make) }] }).lean();
+
 const getVehicles = asyncHandler(async (req, res) => {
   const { q, make, model, city, fuel } = req.query;
   const pageSize = req.query.limit ? Number(req.query.limit) : null;
@@ -105,9 +111,6 @@ const getVehicles = asyncHandler(async (req, res) => {
   res.json({ success: true, count, data });
 });
 
-// @desc    Get vehicle by ID
-// @route   GET /api/vehicles/:id
-// @access  Public
 const getVehicleById = asyncHandler(async (req, res) => {
   if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
     res.status(400);
@@ -123,9 +126,6 @@ const getVehicleById = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc    Create a vehicle
-// @route   POST /api/vehicles
-// @access  Public
 const createVehicle = asyncHandler(async (req, res) => {
   const make = String(req.body.make || req.body.brand || '').trim();
   const model = String(req.body.model || '').trim();
@@ -150,9 +150,6 @@ const createVehicle = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: normalizeVehicleRecord(vehicle) });
 });
 
-// @desc    Update a vehicle
-// @route   PUT /api/vehicles/:id
-// @access  Public
 const updateVehicle = asyncHandler(async (req, res) => {
   const vehicle = await Vehicle.findById(req.params.id);
 
@@ -167,9 +164,6 @@ const updateVehicle = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc    Delete a vehicle
-// @route   DELETE /api/vehicles/:id
-// @access  Public
 const deleteVehicle = asyncHandler(async (req, res) => {
   const vehicle = await Vehicle.findById(req.params.id);
   if (vehicle) {
@@ -181,9 +175,6 @@ const deleteVehicle = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc    Bulk create/update vehicles
-// @route   POST /api/vehicles/bulk
-// @access  Public
 const bulkUploadVehicles = asyncHandler(async (req, res) => {
   const vehiclesData = req.body;
 
@@ -222,18 +213,18 @@ const bulkUploadVehicles = asyncHandler(async (req, res) => {
   res.json({ success: true, data: results });
 });
 
-// @desc    Get unique makes from vehicle database
-// @route   GET /api/vehicles/distinct/makes
-// @access  Public
-const getUniqueMakes = asyncHandler(async (req, res) => {
-  const docs = await Vehicle.find({}).lean();
-  const makes = [...new Set(docs.map((doc) => normalizeVehicleRecord(doc).make).filter(Boolean))].sort();
+const getUniqueMakes = asyncHandler(async (_req, res) => {
+  const [makeValues, brandValues] = await Promise.all([
+    Vehicle.distinct('make', { make: { $exists: true, $ne: null } }),
+    Vehicle.distinct('brand', { brand: { $exists: true, $ne: null } }),
+  ]);
+
+  const makes = [...new Set([...makeValues, ...brandValues].map((value) => String(value || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+
   res.json({ success: true, data: makes });
 });
 
-// @desc    Get unique models for a specific make
-// @route   GET /api/vehicles/distinct/models?make=Toyota
-// @access  Public
 const getUniqueModels = asyncHandler(async (req, res) => {
   const { make } = req.query;
 
@@ -242,20 +233,14 @@ const getUniqueModels = asyncHandler(async (req, res) => {
     throw new Error('Make parameter is required');
   }
 
-  const docs = await Vehicle.find({}).lean();
+  const docs = await findDocsForMake(make);
   const models = [...new Set(
-    docs
-      .filter((doc) => matchesVehicleFilters(doc, { make }))
-      .map((doc) => normalizeVehicleRecord(doc).model)
-      .filter(Boolean),
-  )].sort();
+    docs.map((doc) => normalizeVehicleRecord(doc).model).filter(Boolean),
+  )].sort((a, b) => a.localeCompare(b));
 
   res.json({ success: true, data: models });
 });
 
-// @desc    Get unique variants for a specific make and model
-// @route   GET /api/vehicles/distinct/variants?make=Toyota&model=Corolla
-// @access  Public
 const getUniqueVariants = asyncHandler(async (req, res) => {
   const { make, model } = req.query;
 
@@ -264,77 +249,76 @@ const getUniqueVariants = asyncHandler(async (req, res) => {
     throw new Error('Make and Model parameters are required');
   }
 
-  const docs = await Vehicle.find({}).lean();
+  const docs = await findDocsForMake(make);
   const variants = [...new Set(
     docs
-      .filter((doc) => matchesVehicleFilters(doc, { make, model }))
-      .map((doc) => normalizeVehicleRecord(doc).variant)
+      .map((doc) => normalizeVehicleRecord(doc))
+      .filter((doc) => matchesExact(doc.model, model))
+      .map((doc) => doc.variant)
       .filter(Boolean),
-  )].sort();
+  )].sort((a, b) => a.localeCompare(b));
 
   res.json({ success: true, data: variants });
 });
 
-// @desc    Get vehicle details by make, model, variant
-// @route   GET /api/vehicles/by-details?make=Toyota&model=Corolla&variant=1.8E
-// @access  Public
 const getVehicleByDetails = asyncHandler(async (req, res) => {
   const { make, model, variant, fuel, city } = req.query;
 
   if (!make || !model || !variant) {
     res.status(400);
-    throw new Error('Make, Model, and Variant parameters are required');
+    throw new Error('Make, model and variant are required');
   }
 
-  const docs = await Vehicle.find(buildVehicleQuery({ city, fuel })).lean();
-  const vehicle = docs.find((doc) => matchesVehicleFilters(doc, { make, model, variant, city, fuel }));
+  const docs = await findDocsForMake(make);
+  const match = docs
+    .map((doc) => normalizeVehicleRecord(doc))
+    .find((doc) =>
+      matchesExact(doc.make, make) &&
+      matchesExact(doc.model, model) &&
+      matchesExact(doc.variant, variant) &&
+      matchesExact(doc.city, city) &&
+      matchesExact(doc.fuel, fuel),
+    ) ||
+    docs
+      .map((doc) => normalizeVehicleRecord(doc))
+      .find((doc) =>
+        matchesExact(doc.make, make) &&
+        matchesExact(doc.model, model) &&
+        matchesExact(doc.variant, variant),
+      );
 
-  if (vehicle) {
-    res.json({ success: true, data: normalizeVehicleRecord(vehicle) });
-  } else {
-    res.json({ success: false, data: null, message: 'Vehicle not found' });
+  if (!match) {
+    res.status(404);
+    throw new Error('Vehicle not found');
   }
+
+  res.json({ success: true, data: match });
 });
 
-// @desc    Get vehicle media from vehicle_colors collection
-// @route   GET /api/vehicles/media?make=Audi&model=Q8&variant=Quattro
-// @access  Public
 const getVehicleMedia = asyncHandler(async (req, res) => {
   const { make, model, variant } = req.query;
 
   if (!make || !model) {
     res.status(400);
-    throw new Error('Make and Model parameters are required');
+    throw new Error('Make and model are required');
   }
 
   const collection = mongoose.connection.db.collection('vehicle_colors');
-  const rows = await collection.find({
-    brand: new RegExp(`^${String(make).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
-  }).toArray();
+  const docs = await collection.find({ brand: buildMakeRegex(make) }).toArray();
 
-  const normalizedRows = rows.filter((row) => {
-    const rowMake = normalizeText(row.brand || row.make);
-    const rowModel = normalizeText(trimLeading(row.model || '', row.brand || row.make || ''));
-    const rowVariant = normalizeText(
-      trimLeading(row.variant || '', row.model || '') || trimLeading(row.variant || '', `${row.brand || row.make || ''} ${trimLeading(row.model || '', row.brand || row.make || '')}`.trim()),
-    );
+  const rows = docs
+    .map((doc) => normalizeVehicleRecord(doc))
+    .filter((doc) => matchesExact(doc.make, make) && matchesExact(doc.model, model) && matchesExact(doc.variant, variant))
+    .sort((a, b) => String(a.color_name || '').localeCompare(String(b.color_name || '')));
 
-    if (rowMake !== normalizeText(make)) return false;
-    if (rowModel !== normalizeText(model)) return false;
-    if (!variant) return true;
-    return rowVariant === normalizeText(variant);
-  }).map((row) => ({
-    ...row,
-    make: row.make || row.brand,
-    brand: row.brand || row.make,
-    model: trimLeading(row.model || '', row.brand || row.make || '') || row.model,
-    variant:
-      trimLeading(row.variant || '', row.model || '') ||
-      trimLeading(row.variant || '', `${row.brand || row.make || ''} ${trimLeading(row.model || '', row.brand || row.make || '')}`.trim()) ||
-      row.variant,
-  }));
+  const fallbackRows = rows.length
+    ? rows
+    : docs
+        .map((doc) => normalizeVehicleRecord(doc))
+        .filter((doc) => matchesExact(doc.make, make) && matchesExact(doc.model, model))
+        .sort((a, b) => String(a.color_name || '').localeCompare(String(b.color_name || '')));
 
-  res.json({ success: true, count: normalizedRows.length, data: normalizedRows });
+  res.json({ success: true, data: fallbackRows });
 });
 
 export {
