@@ -62,6 +62,9 @@ vehicleSchema.index({
   city: "text",
 });
 vehicleSchema.index({ model: 1 });
+vehicleSchema.index({ brand: 1 });
+vehicleSchema.index({ brand: 1, model: 1, city: 1 });
+vehicleSchema.index({ make: 1, model: 1, city: 1 });
 
 const Vehicle = mongoose.model("Vehicle", vehicleSchema);
 export default Vehicle;
