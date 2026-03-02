@@ -9,6 +9,8 @@ const customerSchema = mongoose.Schema(
     primaryMobile: { type: String, required: true },
     extraMobiles: { type: [String], default: [] }, // Alt numbers
     email: { type: String },
+    contactPersonName: { type: String },
+    contactPersonMobile: { type: String },
     
     // --- Personal ---
     sdwOf: { type: String }, // Son/Daughter/Wife of
@@ -77,6 +79,8 @@ const customerSchema = mongoose.Schema(
     
     // --- Professional / Occupation ---
     customerType: { type: String, default: 'New' }, // New, Repeat
+    applicantType: { type: String, default: 'Individual' },
+    isMSME: { type: String },
     occupationType: { type: String }, // Salaried, Self-Employed, Professional
     employmentType: { type: String }, // Additional employment type
     professionalType: { type: String }, // Doctor, CA, etc.
@@ -87,6 +91,8 @@ const customerSchema = mongoose.Schema(
     designation: { type: String },
     currentExp: { type: Number }, // In years - numeric
     totalExp: { type: Number }, // In years - numeric
+    experienceCurrent: { type: Number },
+    totalExperience: { type: Number },
     
     // Employment Address (Aliases for Loan compatibility)
     employmentAddress: { type: String }, // Alias for companyAddress
@@ -100,6 +106,7 @@ const customerSchema = mongoose.Schema(
     companyCity: { type: String },
     companyPhone: { type: String }, // Landline
     officialEmail: { type: String },
+    companyPartners: { type: Array, default: [] },
 
     // Income
     monthlyIncome: { type: Number }, // Self Employed
@@ -144,6 +151,7 @@ const customerSchema = mongoose.Schema(
     permanentAddress: { type: String },
     permanentPincode: { type: String },
     permanentCity: { type: String },
+    sameAsCurrentAddress: { type: Boolean },
     addressType: { type: String },
     
     employmentAddress: { type: String },

@@ -117,6 +117,13 @@ const CUSTOMER_SYNC_FIELDS = [
   "customerType",
   "createdOn",
   "createdBy",
+  "contactPersonName",
+  "contactPersonMobile",
+  "sameAsCurrentAddress",
+  "isMSME",
+  "experienceCurrent",
+  "totalExperience",
+  "companyPartners",
 ];
 
 // Helper function to save document with retry logic and reload on version conflicts
@@ -184,6 +191,16 @@ const normalizeCustomerFields = (payload) => {
     "rc_redg_date",
     "approval_approvalDate",
     "approval_disbursedDate",
+    "postfile_firstEmiDate",
+    "postfile_approvalDate",
+    "dispatch_date",
+    "disbursement_date",
+    "cheque_1_date",
+    "cheque_2_date",
+    "cheque_3_date",
+    "cheque_4_date",
+    "ecs_date",
+    "signatory_dob",
     // Delivery & Invoice
     "do_date",
     "delivery_date",
@@ -282,6 +299,11 @@ const normalizeCustomerFields = (payload) => {
     "openedIn",
     "experienceCurrent",
     "totalExperience", // Frontend Aliases
+    "ecs_amount",
+    "cheque_1_amount",
+    "cheque_2_amount",
+    "cheque_3_amount",
+    "cheque_4_amount",
   ];
 
   numericFields.forEach((field) => {
@@ -321,6 +343,21 @@ const normalizeCustomerFields = (payload) => {
     normalized.typeOfLoan = normalized.loanType;
   if (normalized.fatherName && !normalized.sdwOf)
     normalized.sdwOf = normalized.fatherName;
+  if (normalized.businessNature && typeof normalized.businessNature === "string")
+    normalized.businessNature = normalized.businessNature
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+  if (normalized.co_businessNature && typeof normalized.co_businessNature === "string")
+    normalized.co_businessNature = normalized.co_businessNature
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+  if (normalized.gu_businessNature && typeof normalized.gu_businessNature === "string")
+    normalized.gu_businessNature = normalized.gu_businessNature
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
 
   // Income Aliases - Ensure all variants are captured
   if (normalized.salaryMonthly && !normalized.monthlySalary)

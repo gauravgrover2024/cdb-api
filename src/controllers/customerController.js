@@ -56,6 +56,10 @@ const normalizeCustomerData = (payload) => {
   if (normalized.monthlySalary && !normalized.salaryMonthly) normalized.salaryMonthly = parseInt(normalized.monthlySalary, 10) || normalized.monthlySalary;
   if (normalized.fatherName && !normalized.sdwOf) normalized.sdwOf = normalized.fatherName;
   if (normalized.itrYears !== undefined && normalized.totalIncomeITR === undefined) normalized.totalIncomeITR = normalized.itrYears;
+  if (normalized.experienceCurrent !== undefined && normalized.currentExp === undefined) normalized.currentExp = normalized.experienceCurrent;
+  if (normalized.currentExp !== undefined && normalized.experienceCurrent === undefined) normalized.experienceCurrent = normalized.currentExp;
+  if (normalized.totalExperience !== undefined && normalized.totalExp === undefined) normalized.totalExp = normalized.totalExperience;
+  if (normalized.totalExp !== undefined && normalized.totalExperience === undefined) normalized.totalExperience = normalized.totalExp;
 
   // Flatten reference1/reference2 objects to flat fields (DB schema uses reference1_name, etc.)
   if (normalized.reference1 && typeof normalized.reference1 === 'object') {
@@ -233,16 +237,29 @@ const getCustomerDashboard = asyncHandler(async (req, res) => {
         city: customer.city,
         state: customer.state,
         permanentAddress: customer.permanentAddress,
+        permanentPincode: customer.permanentPincode,
+        permanentCity: customer.permanentCity,
+        sameAsCurrentAddress: customer.sameAsCurrentAddress,
         // Employment
         occupationType: customer.occupationType,
         employmentType: customer.employmentType,
         companyName: customer.companyName,
         designation: customer.designation,
+        contactPersonName: customer.contactPersonName,
+        contactPersonMobile: customer.contactPersonMobile,
         currentExp: customer.currentExp,
         totalExp: customer.totalExp,
+        experienceCurrent: customer.experienceCurrent,
+        totalExperience: customer.totalExperience,
+        isMSME: customer.isMSME,
+        companyType: customer.companyType,
+        businessNature: customer.businessNature,
         companyAddress: customer.companyAddress,
         companyCity: customer.companyCity,
+        companyPincode: customer.companyPincode,
+        companyPhone: customer.companyPhone,
         officialEmail: customer.officialEmail,
+        companyPartners: customer.companyPartners,
         // Income
         monthlyIncome: customer.monthlyIncome,
         salaryMonthly: customer.salaryMonthly,
@@ -325,12 +342,14 @@ const createCustomer = asyncHandler(async (req, res) => {
 
   const normalizedData = normalizeCustomerData(req.body);
 
-  // Normalize array fields to strings if needed
+  // companyType is single-select in UI; businessNature remains multi-select
   if (Array.isArray(normalizedData.companyType)) {
     normalizedData.companyType = normalizedData.companyType[0] || "";
   }
-  if (Array.isArray(normalizedData.businessNature)) {
-    normalizedData.businessNature = normalizedData.businessNature.join(", ");
+  if (!Array.isArray(normalizedData.businessNature)) {
+    normalizedData.businessNature = normalizedData.businessNature
+      ? [normalizedData.businessNature]
+      : [];
   }
 
   const { 
@@ -473,12 +492,14 @@ const updateCustomer = asyncHandler(async (req, res) => {
       aadharNumber: normalizedData.aadharNumber
     });
 
-    // Normalize array fields to strings if needed
+    // companyType is single-select in UI; businessNature remains multi-select
     if (Array.isArray(normalizedData.companyType)) {
       normalizedData.companyType = normalizedData.companyType[0] || "";
     }
-    if (Array.isArray(normalizedData.businessNature)) {
-      normalizedData.businessNature = normalizedData.businessNature.join(", ");
+    if (!Array.isArray(normalizedData.businessNature)) {
+      normalizedData.businessNature = normalizedData.businessNature
+        ? [normalizedData.businessNature]
+        : [];
     }
 
     // Clean body - remove system fields
