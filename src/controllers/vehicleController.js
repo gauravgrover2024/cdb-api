@@ -261,6 +261,53 @@ const getUniqueVariants = asyncHandler(async (req, res) => {
   res.json({ success: true, data: variants });
 });
 
+
+
+const getVariantOptionsByModel = asyncHandler(async (req, res) => {
+  const { make, model, city } = req.query;
+
+  if (!make || !model) {
+    res.status(400);
+    throw new Error('Make and model are required');
+  }
+
+  const docs = await findDocsForMake(make);
+  const variants = docs
+    .map((doc) => normalizeVehicleRecord(doc))
+    .filter((doc) => matchesExact(doc.model, model))
+    .sort((a, b) => {
+      if (city) {
+        const aCity = matchesExact(a.city, city) ? 1 : 0;
+        const bCity = matchesExact(b.city, city) ? 1 : 0;
+        if (aCity !== bCity) return bCity - aCity;
+      }
+      return (a.onRoadPrice || 0) - (b.onRoadPrice || 0);
+    });
+
+  const byVariant = new Map();
+  variants.forEach((doc) => {
+    const key = normalizeText(doc.variant);
+    if (!key || byVariant.has(key)) return;
+    byVariant.set(key, {
+      _id: doc._id,
+      id: doc._id,
+      make: doc.make,
+      model: doc.model,
+      variant: doc.variant,
+      city: doc.city,
+      fuel: doc.fuel,
+      exShowroom: doc.exShowroom,
+      onRoadPrice: doc.onRoadPrice || Number(doc.total_on_road_with_accessories || doc.on_road_price_cardekho || 0),
+      insurance: doc.insurance,
+      rto: doc.rto,
+      tcs: Number(doc.tcs || doc.other_tcsCharges || doc.otherCharges || 0),
+      ...doc,
+    });
+  });
+
+  res.json({ success: true, data: Array.from(byVariant.values()) });
+});
+
 const getVehicleByDetails = asyncHandler(async (req, res) => {
   const { make, model, variant, fuel, city } = req.query;
 
@@ -331,6 +378,7 @@ export {
   getUniqueMakes,
   getUniqueModels,
   getUniqueVariants,
+  getVariantOptionsByModel,
   getVehicleByDetails,
   getVehicleMedia,
 };

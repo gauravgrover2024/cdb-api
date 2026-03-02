@@ -10,6 +10,7 @@ import {
   getUniqueMakes,
   getUniqueModels,
   getUniqueVariants,
+  getVariantOptionsByModel,
   getVehicleByDetails,
   getVehicleMedia,
 } from '../controllers/vehicleController.js';
@@ -30,6 +31,9 @@ router.route('/distinct/models')
 
 router.route('/distinct/variants')
   .get(getUniqueVariants);
+
+router.route('/distinct/variants-with-price')
+  .get(getVariantOptionsByModel);
 
 router.route('/by-details')
   .get(getVehicleByDetails);
