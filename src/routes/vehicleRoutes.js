@@ -11,6 +11,7 @@ import {
   getUniqueModels,
   getUniqueVariants,
   getVehicleByDetails,
+  getVehicleMedia,
 } from '../controllers/vehicleController.js';
 
 router.route('/')
@@ -32,6 +33,9 @@ router.route('/distinct/variants')
 
 router.route('/by-details')
   .get(getVehicleByDetails);
+
+router.route('/media')
+  .get(getVehicleMedia);
 
 router.route('/:id')
   .get(getVehicleById)

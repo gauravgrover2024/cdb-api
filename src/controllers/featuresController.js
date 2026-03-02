@@ -61,6 +61,32 @@ const normalizeVariantForJoin = (rawVariant) => {
   return v;
 };
 
+const trimLeading = (value, prefix) => {
+  const source = String(value || "").trim();
+  const leader = String(prefix || "").trim();
+  if (!source || !leader) return source;
+  const escaped = leader.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return source.replace(new RegExp(`^${escaped}\\s*`, "i"), "").trim();
+};
+
+const presentMake = (rawBrand) => String(rawBrand || "").trim();
+const presentModel = (rawBrand, rawModel) => {
+  const make = presentMake(rawBrand);
+  const model = String(rawModel || "").trim();
+  return trimLeading(model, make) || model;
+};
+const presentVariant = (rawBrand, rawModel, rawVariant) => {
+  const make = presentMake(rawBrand);
+  const model = presentModel(rawBrand, rawModel);
+  const variant = String(rawVariant || "").trim();
+  return (
+    trimLeading(variant, rawModel) ||
+    trimLeading(variant, `${make} ${model}`.trim()) ||
+    trimLeading(variant, make) ||
+    variant
+  );
+};
+
 // Simple score so we prefer New-Delhi > Delhi > others when deduping
 const scoreCity = (c) => {
   const lc = (c || "").toLowerCase();
@@ -142,6 +168,9 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
       const brand = v.brand || v.make;
       const modelRaw = v.model;
       const variantRaw = v.variant;
+      const presentBrand = presentMake(brand);
+      const presentModelValue = presentModel(brand, modelRaw);
+      const presentVariantValue = presentVariant(brand, modelRaw, variantRaw);
       if (!brand || !modelRaw || !variantRaw) return;
 
       const brandKey = normalizeBrandForJoin(brand);
@@ -159,9 +188,9 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
       if (!existing || scoreCity(currentCity) > scoreCity(existing.city)) {
         byKey.set(outKey, {
           id: f._id.toString(), // feature doc id
-          make: brand,
-          model: modelRaw,
-          variant: variantRaw,
+          make: presentBrand,
+          model: presentModelValue,
+          variant: presentVariantValue,
           fuel: v.fuel || v.fuel_type || null,
           transmission: "Automatic", // placeholder unless you add real field
           tags: [],
