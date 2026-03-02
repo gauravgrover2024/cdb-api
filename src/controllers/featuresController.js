@@ -18,6 +18,8 @@ const objectToFeaturesArray = (featuresObj) => {
 
 // --- NORMALIZERS (same logic as checkFeaturesJoin.js) ---
 
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const normalizeBrandForJoin = (rawBrand) => {
   if (!rawBrand) return "";
   let b = String(rawBrand).trim().toLowerCase();
@@ -145,6 +147,51 @@ export const getFeatureVariantById = asyncHandler(async (req, res) => {
 //        One row per brand+model+variant (features are not city specific)
 // @route GET /api/features/variants-with-price
 // @access Public
+
+
+export const getFeaturesBySelection = asyncHandler(async (req, res) => {
+  const { make, model, variant, vehicleId } = req.query;
+
+  if (!make || !model || !variant) {
+    res.status(400);
+    throw new Error("Make, model and variant are required");
+  }
+
+  let brand = make;
+  let rawModel = model;
+  let rawVariant = variant;
+
+  if (vehicleId) {
+    const vehicle = await Vehicle.findById(vehicleId).lean();
+    if (vehicle) {
+      brand = vehicle.brand || vehicle.make || make;
+      rawModel = vehicle.model || model;
+      rawVariant = vehicle.variant || variant;
+    }
+  }
+
+  const brandKey = normalizeBrandForJoin(brand);
+  const modelKey = normalizeModelForJoin(brandKey, rawModel);
+  const variantKey = normalizeVariantForJoin(rawVariant);
+  const joinKey = `${brandKey}|${modelKey}|${variantKey}`;
+
+  const featureDocs = await VehicleFeature.find({
+    brand: new RegExp(`^${escapeRegex(brand)}$`, 'i'),
+  }).lean();
+
+  const match = featureDocs.find((f) => {
+    const fBrandKey = normalizeBrandForJoin(f.brand);
+    const fModelKey = normalizeModelForJoin(fBrandKey, f.model);
+    const fVariantKey = normalizeVariantForJoin(f.variant);
+    return `${fBrandKey}|${fModelKey}|${fVariantKey}` === joinKey;
+  });
+
+  res.json({
+    success: true,
+    data: match ? objectToFeaturesArray(match.features) : [],
+  });
+});
+
 export const getVariantsWithPriceAndFeatures = asyncHandler(
   async (req, res) => {
     // 1) Load all features and index by normalized brand|model|variant
