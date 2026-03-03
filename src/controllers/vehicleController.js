@@ -101,6 +101,7 @@ const sortVehicleRows = (rows) =>
   });
 
 const buildMakeRegex = (make) => new RegExp(`^${escapeRegex(String(make || '').trim())}$`, 'i');
+const buildCityRegex = (city) => new RegExp(`^${escapeRegex(String(city || '').trim())}$`, 'i');
 
 const findDocsForMake = async (make) =>
   Vehicle.find({ $or: [{ make: buildMakeRegex(make) }, { brand: buildMakeRegex(make) }] }).lean();
@@ -320,7 +321,7 @@ const getVariantOptionsByModel = asyncHandler(async (req, res) => {
   };
 
   const cityDocs = city
-    ? await Vehicle.find({ ...baseQuery, city }).lean()
+    ? await Vehicle.find({ ...baseQuery, city: buildCityRegex(city) }).lean()
     : [];
   const docs = cityDocs.length ? cityDocs : await Vehicle.find(baseQuery).lean();
 
@@ -370,7 +371,7 @@ const getVehicleByDetails = asyncHandler(async (req, res) => {
     baseQuery.$and = [...(baseQuery.$and || []), { $or: [{ fuel }, { fuel_type: fuel }] }];
   }
 
-  const docsWithCity = city ? await Vehicle.find({ ...baseQuery, city }).lean() : [];
+  const docsWithCity = city ? await Vehicle.find({ ...baseQuery, city: buildCityRegex(city) }).lean() : [];
   const docs = docsWithCity.length ? docsWithCity : await Vehicle.find(baseQuery).lean();
 
   const match = docs
