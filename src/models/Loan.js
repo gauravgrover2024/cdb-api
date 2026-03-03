@@ -92,7 +92,9 @@ const loanSchema = mongoose.Schema(
     co_businessNature: { type: [String] }, // Multiple select
     co_designation: { type: String },
     co_currentExp: { type: Number }, // In years - numeric
+    co_currentExperience: { type: Number },
     co_totalExp: { type: Number }, // In years - numeric
+    co_totalExperience: { type: Number },
     co_companyName: { type: String },
     co_companyAddress: { type: String },
     co_companyPincode: { type: String },
@@ -394,6 +396,7 @@ const loanSchema = mongoose.Schema(
     disbursement_date: { type: Date },
     disbursement_time: { type: String },
     loan_number: { type: String },
+    rc_inv_storage_number: { type: String },
     
     // Instrument Details
     instrumentType: { type: String },

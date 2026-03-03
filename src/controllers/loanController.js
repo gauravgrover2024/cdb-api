@@ -235,7 +235,9 @@ const normalizeCustomerFields = (payload) => {
     // Co-Applicant
     "co_dependents",
     "co_currentExp",
+    "co_currentExperience",
     "co_totalExp",
+    "co_totalExperience",
     "co_salaryMonthly",
     "co_monthlySalary",
     "co_monthlyIncome",
@@ -388,6 +390,14 @@ const normalizeCustomerFields = (payload) => {
     normalized.co_aadhaar = normalized.co_aadhar;
   if (normalized.co_aadhaar && !normalized.co_aadhar)
     normalized.co_aadhar = normalized.co_aadhaar;
+  if (normalized.co_currentExperience && !normalized.co_currentExp)
+    normalized.co_currentExp = normalized.co_currentExperience;
+  if (normalized.co_currentExp && !normalized.co_currentExperience)
+    normalized.co_currentExperience = normalized.co_currentExp;
+  if (normalized.co_totalExperience && !normalized.co_totalExp)
+    normalized.co_totalExp = normalized.co_totalExperience;
+  if (normalized.co_totalExp && !normalized.co_totalExperience)
+    normalized.co_totalExperience = normalized.co_totalExp;
   if (normalized.co_occupationType && !normalized.co_occupation)
     normalized.co_occupation = normalized.co_occupationType;
   if (normalized.co_occupation && !normalized.co_occupationType)
