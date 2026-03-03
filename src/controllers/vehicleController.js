@@ -4,6 +4,18 @@ import Vehicle from '../models/Vehicle.js';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 
+const canonicalizeMake = (value) => {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
+  const aliases = {
+    mercedes: 'mercedes benz',
+    'mercedes benz': 'mercedes benz',
+    benz: 'mercedes benz',
+    maruti: 'maruti suzuki',
+    'maruti suzuki': 'maruti suzuki',
+  };
+  return aliases[normalized] || normalized;
+};
+
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const trimLeading = (value, prefix) => {
@@ -47,7 +59,7 @@ const normalizeVehicleRecord = (doc) => {
 
 const matchesExact = (actual, expected) => {
   if (!expected) return true;
-  return normalizeText(actual) === normalizeText(expected);
+  return canonicalizeMake(actual) === canonicalizeMake(expected) || normalizeText(actual).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ') === normalizeText(expected).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
 };
 
 const matchesVehicleFilters = (vehicle, filters = {}) => {
@@ -96,7 +108,14 @@ const findDocsForMake = async (make) =>
 
 const buildMakeMatch = (make) => {
   const value = String(make || '').trim();
-  return { $or: [{ make: value }, { brand: value }] };
+  const normalized = canonicalizeMake(value);
+  const candidates = [...new Set([
+    value,
+    normalized,
+    normalized.replace(/ /g, '-'),
+    normalized.replace(/ /g, ''),
+  ].filter(Boolean))];
+  return { $or: [{ make: { $in: candidates } }, { brand: { $in: candidates } }] };
 };
 
 const buildModelCandidates = (make, model) => {

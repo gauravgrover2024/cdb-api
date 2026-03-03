@@ -24,13 +24,18 @@ const normalizeBrandForJoin = (rawBrand) => {
   if (!rawBrand) return "";
   let b = String(rawBrand).trim().toLowerCase();
 
-  // "aston-martin" -> "aston martin", "land-rover" -> "land rover"
   b = b.replace(/[-_]+/g, " ");
-
-  // collapse spaces
   b = b.replace(/\s+/g, " ").trim();
 
-  return b;
+  const aliases = {
+    mercedes: "mercedes benz",
+    "mercedes benz": "mercedes benz",
+    benz: "mercedes benz",
+    maruti: "maruti suzuki",
+    "maruti suzuki": "maruti suzuki",
+  };
+
+  return aliases[b] || b;
 };
 
 const normalizeModelForJoin = (brand, rawModel) => {
