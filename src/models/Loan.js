@@ -380,6 +380,8 @@ const loanSchema = mongoose.Schema(
     postfile_processingFees: { type: Number },
     postfile_emiAmount: { type: Number },
     postfile_firstEmiDate: { type: Date },
+    postfile_emiPlan: { type: String },
+    postfile_emiMode: { type: String },
     postfile_roiType: { type: String }, // Fixed / Floating
     postfile_sameAsApproved: { type: String }, // Yes / No
     
