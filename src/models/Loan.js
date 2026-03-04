@@ -382,6 +382,8 @@ const loanSchema = mongoose.Schema(
     postfile_firstEmiDate: { type: Date },
     postfile_emiPlan: { type: String },
     postfile_emiMode: { type: String },
+    emiPlan: { type: String },
+    emiMode: { type: String },
     postfile_roiType: { type: String }, // Fixed / Floating
     postfile_sameAsApproved: { type: String }, // Yes / No
     
