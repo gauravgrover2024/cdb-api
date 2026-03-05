@@ -622,24 +622,46 @@ const ensureLinkedRecords = async (loanDoc) => {
 // @route   GET /api/loans
 // @access  Public
 const getLoans = asyncHandler(async (req, res) => {
-  const { search = "", skip = 0, limit = 200 } = req.query;
+  const {
+    search = "",
+    q = "",
+    skip = 0,
+    page = 1,
+    limit = 200,
+    view = "",
+    sortBy = "updatedAt",
+    sortDir = "desc",
+  } = req.query;
 
-  const safeLimit = Math.min(Number(limit) || 50, 200);
-  const safeSkip = Number(skip) || 0;
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  const safePage = Math.max(Number(page) || 1, 1);
+  const safeSkip =
+    Number.isFinite(Number(skip)) && Number(skip) > 0
+      ? Number(skip)
+      : (safePage - 1) * safeLimit;
+  const safeSearch = String(search || q || "").trim();
 
   let query = {};
 
   // If search term present → filter
-  if (search && String(search).trim()) {
-    const s = String(search).trim();
+  if (safeSearch) {
+    const s = safeSearch;
     const regex = new RegExp(s, "i");
 
     query = {
       $or: [
         { loanId: regex },
+        { loan_number: regex },
         { customerName: regex },
+        { primaryMobile: regex },
+        { registrationNumber: regex },
+        { rc_redg_no: regex },
+        { approval_bankName: regex },
+        { postfile_bankName: regex },
         { recordSource: regex },
         { sourceName: regex },
+        { showroomName: regex },
+        { dealerName: regex },
         { vehicleMake: regex },
         { vehicleModel: regex },
         { vehicleVariant: regex },
@@ -647,15 +669,99 @@ const getLoans = asyncHandler(async (req, res) => {
     };
   }
 
+  const direction = String(sortDir).toLowerCase() === "asc" ? 1 : -1;
+  const allowedSort = new Set([
+    "createdAt",
+    "updatedAt",
+    "loanId",
+    "loan_number",
+    "customerName",
+    "approval_loanAmountDisbursed",
+    "approval_loanAmountApproved",
+    "postfile_emiAmount",
+    "aging",
+  ]);
+  const sortField = allowedSort.has(String(sortBy)) ? String(sortBy) : "updatedAt";
+  const sort = { [sortField]: direction, _id: -1 };
+
+  const dashboardSelect = [
+    "_id",
+    "loanId",
+    "loan_number",
+    "loanType",
+    "typeOfLoan",
+    "caseType",
+    "loan_type",
+    "isFinanced",
+    "isFinanceRequired",
+    "customerName",
+    "primaryMobile",
+    "city",
+    "permanentCity",
+    "residenceAddress",
+    "permanentAddress",
+    "address",
+    "source",
+    "recordSource",
+    "sourceName",
+    "dealerName",
+    "showroomName",
+    "showroom",
+    "showroom_name",
+    "approval_bankName",
+    "postfile_bankName",
+    "approval_banksData",
+    "approval_loanAmountDisbursed",
+    "approval_loanAmountApproved",
+    "approval_roi",
+    "approval_tenureMonths",
+    "postfile_emiAmount",
+    "emiAmount",
+    "financeExpectation",
+    "loanTenureMonths",
+    "disbursement_date",
+    "approval_disbursedDate",
+    "delivery_date",
+    "dispatch_date",
+    "postfile_firstEmiDate",
+    "postfile_maturityDate",
+    "postfile_currentOutstanding",
+    "postfile_current_outstanding",
+    "livePrincipalOutstanding",
+    "principalOutstanding",
+    "registrationNumber",
+    "vehicleRegNo",
+    "rc_redg_no",
+    "postfile_regd_city",
+    "registrationCity",
+    "vehicleMake",
+    "vehicleModel",
+    "vehicleVariant",
+    "status",
+    "loanStatus",
+    "currentStage",
+    "createdAt",
+    "updatedAt",
+  ].join(" ");
+
   const [data, total] = await Promise.all([
     Loan.find(query)
-      .sort({ createdAt: -1, _id: -1 }) // latest first
+      .sort(sort)
       .skip(safeSkip)
-      .limit(safeLimit),
+      .limit(safeLimit)
+      .select(String(view).toLowerCase() === "dashboard" ? dashboardSelect : "")
+      .lean(),
     Loan.countDocuments(query),
   ]);
 
-  res.json({ data, total });
+  res.json({
+    data,
+    total,
+    page: Math.floor(safeSkip / safeLimit) + 1,
+    limit: safeLimit,
+    skip: safeSkip,
+    hasMore: safeSkip + data.length < total,
+  });
 });
 
 // @desc    Get loan by ID
