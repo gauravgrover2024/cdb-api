@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const loanSchema = mongoose.Schema(
   {
-    loanId: { type: String, required: true, unique: true }, // Custom ID e.g. "LN-2024-001"
+    loanId: { type: String, required: true, index: true }, // Custom ID e.g. "LN-2024-001"
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
     
     // Denormalized customer info for quicker access (common in non-relational)
@@ -579,6 +579,17 @@ loanSchema.index({ currentStage: 1 });
 loanSchema.index({ loanType: 1 });
 loanSchema.index({ createdAt: -1 });
 loanSchema.index({ primaryMobile: 1 });
+loanSchema.index({ updatedAt: -1, _id: -1 });
+loanSchema.index({ disbursement_date: -1, _id: -1 });
+loanSchema.index({ delivery_date: -1, _id: -1 });
+loanSchema.index({ loan_number: 1 });
+loanSchema.index({ registrationNumber: 1 });
+loanSchema.index({ rc_redg_no: 1 });
+loanSchema.index({ approval_bankName: 1 });
+loanSchema.index({ postfile_bankName: 1 });
+loanSchema.index({ currentStage: 1, status: 1 });
+loanSchema.index({ status: 1, updatedAt: -1 });
+loanSchema.index({ approval_approvalDate: -1 });
 
 
 const Loan = mongoose.model('Loan', loanSchema);

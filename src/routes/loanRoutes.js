@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   getLoans,
+  getLoanDashboardStats,
   getLoanById,
   createLoan,
   updateLoan,
@@ -15,6 +16,8 @@ const router = express.Router();
 router.route('/')
   .get(getLoans)
   .post(createLoan);
+
+router.get('/dashboard/stats', getLoanDashboardStats);
 
 router.route('/:id')
   .get(getLoanById)

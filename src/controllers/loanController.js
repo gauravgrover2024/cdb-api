@@ -618,6 +618,16 @@ const ensureLinkedRecords = async (loanDoc) => {
   }
 };
 
+const parseAmount = (value) => {
+  if (value == null || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const parsed = Number(String(value).replace(/[^\d.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const escapeRegex = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // @desc    Get loans with search + pagination
 // @route   GET /api/loans
 // @access  Public
@@ -629,62 +639,45 @@ const getLoans = asyncHandler(async (req, res) => {
     page = 1,
     limit = 200,
     view = "",
-    sortBy = "updatedAt",
+    sortBy = "",
     sortDir = "desc",
   } = req.query;
 
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
   const safePage = Math.max(Number(page) || 1, 1);
   const safeSkip =
-    Number.isFinite(Number(skip)) && Number(skip) > 0
+    Number.isFinite(Number(skip)) && Number(skip) >= 0
       ? Number(skip)
       : (safePage - 1) * safeLimit;
   const safeSearch = String(search || q || "").trim();
+  const viewMode = String(view || "").toLowerCase();
+  const direction = String(sortDir).toLowerCase() === "asc" ? 1 : -1;
+  const sortField =
+    String(sortBy || "").trim() || (viewMode === "dashboard" ? "latestBusiness" : "updatedAt");
 
   let query = {};
-
-  // If search term present → filter
   if (safeSearch) {
-    const s = safeSearch;
-    const regex = new RegExp(s, "i");
+    const escaped = escapeRegex(safeSearch);
+    const isMostlyNumeric = /^[\d-]+$/.test(safeSearch);
 
-    query = {
-      $or: [
-        { loanId: regex },
-        { loan_number: regex },
-        { customerName: regex },
-        { primaryMobile: regex },
-        { registrationNumber: regex },
-        { rc_redg_no: regex },
-        { approval_bankName: regex },
-        { postfile_bankName: regex },
-        { recordSource: regex },
-        { sourceName: regex },
-        { showroomName: regex },
-        { dealerName: regex },
-        { vehicleMake: regex },
-        { vehicleModel: regex },
-        { vehicleVariant: regex },
-      ],
-    };
+    if (isMostlyNumeric) {
+      // Prefix/exact style searches hit B-tree indexes and are much faster than global /i regex.
+      query = {
+        $or: [
+          { loanId: new RegExp(`^${escaped}`) },
+          { loan_number: new RegExp(`^${escaped}`) },
+          { primaryMobile: new RegExp(`^${escaped}`) },
+          { registrationNumber: new RegExp(`^${escaped}`) },
+          { rc_redg_no: new RegExp(`^${escaped}`) },
+        ],
+      };
+    } else {
+      // Use text index for fast free-text lookups.
+      query = { $text: { $search: safeSearch } };
+    }
   }
 
-  const direction = String(sortDir).toLowerCase() === "asc" ? 1 : -1;
-  const allowedSort = new Set([
-    "createdAt",
-    "updatedAt",
-    "loanId",
-    "loan_number",
-    "customerName",
-    "approval_loanAmountDisbursed",
-    "approval_loanAmountApproved",
-    "postfile_emiAmount",
-    "aging",
-  ]);
-  const sortField = allowedSort.has(String(sortBy)) ? String(sortBy) : "updatedAt";
-  const sort = { [sortField]: direction, _id: -1 };
-
-  const dashboardSelect = [
+  const dashboardFields = [
     "_id",
     "loanId",
     "loan_number",
@@ -742,17 +735,106 @@ const getLoans = asyncHandler(async (req, res) => {
     "currentStage",
     "createdAt",
     "updatedAt",
-  ].join(" ");
+  ];
+  const dashboardSelect = dashboardFields.join(" ");
+  const dashboardProject = dashboardFields.reduce((acc, field) => {
+    acc[field] = 1;
+    return acc;
+  }, {});
 
-  const [data, total] = await Promise.all([
-    Loan.find(query)
+  const totalPromise = Loan.countDocuments(query);
+  let dataPromise;
+
+  if (sortField === "latestBusiness") {
+    const matchStages = [{ $match: query }];
+    const lifecycleText = {
+      $toLower: {
+        $concat: [
+          { $ifNull: ["$typeOfLoan", ""] },
+          " ",
+          { $ifNull: ["$loanType", ""] },
+          " ",
+          { $ifNull: ["$caseType", ""] },
+          " ",
+          { $ifNull: ["$loan_type", ""] },
+        ],
+      },
+    };
+
+    dataPromise = Loan.aggregate([
+      ...matchStages,
+      {
+        $addFields: {
+          __isCashCase: {
+            $or: [
+              {
+                $in: [
+                  { $toLower: { $toString: { $ifNull: ["$isFinanced", ""] } } },
+                  ["no", "false"],
+                ],
+              },
+              {
+                $in: [
+                  { $toLower: { $toString: { $ifNull: ["$isFinanceRequired", ""] } } },
+                  ["no", "false"],
+                ],
+              },
+              { $regexMatch: { input: lifecycleText, regex: "cash" } },
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          __latestBusinessDate: {
+            $cond: [
+              "$__isCashCase",
+              {
+                $ifNull: [
+                  "$delivery_date",
+                  { $ifNull: ["$deliveryDate", { $ifNull: ["$delivery_done_at", null] }] },
+                ],
+              },
+              {
+                $ifNull: [
+                  "$disbursement_date",
+                  { $ifNull: ["$approval_disbursedDate", { $ifNull: ["$disbursedDate", null] }] },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      { $sort: { __latestBusinessDate: direction, _id: -1 } },
+      { $skip: safeSkip },
+      { $limit: safeLimit },
+      ...(viewMode === "dashboard" ? [{ $project: dashboardProject }] : []),
+    ]);
+  } else {
+    const allowedSort = new Set([
+      "createdAt",
+      "updatedAt",
+      "loanId",
+      "loan_number",
+      "customerName",
+      "approval_loanAmountDisbursed",
+      "approval_loanAmountApproved",
+      "postfile_emiAmount",
+      "aging",
+      "disbursement_date",
+      "delivery_date",
+    ]);
+    const safeSortField = allowedSort.has(sortField) ? sortField : "updatedAt";
+    const sort = { [safeSortField]: direction, _id: -1 };
+    dataPromise = Loan.find(query)
       .sort(sort)
       .skip(safeSkip)
       .limit(safeLimit)
-      .select(String(view).toLowerCase() === "dashboard" ? dashboardSelect : "")
-      .lean(),
-    Loan.countDocuments(query),
-  ]);
+      .select(viewMode === "dashboard" ? dashboardSelect : "")
+      .lean();
+  }
+
+  const [data, total] = await Promise.all([dataPromise, totalPromise]);
 
   res.json({
     data,
@@ -761,6 +843,102 @@ const getLoans = asyncHandler(async (req, res) => {
     limit: safeLimit,
     skip: safeSkip,
     hasMore: safeSkip + data.length < total,
+  });
+});
+
+// @desc    Dashboard aggregate stats for all loans
+// @route   GET /api/loans/dashboard/stats
+// @access  Public
+const getLoanDashboardStats = asyncHandler(async (req, res) => {
+  const rows = await Loan.find(
+    {},
+    [
+      "status",
+      "currentStage",
+      "updatedAt",
+      "approval_approvalDate",
+      "approval_loanAmountDisbursed",
+      "approval_loanAmountApproved",
+      "loanAmount",
+      "financeExpectation",
+      "approval_banksData",
+      "postfile_emiAmount",
+      "emiAmount",
+      "rc_redg_no",
+      "vehicleRegNo",
+      "registrationNumber",
+      "vehicleNumber",
+    ].join(" "),
+  ).lean();
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const nextDay = new Date(today);
+  nextDay.setDate(nextDay.getDate() + 1);
+
+  let pending = 0;
+  let approvedToday = 0;
+  let disbursed = 0;
+  let totalBookValue = 0;
+  let emiCapturedCount = 0;
+  let regNoCapturedCount = 0;
+
+  rows.forEach((l) => {
+    const statusText = String(l?.status || "").toLowerCase();
+    const stageText = String(l?.currentStage || "").toLowerCase();
+
+    if (
+      stageText === "approval" &&
+      (statusText.includes("pending") || statusText.includes("progress"))
+    ) {
+      pending += 1;
+    }
+    if (statusText.includes("disburs")) disbursed += 1;
+
+    const approvedAt = l?.approval_approvalDate ? new Date(l.approval_approvalDate) : null;
+    const updatedAt = l?.updatedAt ? new Date(l.updatedAt) : null;
+    const inToday =
+      (approvedAt && approvedAt >= today && approvedAt < nextDay) ||
+      (updatedAt &&
+        updatedAt >= today &&
+        updatedAt < nextDay &&
+        statusText.includes("approved"));
+    if (inToday) approvedToday += 1;
+
+    const book =
+      parseAmount(l?.approval_loanAmountDisbursed) ||
+      parseAmount(l?.approval_loanAmountApproved) ||
+      parseAmount(l?.loanAmount) ||
+      parseAmount(l?.financeExpectation) ||
+      0;
+    totalBookValue += book;
+
+    const banks = Array.isArray(l?.approval_banksData) ? l.approval_banksData : [];
+    const primary =
+      banks.find((b) => String(b?.status || "").toLowerCase() === "disbursed") ||
+      banks.find((b) => String(b?.status || "").toLowerCase() === "approved") ||
+      banks[0];
+    const emi =
+      parseAmount(primary?.emiAmount) ||
+      parseAmount(primary?.emi) ||
+      parseAmount(l?.postfile_emiAmount) ||
+      parseAmount(l?.emiAmount) ||
+      0;
+    if (emi > 0) emiCapturedCount += 1;
+
+    if (l?.rc_redg_no || l?.vehicleRegNo || l?.registrationNumber || l?.vehicleNumber) {
+      regNoCapturedCount += 1;
+    }
+  });
+
+  res.json({
+    total: rows.length,
+    pending,
+    approvedToday,
+    disbursed,
+    totalBookValue,
+    emiCapturedCount,
+    regNoCapturedCount,
   });
 });
 
@@ -1504,6 +1682,7 @@ const createBank = asyncHandler(async (req, res) => {
 
 export {
   getLoans,
+  getLoanDashboardStats,
   getLoanById,
   createLoan,
   updateLoan,
