@@ -8,6 +8,7 @@
     "dev": "node src/server.js",
     "dev:watch": "node --watch src/server.js",
     "indexes:loan": "node src/scripts/ensureLoanIndexes.js",
+    "backfill:latest-business": "node src/scripts/backfillLatestBusinessDate.js",
     "data:import": "node src/seeder.js",
     "vehicles:import": "node src/scripts/importVehicles.js",
     "vehicles:clear": "node src/scripts/clearVehicles.js"

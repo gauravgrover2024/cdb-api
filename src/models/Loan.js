@@ -552,6 +552,8 @@ const loanSchema = mongoose.Schema(
     // --- Bulk ---
     isBulk: { type: Boolean, default: false },
     bulkCount: { type: Number },
+    isCashCase: { type: Boolean, default: false },
+    latestBusinessDate: { type: Date },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
@@ -560,6 +562,50 @@ const loanSchema = mongoose.Schema(
     strict: false, // Allow any additional fields from form
   }
 );
+
+const inferIsCashCase = (doc) => {
+  const isFinancedText = String(doc?.isFinanced ?? doc?.isFinanceRequired ?? "")
+    .trim()
+    .toLowerCase();
+  if (isFinancedText === "no" || isFinancedText === "false") return true;
+  if (isFinancedText === "yes" || isFinancedText === "true") return false;
+
+  const loanTypeText = String(
+    doc?.typeOfLoan || doc?.loanType || doc?.caseType || doc?.loan_type || "",
+  )
+    .trim()
+    .toLowerCase();
+  return loanTypeText.includes("cash");
+};
+
+const pickLatestBusinessDate = (doc, isCashCase) => {
+  if (isCashCase) {
+    return (
+      doc?.delivery_date ||
+      doc?.deliveryDate ||
+      doc?.delivery_done_at ||
+      doc?.vehicleDeliveryDate ||
+      null
+    );
+  }
+  return (
+    doc?.disbursement_date ||
+    doc?.approval_disbursedDate ||
+    doc?.disbursedDate ||
+    null
+  );
+};
+
+loanSchema.pre("save", function computeBusinessFields(next) {
+  try {
+    const cash = inferIsCashCase(this);
+    this.isCashCase = cash;
+    this.latestBusinessDate = pickLatestBusinessDate(this, cash) || null;
+  } catch (_) {
+    // Best-effort derived fields only
+  }
+  next();
+});
 
 // --- Indexes ---
 // Text index for global search
@@ -582,6 +628,8 @@ loanSchema.index({ primaryMobile: 1 });
 loanSchema.index({ updatedAt: -1, _id: -1 });
 loanSchema.index({ disbursement_date: -1, _id: -1 });
 loanSchema.index({ delivery_date: -1, _id: -1 });
+loanSchema.index({ latestBusinessDate: -1, _id: -1 });
+loanSchema.index({ isCashCase: 1, latestBusinessDate: -1 });
 loanSchema.index({ loan_number: 1 });
 loanSchema.index({ registrationNumber: 1 });
 loanSchema.index({ rc_redg_no: 1 });

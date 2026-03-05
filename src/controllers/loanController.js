@@ -628,10 +628,20 @@ const parseAmount = (value) => {
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const LIST_COUNT_CACHE_TTL_MS = 45 * 1000;
+const DASHBOARD_STATS_CACHE_TTL_MS = 60 * 1000;
+const listCountCache = new Map();
+let dashboardStatsCache = { ts: 0, data: null };
+const clearLoanCaches = () => {
+  listCountCache.clear();
+  dashboardStatsCache = { ts: 0, data: null };
+};
+
 // @desc    Get loans with search + pagination
 // @route   GET /api/loans
 // @access  Public
 const getLoans = asyncHandler(async (req, res) => {
+  const startedAt = Date.now();
   const {
     search = "",
     q = "",
@@ -732,84 +742,31 @@ const getLoans = asyncHandler(async (req, res) => {
     "vehicleVariant",
     "status",
     "loanStatus",
+    "isCashCase",
+    "latestBusinessDate",
     "currentStage",
     "createdAt",
     "updatedAt",
   ];
   const dashboardSelect = dashboardFields.join(" ");
-  const dashboardProject = dashboardFields.reduce((acc, field) => {
-    acc[field] = 1;
-    return acc;
-  }, {});
-
-  const totalPromise = Loan.countDocuments(query);
+  const countKey = JSON.stringify({ viewMode, search: safeSearch });
+  const cachedCount = listCountCache.get(countKey);
+  const useCachedCount =
+    cachedCount && Date.now() - cachedCount.ts < LIST_COUNT_CACHE_TTL_MS;
+  const totalPromise = useCachedCount
+    ? Promise.resolve(cachedCount.total)
+    : !safeSearch && viewMode === "dashboard"
+      ? Loan.estimatedDocumentCount()
+      : Loan.countDocuments(query);
   let dataPromise;
 
   if (sortField === "latestBusiness") {
-    const matchStages = [{ $match: query }];
-    const lifecycleText = {
-      $toLower: {
-        $concat: [
-          { $ifNull: ["$typeOfLoan", ""] },
-          " ",
-          { $ifNull: ["$loanType", ""] },
-          " ",
-          { $ifNull: ["$caseType", ""] },
-          " ",
-          { $ifNull: ["$loan_type", ""] },
-        ],
-      },
-    };
-
-    dataPromise = Loan.aggregate([
-      ...matchStages,
-      {
-        $addFields: {
-          __isCashCase: {
-            $or: [
-              {
-                $in: [
-                  { $toLower: { $toString: { $ifNull: ["$isFinanced", ""] } } },
-                  ["no", "false"],
-                ],
-              },
-              {
-                $in: [
-                  { $toLower: { $toString: { $ifNull: ["$isFinanceRequired", ""] } } },
-                  ["no", "false"],
-                ],
-              },
-              { $regexMatch: { input: lifecycleText, regex: "cash" } },
-            ],
-          },
-        },
-      },
-      {
-        $addFields: {
-          __latestBusinessDate: {
-            $cond: [
-              "$__isCashCase",
-              {
-                $ifNull: [
-                  "$delivery_date",
-                  { $ifNull: ["$deliveryDate", { $ifNull: ["$delivery_done_at", null] }] },
-                ],
-              },
-              {
-                $ifNull: [
-                  "$disbursement_date",
-                  { $ifNull: ["$approval_disbursedDate", { $ifNull: ["$disbursedDate", null] }] },
-                ],
-              },
-            ],
-          },
-        },
-      },
-      { $sort: { __latestBusinessDate: direction, _id: -1 } },
-      { $skip: safeSkip },
-      { $limit: safeLimit },
-      ...(viewMode === "dashboard" ? [{ $project: dashboardProject }] : []),
-    ]);
+    dataPromise = Loan.find(query)
+      .sort({ latestBusinessDate: direction, _id: -1 })
+      .skip(safeSkip)
+      .limit(safeLimit)
+      .select(viewMode === "dashboard" ? dashboardSelect : "")
+      .lean();
   } else {
     const allowedSort = new Set([
       "createdAt",
@@ -835,6 +792,27 @@ const getLoans = asyncHandler(async (req, res) => {
   }
 
   const [data, total] = await Promise.all([dataPromise, totalPromise]);
+  if (!useCachedCount) {
+    listCountCache.set(countKey, { total, ts: Date.now() });
+  }
+  const queryMs = Date.now() - startedAt;
+  const responseMeta = {
+    queryMs,
+    rows: Array.isArray(data) ? data.length : 0,
+    total,
+    page: Math.floor(safeSkip / safeLimit) + 1,
+    limit: safeLimit,
+    skip: safeSkip,
+    view: viewMode || "default",
+    sortBy: sortField,
+    sortDir: direction === 1 ? "asc" : "desc",
+    searched: Boolean(safeSearch),
+    searchLength: safeSearch.length,
+  };
+
+  if (process.env.NODE_ENV !== "production") {
+    console.info("[LoansAPI:getLoans]", responseMeta);
+  }
 
   res.json({
     data,
@@ -843,6 +821,7 @@ const getLoans = asyncHandler(async (req, res) => {
     limit: safeLimit,
     skip: safeSkip,
     hasMore: safeSkip + data.length < total,
+    meta: responseMeta,
   });
 });
 
@@ -850,96 +829,156 @@ const getLoans = asyncHandler(async (req, res) => {
 // @route   GET /api/loans/dashboard/stats
 // @access  Public
 const getLoanDashboardStats = asyncHandler(async (req, res) => {
-  const rows = await Loan.find(
-    {},
-    [
-      "status",
-      "currentStage",
-      "updatedAt",
-      "approval_approvalDate",
-      "approval_loanAmountDisbursed",
-      "approval_loanAmountApproved",
-      "loanAmount",
-      "financeExpectation",
-      "approval_banksData",
-      "postfile_emiAmount",
-      "emiAmount",
-      "rc_redg_no",
-      "vehicleRegNo",
-      "registrationNumber",
-      "vehicleNumber",
-    ].join(" "),
-  ).lean();
+  const cached =
+    dashboardStatsCache?.data &&
+    Date.now() - Number(dashboardStatsCache.ts || 0) < DASHBOARD_STATS_CACHE_TTL_MS;
+  if (cached) {
+    return res.json({
+      ...dashboardStatsCache.data,
+      meta: {
+        ...(dashboardStatsCache.data?.meta || {}),
+        fromCache: true,
+      },
+    });
+  }
 
+  const startedAt = Date.now();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const nextDay = new Date(today);
   nextDay.setDate(nextDay.getDate() + 1);
+  const agg = await Loan.aggregate([
+    {
+      $addFields: {
+        __statusLower: { $toLower: { $ifNull: ["$status", ""] } },
+        __stageLower: { $toLower: { $ifNull: ["$currentStage", ""] } },
+        __bookValue: {
+          $ifNull: [
+            "$approval_loanAmountDisbursed",
+            {
+              $ifNull: [
+                "$approval_loanAmountApproved",
+                { $ifNull: ["$loanAmount", { $ifNull: ["$financeExpectation", 0] }] },
+              ],
+            },
+          ],
+        },
+        __emiValue: {
+          $ifNull: [
+            { $arrayElemAt: ["$approval_banksData.emiAmount", 0] },
+            {
+              $ifNull: [
+                { $arrayElemAt: ["$approval_banksData.emi", 0] },
+                { $ifNull: ["$postfile_emiAmount", { $ifNull: ["$emiAmount", 0] }] },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: 1 },
+        pending: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ["$__stageLower", "approval"] },
+                  {
+                    $or: [
+                      { $regexMatch: { input: "$__statusLower", regex: "pending" } },
+                      { $regexMatch: { input: "$__statusLower", regex: "progress" } },
+                    ],
+                  },
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+        disbursed: {
+          $sum: {
+            $cond: [{ $regexMatch: { input: "$__statusLower", regex: "disburs" } }, 1, 0],
+          },
+        },
+        approvedToday: {
+          $sum: {
+            $cond: [
+              {
+                $or: [
+                  {
+                    $and: [
+                      { $gte: ["$approval_approvalDate", today] },
+                      { $lt: ["$approval_approvalDate", nextDay] },
+                    ],
+                  },
+                  {
+                    $and: [
+                      { $gte: ["$updatedAt", today] },
+                      { $lt: ["$updatedAt", nextDay] },
+                      { $regexMatch: { input: "$__statusLower", regex: "approved" } },
+                    ],
+                  },
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+        totalBookValue: { $sum: { $ifNull: ["$__bookValue", 0] } },
+        emiCapturedCount: {
+          $sum: {
+            $cond: [{ $gt: [{ $ifNull: ["$__emiValue", 0] }, 0] }, 1, 0],
+          },
+        },
+        regNoCapturedCount: {
+          $sum: {
+            $cond: [
+              {
+                $or: [
+                  { $ne: [{ $ifNull: ["$rc_redg_no", null] }, null] },
+                  { $ne: [{ $ifNull: ["$vehicleRegNo", null] }, null] },
+                  { $ne: [{ $ifNull: ["$registrationNumber", null] }, null] },
+                  { $ne: [{ $ifNull: ["$vehicleNumber", null] }, null] },
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+      },
+    },
+  ]);
 
-  let pending = 0;
-  let approvedToday = 0;
-  let disbursed = 0;
-  let totalBookValue = 0;
-  let emiCapturedCount = 0;
-  let regNoCapturedCount = 0;
+  const row = agg[0] || {};
 
-  rows.forEach((l) => {
-    const statusText = String(l?.status || "").toLowerCase();
-    const stageText = String(l?.currentStage || "").toLowerCase();
+  const queryMs = Date.now() - startedAt;
+  const response = {
+    total: Number(row.total) || 0,
+    pending: Number(row.pending) || 0,
+    approvedToday: Number(row.approvedToday) || 0,
+    disbursed: Number(row.disbursed) || 0,
+    totalBookValue: Number(row.totalBookValue) || 0,
+    emiCapturedCount: Number(row.emiCapturedCount) || 0,
+    regNoCapturedCount: Number(row.regNoCapturedCount) || 0,
+    meta: {
+      queryMs,
+      rowsScanned: Number(row.total) || 0,
+      fromCache: false,
+    },
+  };
 
-    if (
-      stageText === "approval" &&
-      (statusText.includes("pending") || statusText.includes("progress"))
-    ) {
-      pending += 1;
-    }
-    if (statusText.includes("disburs")) disbursed += 1;
+  if (process.env.NODE_ENV !== "production") {
+    console.info("[LoansAPI:getLoanDashboardStats]", response.meta);
+  }
 
-    const approvedAt = l?.approval_approvalDate ? new Date(l.approval_approvalDate) : null;
-    const updatedAt = l?.updatedAt ? new Date(l.updatedAt) : null;
-    const inToday =
-      (approvedAt && approvedAt >= today && approvedAt < nextDay) ||
-      (updatedAt &&
-        updatedAt >= today &&
-        updatedAt < nextDay &&
-        statusText.includes("approved"));
-    if (inToday) approvedToday += 1;
-
-    const book =
-      parseAmount(l?.approval_loanAmountDisbursed) ||
-      parseAmount(l?.approval_loanAmountApproved) ||
-      parseAmount(l?.loanAmount) ||
-      parseAmount(l?.financeExpectation) ||
-      0;
-    totalBookValue += book;
-
-    const banks = Array.isArray(l?.approval_banksData) ? l.approval_banksData : [];
-    const primary =
-      banks.find((b) => String(b?.status || "").toLowerCase() === "disbursed") ||
-      banks.find((b) => String(b?.status || "").toLowerCase() === "approved") ||
-      banks[0];
-    const emi =
-      parseAmount(primary?.emiAmount) ||
-      parseAmount(primary?.emi) ||
-      parseAmount(l?.postfile_emiAmount) ||
-      parseAmount(l?.emiAmount) ||
-      0;
-    if (emi > 0) emiCapturedCount += 1;
-
-    if (l?.rc_redg_no || l?.vehicleRegNo || l?.registrationNumber || l?.vehicleNumber) {
-      regNoCapturedCount += 1;
-    }
-  });
-
-  res.json({
-    total: rows.length,
-    pending,
-    approvedToday,
-    disbursed,
-    totalBookValue,
-    emiCapturedCount,
-    regNoCapturedCount,
-  });
+  dashboardStatsCache = { ts: Date.now(), data: response };
+  res.json(response);
 });
 
 // @desc    Get loan by ID
@@ -1210,6 +1249,7 @@ const createLoan = asyncHandler(async (req, res) => {
       }
     }
 
+    clearLoanCaches();
     res.status(201).json({
       success: true,
       count: createdLoans.length,
@@ -1267,6 +1307,7 @@ const createLoan = asyncHandler(async (req, res) => {
 
   if (loan) {
     await ensureLinkedRecords(loan);
+    clearLoanCaches();
 
     // Return comprehensive response confirming all details were saved
     res.status(201).json({
@@ -1406,6 +1447,7 @@ const deleteLoan = asyncHandler(async (req, res) => {
 
   if (loan) {
     await loan.deleteOne();
+    clearLoanCaches();
     res.json({ success: true, message: "Loan removed" });
   } else {
     res.status(404);
@@ -1547,6 +1589,7 @@ const disburseLoan = asyncHandler(async (req, res) => {
 
   // Save updated loan with retry for version conflicts
   await saveWithRetry(loan);
+  clearLoanCaches();
 
   // =====================================
   // 5. CREATE/UPDATE PAYMENT RECORD
@@ -1643,6 +1686,7 @@ const saveBanksData = asyncHandler(async (req, res) => {
 
   // Save with retry for version conflicts
   await saveWithRetry(loan);
+  clearLoanCaches();
 
   res.json({
     success: true,
