@@ -85,19 +85,17 @@ showroomSchema.index({ mobile: 1 });
 showroomSchema.index({ status: 1 });
 
 // Auto-generate showroomId before saving
-showroomSchema.pre('save', async function (next) {
+showroomSchema.pre('save', async function () {
   if (!this.showroomId) {
     const year = new Date().getFullYear();
     const count = await mongoose.model('Showroom').countDocuments();
     this.showroomId = `SH-${year}-${String(count + 1).padStart(4, '0')}`;
   }
-  next();
 });
 
 // Calculate outstanding commission before saving
-showroomSchema.pre('save', function (next) {
+showroomSchema.pre('save', function () {
   this.outstandingCommission = this.totalCommissionReceivable - this.totalCommissionPaid;
-  next();
 });
 
 const Showroom = mongoose.model('Showroom', showroomSchema);

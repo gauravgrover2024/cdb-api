@@ -139,6 +139,32 @@ const customerSchema = mongoose.Schema(
     currentAddress: { type: String },
     officeAddress: { type: String },
     incorporationYear: { type: String },
+    docsPreparedBy: { type: String },
+
+    // Registration snapshot aliases (used in cash/profile flows)
+    registerSameAsAadhaar: { type: String },
+    registerSameAsPermanent: { type: String },
+    registrationAddress: { type: String },
+    registrationPincode: { type: String },
+    registrationCity: { type: String },
+
+    // Embedded co-applicant quick snapshot (customer module reuse)
+    co_customerName: { type: String },
+    co_primaryMobile: { type: String },
+    co_dob: { type: Date },
+    co_pan: { type: String },
+    co_address: { type: String },
+
+    // Embedded signatory snapshot (company flows)
+    signatory_customerName: { type: String },
+    signatory_primaryMobile: { type: String },
+    signatory_address: { type: String },
+    signatory_pincode: { type: String },
+    signatory_city: { type: String },
+    signatory_dob: { type: Date },
+    signatory_designation: { type: String },
+    signatory_pan: { type: String },
+    signatory_aadhaar: { type: String },
     
     // KYC Workflow
     kycStatus: { 

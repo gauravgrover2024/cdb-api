@@ -74,7 +74,7 @@ const paymentSchema = mongoose.Schema(
 );
 
 // Calculate outstanding amounts before saving
-paymentSchema.pre('save', function (next) {
+paymentSchema.pre('save', function () {
   // Calculate outstanding commission from showroom
   this.outstandingCommissionFromShowroom = 
     this.commissionReceivableFromShowroom - this.commissionReceivedFromShowroom;
@@ -83,7 +83,6 @@ paymentSchema.pre('save', function (next) {
   this.outstandingChannelCommission = 
     this.channelCommissionPayable - this.channelCommissionPaid;
   
-  next();
 });
 
 const Payment = mongoose.model('Payment', paymentSchema);

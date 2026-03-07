@@ -111,24 +111,21 @@ channelSchema.index({ dsaCode: 1 });
 channelSchema.index({ dealerCode: 1 });
 
 // Auto-generate channelId before saving
-channelSchema.pre('save', async function (next) {
+channelSchema.pre('save', async function () {
   if (!this.channelId) {
     const year = new Date().getFullYear();
     const count = await mongoose.model('Channel').countDocuments();
     this.channelId = `CH-${year}-${String(count + 1).padStart(4, '0')}`;
   }
-  next();
 });
 
 // Calculate outstanding commission and conversion rate before saving
-channelSchema.pre('save', function (next) {
+channelSchema.pre('save', function () {
   this.outstandingCommission = this.totalCommissionEarned - this.totalCommissionPaid;
   
   if (this.totalLeadsGenerated > 0) {
     this.conversionRate = ((this.totalLoansApproved / this.totalLeadsGenerated) * 100).toFixed(2);
   }
-  
-  next();
 });
 
 const Channel = mongoose.model('Channel', channelSchema);
