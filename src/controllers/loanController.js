@@ -561,60 +561,47 @@ const ensureLinkedRecords = async (loanDoc) => {
   if (!isNewCarLoan(loanDoc)) {
     return;
   }
-
-  const session = await mongoose.startSession();
-
   try {
-    await session.withTransaction(async () => {
-      // Create/Update DeliveryOrder with loan snapshot data
-      const doPayload = {
-        loanId: loanDoc.loanId,
-        do_loanId: loanDoc.loanId, // Maintain both field names for compatibility
-        dealerName: loanDoc.dealerName,
-        dealerAddress: loanDoc.dealerAddress,
-        vehicleModel: loanDoc.vehicleModel,
-        vehicleColor: loanDoc.vehicleColor,
-        chassisNumber: loanDoc.chassisNumber,
-        engineNumber: loanDoc.engineNumber,
-        createdBy: loanDoc.createdBy || undefined,
-      };
+    // Create/Update DeliveryOrder with loan snapshot data.
+    // Avoid transaction/session dependency so this stays safe in serverless/shared Mongo tiers.
+    const doPayload = {
+      loanId: loanDoc.loanId,
+      do_loanId: loanDoc.loanId, // Maintain both field names for compatibility
+      dealerName: loanDoc.dealerName,
+      dealerAddress: loanDoc.dealerAddress,
+      vehicleModel: loanDoc.vehicleModel,
+      vehicleColor: loanDoc.vehicleColor,
+      chassisNumber: loanDoc.chassisNumber,
+      engineNumber: loanDoc.engineNumber,
+      createdBy: loanDoc.createdBy || undefined,
+    };
 
-      const deliveryOrder = await DeliveryOrder.findOneAndUpdate(
-        { loanId: loanDoc.loanId },
-        { $setOnInsert: doPayload },
-        { upsert: true, new: true, session },
-      );
+    await DeliveryOrder.findOneAndUpdate(
+      { loanId: loanDoc.loanId },
+      { $setOnInsert: doPayload },
+      { upsert: true, new: true },
+    );
 
-      if (!deliveryOrder) {
-        throw new Error("DeliveryOrder creation failed");
-      }
+    // Create Payment skeleton (idempotent upsert)
+    const paymentPayload = {
+      loanId: loanDoc.loanId,
+      showroomRows: [],
+      entryTotals: {},
+      isVerified: false,
+      autocreditsRows: [],
+      autocreditsTotals: {},
+      isAutocreditsVerified: false,
+      createdBy: loanDoc.createdBy || undefined,
+    };
 
-      // Create Payment only if DO exists
-      const paymentPayload = {
-        loanId: loanDoc.loanId,
-        showroomRows: [],
-        entryTotals: {},
-        isVerified: false,
-        autocreditsRows: [],
-        autocreditsTotals: {},
-        isAutocreditsVerified: false,
-        createdBy: loanDoc.createdBy || undefined,
-      };
-
-      const payment = await Payment.findOneAndUpdate(
-        { loanId: loanDoc.loanId },
-        { $setOnInsert: paymentPayload },
-        { upsert: true, new: true, session },
-      );
-
-      if (!payment) {
-        throw new Error("Payment creation failed");
-      }
-    });
+    await Payment.findOneAndUpdate(
+      { loanId: loanDoc.loanId },
+      { $setOnInsert: paymentPayload },
+      { upsert: true, new: true },
+    );
   } catch (err) {
-    // Linked records are supplementary, don't block loan creation
-  } finally {
-    session.endSession();
+    // Linked records are supplementary, never block loan save/update flow.
+    console.error("ensureLinkedRecords warning:", err?.message || err);
   }
 };
 
@@ -1353,6 +1340,7 @@ const createLoan = asyncHandler(async (req, res) => {
 // @access  Public
 const updateLoan = asyncHandler(async (req, res) => {
   let loan;
+  let step = "resolve-loan";
   if (req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
     loan = await Loan.findById(req.params.id);
   } else {
@@ -1360,75 +1348,113 @@ const updateLoan = asyncHandler(async (req, res) => {
   }
 
   if (loan) {
-    // 1. Update Loan (store full payload, including customer fields)
-    const normalizedBody = normalizeCustomerFields(req.body || {});
+    try {
+      step = "normalize-body";
+      // 1. Update Loan (store full payload, including customer fields)
+      const normalizedBody = normalizeCustomerFields(req.body || {});
 
-    // Remove immutable/system fields
-    const cleanedBody = { ...normalizedBody };
-    delete cleanedBody._id;
-    delete cleanedBody.__v;
-    delete cleanedBody.createdAt;
-    delete cleanedBody.updatedAt;
-    delete cleanedBody.loanId;
+      step = "clean-body";
+      // Remove immutable/system fields
+      const cleanedBody = { ...normalizedBody };
+      delete cleanedBody._id;
+      delete cleanedBody.__v;
+      delete cleanedBody.createdAt;
+      delete cleanedBody.updatedAt;
+      delete cleanedBody.loanId;
 
-    // Validate customer reference if provided or missing
-    if (normalizedBody?.customerId) {
-      const customer = await resolveCustomerById(normalizedBody.customerId);
-      if (!customer) {
+      step = "validate-customer";
+      // Validate customer reference if provided or missing
+      if (normalizedBody?.customerId) {
+        const customer = await resolveCustomerById(normalizedBody.customerId);
+        if (!customer) {
+          res.status(400);
+          throw new Error(
+            "Invalid customerId. Please select or create a valid customer first.",
+          );
+        }
+        loan.customerId = customer._id;
+        delete cleanedBody.customerId;
+      } else if (!loan.customerId) {
         res.status(400);
         throw new Error(
-          "Invalid customerId. Please select or create a valid customer first.",
+          "Customer is required. Please link a customer before updating this loan.",
         );
       }
-      loan.customerId = customer._id;
-      delete cleanedBody.customerId;
-    } else if (!loan.customerId) {
-      res.status(400);
-      throw new Error(
-        "Customer is required. Please link a customer before updating this loan.",
-      );
-    }
 
-    // ASSIGN ALL FIELDS - ensure nothing is missed
-    Object.assign(loan, cleanedBody);
+      step = "assign-fields";
+      // ASSIGN ALL FIELDS - ensure nothing is missed
+      Object.assign(loan, cleanedBody);
 
-    // Save with retry for version conflicts
-    const updatedLoan = await saveWithRetry(loan);
-
-    // Auto-sync bank details to global Bank collection for future auto-fill
-    await syncBankCollection(normalizedBody);
-
-    // 2. Sync with Customer (Bidirectional)
-    if (loan.customerId) {
+      step = "save-loan-primary";
+      // Save with retry for version conflicts.
+      // Fallback to direct atomic update if mongoose save middleware throws runtime issues
+      // (e.g. "next is not a function" from legacy hook paths on deployed envs).
+      let updatedLoan;
       try {
-        const customer = await Customer.findById(loan.customerId);
-        if (customer) {
-          let hasCustomerUpdate = false;
-          CUSTOMER_SYNC_FIELDS.forEach((field) => {
-            if (normalizedBody[field] !== undefined) {
-              customer[field] = normalizedBody[field];
-              hasCustomerUpdate = true;
-            }
-          });
+        updatedLoan = await saveWithRetry(loan);
+      } catch (saveErr) {
+        step = "save-loan-fallback";
+        console.error(
+          "Loan saveWithRetry failed, using fallback update path:",
+          saveErr?.message || saveErr,
+        );
+        const filter = loan?._id
+          ? { _id: loan._id }
+          : { loanId: req.params.id };
 
-          if (hasCustomerUpdate) {
-            await customer.save();
-          }
+        updatedLoan = await Loan.findOneAndUpdate(
+          filter,
+          { $set: cleanedBody },
+          { new: true, runValidators: false },
+        );
+
+        if (!updatedLoan) {
+          throw saveErr;
         }
-      } catch (err) {
-        console.error("Error syncing customer profile:", err);
       }
+
+      step = "sync-bank-collection";
+      // Auto-sync bank details to global Bank collection for future auto-fill
+      await syncBankCollection(normalizedBody);
+
+      step = "sync-customer";
+      // 2. Sync with Customer (Bidirectional)
+      if (loan.customerId) {
+        try {
+          const customer = await Customer.findById(loan.customerId);
+          if (customer) {
+            let hasCustomerUpdate = false;
+            CUSTOMER_SYNC_FIELDS.forEach((field) => {
+              if (normalizedBody[field] !== undefined) {
+                customer[field] = normalizedBody[field];
+                hasCustomerUpdate = true;
+              }
+            });
+
+            if (hasCustomerUpdate) {
+              await customer.save();
+            }
+          }
+        } catch (err) {
+          console.error("Error syncing customer profile:", err);
+        }
+      }
+
+      step = "ensure-linked-records";
+      // 3. Ensure linked records (DO and Payment)
+      await ensureLinkedRecords(updatedLoan);
+
+      step = "respond-success";
+      res.json({
+        success: true,
+        data: updatedLoan,
+        message: "✅ Loan updated with all details saved",
+        updatedFields: Object.keys(cleanedBody).length,
+      });
+    } catch (err) {
+      if (res.statusCode < 400) res.status(500);
+      throw new Error(`[updateLoan:${step}] ${err.message}`);
     }
-
-    // 3. Ensure linked records (DO and Payment)
-    await ensureLinkedRecords(updatedLoan);
-
-    res.json({
-      success: true,
-      data: updatedLoan,
-      message: "✅ Loan updated with all details saved",
-      updatedFields: Object.keys(cleanedBody).length,
-    });
   } else {
     res.status(404);
     throw new Error("Loan not found");
