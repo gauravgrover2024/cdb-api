@@ -780,6 +780,7 @@ const getLoans = asyncHandler(async (req, res) => {
       "aging",
       "disbursement_date",
       "delivery_date",
+      "vehicleModel",
     ]);
     const safeSortField = allowedSort.has(sortField) ? sortField : "updatedAt";
     const sort = { [safeSortField]: direction, _id: -1 };
