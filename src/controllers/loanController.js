@@ -1,6 +1,7 @@
 import asyncHandler from "express-async-handler";
 import mongoose from "mongoose";
 import Bank from "../models/Bank.js";
+import BankDirectory from "../models/BankDirectory.js";
 import Loan from "../models/Loan.js";
 import Customer from "../models/Customer.js";
 import DeliveryOrder from "../models/DeliveryOrder.js";
@@ -126,6 +127,105 @@ const CUSTOMER_SYNC_FIELDS = [
   "companyPartners",
 ];
 
+const IFSC_CODE_BANK_MAP = {
+  HDFC: "HDFC Bank",
+  ICIC: "ICICI Bank",
+  SBIN: "State Bank of India",
+  UTIB: "Axis Bank",
+  KKBK: "Kotak Mahindra Bank",
+  FDRL: "Federal Bank",
+  PUNB: "Punjab National Bank",
+  CNRB: "Canara Bank",
+  IDIB: "Indian Bank",
+  BARB: "Bank of Baroda",
+  BKID: "Bank of India",
+  UBIN: "Union Bank of India",
+  INDB: "IndusInd Bank",
+  YESB: "Yes Bank",
+  IDFB: "IDFC First Bank",
+  MAHB: "Bank of Maharashtra",
+};
+
+const MICR_BANK_CODE_MAP = {
+  "002": "State Bank of India",
+  "012": "Bank of Baroda",
+  "013": "Bank of India",
+  "015": "Canara Bank",
+  "019": "Indian Bank",
+  "026": "Union Bank of India",
+  "176": "Punjab National Bank",
+  "211": "Axis Bank",
+  "229": "ICICI Bank",
+  "237": "IndusInd Bank",
+  "240": "HDFC Bank",
+  "425": "Federal Bank",
+  "485": "Kotak Mahindra Bank",
+  "532": "Yes Bank",
+  "760": "IDFC First Bank",
+};
+
+const normalizeIfsc = (value) =>
+  String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 11);
+
+const normalizeMicr = (value) =>
+  String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 9);
+
+const inferBankNameFromIfsc = (value) => {
+  const ifsc = normalizeIfsc(value);
+  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return "";
+  return IFSC_CODE_BANK_MAP[ifsc.slice(0, 4)] || "";
+};
+
+const inferBankNameFromMicr = (value) => {
+  const micr = normalizeMicr(value);
+  if (micr.length !== 9) return "";
+  return MICR_BANK_CODE_MAP[micr.slice(3, 6)] || "";
+};
+
+const fetchIfscFromRazorpay = async (ifsc) => {
+  const normalized = normalizeIfsc(ifsc);
+  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(normalized)) return null;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const res = await fetch(`https://ifsc.razorpay.com/${normalized}`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      return { notFound: res.status === 404, status: res.status };
+    }
+
+    const data = await res.json();
+    return {
+      ifsc: normalized,
+      micr: normalizeMicr(data?.MICR),
+      bankName: String(data?.BANK || "").trim(),
+      branch: String(data?.BRANCH || "").trim(),
+      address: String(data?.ADDRESS || "").trim(),
+      city: String(data?.CITY || "").trim(),
+      state: String(data?.STATE || "").trim(),
+      district: String(data?.DISTRICT || "").trim(),
+      contact: String(data?.CONTACT || "").trim(),
+      active: true,
+      source: "razorpay-ifsc",
+      lastVerifiedAt: new Date(),
+      raw: data,
+    };
+  } catch (error) {
+    return { error: error?.name === "AbortError" ? "timeout" : "fetch_failed" };
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 // Helper function to save document with retry logic and reload on version conflicts
 const saveWithRetry = async (doc, maxRetries = 3) => {
   let retries = maxRetries;
@@ -195,10 +295,7 @@ const normalizeCustomerFields = (payload) => {
     "postfile_approvalDate",
     "dispatch_date",
     "disbursement_date",
-    "cheque_1_date",
-    "cheque_2_date",
-    "cheque_3_date",
-    "cheque_4_date",
+
     "ecs_date",
     "signatory_dob",
     // Delivery & Invoice
@@ -209,6 +306,9 @@ const normalizeCustomerFields = (payload) => {
     // RC
     "rc_received_date",
   ];
+
+  const chequeDateFields = Array.from({ length: 20 }, (_, i) => `cheque_${i + 1}_date`);
+  dateFields.push(...chequeDateFields);
 
   dateFields.forEach((field) => {
     if (normalized[field] && typeof normalized[field] === "string") {
@@ -302,11 +402,11 @@ const normalizeCustomerFields = (payload) => {
     "experienceCurrent",
     "totalExperience", // Frontend Aliases
     "ecs_amount",
-    "cheque_1_amount",
-    "cheque_2_amount",
-    "cheque_3_amount",
-    "cheque_4_amount",
+
   ];
+
+  const chequeAmountFields = Array.from({ length: 20 }, (_, i) => `cheque_${i + 1}_amount`);
+  numericFields.push(...chequeAmountFields);
 
   numericFields.forEach((field) => {
     if (
@@ -335,10 +435,28 @@ const normalizeCustomerFields = (payload) => {
     normalized.email = normalized.emailAddress;
   if (normalized.email && !normalized.emailAddress)
     normalized.emailAddress = normalized.email;
-  if (normalized.ifsc && !normalized.ifscCode)
-    normalized.ifscCode = normalized.ifsc;
-  if (normalized.ifscCode && !normalized.ifsc)
-    normalized.ifsc = normalized.ifscCode;
+  if (normalized.ifsc && !normalized.ifscCode) normalized.ifscCode = normalized.ifsc;
+  if (normalized.ifscCode && !normalized.ifsc) normalized.ifsc = normalized.ifscCode;
+  if (normalized.ifsc) normalized.ifsc = normalizeIfsc(normalized.ifsc);
+  if (normalized.ifscCode) normalized.ifscCode = normalizeIfsc(normalized.ifscCode);
+  if (normalized.co_ifsc) normalized.co_ifsc = normalizeIfsc(normalized.co_ifsc);
+  if (normalized.co_ifscCode) normalized.co_ifscCode = normalizeIfsc(normalized.co_ifscCode);
+  if (normalized.gu_ifsc) normalized.gu_ifsc = normalizeIfsc(normalized.gu_ifsc);
+  if (normalized.gu_ifscCode) normalized.gu_ifscCode = normalizeIfsc(normalized.gu_ifscCode);
+  if (normalized.ecs_micrCode) normalized.ecs_micrCode = normalizeMicr(normalized.ecs_micrCode);
+  const inferredMainBank = inferBankNameFromIfsc(normalized.ifscCode || normalized.ifsc);
+  if (inferredMainBank) {
+    if (!normalized.bankName) normalized.bankName = inferredMainBank;
+    if (!normalized.approval_bankName) normalized.approval_bankName = inferredMainBank;
+    if (!normalized.postfile_bankName) normalized.postfile_bankName = inferredMainBank;
+    if (!normalized.disburse_bankName) normalized.disburse_bankName = inferredMainBank;
+  }
+  const inferredEcsBank = inferBankNameFromMicr(normalized.ecs_micrCode);
+  if (inferredEcsBank && !normalized.ecs_bankName) normalized.ecs_bankName = inferredEcsBank;
+  const inferredCoBank = inferBankNameFromIfsc(normalized.co_ifscCode || normalized.co_ifsc);
+  if (inferredCoBank && !normalized.co_bankName) normalized.co_bankName = inferredCoBank;
+  const inferredGuBank = inferBankNameFromIfsc(normalized.gu_ifscCode || normalized.gu_ifsc);
+  if (inferredGuBank && !normalized.gu_bankName) normalized.gu_bankName = inferredGuBank;
   if (normalized.typeOfLoan && !normalized.loanType)
     normalized.loanType = normalized.typeOfLoan;
   if (normalized.loanType && !normalized.typeOfLoan)
@@ -443,7 +561,186 @@ const normalizeCustomerFields = (payload) => {
     normalized.reference2_relation = normalized.reference2.relation;
     delete normalized.reference2;
   }
+
+  // Pincode -> city fallback for cases where UI/import did not resolve city.
+  const inferCityFromPin = (rawPin) => {
+    const pin = String(rawPin || "").replace(/\D/g, "").slice(0, 6);
+    if (!pin) return "";
+    if (pin.startsWith("110")) return "Delhi";
+    if (pin.startsWith("122")) return "Gurgaon";
+    if (pin.startsWith("121")) return "Faridabad";
+    if (pin.startsWith("2013")) return "Noida";
+    if (pin.startsWith("2010")) return "Ghaziabad";
+    return "";
+  };
+  [
+    ["city", "pincode"],
+    ["permanentCity", "permanentPincode"],
+    ["employmentCity", "employmentPincode"],
+    ["co_city", "co_pincode"],
+    ["co_companyCity", "co_companyPincode"],
+    ["gu_city", "gu_pincode"],
+    ["gu_companyCity", "gu_companyPincode"],
+    ["signatory_city", "signatory_pincode"],
+    ["registrationCity", "registrationPincode"],
+    ["reference1_city", "reference1_pincode"],
+    ["reference2_city", "reference2_pincode"],
+  ].forEach(([cityKey, pinKey]) => {
+    if (normalized[cityKey]) return;
+    const inferred = inferCityFromPin(normalized[pinKey]);
+    if (inferred) normalized[cityKey] = inferred;
+  });
+
   return normalized;
+};
+
+const normalizeInstrumentType = (value) => {
+  const t = String(value || "").trim().toUpperCase();
+  if (!t) return "";
+  if (t.includes("CHEQUE") || t.includes("CHQ") || t.includes("PDC")) return "CHEQUE";
+  if (t.includes("ECS")) return "ECS";
+  if (t === "SI" || t.includes("STANDING INSTRUCTION")) return "SI";
+  if (t.includes("NACH") || t.includes("MANDATE")) return "NACH";
+  return "";
+};
+
+const sanitizeInstrumentForPersistence = (payload) => {
+  if (!payload || typeof payload !== "object") return payload;
+  const cleaned = { ...payload };
+  const type = normalizeInstrumentType(cleaned.instrumentType);
+  const chequeSuffixes = [
+    "number",
+    "bankName",
+    "accountNumber",
+    "date",
+    "amount",
+    "tag",
+    "favouring",
+    "signedBy",
+    "image",
+  ];
+
+  const isFilled = (v) => {
+    if (v === undefined || v === null) return false;
+    if (typeof v === "number") return Number.isFinite(v) && v !== 0;
+    const s = String(v).trim();
+    if (!s) return false;
+    if (s === "0" || s === "0.0" || s === "0.00") return false;
+    return true;
+  };
+
+  for (let i = 1; i <= 20; i += 1) {
+    const keys = chequeSuffixes.map((suffix) => `cheque_${i}_${suffix}`);
+    const hasValue = keys.some((k) => isFilled(cleaned[k]));
+    if (!hasValue) {
+      keys.forEach((k) => {
+        cleaned[k] = undefined;
+      });
+    }
+  }
+
+  const unsetEcs = () => {
+    [
+      "ecs_micrCode",
+      "ecs_bankName",
+      "ecs_accountNumber",
+      "ecs_date",
+      "ecs_amount",
+      "ecs_tag",
+      "ecs_favouring",
+      "ecs_signedBy",
+      "ecs_image",
+    ].forEach((k) => {
+      cleaned[k] = undefined;
+    });
+  };
+
+  const unsetSi = () => {
+    ["si_accountNumber", "si_signedBy", "si_image"].forEach((k) => {
+      cleaned[k] = undefined;
+    });
+  };
+
+  const unsetCheques = () => {
+    for (let i = 1; i <= 20; i += 1) {
+      chequeSuffixes.forEach((suffix) => {
+        cleaned[`cheque_${i}_${suffix}`] = undefined;
+      });
+    }
+  };
+
+  if (type === "SI" || type === "NACH") {
+    unsetEcs();
+    unsetCheques();
+  } else if (type === "ECS") {
+    unsetSi();
+  } else if (type === "CHEQUE") {
+    unsetSi();
+    unsetEcs();
+  }
+
+  return cleaned;
+};
+
+const splitUndefinedForMongo = (payload) => {
+  const setPayload = {};
+  const unsetPayload = {};
+  Object.entries(payload || {}).forEach(([k, v]) => {
+    if (v === undefined) unsetPayload[k] = 1;
+    else setPayload[k] = v;
+  });
+  return { setPayload, unsetPayload };
+};
+
+const applyUndefinedOnDoc = (doc, payload) => {
+  Object.entries(payload || {}).forEach(([k, v]) => {
+    if (v === undefined) doc.set(k, undefined);
+  });
+};
+
+const upsertBankDirectoryEntry = async ({
+  ifsc,
+  micr,
+  bankName,
+  branch,
+  address,
+  city,
+  state,
+  district,
+  contact,
+  source = "internal",
+  active = true,
+  raw = null,
+}) => {
+  const normalizedIfsc = normalizeIfsc(ifsc);
+  const normalizedMicr = normalizeMicr(micr);
+  if (!normalizedIfsc && !normalizedMicr) return null;
+
+  const base = {
+    ifsc: normalizedIfsc || undefined,
+    micr: normalizedMicr || undefined,
+    bankName: String(bankName || "").trim() || undefined,
+    branch: String(branch || "").trim() || undefined,
+    address: String(address || "").trim() || undefined,
+    city: String(city || "").trim() || undefined,
+    state: String(state || "").trim() || undefined,
+    district: String(district || "").trim() || undefined,
+    contact: String(contact || "").trim() || undefined,
+    active: Boolean(active),
+    source,
+    lastVerifiedAt: new Date(),
+    raw,
+  };
+
+  const query = normalizedIfsc
+    ? { ifsc: normalizedIfsc }
+    : { micr: normalizedMicr, bankName: base.bankName || inferBankNameFromMicr(normalizedMicr) };
+
+  return await BankDirectory.findOneAndUpdate(
+    query,
+    { $set: base },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
 };
 
 // Resolve customer by ObjectId or custom customerId
@@ -454,48 +751,67 @@ const syncBankCollection = async (payload) => {
       name: payload.bankName,
       ifsc: payload.ifscCode || payload.ifsc,
       address: payload.branch,
+      micr: undefined,
     },
     {
       name: payload.co_bankName,
-      ifsc: payload.co_ifscCode,
+      ifsc: payload.co_ifscCode || payload.co_ifsc,
       address: payload.co_branch,
+      micr: undefined,
     },
     {
       name: payload.gu_bankName,
-      ifsc: payload.gu_ifscCode,
+      ifsc: payload.gu_ifscCode || payload.gu_ifsc,
       address: payload.gu_branch,
+      micr: undefined,
+    },
+    {
+      name: payload.ecs_bankName,
+      ifsc: undefined,
+      address: "",
+      micr: payload.ecs_micrCode,
     },
   ];
 
   for (const bank of banksToSync) {
-    if (bank.name && bank.ifsc) {
+    if (bank.name && (bank.ifsc || bank.micr)) {
       try {
-        const normalizedIfsc = bank.ifsc.toUpperCase();
-        const existingBank = await Bank.findOne({ ifsc: normalizedIfsc });
-        if (!existingBank) {
-          await Bank.create({
-            name: bank.name,
-            ifsc: normalizedIfsc,
-            address: bank.address || "",
-          });
-          console.log(
-            `✅ New bank added to database: ${bank.name} (${normalizedIfsc})`,
-          );
-        } else {
-          // Update address if it's provided and different
-          let updated = false;
-          if (bank.address && existingBank.address !== bank.address) {
-            existingBank.address = bank.address;
-            updated = true;
-          }
-          if (existingBank.name !== bank.name) {
-            existingBank.name = bank.name;
-            updated = true;
-          }
-          if (updated) {
-            await existingBank.save();
+        if (bank.ifsc) {
+          const normalizedIfsc = normalizeIfsc(bank.ifsc);
+          const existingBank = await Bank.findOne({ ifsc: normalizedIfsc });
+          if (!existingBank) {
+            await Bank.create({
+              name: bank.name,
+              ifsc: normalizedIfsc,
+              address: bank.address || "",
+            });
+            console.log(
+              `✅ New bank added to database: ${bank.name} (${normalizedIfsc})`,
+            );
+          } else {
+            // Update address if it's provided and different
+            let updated = false;
+            if (bank.address && existingBank.address !== bank.address) {
+              existingBank.address = bank.address;
+              updated = true;
+            }
+            if (existingBank.name !== bank.name) {
+              existingBank.name = bank.name;
+              updated = true;
+            }
+            if (updated) {
+              await existingBank.save();
+            }
           }
         }
+        await upsertBankDirectoryEntry({
+          ifsc: bank.ifsc,
+          micr: bank.micr,
+          bankName: bank.name,
+          address: bank.address || "",
+          source: "loan-save",
+          active: true,
+        });
       } catch (err) {
         console.error("Error syncing bank collection:", err.message);
       }
@@ -1079,6 +1395,7 @@ const getLoanById = asyncHandler(async (req, res) => {
 const createLoan = asyncHandler(async (req, res) => {
   const { numberOfCars, ...loanData } = req.body;
   const normalizedLoanData = normalizeCustomerFields(loanData);
+  const instrumentSanitizedLoanData = sanitizeInstrumentForPersistence(normalizedLoanData);
 
   // ---------------------------------------------------------
   // 1️⃣ VALIDATE / LINK CUSTOMER (AUTO-CREATE IF NEEDED)
@@ -1143,7 +1460,7 @@ const createLoan = asyncHandler(async (req, res) => {
 
   // Prepare loan payload with ALL fields (let Mongoose schema handle it)
   const loanPayload = {
-    ...normalizedLoanData,
+    ...instrumentSanitizedLoanData,
     customerId: linkedCustomerId,
   };
 
@@ -1352,10 +1669,11 @@ const updateLoan = asyncHandler(async (req, res) => {
       step = "normalize-body";
       // 1. Update Loan (store full payload, including customer fields)
       const normalizedBody = normalizeCustomerFields(req.body || {});
+      const instrumentSanitizedBody = sanitizeInstrumentForPersistence(normalizedBody);
 
       step = "clean-body";
       // Remove immutable/system fields
-      const cleanedBody = { ...normalizedBody };
+      const cleanedBody = { ...instrumentSanitizedBody };
       delete cleanedBody._id;
       delete cleanedBody.__v;
       delete cleanedBody.createdAt;
@@ -1384,6 +1702,7 @@ const updateLoan = asyncHandler(async (req, res) => {
       step = "assign-fields";
       // ASSIGN ALL FIELDS - ensure nothing is missed
       Object.assign(loan, cleanedBody);
+      applyUndefinedOnDoc(loan, cleanedBody);
 
       step = "save-loan-primary";
       // Save with retry for version conflicts.
@@ -1401,10 +1720,11 @@ const updateLoan = asyncHandler(async (req, res) => {
         const filter = loan?._id
           ? { _id: loan._id }
           : { loanId: req.params.id };
+        const { setPayload, unsetPayload } = splitUndefinedForMongo(cleanedBody);
 
         updatedLoan = await Loan.findOneAndUpdate(
           filter,
-          { $set: cleanedBody },
+          { $set: setPayload, ...(Object.keys(unsetPayload).length ? { $unset: unsetPayload } : {}) },
           { new: true, runValidators: false },
         );
 
@@ -1728,10 +2048,163 @@ const getAllBanks = asyncHandler(async (req, res) => {
   res.json(banks);
 });
 
+const resolveBankLookup = asyncHandler(async (req, res) => {
+  const ifsc = normalizeIfsc(req.query.ifsc);
+  const micr = normalizeMicr(req.query.micr);
+
+  if (!ifsc && !micr) {
+    res.status(400);
+    throw new Error("Provide ifsc or micr query parameter");
+  }
+
+  // 1) IFSC path (cache-first + remote refresh/fetch)
+  if (ifsc) {
+    const cached = await BankDirectory.findOne({ ifsc });
+    if (cached) {
+      return res.json({
+        success: true,
+        data: {
+          ifsc: cached.ifsc || ifsc,
+          micr: cached.micr || "",
+          bankName: cached.bankName || inferBankNameFromIfsc(ifsc),
+          branch: cached.branch || "",
+          address: cached.address || "",
+          city: cached.city || "",
+          state: cached.state || "",
+          district: cached.district || "",
+          contact: cached.contact || "",
+          active: cached.active !== false,
+          source: "cache",
+          lastVerifiedAt: cached.lastVerifiedAt || cached.updatedAt || null,
+        },
+      });
+    }
+
+    const fetched = await fetchIfscFromRazorpay(ifsc);
+    if (fetched && !fetched.error && !fetched.notFound) {
+      const saved = await upsertBankDirectoryEntry({
+        ...fetched,
+        source: "razorpay-ifsc",
+        active: true,
+      });
+      // Also keep lightweight Bank master synced for existing dropdown consumers.
+      if (saved?.bankName && saved?.ifsc) {
+        await Bank.findOneAndUpdate(
+          { ifsc: saved.ifsc },
+          { $set: { name: saved.bankName, ifsc: saved.ifsc, address: saved.address || saved.branch || "" } },
+          { upsert: true, new: true, setDefaultsOnInsert: true },
+        );
+      }
+      return res.json({
+        success: true,
+        data: {
+          ifsc: saved?.ifsc || fetched.ifsc,
+          micr: saved?.micr || fetched.micr || "",
+          bankName: saved?.bankName || fetched.bankName || inferBankNameFromIfsc(ifsc),
+          branch: saved?.branch || fetched.branch || "",
+          address: saved?.address || fetched.address || "",
+          city: saved?.city || fetched.city || "",
+          state: saved?.state || fetched.state || "",
+          district: saved?.district || fetched.district || "",
+          contact: saved?.contact || fetched.contact || "",
+          active: true,
+          source: "razorpay-ifsc",
+          lastVerifiedAt: saved?.lastVerifiedAt || new Date(),
+        },
+      });
+    }
+
+    const inferred = inferBankNameFromIfsc(ifsc);
+    if (inferred) {
+      // Soft cache even if remote is unavailable.
+      await upsertBankDirectoryEntry({
+        ifsc,
+        bankName: inferred,
+        source: fetched?.notFound ? "ifsc-code-fallback-notfound" : "ifsc-code-fallback",
+        active: fetched?.notFound ? false : true,
+        raw: fetched || null,
+      });
+      return res.json({
+        success: true,
+        data: {
+          ifsc,
+          micr: "",
+          bankName: inferred,
+          branch: "",
+          address: "",
+          city: "",
+          state: "",
+          district: "",
+          contact: "",
+          active: fetched?.notFound ? false : true,
+          source: fetched?.notFound ? "ifsc-code-fallback-notfound" : "ifsc-code-fallback",
+          lastVerifiedAt: new Date(),
+        },
+      });
+    }
+
+    res.status(404);
+    throw new Error("IFSC not found");
+  }
+
+  // 2) MICR path (cache-first + bank-code fallback)
+  const cachedByMicr = await BankDirectory.findOne({ micr }).sort({ updatedAt: -1 });
+  if (cachedByMicr) {
+    return res.json({
+      success: true,
+      data: {
+        ifsc: cachedByMicr.ifsc || "",
+        micr: cachedByMicr.micr || micr,
+        bankName: cachedByMicr.bankName || inferBankNameFromMicr(micr),
+        branch: cachedByMicr.branch || "",
+        address: cachedByMicr.address || "",
+        city: cachedByMicr.city || "",
+        state: cachedByMicr.state || "",
+        district: cachedByMicr.district || "",
+        contact: cachedByMicr.contact || "",
+        active: cachedByMicr.active !== false,
+        source: "cache-micr",
+        lastVerifiedAt: cachedByMicr.lastVerifiedAt || cachedByMicr.updatedAt || null,
+      },
+    });
+  }
+
+  const inferredMicrBank = inferBankNameFromMicr(micr);
+  if (inferredMicrBank) {
+    await upsertBankDirectoryEntry({
+      micr,
+      bankName: inferredMicrBank,
+      source: "micr-code-fallback",
+      active: true,
+    });
+    return res.json({
+      success: true,
+      data: {
+        ifsc: "",
+        micr,
+        bankName: inferredMicrBank,
+        branch: "",
+        address: "",
+        city: "",
+        state: "",
+        district: "",
+        contact: "",
+        active: true,
+        source: "micr-code-fallback",
+        lastVerifiedAt: new Date(),
+      },
+    });
+  }
+
+  res.status(404);
+  throw new Error("MICR not found");
+});
+
 const createBank = asyncHandler(async (req, res) => {
   const { name, ifsc, address } = req.body;
 
-  const bankExists = await Bank.findOne({ ifsc });
+  const normalizedIfsc = normalizeIfsc(ifsc);
+  const bankExists = await Bank.findOne({ ifsc: normalizedIfsc });
   if (bankExists) {
     res.status(400);
     throw new Error("Bank with this IFSC already exists");
@@ -1739,8 +2212,16 @@ const createBank = asyncHandler(async (req, res) => {
 
   const bank = await Bank.create({
     name,
-    ifsc,
+    ifsc: normalizedIfsc,
     address,
+  });
+
+  await upsertBankDirectoryEntry({
+    ifsc: normalizedIfsc,
+    bankName: name,
+    address,
+    source: "manual-bank-create",
+    active: true,
   });
 
   if (bank) {
@@ -1762,5 +2243,6 @@ export {
   getBanksData,
   saveBanksData,
   getAllBanks,
+  resolveBankLookup,
   createBank,
 };
