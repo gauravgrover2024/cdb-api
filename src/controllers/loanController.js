@@ -1,6 +1,5 @@
 import asyncHandler from "express-async-handler";
 import mongoose from "mongoose";
-import Bank from "../models/Bank.js";
 import BankDirectory from "../models/BankDirectory.js";
 import Loan from "../models/Loan.js";
 import Customer from "../models/Customer.js";
@@ -776,38 +775,11 @@ const syncBankCollection = async (payload) => {
   for (const bank of banksToSync) {
     if (bank.name && (bank.ifsc || bank.micr)) {
       try {
-        if (bank.ifsc) {
-          const normalizedIfsc = normalizeIfsc(bank.ifsc);
-          const existingBank = await Bank.findOne({ ifsc: normalizedIfsc });
-          if (!existingBank) {
-            await Bank.create({
-              name: bank.name,
-              ifsc: normalizedIfsc,
-              address: bank.address || "",
-            });
-            console.log(
-              `✅ New bank added to database: ${bank.name} (${normalizedIfsc})`,
-            );
-          } else {
-            // Update address if it's provided and different
-            let updated = false;
-            if (bank.address && existingBank.address !== bank.address) {
-              existingBank.address = bank.address;
-              updated = true;
-            }
-            if (existingBank.name !== bank.name) {
-              existingBank.name = bank.name;
-              updated = true;
-            }
-            if (updated) {
-              await existingBank.save();
-            }
-          }
-        }
         await upsertBankDirectoryEntry({
           ifsc: bank.ifsc,
           micr: bank.micr,
           bankName: bank.name,
+          branch: bank.address || "",
           address: bank.address || "",
           source: "loan-save",
           active: true,
@@ -2044,7 +2016,24 @@ const saveBanksData = asyncHandler(async (req, res) => {
 
 // Get all banks
 const getAllBanks = asyncHandler(async (req, res) => {
-  const banks = await Bank.find({}).sort({ name: 1 });
+  const docs = await BankDirectory.find({})
+    .sort({ bankName: 1, ifsc: 1 })
+    .select("bankName ifsc branch address micr active updatedAt createdAt")
+    .lean();
+
+  // Keep API shape backward-compatible with previous `Bank` model.
+  const banks = docs.map((row) => ({
+    _id: row._id,
+    name: row.bankName || inferBankNameFromIfsc(row.ifsc) || inferBankNameFromMicr(row.micr) || "",
+    ifsc: row.ifsc || "",
+    branch: row.branch || row.address || "",
+    address: row.address || row.branch || "",
+    micr: row.micr || "",
+    active: row.active !== false,
+    updatedAt: row.updatedAt,
+    createdAt: row.createdAt,
+  }));
+
   res.json(banks);
 });
 
@@ -2061,14 +2050,16 @@ const resolveBankLookup = asyncHandler(async (req, res) => {
   if (ifsc) {
     const cached = await BankDirectory.findOne({ ifsc });
     if (cached) {
+      const fallbackBranch = cached.branch || cached.address || "";
+      const fallbackAddress = cached.address || cached.branch || "";
       return res.json({
         success: true,
         data: {
           ifsc: cached.ifsc || ifsc,
           micr: cached.micr || "",
           bankName: cached.bankName || inferBankNameFromIfsc(ifsc),
-          branch: cached.branch || "",
-          address: cached.address || "",
+          branch: fallbackBranch,
+          address: fallbackAddress,
           city: cached.city || "",
           state: cached.state || "",
           district: cached.district || "",
@@ -2087,22 +2078,14 @@ const resolveBankLookup = asyncHandler(async (req, res) => {
         source: "razorpay-ifsc",
         active: true,
       });
-      // Also keep lightweight Bank master synced for existing dropdown consumers.
-      if (saved?.bankName && saved?.ifsc) {
-        await Bank.findOneAndUpdate(
-          { ifsc: saved.ifsc },
-          { $set: { name: saved.bankName, ifsc: saved.ifsc, address: saved.address || saved.branch || "" } },
-          { upsert: true, new: true, setDefaultsOnInsert: true },
-        );
-      }
       return res.json({
         success: true,
         data: {
           ifsc: saved?.ifsc || fetched.ifsc,
           micr: saved?.micr || fetched.micr || "",
           bankName: saved?.bankName || fetched.bankName || inferBankNameFromIfsc(ifsc),
-          branch: saved?.branch || fetched.branch || "",
-          address: saved?.address || fetched.address || "",
+          branch: saved?.branch || fetched.branch || saved?.address || fetched.address || bankMaster?.address || "",
+          address: saved?.address || fetched.address || saved?.branch || fetched.branch || bankMaster?.address || "",
           city: saved?.city || fetched.city || "",
           state: saved?.state || fetched.state || "",
           district: saved?.district || fetched.district || "",
@@ -2150,14 +2133,16 @@ const resolveBankLookup = asyncHandler(async (req, res) => {
   // 2) MICR path (cache-first + bank-code fallback)
   const cachedByMicr = await BankDirectory.findOne({ micr }).sort({ updatedAt: -1 });
   if (cachedByMicr) {
+    const fallbackBranch = cachedByMicr.branch || cachedByMicr.address || "";
+    const fallbackAddress = cachedByMicr.address || cachedByMicr.branch || "";
     return res.json({
       success: true,
       data: {
         ifsc: cachedByMicr.ifsc || "",
         micr: cachedByMicr.micr || micr,
         bankName: cachedByMicr.bankName || inferBankNameFromMicr(micr),
-        branch: cachedByMicr.branch || "",
-        address: cachedByMicr.address || "",
+        branch: fallbackBranch,
+        address: fallbackAddress,
         city: cachedByMicr.city || "",
         state: cachedByMicr.state || "",
         district: cachedByMicr.district || "",
@@ -2201,31 +2186,41 @@ const resolveBankLookup = asyncHandler(async (req, res) => {
 });
 
 const createBank = asyncHandler(async (req, res) => {
-  const { name, ifsc, address } = req.body;
+  const { name, ifsc, address, branch, micr } = req.body;
 
   const normalizedIfsc = normalizeIfsc(ifsc);
-  const bankExists = await Bank.findOne({ ifsc: normalizedIfsc });
-  if (bankExists) {
+  const normalizedMicr = normalizeMicr(micr);
+  const existing = normalizedIfsc
+    ? await BankDirectory.findOne({ ifsc: normalizedIfsc })
+    : normalizedMicr
+      ? await BankDirectory.findOne({ micr: normalizedMicr, bankName: String(name || "").trim() })
+      : null;
+  if (existing) {
     res.status(400);
-    throw new Error("Bank with this IFSC already exists");
+    throw new Error("Bank directory entry already exists");
   }
 
-  const bank = await Bank.create({
-    name,
+  const bank = await upsertBankDirectoryEntry({
     ifsc: normalizedIfsc,
-    address,
-  });
-
-  await upsertBankDirectoryEntry({
-    ifsc: normalizedIfsc,
+    micr: normalizedMicr,
     bankName: name,
-    address,
+    branch: branch || address || "",
+    address: address || branch || "",
     source: "manual-bank-create",
     active: true,
   });
 
   if (bank) {
-    res.status(201).json(bank);
+    res.status(201).json({
+      _id: bank._id,
+      name: bank.bankName || "",
+      ifsc: bank.ifsc || "",
+      branch: bank.branch || bank.address || "",
+      address: bank.address || bank.branch || "",
+      micr: bank.micr || "",
+      active: bank.active !== false,
+      source: bank.source || "manual-bank-create",
+    });
   } else {
     res.status(400);
     throw new Error("Invalid bank data");
