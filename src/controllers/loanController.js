@@ -9,6 +9,7 @@ import {
   calculatePayoutsOnDisbursement,
   validateDisbursementData,
 } from "../services/payoutService.js";
+import { upsertVehicleRecordFromLoan } from "../services/vehicleRecordService.js";
 
 // Fields to sync from Loan -> Customer (comprehensive list)
 const CUSTOMER_SYNC_FIELDS = [
@@ -893,6 +894,15 @@ const ensureLinkedRecords = async (loanDoc) => {
   }
 };
 
+const syncVehicleMasterRecord = async (loanDoc) => {
+  try {
+    await upsertVehicleRecordFromLoan(loanDoc);
+  } catch (err) {
+    // Vehicle master record is supplementary; loan save should never fail because of this.
+    console.error("syncVehicleMasterRecord warning:", err?.message || err);
+  }
+};
+
 const parseAmount = (value) => {
   if (value == null || value === "") return 0;
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -1506,6 +1516,7 @@ const createLoan = asyncHandler(async (req, res) => {
           bulkCount: count,
         });
         await ensureLinkedRecords(loan);
+        await syncVehicleMasterRecord(loan);
         createdLoans.push(loan);
       } catch (err) {
         // Collision fallback: try one with offset
@@ -1519,6 +1530,7 @@ const createLoan = asyncHandler(async (req, res) => {
             bulkCount: count,
           });
           await ensureLinkedRecords(loan);
+          await syncVehicleMasterRecord(loan);
           createdLoans.push(loan);
         } catch (e) {
           console.error("Failed to create bulk loan item", e);
@@ -1584,6 +1596,7 @@ const createLoan = asyncHandler(async (req, res) => {
 
   if (loan) {
     await ensureLinkedRecords(loan);
+    await syncVehicleMasterRecord(loan);
     clearLoanCaches();
 
     // Return comprehensive response confirming all details were saved
@@ -1735,6 +1748,10 @@ const updateLoan = asyncHandler(async (req, res) => {
       step = "ensure-linked-records";
       // 3. Ensure linked records (DO and Payment)
       await ensureLinkedRecords(updatedLoan);
+
+      step = "sync-vehicle-record";
+      // 4. Upsert vehicle master record
+      await syncVehicleMasterRecord(updatedLoan);
 
       step = "respond-success";
       res.json({
