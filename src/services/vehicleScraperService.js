@@ -6,7 +6,10 @@ import mongoose from "mongoose";
 const DEFAULT_SCRIPTS_DIR = path.resolve(process.cwd(), "scripts/vehicle-scrapers");
 const SCRIPTS_DIR =
   process.env.SCRAPER_SCRIPTS_DIR || DEFAULT_SCRIPTS_DIR;
-const PYTHON_BIN = process.env.SCRAPER_PYTHON_BIN || "python3";
+const DEFAULT_PYTHON_BIN = fs.existsSync("/usr/local/bin/python3")
+  ? "/usr/local/bin/python3"
+  : "python3";
+const PYTHON_BIN = process.env.SCRAPER_PYTHON_BIN || DEFAULT_PYTHON_BIN;
 
 const SCRIPT_CATALOG = {
   prices: {
