@@ -1,29 +1,55 @@
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
-const required = [
+const REQUIRED_KEYS = [
   "R2_ACCOUNT_ID",
   "R2_ACCESS_KEY_ID",
   "R2_SECRET_ACCESS_KEY",
   "R2_BUCKET",
 ];
 
-const missing = required.filter((key) => !process.env[key]);
+const getEnv = () => {
+  const env = {
+    accountId: process.env.R2_ACCOUNT_ID,
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    bucket: process.env.R2_BUCKET,
+    endpoint: process.env.R2_ENDPOINT,
+    publicBaseUrl: process.env.R2_PUBLIC_BASE_URL,
+  };
 
-const endpoint =
-  process.env.R2_ENDPOINT ||
-  `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+  env.missing = REQUIRED_KEYS.filter((k) => !process.env[k]);
+  if (!env.endpoint && env.accountId) {
+    env.endpoint = `https://${env.accountId}.r2.cloudflarestorage.com`;
+  }
 
-const r2Client =
-  missing.length === 0
-    ? new S3Client({
-        region: "auto",
-        endpoint,
-        credentials: {
-          accessKeyId: process.env.R2_ACCESS_KEY_ID,
-          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-        },
-      })
-    : null;
+  return env;
+};
+
+let clientCache = { signature: "", client: null };
+
+const getR2Client = () => {
+  const env = getEnv();
+  if (env.missing.length) {
+    return { client: null, env };
+  }
+
+  const signature = [env.endpoint, env.accessKeyId, env.secretAccessKey].join("|");
+  if (clientCache.client && clientCache.signature === signature) {
+    return { client: clientCache.client, env };
+  }
+
+  const client = new S3Client({
+    region: "auto",
+    endpoint: env.endpoint,
+    credentials: {
+      accessKeyId: env.accessKeyId,
+      secretAccessKey: env.secretAccessKey,
+    },
+  });
+
+  clientCache = { signature, client };
+  return { client, env };
+};
 
 const encodeKeyForUrl = (key = "") =>
   String(key)
@@ -32,26 +58,32 @@ const encodeKeyForUrl = (key = "") =>
     .join("/");
 
 export const getR2ConfigError = () => {
-  if (missing.length === 0) return null;
-  return `Missing R2 environment variables: ${missing.join(", ")}`;
+  const { env } = getR2Client();
+  if (!env.missing.length) return null;
+  return `Missing R2 environment variables: ${env.missing.join(", ")}`;
 };
 
 export const buildR2PublicUrl = (key) => {
+  const { env } = getR2Client();
   const safeKey = encodeKeyForUrl(key);
-  const publicBase = process.env.R2_PUBLIC_BASE_URL || "";
-  if (publicBase) {
-    return `${publicBase.replace(/\/$/, "")}/${safeKey}`;
+
+  if (env.publicBaseUrl) {
+    return `${env.publicBaseUrl.replace(/\/$/, "")}/${safeKey}`;
   }
-  return `${endpoint.replace(/\/$/, "")}/${process.env.R2_BUCKET}/${safeKey}`;
+
+  return `${String(env.endpoint || "").replace(/\/$/, "")}/${env.bucket}/${safeKey}`;
 };
 
 export const uploadBufferToR2 = async ({ key, body, contentType }) => {
-  const configError = getR2ConfigError();
-  if (configError) throw new Error(configError);
+  const { client, env } = getR2Client();
 
-  await r2Client.send(
+  if (!client) {
+    throw new Error(`Missing R2 environment variables: ${env.missing.join(", ")}`);
+  }
+
+  await client.send(
     new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET,
+      Bucket: env.bucket,
       Key: key,
       Body: body,
       ContentType: contentType || "application/octet-stream",
