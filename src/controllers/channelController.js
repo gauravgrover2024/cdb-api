@@ -60,27 +60,24 @@ const getChannelById = asyncHandler(async (req, res) => {
 // @access  Public
 const searchChannels = asyncHandler(async (req, res) => {
   const { term, type } = req.query;
-  
-  if (!term) {
-    res.status(400);
-    throw new Error('Search term is required');
-  }
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 200);
 
-  const query = {
-    $or: [
+  const query = { status: 'Active' };
+  if (term && String(term).trim()) {
+    query.$or = [
       { name: new RegExp(term, 'i') },
       { mobile: new RegExp(term, 'i') },
       { channelId: new RegExp(term, 'i') },
       { dsaCode: new RegExp(term, 'i') },
-    ],
-    status: 'Active',
-  };
+      { address: new RegExp(term, 'i') },
+    ];
+  }
 
   if (type) query.type = type;
 
   const channels = await Channel.find(query)
-    .limit(10)
-    .select('channelId name type mobile contactPerson city commissionRate payoutPercentage outstandingCommission');
+    .limit(limit)
+    .select('channelId name type mobile contactPerson city address commissionRate payoutPercentage outstandingCommission');
 
   res.json({
     success: true,

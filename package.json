@@ -10,6 +10,7 @@
     "indexes:loan": "node src/scripts/ensureLoanIndexes.js",
     "backfill:latest-business": "node src/scripts/backfillLatestBusinessDate.js",
     "banks:import": "node src/scripts/importBankDirectoryFromFile.js",
+    "showrooms:import": "node src/scripts/importCardekhoShowrooms.js",
     "data:import": "node src/seeder.js",
     "vehicles:import": "node src/scripts/importVehicles.js",
     "vehicles:clear": "node src/scripts/clearVehicles.js"

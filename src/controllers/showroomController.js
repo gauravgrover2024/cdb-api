@@ -1,6 +1,46 @@
 import asyncHandler from 'express-async-handler';
 import Showroom from '../models/Showroom.js';
 
+const cleanText = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+
+const canonicalBrandKey = (value) => {
+  const raw = cleanText(value).toLowerCase().replace(/[_-]+/g, ' ');
+  if (!raw) return '';
+  const compact = raw.replace(/[^a-z0-9]/g, '');
+
+  if (['maruti', 'marutisuzuki', 'suzuki', 'msil'].includes(compact)) return 'maruti';
+  if (['mercedes', 'mercedesbenz', 'benz', 'mercedesbenzcars'].includes(compact)) return 'mercedes-benz';
+  if (['bmw', 'bmwindia'].includes(compact)) return 'bmw';
+  if (['landrover', 'jaguarlandrover', 'jlr'].includes(compact)) return 'land-rover';
+  if (['volkswagen', 'vw'].includes(compact)) return 'volkswagen';
+  if (['mahindra', 'mahindramahindra'].includes(compact)) return 'mahindra';
+  if (['mg', 'morrisgarages', 'morrisgarage'].includes(compact)) return 'mg';
+  if (['tata', 'tatamotors'].includes(compact)) return 'tata';
+  if (['hyundai'].includes(compact)) return 'hyundai';
+  if (['kia'].includes(compact)) return 'kia';
+  if (['honda'].includes(compact)) return 'honda';
+  if (['toyota', 'toyotakirloskar'].includes(compact)) return 'toyota';
+  if (['renault'].includes(compact)) return 'renault';
+  if (['nissan'].includes(compact)) return 'nissan';
+  if (['skoda'].includes(compact)) return 'skoda';
+  if (['audi'].includes(compact)) return 'audi';
+  if (['jeep'].includes(compact)) return 'jeep';
+  if (['isuzu'].includes(compact)) return 'isuzu';
+  if (['citroen'].includes(compact)) return 'citroen';
+  if (['byd'].includes(compact)) return 'byd';
+  if (['force', 'forcemotors'].includes(compact)) return 'force';
+  if (['jaguar'].includes(compact)) return 'jaguar';
+  if (['astonmartin'].includes(compact)) return 'aston-martin';
+  if (['bentley'].includes(compact)) return 'bentley';
+
+  return raw;
+};
+
+const safeRegex = (value) => {
+  const escaped = String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(escaped, 'i');
+};
+
 // @desc    Get all showrooms with search and filtering
 // @route   GET /api/showrooms
 // @access  Public
@@ -9,27 +49,28 @@ const getShowrooms = asyncHandler(async (req, res) => {
   const pageSize = req.query.limit ? Number(req.query.limit) : 50;
   const skip = Number(req.query.skip) || 0;
 
-  let query = {};
+  const query = {};
 
-  // Text search across name, mobile, city
   if (q) {
+    const re = safeRegex(q);
     query.$or = [
-      { name: new RegExp(q, 'i') },
-      { businessName: new RegExp(q, 'i') },
-      { mobile: new RegExp(q, 'i') },
-      { contactPerson: new RegExp(q, 'i') },
-      { showroomId: new RegExp(q, 'i') },
+      { name: re },
+      { businessName: re },
+      { mobile: re },
+      { contactPerson: re },
+      { showroomId: re },
     ];
   }
 
-  if (city) query.city = new RegExp(city, 'i');
+  if (city) query.city = safeRegex(city);
   if (status) query.status = status;
 
   const count = await Showroom.countDocuments(query);
   const showrooms = await Showroom.find(query)
     .sort({ createdAt: -1 })
     .limit(pageSize)
-    .skip(skip);
+    .skip(skip)
+    .lean();
 
   res.json({
     success: true,
@@ -43,7 +84,7 @@ const getShowrooms = asyncHandler(async (req, res) => {
 // @access  Public
 const getShowroomById = asyncHandler(async (req, res) => {
   const showroom = await Showroom.findById(req.params.id);
-  
+
   if (showroom) {
     res.json({ success: true, data: showroom });
   } else {
@@ -56,23 +97,40 @@ const getShowroomById = asyncHandler(async (req, res) => {
 // @route   GET /api/showrooms/search
 // @access  Public
 const searchShowrooms = asyncHandler(async (req, res) => {
-  const { term } = req.query;
-  
-  if (!term) {
-    res.status(400);
-    throw new Error('Search term is required');
+  const term = cleanText(req.query.term || '');
+  const brand = cleanText(req.query.brand || '');
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 5000);
+
+  const query = { status: 'Active' };
+
+  const brandKey = canonicalBrandKey(brand);
+  if (brandKey) {
+    // Indexed array exact-match filter (fast)
+    query.brandKeys = brandKey;
   }
 
-  const showrooms = await Showroom.find({
-    $or: [
-      { name: new RegExp(term, 'i') },
-      { mobile: new RegExp(term, 'i') },
-      { showroomId: new RegExp(term, 'i') },
-    ],
-    status: 'Active',
-  })
-    .limit(10)
-    .select('showroomId name mobile contactPerson city address commissionRate outstandingCommission');
+  if (term) {
+    const termKey = canonicalBrandKey(term);
+    const looksLikeSameBrandSearch = brandKey && termKey && termKey === brandKey;
+
+    if (!looksLikeSameBrandSearch) {
+      const re = safeRegex(term);
+      query.$or = [
+        { name: re },
+        { businessName: re },
+        { mobile: re },
+        { showroomId: re },
+        { city: re },
+        { address: re },
+      ];
+    }
+  }
+
+  const showrooms = await Showroom.find(query)
+    .sort({ name: 1, city: 1 })
+    .limit(limit)
+    .select('showroomId name businessName mobile contactPerson city address brands brandKeys commissionRate outstandingCommission')
+    .lean();
 
   res.json({
     success: true,
@@ -91,15 +149,19 @@ const createShowroom = asyncHandler(async (req, res) => {
     throw new Error('Please provide name, mobile, address, and city');
   }
 
-  // Check if showroom with same mobile already exists
   const showroomExists = await Showroom.findOne({ mobile });
   if (showroomExists) {
     res.status(400);
     throw new Error('Showroom with this mobile number already exists');
   }
 
+  const brandKeys = Array.isArray(req.body?.brands)
+    ? [...new Set(req.body.brands.map((b) => canonicalBrandKey(b)).filter(Boolean))]
+    : [];
+
   const showroom = await Showroom.create({
     ...req.body,
+    brandKeys,
     createdBy: req.user?._id,
   });
 
@@ -121,7 +183,11 @@ const updateShowroom = asyncHandler(async (req, res) => {
     Object.keys(req.body).forEach((key) => {
       showroom[key] = req.body[key];
     });
-    
+
+    if (Array.isArray(req.body?.brands)) {
+      showroom.brandKeys = [...new Set(req.body.brands.map((b) => canonicalBrandKey(b)).filter(Boolean))];
+    }
+
     showroom.lastModifiedBy = req.user?._id;
 
     const updatedShowroom = await showroom.save();
@@ -139,10 +205,9 @@ const deleteShowroom = asyncHandler(async (req, res) => {
   const showroom = await Showroom.findById(req.params.id);
 
   if (showroom) {
-    // Soft delete by setting status to Inactive
     showroom.status = 'Inactive';
     await showroom.save();
-    
+
     res.json({ success: true, message: 'Showroom deactivated successfully' });
   } else {
     res.status(404);
@@ -174,8 +239,7 @@ const addShowroomPayment = asyncHandler(async (req, res) => {
   };
 
   showroom.paymentHistory.push(paymentEntry);
-  
-  // Update commission totals
+
   if (excessAmount > 0) {
     showroom.totalCommissionReceivable += excessAmount;
   }

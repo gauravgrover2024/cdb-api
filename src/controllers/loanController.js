@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import BankDirectory from "../models/BankDirectory.js";
 import Loan from "../models/Loan.js";
 import Customer from "../models/Customer.js";
+import Channel from "../models/Channel.js";
 import DeliveryOrder from "../models/DeliveryOrder.js";
 import Payment from "../models/Payment.js";
 import {
@@ -792,6 +793,104 @@ const syncBankCollection = async (payload) => {
   }
 };
 
+const normalizeMobileForChannel = (value) =>
+  String(value || "").replace(/\D/g, "").slice(-10);
+
+const guessCityForChannel = (payload = {}, address = "") => {
+  const directCity = String(
+    payload.city ||
+      payload.permanentCity ||
+      payload.companyCity ||
+      payload.registrationCity ||
+      payload.postfile_regd_city ||
+      "",
+  ).trim();
+  if (directCity) return directCity;
+
+  const match = String(address || "")
+    .match(/([A-Za-z\s]+),\s*[A-Za-z\s]+(?:\s+\d{6})?$/);
+  if (match?.[1]) return match[1].trim();
+
+  return "Unknown";
+};
+
+const upsertChannelPartnerFromLoan = async (payload = {}) => {
+  const sourceType = String(payload.recordSource || payload.source || "")
+    .trim()
+    .toLowerCase();
+  if (sourceType !== "indirect") return null;
+
+  const partnerName = String(payload.dealerName || payload.sourceName || "").trim();
+  const mobile = normalizeMobileForChannel(payload.dealerMobile);
+  const address = String(payload.dealerAddress || "").trim();
+  if (!partnerName || !mobile || !address) return null;
+
+  const city = guessCityForChannel(payload, address);
+  const query = {
+    $or: [
+      { mobile },
+      { name: new RegExp(`^${partnerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+    ],
+  };
+
+  const existing = await Channel.findOne(query);
+  if (existing) {
+    let dirty = false;
+    if (!existing.name || existing.name !== partnerName) {
+      existing.name = partnerName;
+      dirty = true;
+    }
+    if (!existing.businessName || existing.businessName !== partnerName) {
+      existing.businessName = partnerName;
+      dirty = true;
+    }
+    if (!existing.contactPerson || existing.contactPerson !== partnerName) {
+      existing.contactPerson = partnerName;
+      dirty = true;
+    }
+    if (!existing.mobile || existing.mobile !== mobile) {
+      existing.mobile = mobile;
+      dirty = true;
+    }
+    if (!existing.address || existing.address !== address) {
+      existing.address = address;
+      dirty = true;
+    }
+    if (!existing.city || existing.city === "Unknown") {
+      existing.city = city || "Unknown";
+      dirty = true;
+    }
+    if (!existing.type) {
+      existing.type = "Dealer";
+      dirty = true;
+    }
+    if (!existing.status || existing.status !== "Active") {
+      existing.status = "Active";
+      dirty = true;
+    }
+    if (dirty) await existing.save();
+    return existing;
+  }
+
+  const year = new Date().getFullYear();
+  const channelCount = await Channel.countDocuments();
+  const channelId = `CH-${year}-${String(channelCount + 1).padStart(4, "0")}`;
+
+  return await Channel.create({
+    channelId,
+    name: partnerName,
+    businessName: partnerName,
+    type: "Dealer",
+    contactPerson: partnerName,
+    mobile,
+    address,
+    city: city || "Unknown",
+    status: "Active",
+    commissionRate: 0,
+    payoutPercentage: 0,
+  });
+};
+
 const resolveCustomerById = async (customerIdValue) => {
   if (!customerIdValue) return null;
 
@@ -1515,6 +1614,11 @@ const createLoan = asyncHandler(async (req, res) => {
           isBulk: true,
           bulkCount: count,
         });
+        try {
+          await upsertChannelPartnerFromLoan({ ...loanPayload, ...loan.toObject() });
+        } catch (channelErr) {
+          console.warn("Channel partner upsert skipped (bulk item):", channelErr?.message);
+        }
         await ensureLinkedRecords(loan);
         await syncVehicleMasterRecord(loan);
         createdLoans.push(loan);
@@ -1529,6 +1633,11 @@ const createLoan = asyncHandler(async (req, res) => {
             isBulk: true,
             bulkCount: count,
           });
+          try {
+            await upsertChannelPartnerFromLoan({ ...loanPayload, ...loan.toObject() });
+          } catch (channelErr) {
+            console.warn("Channel partner upsert skipped (bulk fallback item):", channelErr?.message);
+          }
           await ensureLinkedRecords(loan);
           await syncVehicleMasterRecord(loan);
           createdLoans.push(loan);
@@ -1572,6 +1681,11 @@ const createLoan = asyncHandler(async (req, res) => {
 
     // Auto-sync bank details to global Bank collection for future auto-fill
     await syncBankCollection(finalPayload);
+    try {
+      await upsertChannelPartnerFromLoan(finalPayload);
+    } catch (channelErr) {
+      console.warn("Channel partner upsert skipped (create):", channelErr?.message);
+    }
   } catch (error) {
     if (error.code === 11000) {
       // Duplicate key error - Loan ID collision
@@ -1583,6 +1697,11 @@ const createLoan = asyncHandler(async (req, res) => {
         ...loanPayload,
         loanId: incId,
       });
+      try {
+        await upsertChannelPartnerFromLoan({ ...loanPayload, ...loan.toObject() });
+      } catch (channelErr) {
+        console.warn("Channel partner upsert skipped (create fallback):", channelErr?.message);
+      }
     } else if (error.name === "ValidationError") {
       console.error(
         "❌ Validation Error:",
@@ -1721,6 +1840,11 @@ const updateLoan = asyncHandler(async (req, res) => {
       step = "sync-bank-collection";
       // Auto-sync bank details to global Bank collection for future auto-fill
       await syncBankCollection(normalizedBody);
+      try {
+        await upsertChannelPartnerFromLoan(updatedLoan?.toObject?.() || normalizedBody);
+      } catch (channelErr) {
+        console.warn("Channel partner upsert skipped (update):", channelErr?.message);
+      }
 
       step = "sync-customer";
       // 2. Sync with Customer (Bidirectional)
