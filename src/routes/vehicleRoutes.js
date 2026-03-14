@@ -14,6 +14,13 @@ import {
   getVehicleByDetails,
   getVehicleMedia,
 } from '../controllers/vehicleController.js';
+import {
+  getScraperCatalog,
+  getScraperSummary,
+  getScraperRuns,
+  getScraperRunById,
+  runScraper,
+} from "../controllers/vehicleScraperController.js";
 
 router.route('/')
   .get(getVehicles)
@@ -40,6 +47,12 @@ router.route('/by-details')
 
 router.route('/media')
   .get(getVehicleMedia);
+
+router.get("/scraper/catalog", getScraperCatalog);
+router.get("/scraper/summary", getScraperSummary);
+router.get("/scraper/runs", getScraperRuns);
+router.get("/scraper/runs/:runId", getScraperRunById);
+router.post("/scraper/run", runScraper);
 
 router.route('/:id')
   .get(getVehicleById)
