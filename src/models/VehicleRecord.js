@@ -2,13 +2,13 @@ import mongoose from "mongoose";
 
 const vehicleRecordSchema = mongoose.Schema(
   {
-    loanId: { type: String, index: true, sparse: true },
+    loanId: { type: String, sparse: true },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", index: true },
     customerName: { type: String },
     primaryMobile: { type: String },
 
     registrationNumber: { type: String },
-    registrationNumberNormalized: { type: String, index: true },
+    registrationNumberNormalized: { type: String },
     make: { type: String, index: true },
     model: { type: String, index: true },
     variant: { type: String, index: true },
