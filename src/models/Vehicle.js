@@ -55,6 +55,10 @@ vehicleSchema.index(
   { make: 1, model: 1, variant: 1, fuel: 1, city: 1 },
   { unique: true },
 );
+vehicleSchema.index({ city: 1 });
+vehicleSchema.index({ city: 1, make: 1, model: 1 });
+vehicleSchema.index({ city: 1, make: 1, model: 1, variant: 1 });
+vehicleSchema.index({ city: 1, brand: 1, model: 1 });
 vehicleSchema.index({
   make: "text",
   model: "text",
