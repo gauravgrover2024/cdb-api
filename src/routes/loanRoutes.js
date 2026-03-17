@@ -2,6 +2,10 @@ import express from 'express';
 import {
   getLoans,
   getLoanDashboardStats,
+  getLoanAnalyticsOverview,
+  getLoanAnalyticsDrilldown,
+  createLoanCustomWidget,
+  createLoanCustomReport,
   getLoanById,
   createLoan,
   updateLoan,
@@ -18,6 +22,10 @@ router.route('/')
   .post(createLoan);
 
 router.get('/dashboard/stats', getLoanDashboardStats);
+router.get('/analytics/overview', getLoanAnalyticsOverview);
+router.get('/analytics/drilldown', getLoanAnalyticsDrilldown);
+router.post('/analytics/custom-widget', createLoanCustomWidget);
+router.post('/analytics/custom-report', createLoanCustomReport);
 
 router.route('/:id')
   .get(getLoanById)
