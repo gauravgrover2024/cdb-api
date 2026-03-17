@@ -242,6 +242,24 @@ const buildVehicleQuery = ({ q, make, model, variant, city, fuel }) => {
 
 const buildMakeRegex = (make) => new RegExp(`^${escapeRegex(String(make || '').trim())}$`, 'i');
 
+const parseBoolean = (value) => {
+  const raw = String(value ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+};
+
+const ACTIVE_VARIANT_FILTER = {
+  $nor: [
+    { is_discontinued: true },
+    { is_discontinued: 1 },
+    { is_discontinued: 'true' },
+    { is_discontinued: 'True' },
+    { isDiscontinued: true },
+    { isDiscontinued: 1 },
+    { isDiscontinued: 'true' },
+    { isDiscontinued: 'True' },
+  ],
+};
+
 const getVehicles = asyncHandler(async (req, res) => {
   const { q, make, model, variant, city, fuel } = req.query;
   const pageSize = req.query.limit ? Number(req.query.limit) : null;
@@ -383,11 +401,15 @@ const bulkUploadVehicles = asyncHandler(async (req, res) => {
 
 const getUniqueMakes = asyncHandler(async (req, res) => {
   const { city } = req.query;
+  const includeDiscontinued = parseBoolean(req.query.includeDiscontinued);
   const cityQuery = city ? buildVehicleQuery({ city }) : {};
+  const baseQuery = includeDiscontinued
+    ? cityQuery
+    : { ...cityQuery, ...ACTIVE_VARIANT_FILTER };
 
   const [makeValues, brandValues] = await Promise.all([
-    Vehicle.distinct('make', { ...cityQuery, make: { $exists: true, $ne: null } }),
-    Vehicle.distinct('brand', { ...cityQuery, brand: { $exists: true, $ne: null } }),
+    Vehicle.distinct('make', { ...baseQuery, make: { $exists: true, $ne: null } }),
+    Vehicle.distinct('brand', { ...baseQuery, brand: { $exists: true, $ne: null } }),
   ]);
 
   const makes = [
@@ -403,6 +425,7 @@ const getUniqueMakes = asyncHandler(async (req, res) => {
 
 const getUniqueModels = asyncHandler(async (req, res) => {
   const { make, city } = req.query;
+  const includeDiscontinued = parseBoolean(req.query.includeDiscontinued);
 
   if (!make) {
     res.status(400);
@@ -410,6 +433,7 @@ const getUniqueModels = asyncHandler(async (req, res) => {
   }
 
   const query = buildVehicleQuery({ make, city });
+  if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
   const docs = await Vehicle.find(query).select({ make: 1, brand: 1, model: 1 }).lean();
   const models = [...new Set(docs.map((doc) => normalizeVehicleRecord(doc).model).filter(Boolean))].sort(
     (a, b) => a.localeCompare(b),
@@ -420,13 +444,17 @@ const getUniqueModels = asyncHandler(async (req, res) => {
 
 const getUniqueVariants = asyncHandler(async (req, res) => {
   const { make, model, city } = req.query;
+  const includeDiscontinued = parseBoolean(req.query.includeDiscontinued);
 
   if (!make || !model) {
     res.status(400);
     throw new Error('Make and Model parameters are required');
   }
 
-  const docs = await Vehicle.find(buildVehicleQuery({ make, model, city }))
+  const query = buildVehicleQuery({ make, model, city });
+  if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
+
+  const docs = await Vehicle.find(query)
     .select({ make: 1, brand: 1, model: 1, variant: 1 })
     .lean();
   const variants = [...new Set(
@@ -442,6 +470,7 @@ const getUniqueVariants = asyncHandler(async (req, res) => {
 
 const getVariantOptionsByModel = asyncHandler(async (req, res) => {
   const { make, model, city } = req.query;
+  const includeDiscontinued = parseBoolean(req.query.includeDiscontinued);
 
   if (!make || !model) {
     res.status(400);
@@ -450,6 +479,10 @@ const getVariantOptionsByModel = asyncHandler(async (req, res) => {
 
   const baseQuery = buildVehicleQuery({ make, model });
   const cityQuery = city ? buildVehicleQuery({ make, model, city }) : null;
+  if (!includeDiscontinued) {
+    mergeAndCondition(baseQuery, ACTIVE_VARIANT_FILTER);
+    if (cityQuery) mergeAndCondition(cityQuery, ACTIVE_VARIANT_FILTER);
+  }
 
   const cityDocs = cityQuery ? await Vehicle.find(cityQuery).select(VEHICLE_LIST_PROJECTION).lean() : [];
   const docs = cityDocs.length
