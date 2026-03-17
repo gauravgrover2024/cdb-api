@@ -3,12 +3,6 @@ import Quotation from "../models/Quotation.js";
 
 const router = express.Router();
 
-// Debug: log pricing paths once
-console.log(
-  "Quotation pricing paths:",
-  Object.keys(Quotation.schema.paths).filter((p) => p.startsWith("pricing.")),
-);
-
 // POST /api/quotations
 router.post("/", async (req, res) => {
   try {

@@ -19,7 +19,6 @@ import featuresRoutes from "./routes/featuresRoutes.js";
 import bookingsRouter from "./routes/bookings.js";
 
 dotenv.config();
-connectDB();
 
 const app = express();
 
@@ -105,10 +104,21 @@ app.use((err, req, res, next) => {
 // Local runtime: start server only outside Vercel serverless
 const PORT = process.env.PORT || 5050;
 if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  startServer();
 }
 
 // Export Express app for Vercel serverless
 export default app;
+
+async function startServer() {
+  try {
+    await connectDB();
+
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error.message);
+    process.exit(1);
+  }
+}
