@@ -339,6 +339,8 @@ const normalizeCustomerFields = (payload) => {
     "co_currentExperience",
     "co_totalExp",
     "co_totalExperience",
+    "co_yearsAtCurrentResidence",
+    "co_yearsInCurrentResidence",
     "co_salaryMonthly",
     "co_monthlySalary",
     "co_monthlyIncome",
@@ -517,6 +519,16 @@ const normalizeCustomerFields = (payload) => {
     normalized.co_totalExp = normalized.co_totalExperience;
   if (normalized.co_totalExp && !normalized.co_totalExperience)
     normalized.co_totalExperience = normalized.co_totalExp;
+  if (
+    normalized.co_yearsAtCurrentResidence !== undefined &&
+    (normalized.co_yearsInCurrentResidence === undefined || normalized.co_yearsInCurrentResidence === null)
+  )
+    normalized.co_yearsInCurrentResidence = normalized.co_yearsAtCurrentResidence;
+  if (
+    normalized.co_yearsInCurrentResidence !== undefined &&
+    (normalized.co_yearsAtCurrentResidence === undefined || normalized.co_yearsAtCurrentResidence === null)
+  )
+    normalized.co_yearsAtCurrentResidence = normalized.co_yearsInCurrentResidence;
   if (normalized.co_occupationType && !normalized.co_occupation)
     normalized.co_occupation = normalized.co_occupationType;
   if (normalized.co_occupation && !normalized.co_occupationType)
@@ -1096,6 +1108,8 @@ const getLoans = asyncHandler(async (req, res) => {
     "showroom",
     "showroom_name",
     "approval_bankName",
+    "approval_loanBookedIn",
+    "approval_brokerName",
     "postfile_bankName",
     "approval_banksData",
     "approval_loanAmountDisbursed",
@@ -1447,6 +1461,9 @@ const getLoanById = asyncHandler(async (req, res) => {
       loanObj.approval_banksData = [
         {
           bankName: loanObj.approval_bankName,
+          loanBookedIn: loanObj.approval_loanBookedIn || "Direct Code",
+          brokerName: loanObj.approval_brokerName || "",
+          dsaCode: loanObj.dsaCode || "",
           loanAmount: loanObj.approval_loanAmountApproved,
           interestRate: loanObj.approval_roi,
           tenure: loanObj.approval_tenureMonths,
@@ -2143,6 +2160,24 @@ const saveBanksData = asyncHandler(async (req, res) => {
   }
 
   loan.approval_banksData = banks;
+  const primaryBank =
+    banks.find((b) => String(b?.status || "").toLowerCase() === "disbursed") ||
+    banks.find((b) => String(b?.status || "").toLowerCase() === "approved") ||
+    banks[0] ||
+    null;
+
+  if (primaryBank) {
+    loan.approval_loanBookedIn = primaryBank.loanBookedIn || "Direct Code";
+    loan.approval_brokerName =
+      loan.approval_loanBookedIn === "Indirect Code"
+        ? String(primaryBank.brokerName || "").trim()
+        : "";
+    if (loan.approval_loanBookedIn === "Indirect Code") {
+      loan.dsaCode = "";
+    } else if (primaryBank.dsaCode !== undefined) {
+      loan.dsaCode = primaryBank.dsaCode;
+    }
+  }
 
   // Save with retry for version conflicts
   await saveWithRetry(loan);
