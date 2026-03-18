@@ -3,11 +3,11 @@ import mongoose from 'mongoose';
 const loanSchema = mongoose.Schema(
   {
     loanId: { type: String, required: true, index: true }, // Custom ID e.g. "LN-2024-001"
-    customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
-    
+    customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
+
     // Denormalized customer info for quicker access (common in non-relational)
-    customerName: { type: String }, 
-    
+    customerName: { type: String },
+
     // --- Sourcing ---
     // --- Sourcing & Lead ---
     sourcingChannel: { type: String },
@@ -25,13 +25,13 @@ const loanSchema = mongoose.Schema(
     dealerAddress: { type: String }, // Dealer address if Indirect
     dealerMobile: { type: String }, // Dealer mobile if Indirect
     dealtBy: { type: String }, // Assigned Employee
-    
+
     // --- Payout Details (only applicable when Indirect) ---
     payoutApplicable: { type: String }, // Yes / No (from Record Details)
     prefile_sourcePayoutPercentage: { type: Number }, // Payout % for indirect source
 
     // --- Applicant Type ---
-    applicantType: { type: String, default: 'Individual' },
+    applicantType: { type: String, default: "Individual" },
     caseType: { type: String },
     customerType: { type: String },
     isMSME: { type: String },
@@ -44,20 +44,20 @@ const loanSchema = mongoose.Schema(
     education: { type: String },
     houseType: { type: String },
     addressType: { type: String },
-    
+
     identityProofType: { type: String },
     identityProofNumber: { type: String },
     identityProofExpiry: { type: Date },
-    
+
     addressProofType: { type: String },
     addressProofNumber: { type: String },
-    
+
     residenceAddress: { type: String },
     pincode: { type: String },
     city: { type: String },
     yearsInCurrentCity: { type: Number },
     yearsInCurrentHouse: { type: Number },
-    
+
     primaryMobile: { type: String },
     customerMobile: { type: String }, // Alias in pre-file/profile helpers
     mobileNo: { type: String }, // Alias used by profile/header snapshots
@@ -69,7 +69,7 @@ const loanSchema = mongoose.Schema(
     contactPersonName: { type: String },
     contactPersonMobile: { type: String },
     extraMobiles: { type: [String] }, // Array of strings
-    
+
     permanentAddress: { type: String },
     permanentPincode: { type: String },
     permanentCity: { type: String },
@@ -104,10 +104,10 @@ const loanSchema = mongoose.Schema(
     co_companyType: { type: String },
     co_businessNature: { type: [String] }, // Multiple select
     co_designation: { type: String },
-    co_currentExp: { type: Number }, // In years - numeric
-    co_currentExperience: { type: Number },
-    co_totalExp: { type: Number }, // In years - numeric
-    co_totalExperience: { type: Number },
+    co_currentExp: { type: String }, // In years - numeric
+    co_currentExperience: { type: String },
+    co_totalExp: { type: String }, // In years - numeric
+    co_totalExperience: { type: String },
     co_yearsAtCurrentResidence: { type: Number },
     co_yearsInCurrentResidence: { type: Number }, // legacy alias
     co_companyName: { type: String },
@@ -147,10 +147,10 @@ const loanSchema = mongoose.Schema(
     gu_companyType: { type: String },
     gu_businessNature: { type: [String] },
     gu_designation: { type: String },
-    gu_currentExp: { type: Number }, // In years - numeric
-    gu_currentExperience: { type: Number }, // Alias
-    gu_totalExp: { type: Number }, // In years - numeric
-    gu_totalExperience: { type: Number }, // Alias
+    gu_currentExp: { type: String }, // In years - numeric
+    gu_currentExperience: { type: String }, // Alias
+    gu_totalExp: { type: String }, // In years - numeric
+    gu_totalExperience: { type: String }, // Alias
     gu_companyName: { type: String },
     gu_companyAddress: { type: String },
     gu_companyPincode: { type: String },
@@ -164,7 +164,7 @@ const loanSchema = mongoose.Schema(
     vehicleModel: { type: String },
     vehicleVariant: { type: String },
     vehicleFuelType: { type: String },
-    
+
     // --- Pricing Breakdown
     exShowroom: { type: Number }, // Vehicle pricing popup alias
     insurance: { type: Number }, // Vehicle pricing popup alias
@@ -192,7 +192,7 @@ const loanSchema = mongoose.Schema(
     tradeInValue: { type: Number },
     otherDiscounts: { type: Number },
     onRoadPrice: { type: Number }, // Calculated
-    
+
     // Dealer
     dealerName: { type: String },
     dealerContactPerson: { type: String },
@@ -212,7 +212,7 @@ const loanSchema = mongoose.Schema(
     registrationAddress: { type: String },
     registrationPincode: { type: String },
     registrationCity: { type: String },
-    
+
     // Buying Year (Used Car)
     boughtInYear: { type: String },
     purposeOfLoan: { type: String },
@@ -235,21 +235,21 @@ const loanSchema = mongoose.Schema(
     monthlyIncome: { type: Number }, // Self Employed
     monthlySalary: { type: Number }, // Salaried
     salaryMonthly: { type: Number }, // Alias for monthlySalary
-    experienceCurrent: { type: Number }, // Alias used in UI
+    experienceCurrent: { type: String }, // Alias used in UI
     annualIncome: { type: Number },
     totalIncomeITR: { type: Number }, // Total Income as per ITR
     annualTurnover: { type: Number }, // For Self Employed
     netProfit: { type: Number }, // For Self Employed
     otherIncome: { type: Number },
     otherIncomeSource: { type: String },
-    
+
     // Office Address
     employmentAddress: { type: String },
     employmentPincode: { type: String },
     employmentCity: { type: String },
     employmentPhone: { type: String },
     officialEmail: { type: String },
-    
+
     // State & Other Personal
     state: { type: String },
     fatherName: { type: String },
@@ -257,15 +257,15 @@ const loanSchema = mongoose.Schema(
     sdwOf: { type: String }, // Son/Daughter/Wife of
 
     // --- Loan Parameters ---
-    isFinanced: { type: String, default: 'Yes' },
+    isFinanced: { type: String, default: "Yes" },
     loanAmount: { type: Number },
     requiredLoanAmount: { type: Number },
     tenure: { type: Number },
     interestRate: { type: Number },
 
     // Approval / Sanction / Disbursement
-    currentStage: { type: String, default: 'profile' }, 
-    status: { type: String, default: 'Pending' },
+    currentStage: { type: String, default: "profile" },
+    status: { type: String, default: "Pending" },
     postFileStatus: { type: String },
     completedDate: { type: Date },
 
@@ -282,9 +282,9 @@ const loanSchema = mongoose.Schema(
     approval_statusHistory: { type: Array, default: [] },
     approval_approvalDate: { type: Date },
     approval_remarks: { type: String },
-    
+
     // Multi-Bank Data
-    approval_banksData: { type: Array, default: [] }, 
+    approval_banksData: { type: Array, default: [] },
 
     // ===== DISBURSEMENT STAGE (NEW - Separate from Approval) =====
     disburse_status: { type: String }, // "Pending", "Disbursed", "Cancelled"
@@ -298,7 +298,7 @@ const loanSchema = mongoose.Schema(
     disbursementDate: { type: Date }, // Alias
     disburse_remarks: { type: String }, // MANDATORY: Disbursement remarks/reason (required from frontend)
     disbursementRemarks: { type: String }, // Alias for disburse_remarks (stored in banksData array)
-    
+
     // DEPRECATED (Legacy - kept for backward compatibility)
     approval_loanAmountDisbursed: { type: Number },
     approval_disbursedDate: { type: Date },
@@ -308,21 +308,21 @@ const loanSchema = mongoose.Schema(
     payout_amount: { type: Number }, // Calculated at disbursement
     payout_calculatedAt: { type: Date },
     payout_applicableFor: { type: String }, // "Bank", "Dealer", "Both"
-    
+
     // Receivables & Payables (Created after disbursement)
     loan_receivables: [mongoose.Schema.Types.Mixed], // Array of receivable records from bank payout
     loan_payables: [mongoose.Schema.Types.Mixed], // Array of payable records for dealer payout
-    
+
     // Bill Printing (Payout)
     bill_number: { type: String }, // Auto-generated bill number (BILL-YYYYMMDD-XXXX)
     bill_date: { type: Date }, // Date when bill was generated
     billNumber: { type: String }, // Alias
     billDate: { type: Date }, // Alias
-    
+
     // DEPRECATED (Legacy - moved to disbursement stage)
     payoutPercentage: { type: Number },
     payoutAmount: { type: Number },
-    
+
     do_number: { type: String },
     do_date: { type: Date },
 
@@ -369,35 +369,35 @@ const loanSchema = mongoose.Schema(
     dlDocUrl: { type: String }, // Driver License
     gstDocUrl: { type: String },
     addressProofDocUrl: { type: String },
-    
+
     // Co-Applicant Documents
     co_aadhaarCardDocUrl: { type: String },
     co_panCardDocUrl: { type: String },
     co_passportDocUrl: { type: String },
     co_dlDocUrl: { type: String },
     co_addressProofDocUrl: { type: String },
-    
+
     // Guarantor Documents
     gu_aadhaarCardDocUrl: { type: String },
     gu_panCardDocUrl: { type: String },
     gu_passportDocUrl: { type: String },
     gu_dlDocUrl: { type: String },
     gu_addressProofDocUrl: { type: String },
-    
+
     // Vehicle Documents
     vehiclePhotoUrl: { type: String },
     vehicleRCUrl: { type: String },
     insurancePolicyUrl: { type: String },
     hypothecationDocUrl: { type: String },
-    
+
     // Delivery Order & Invoices
     delivery_invoiceFile: { type: String },
     delivery_rcFile: { type: String },
-    
+
     // PostFile Documents
     postfile_documents: [mongoose.Schema.Types.Mixed], // Array of document objects
     postfile_documents_ledger: [mongoose.Schema.Types.Mixed],
-    
+
     // Additional KYC Documents
     aadhaarNumber: { type: String },
     aadharNumber: { type: String },
@@ -405,20 +405,20 @@ const loanSchema = mongoose.Schema(
     passportNumber: { type: String },
     dlNumber: { type: String },
     gstNumber: { type: String },
-    
+
     // Co-Applicant & Guarantor ID Numbers
     co_aadhaarNumber: { type: String },
     co_panNumber: { type: String },
     co_passportNumber: { type: String },
     co_dlNumber: { type: String },
     co_gstNumber: { type: String },
-    
+
     gu_aadhaarNumber: { type: String },
     gu_panNumber: { type: String },
     gu_passportNumber: { type: String },
     gu_dlNumber: { type: String },
     gu_gstNumber: { type: String },
-    
+
     // Authorised Signatory
     signatorySameAsCoApplicant: { type: Boolean },
     signatory_id: { type: String },
@@ -432,7 +432,7 @@ const loanSchema = mongoose.Schema(
     signatory_designation: { type: String },
     signatory_pan: { type: String },
     signatory_aadhaar: { type: String },
-    
+
     // PostFile Specific Fields
     postfile_bankName: { type: String },
     postfile_regd_city: { type: String },
@@ -451,7 +451,7 @@ const loanSchema = mongoose.Schema(
     postfile_sameAsApproved: { type: String }, // Yes / No
     postfile_approvalDate: { type: Date }, // Alias
     postfile_maturityDate: { type: Date },
-    
+
     // PostFile Disbursal Breakup (Net Loan Amount for Disbursal)
     postfile_disbursedLoan: { type: Number },
     postfile_disbursedCreditAssured: { type: Number },
@@ -459,7 +459,7 @@ const loanSchema = mongoose.Schema(
     postfile_disbursedEw: { type: Number },
     postfile_disbursedLoanTotal: { type: Number }, // Alias
     postfile_tags: { type: [String], default: [] },
-    
+
     // Dispatch & Disbursement
     dispatch_date: { type: Date },
     dispatch_time: { type: String },
@@ -468,7 +468,7 @@ const loanSchema = mongoose.Schema(
     disbursement_time: { type: String },
     loan_number: { type: String },
     rc_inv_storage_number: { type: String },
-    
+
     // Instrument Details
     instrumentType: { type: String },
     nach_accountNumber: { type: String },
@@ -666,7 +666,7 @@ const loanSchema = mongoose.Schema(
     cheque_20_favouring: { type: String },
     cheque_20_signedBy: { type: String },
     cheque_20_image: { type: String },
-    
+
     // Record Details / Section 7
     receivingDate: { type: Date },
     receivingTime: { type: String },
@@ -680,7 +680,7 @@ const loanSchema = mongoose.Schema(
     payment_amount: { type: Number },
     payment_remarks: { type: String },
     received_date: { type: Date },
-    
+
     // Finance Details
     typeOfLoan: { type: String },
     financeExpectation: { type: Number }, // Expected Funding
@@ -690,16 +690,16 @@ const loanSchema = mongoose.Schema(
     customLoanAmount: { type: Number },
     customTenure: { type: Number },
     customRate: { type: Number },
-    
+
     // Bulk Loan Creation
     numberOfCars: { type: Number },
     isMultipleCars: { type: Boolean },
     isSameVehicle: { type: Boolean },
-    
+
     // Lead Details
     leadType: { type: String },
     leadSource: { type: String },
-    
+
     // General Extras
     nomineeName: { type: String },
     nomineeDob: { type: Date },
@@ -709,7 +709,7 @@ const loanSchema = mongoose.Schema(
     deliveryStatus: { type: String },
     photoUrl: { type: String },
     signatureUrl: { type: String },
-    
+
     // References
     reference1_name: { type: String },
     reference1_mobile: { type: String },
@@ -723,7 +723,7 @@ const loanSchema = mongoose.Schema(
     reference2_pincode: { type: String },
     reference2_city: { type: String },
     reference2_relation: { type: String },
-    
+
     // Company Details
     businessName: { type: String }, // Alias used in vehicle verification flow
     cinNumber: { type: String },
@@ -735,15 +735,15 @@ const loanSchema = mongoose.Schema(
     companyType: { type: String },
     businessNature: { type: [String] },
     companyPartners: { type: Array, default: [] },
-    
+
     // Professional Details
     professionalType: { type: String },
     designation: { type: String },
-    currentExp: { type: Number },
-    totalExp: { type: Number },
-    totalExperience: { type: Number }, // Alias used by profile/pre-file UI
+    currentExp: { type: String },
+    totalExp: { type: String },
+    totalExperience: { type: String }, // Alias used by profile/pre-file UI
     incorporationYear: { type: Number },
-    
+
     // Extra Fields
     customerIdDisplay: { type: String },
     educationOther: { type: String },
@@ -765,7 +765,7 @@ const loanSchema = mongoose.Schema(
     maritalStatus: { type: String },
     dependents: { type: Number },
     education: { type: String },
-    
+
     // Co-Applicant & Guarantor Banking
     co_accountNumber: { type: String },
     co_accountType: { type: String },
@@ -776,7 +776,7 @@ const loanSchema = mongoose.Schema(
     co_monthlySalary: { type: Number },
     co_monthlyIncome: { type: Number },
     co_annualIncome: { type: Number },
-    
+
     gu_accountNumber: { type: String },
     gu_accountType: { type: String },
     gu_bankName: { type: String },
@@ -786,7 +786,7 @@ const loanSchema = mongoose.Schema(
     gu_monthlySalary: { type: Number },
     gu_monthlyIncome: { type: Number },
     gu_annualIncome: { type: Number },
-    
+
     // Internal Flags
     __postfileSeeded: { type: Boolean, default: false },
     __postfileLocked: { type: Boolean, default: false },
@@ -798,19 +798,19 @@ const loanSchema = mongoose.Schema(
     collection_next_action: { type: String },
     collection_last_followup: { type: Date },
     collection_remarks: { type: String },
-    
+
     // --- Bulk ---
     isBulk: { type: Boolean, default: false },
     bulkCount: { type: Number },
     isCashCase: { type: Boolean, default: false },
     latestBusinessDate: { type: Date },
 
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   {
     timestamps: true,
     strict: false, // Allow any additional fields from form
-  }
+  },
 );
 
 const inferIsCashCase = (doc) => {

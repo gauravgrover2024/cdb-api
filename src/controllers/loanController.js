@@ -154,15 +154,15 @@ const MICR_BANK_CODE_MAP = {
   "015": "Canara Bank",
   "019": "Indian Bank",
   "026": "Union Bank of India",
-  "176": "Punjab National Bank",
-  "211": "Axis Bank",
-  "229": "ICICI Bank",
-  "237": "IndusInd Bank",
-  "240": "HDFC Bank",
-  "425": "Federal Bank",
-  "485": "Kotak Mahindra Bank",
-  "532": "Yes Bank",
-  "760": "IDFC First Bank",
+  176: "Punjab National Bank",
+  211: "Axis Bank",
+  229: "ICICI Bank",
+  237: "IndusInd Bank",
+  240: "HDFC Bank",
+  425: "Federal Bank",
+  485: "Kotak Mahindra Bank",
+  532: "Yes Bank",
+  760: "IDFC First Bank",
 };
 
 const normalizeIfsc = (value) =>
@@ -308,7 +308,10 @@ const normalizeCustomerFields = (payload) => {
     "rc_received_date",
   ];
 
-  const chequeDateFields = Array.from({ length: 20 }, (_, i) => `cheque_${i + 1}_date`);
+  const chequeDateFields = Array.from(
+    { length: 20 },
+    (_, i) => `cheque_${i + 1}_date`,
+  );
   dateFields.push(...chequeDateFields);
 
   dateFields.forEach((field) => {
@@ -335,10 +338,6 @@ const normalizeCustomerFields = (payload) => {
     "dependents",
     // Co-Applicant
     "co_dependents",
-    "co_currentExp",
-    "co_currentExperience",
-    "co_totalExp",
-    "co_totalExperience",
     "co_yearsAtCurrentResidence",
     "co_yearsInCurrentResidence",
     "co_salaryMonthly",
@@ -347,8 +346,6 @@ const normalizeCustomerFields = (payload) => {
     "co_annualIncome",
     // Guarantor
     "gu_dependents",
-    "gu_currentExp",
-    "gu_totalExp",
     "gu_salaryMonthly",
     "gu_monthlySalary",
     "gu_monthlyIncome",
@@ -358,8 +355,6 @@ const normalizeCustomerFields = (payload) => {
     "monthlySalary",
     "salaryMonthly",
     "annualIncome",
-    "currentExp",
-    "totalExp",
     "totalIncomeITR",
     "annualTurnover",
     "netProfit",
@@ -402,13 +397,14 @@ const normalizeCustomerFields = (payload) => {
     "incorporationYear",
     "accountSinceYears",
     "openedIn",
-    "experienceCurrent",
-    "totalExperience", // Frontend Aliases
-    "ecs_amount",
 
+    "ecs_amount",
   ];
 
-  const chequeAmountFields = Array.from({ length: 20 }, (_, i) => `cheque_${i + 1}_amount`);
+  const chequeAmountFields = Array.from(
+    { length: 20 },
+    (_, i) => `cheque_${i + 1}_amount`,
+  );
   numericFields.push(...chequeAmountFields);
 
   numericFields.forEach((field) => {
@@ -438,45 +434,74 @@ const normalizeCustomerFields = (payload) => {
     normalized.email = normalized.emailAddress;
   if (normalized.email && !normalized.emailAddress)
     normalized.emailAddress = normalized.email;
-  if (normalized.ifsc && !normalized.ifscCode) normalized.ifscCode = normalized.ifsc;
-  if (normalized.ifscCode && !normalized.ifsc) normalized.ifsc = normalized.ifscCode;
+  if (normalized.ifsc && !normalized.ifscCode)
+    normalized.ifscCode = normalized.ifsc;
+  if (normalized.ifscCode && !normalized.ifsc)
+    normalized.ifsc = normalized.ifscCode;
   if (normalized.ifsc) normalized.ifsc = normalizeIfsc(normalized.ifsc);
-  if (normalized.ifscCode) normalized.ifscCode = normalizeIfsc(normalized.ifscCode);
-  if (normalized.co_ifsc) normalized.co_ifsc = normalizeIfsc(normalized.co_ifsc);
-  if (normalized.co_ifscCode) normalized.co_ifscCode = normalizeIfsc(normalized.co_ifscCode);
-  if (normalized.gu_ifsc) normalized.gu_ifsc = normalizeIfsc(normalized.gu_ifsc);
-  if (normalized.gu_ifscCode) normalized.gu_ifscCode = normalizeIfsc(normalized.gu_ifscCode);
-  if (normalized.ecs_micrCode) normalized.ecs_micrCode = normalizeMicr(normalized.ecs_micrCode);
-  const inferredMainBank = inferBankNameFromIfsc(normalized.ifscCode || normalized.ifsc);
+  if (normalized.ifscCode)
+    normalized.ifscCode = normalizeIfsc(normalized.ifscCode);
+  if (normalized.co_ifsc)
+    normalized.co_ifsc = normalizeIfsc(normalized.co_ifsc);
+  if (normalized.co_ifscCode)
+    normalized.co_ifscCode = normalizeIfsc(normalized.co_ifscCode);
+  if (normalized.gu_ifsc)
+    normalized.gu_ifsc = normalizeIfsc(normalized.gu_ifsc);
+  if (normalized.gu_ifscCode)
+    normalized.gu_ifscCode = normalizeIfsc(normalized.gu_ifscCode);
+  if (normalized.ecs_micrCode)
+    normalized.ecs_micrCode = normalizeMicr(normalized.ecs_micrCode);
+  const inferredMainBank = inferBankNameFromIfsc(
+    normalized.ifscCode || normalized.ifsc,
+  );
   if (inferredMainBank) {
     if (!normalized.bankName) normalized.bankName = inferredMainBank;
-    if (!normalized.approval_bankName) normalized.approval_bankName = inferredMainBank;
-    if (!normalized.postfile_bankName) normalized.postfile_bankName = inferredMainBank;
-    if (!normalized.disburse_bankName) normalized.disburse_bankName = inferredMainBank;
+    if (!normalized.approval_bankName)
+      normalized.approval_bankName = inferredMainBank;
+    if (!normalized.postfile_bankName)
+      normalized.postfile_bankName = inferredMainBank;
+    if (!normalized.disburse_bankName)
+      normalized.disburse_bankName = inferredMainBank;
   }
   const inferredEcsBank = inferBankNameFromMicr(normalized.ecs_micrCode);
-  if (inferredEcsBank && !normalized.ecs_bankName) normalized.ecs_bankName = inferredEcsBank;
-  const inferredCoBank = inferBankNameFromIfsc(normalized.co_ifscCode || normalized.co_ifsc);
-  if (inferredCoBank && !normalized.co_bankName) normalized.co_bankName = inferredCoBank;
-  const inferredGuBank = inferBankNameFromIfsc(normalized.gu_ifscCode || normalized.gu_ifsc);
-  if (inferredGuBank && !normalized.gu_bankName) normalized.gu_bankName = inferredGuBank;
+  if (inferredEcsBank && !normalized.ecs_bankName)
+    normalized.ecs_bankName = inferredEcsBank;
+  const inferredCoBank = inferBankNameFromIfsc(
+    normalized.co_ifscCode || normalized.co_ifsc,
+  );
+  if (inferredCoBank && !normalized.co_bankName)
+    normalized.co_bankName = inferredCoBank;
+  const inferredGuBank = inferBankNameFromIfsc(
+    normalized.gu_ifscCode || normalized.gu_ifsc,
+  );
+  if (inferredGuBank && !normalized.gu_bankName)
+    normalized.gu_bankName = inferredGuBank;
   if (normalized.typeOfLoan && !normalized.loanType)
     normalized.loanType = normalized.typeOfLoan;
   if (normalized.loanType && !normalized.typeOfLoan)
     normalized.typeOfLoan = normalized.loanType;
   if (normalized.fatherName && !normalized.sdwOf)
     normalized.sdwOf = normalized.fatherName;
-  if (normalized.businessNature && typeof normalized.businessNature === "string")
+  if (
+    normalized.businessNature &&
+    typeof normalized.businessNature === "string"
+  )
     normalized.businessNature = normalized.businessNature
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-  if (normalized.co_businessNature && typeof normalized.co_businessNature === "string")
+  if (
+    normalized.co_businessNature &&
+    typeof normalized.co_businessNature === "string"
+  )
     normalized.co_businessNature = normalized.co_businessNature
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-  if (normalized.gu_businessNature && typeof normalized.gu_businessNature === "string")
+  if (
+    normalized.gu_businessNature &&
+    typeof normalized.gu_businessNature === "string"
+  )
     normalized.gu_businessNature = normalized.gu_businessNature
       .split(",")
       .map((value) => value.trim())
@@ -521,14 +546,18 @@ const normalizeCustomerFields = (payload) => {
     normalized.co_totalExperience = normalized.co_totalExp;
   if (
     normalized.co_yearsAtCurrentResidence !== undefined &&
-    (normalized.co_yearsInCurrentResidence === undefined || normalized.co_yearsInCurrentResidence === null)
+    (normalized.co_yearsInCurrentResidence === undefined ||
+      normalized.co_yearsInCurrentResidence === null)
   )
-    normalized.co_yearsInCurrentResidence = normalized.co_yearsAtCurrentResidence;
+    normalized.co_yearsInCurrentResidence =
+      normalized.co_yearsAtCurrentResidence;
   if (
     normalized.co_yearsInCurrentResidence !== undefined &&
-    (normalized.co_yearsAtCurrentResidence === undefined || normalized.co_yearsAtCurrentResidence === null)
+    (normalized.co_yearsAtCurrentResidence === undefined ||
+      normalized.co_yearsAtCurrentResidence === null)
   )
-    normalized.co_yearsAtCurrentResidence = normalized.co_yearsInCurrentResidence;
+    normalized.co_yearsAtCurrentResidence =
+      normalized.co_yearsInCurrentResidence;
   if (normalized.co_occupationType && !normalized.co_occupation)
     normalized.co_occupation = normalized.co_occupationType;
   if (normalized.co_occupation && !normalized.co_occupationType)
@@ -577,7 +606,9 @@ const normalizeCustomerFields = (payload) => {
 
   // Pincode -> city fallback for cases where UI/import did not resolve city.
   const inferCityFromPin = (rawPin) => {
-    const pin = String(rawPin || "").replace(/\D/g, "").slice(0, 6);
+    const pin = String(rawPin || "")
+      .replace(/\D/g, "")
+      .slice(0, 6);
     if (!pin) return "";
     if (pin.startsWith("110")) return "Delhi";
     if (pin.startsWith("122")) return "Gurgaon";
@@ -608,9 +639,12 @@ const normalizeCustomerFields = (payload) => {
 };
 
 const normalizeInstrumentType = (value) => {
-  const t = String(value || "").trim().toUpperCase();
+  const t = String(value || "")
+    .trim()
+    .toUpperCase();
   if (!t) return "";
-  if (t.includes("CHEQUE") || t.includes("CHQ") || t.includes("PDC")) return "CHEQUE";
+  if (t.includes("CHEQUE") || t.includes("CHQ") || t.includes("PDC"))
+    return "CHEQUE";
   if (t.includes("ECS")) return "ECS";
   if (t === "SI" || t.includes("STANDING INSTRUCTION")) return "SI";
   if (t.includes("NACH") || t.includes("MANDATE")) return "NACH";
@@ -747,7 +781,10 @@ const upsertBankDirectoryEntry = async ({
 
   const query = normalizedIfsc
     ? { ifsc: normalizedIfsc }
-    : { micr: normalizedMicr, bankName: base.bankName || inferBankNameFromMicr(normalizedMicr) };
+    : {
+        micr: normalizedMicr,
+        bankName: base.bankName || inferBankNameFromMicr(normalizedMicr),
+      };
 
   return await BankDirectory.findOneAndUpdate(
     query,
@@ -806,7 +843,9 @@ const syncBankCollection = async (payload) => {
 };
 
 const normalizeMobileForChannel = (value) =>
-  String(value || "").replace(/\D/g, "").slice(-10);
+  String(value || "")
+    .replace(/\D/g, "")
+    .slice(-10);
 
 const guessCityForChannel = (payload = {}, address = "") => {
   const directCity = String(
@@ -819,8 +858,9 @@ const guessCityForChannel = (payload = {}, address = "") => {
   ).trim();
   if (directCity) return directCity;
 
-  const match = String(address || "")
-    .match(/([A-Za-z\s]+),\s*[A-Za-z\s]+(?:\s+\d{6})?$/);
+  const match = String(address || "").match(
+    /([A-Za-z\s]+),\s*[A-Za-z\s]+(?:\s+\d{6})?$/,
+  );
   if (match?.[1]) return match[1].trim();
 
   return "Unknown";
@@ -832,7 +872,9 @@ const upsertChannelPartnerFromLoan = async (payload = {}) => {
     .toLowerCase();
   if (sourceType !== "indirect") return null;
 
-  const partnerName = String(payload.dealerName || payload.sourceName || "").trim();
+  const partnerName = String(
+    payload.dealerName || payload.sourceName || "",
+  ).trim();
   const mobile = normalizeMobileForChannel(payload.dealerMobile);
   const address = String(payload.dealerAddress || "").trim();
   if (!partnerName || !mobile || !address) return null;
@@ -841,7 +883,12 @@ const upsertChannelPartnerFromLoan = async (payload = {}) => {
   const query = {
     $or: [
       { mobile },
-      { name: new RegExp(`^${partnerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+      {
+        name: new RegExp(
+          `^${partnerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "i",
+        ),
+      },
     ],
   };
 
@@ -1152,7 +1199,9 @@ const buildMonthBuckets = (start, end) => {
 };
 
 const normalizeStage = (value) => {
-  const stage = String(value || "").toLowerCase().trim();
+  const stage = String(value || "")
+    .toLowerCase()
+    .trim();
   if (!stage) return "profile";
   if (stage.includes("pre")) return "prefile";
   if (stage.includes("approv")) return "approval";
@@ -1169,11 +1218,17 @@ const stageRank = (value) => {
 };
 
 const normalizeStatus = (loan) => {
-  const base = String(loan?.status || loan?.approval_status || "").toLowerCase();
+  const base = String(
+    loan?.status || loan?.approval_status || "",
+  ).toLowerCase();
   if (!base) return "pending";
   if (base.includes("disburs")) return "disbursed";
   if (base.includes("approv")) return "approved";
-  if (base.includes("reject") || base.includes("declin") || base.includes("fail"))
+  if (
+    base.includes("reject") ||
+    base.includes("declin") ||
+    base.includes("fail")
+  )
     return "rejected";
   if (base.includes("complete") || base.includes("close")) return "completed";
   return "pending";
@@ -1198,9 +1253,7 @@ const pickLoanAmount = (loan) =>
 
 const pickDisbursedAmount = (loan) =>
   parseAmountValue(
-    loan?.disburse_amount ??
-      loan?.approval_loanAmountDisbursed ??
-      0,
+    loan?.disburse_amount ?? loan?.approval_loanAmountDisbursed ?? 0,
   );
 
 const pickBankName = (loan) =>
@@ -1208,12 +1261,15 @@ const pickBankName = (loan) =>
     loan?.approval_bankName ||
       loan?.postfile_bankName ||
       loan?.bankName ||
-      (Array.isArray(loan?.approval_banksData) && loan.approval_banksData[0]?.bankName) ||
+      (Array.isArray(loan?.approval_banksData) &&
+        loan.approval_banksData[0]?.bankName) ||
       "Unknown",
   ).trim() || "Unknown";
 
 const pickSource = (loan) => {
-  const raw = String(loan?.approval_loanBookedIn || loan?.recordSource || loan?.source || "")
+  const raw = String(
+    loan?.approval_loanBookedIn || loan?.recordSource || loan?.source || "",
+  )
     .toLowerCase()
     .trim();
   if (raw.includes("indirect")) return "Indirect";
@@ -1222,7 +1278,9 @@ const pickSource = (loan) => {
 };
 
 const pickLoanType = (loan) =>
-  String(loan?.typeOfLoan || loan?.loanType || loan?.caseType || "Unknown").trim() || "Unknown";
+  String(
+    loan?.typeOfLoan || loan?.loanType || loan?.caseType || "Unknown",
+  ).trim() || "Unknown";
 
 const pickRegNo = (loan) =>
   String(
@@ -1232,7 +1290,10 @@ const pickRegNo = (loan) =>
     .toUpperCase();
 
 const pickDisbursementDate = (loan) =>
-  loan?.disbursement_date || loan?.approval_disbursedDate || loan?.disburse_date || null;
+  loan?.disbursement_date ||
+  loan?.approval_disbursedDate ||
+  loan?.disburse_date ||
+  null;
 
 const isDisbursedLoan = (loan) => {
   const status = normalizeStatus(loan);
@@ -1268,24 +1329,52 @@ const missingDeliveryFields = (loan) => {
 };
 
 const parseAnalyticsFilters = (query = {}) => ({
-  stage: String(query.stage || "").trim().toLowerCase(),
-  status: String(query.status || "").trim().toLowerCase(),
-  bank: String(query.bank || "").trim().toLowerCase(),
-  source: String(query.source || "").trim().toLowerCase(),
-  loanType: String(query.loanType || "").trim().toLowerCase(),
-  dealer: String(query.dealer || "").trim().toLowerCase(),
+  stage: String(query.stage || "")
+    .trim()
+    .toLowerCase(),
+  status: String(query.status || "")
+    .trim()
+    .toLowerCase(),
+  bank: String(query.bank || "")
+    .trim()
+    .toLowerCase(),
+  source: String(query.source || "")
+    .trim()
+    .toLowerCase(),
+  loanType: String(query.loanType || "")
+    .trim()
+    .toLowerCase(),
+  dealer: String(query.dealer || "")
+    .trim()
+    .toLowerCase(),
 });
 
 const applyAnalyticsFilters = (loans, filters) =>
   loans.filter((loan) => {
-    if (filters.stage && normalizeStage(loan.currentStage) !== filters.stage) return false;
-    if (filters.status && normalizeStatus(loan) !== filters.status) return false;
-    if (filters.bank && !pickBankName(loan).toLowerCase().includes(filters.bank)) return false;
-    if (filters.source && pickSource(loan).toLowerCase() !== filters.source) return false;
-    if (filters.loanType && pickLoanType(loan).toLowerCase() !== filters.loanType) return false;
+    if (filters.stage && normalizeStage(loan.currentStage) !== filters.stage)
+      return false;
+    if (filters.status && normalizeStatus(loan) !== filters.status)
+      return false;
+    if (
+      filters.bank &&
+      !pickBankName(loan).toLowerCase().includes(filters.bank)
+    )
+      return false;
+    if (filters.source && pickSource(loan).toLowerCase() !== filters.source)
+      return false;
+    if (
+      filters.loanType &&
+      pickLoanType(loan).toLowerCase() !== filters.loanType
+    )
+      return false;
     if (
       filters.dealer &&
-      !String(loan?.dealerName || loan?.showroomDealerName || loan?.showroomName || "")
+      !String(
+        loan?.dealerName ||
+          loan?.showroomDealerName ||
+          loan?.showroomName ||
+          "",
+      )
         .toLowerCase()
         .includes(filters.dealer)
     ) {
@@ -1320,7 +1409,8 @@ const getLoans = asyncHandler(async (req, res) => {
   const viewMode = String(view || "").toLowerCase();
   const direction = String(sortDir).toLowerCase() === "asc" ? 1 : -1;
   const sortField =
-    String(sortBy || "").trim() || (viewMode === "dashboard" ? "latestBusiness" : "updatedAt");
+    String(sortBy || "").trim() ||
+    (viewMode === "dashboard" ? "latestBusiness" : "updatedAt");
 
   let query = {};
   if (safeSearch) {
@@ -1494,7 +1584,8 @@ const getLoans = asyncHandler(async (req, res) => {
 const getLoanDashboardStats = asyncHandler(async (req, res) => {
   const cached =
     dashboardStatsCache?.data &&
-    Date.now() - Number(dashboardStatsCache.ts || 0) < DASHBOARD_STATS_CACHE_TTL_MS;
+    Date.now() - Number(dashboardStatsCache.ts || 0) <
+      DASHBOARD_STATS_CACHE_TTL_MS;
   if (cached) {
     return res.json({
       ...dashboardStatsCache.data,
@@ -1521,7 +1612,12 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
             {
               $ifNull: [
                 "$approval_loanAmountApproved",
-                { $ifNull: ["$loanAmount", { $ifNull: ["$financeExpectation", 0] }] },
+                {
+                  $ifNull: [
+                    "$loanAmount",
+                    { $ifNull: ["$financeExpectation", 0] },
+                  ],
+                },
               ],
             },
           ],
@@ -1532,7 +1628,12 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
             {
               $ifNull: [
                 { $arrayElemAt: ["$approval_banksData.emi", 0] },
-                { $ifNull: ["$postfile_emiAmount", { $ifNull: ["$emiAmount", 0] }] },
+                {
+                  $ifNull: [
+                    "$postfile_emiAmount",
+                    { $ifNull: ["$emiAmount", 0] },
+                  ],
+                },
               ],
             },
           ],
@@ -1551,8 +1652,18 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
                   { $eq: ["$__stageLower", "approval"] },
                   {
                     $or: [
-                      { $regexMatch: { input: "$__statusLower", regex: "pending" } },
-                      { $regexMatch: { input: "$__statusLower", regex: "progress" } },
+                      {
+                        $regexMatch: {
+                          input: "$__statusLower",
+                          regex: "pending",
+                        },
+                      },
+                      {
+                        $regexMatch: {
+                          input: "$__statusLower",
+                          regex: "progress",
+                        },
+                      },
                     ],
                   },
                 ],
@@ -1564,7 +1675,11 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
         },
         disbursed: {
           $sum: {
-            $cond: [{ $regexMatch: { input: "$__statusLower", regex: "disburs" } }, 1, 0],
+            $cond: [
+              { $regexMatch: { input: "$__statusLower", regex: "disburs" } },
+              1,
+              0,
+            ],
           },
         },
         approvedToday: {
@@ -1582,7 +1697,12 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
                     $and: [
                       { $gte: ["$updatedAt", today] },
                       { $lt: ["$updatedAt", nextDay] },
-                      { $regexMatch: { input: "$__statusLower", regex: "approved" } },
+                      {
+                        $regexMatch: {
+                          input: "$__statusLower",
+                          regex: "approved",
+                        },
+                      },
                     ],
                   },
                 ],
@@ -1668,8 +1788,12 @@ const collectRepeatedCustomerStats = (loans) => {
   for (const loan of loans) {
     const loanRef = loan?.loanId || loan?._id;
     const mobile = String(loan?.primaryMobile || "").replace(/\D/g, "");
-    const pan = String(loan?.panNumber || "").toUpperCase().trim();
-    const gst = String(loan?.gstNumber || "").toUpperCase().trim();
+    const pan = String(loan?.panNumber || "")
+      .toUpperCase()
+      .trim();
+    const gst = String(loan?.gstNumber || "")
+      .toUpperCase()
+      .trim();
 
     if (mobile.length >= 10) pushKey(`MOBILE:${mobile}`, loanRef);
     if (pan.length >= 6) pushKey(`PAN:${pan}`, loanRef);
@@ -1720,9 +1844,13 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
 
   const months = buildMonthBuckets(start, end);
   const totalLoansByMonth = new Map(months.map((m) => [m.key, 0]));
-  const disbursedAmountByMonth = new Map(months.map((m) => [m.key, { amount: 0, count: 0 }]));
+  const disbursedAmountByMonth = new Map(
+    months.map((m) => [m.key, { amount: 0, count: 0 }]),
+  );
 
-  const stageCounts = Object.fromEntries(ANALYTICS_STAGE_ORDER.map((stage) => [stage, 0]));
+  const stageCounts = Object.fromEntries(
+    ANALYTICS_STAGE_ORDER.map((stage) => [stage, 0]),
+  );
   const loanTypeMap = new Map();
   const bankMap = new Map();
   const sourceMap = new Map();
@@ -1738,7 +1866,10 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
   for (const loan of loans) {
     const createdMonth = monthKey(loan?.createdAt);
     if (createdMonth && totalLoansByMonth.has(createdMonth)) {
-      totalLoansByMonth.set(createdMonth, (totalLoansByMonth.get(createdMonth) || 0) + 1);
+      totalLoansByMonth.set(
+        createdMonth,
+        (totalLoansByMonth.get(createdMonth) || 0) + 1,
+      );
     }
 
     const stage = normalizeStage(loan?.currentStage);
@@ -1785,9 +1916,13 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
     if (status === "pending") sourceNode.pending += 1;
     if (isDisbursedLoan(loan)) sourceNode.disbursed += 1;
 
-    const dealerName = String(
-      loan?.dealerName || loan?.showroomDealerName || loan?.showroomName || "Unknown",
-    ).trim() || "Unknown";
+    const dealerName =
+      String(
+        loan?.dealerName ||
+          loan?.showroomDealerName ||
+          loan?.showroomName ||
+          "Unknown",
+      ).trim() || "Unknown";
     if (!dealerMap.has(dealerName)) {
       dealerMap.set(dealerName, {
         dealerName,
@@ -1804,10 +1939,15 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
     if (isDisbursedLoan(loan)) dealerNode.disbursed += 1;
     const createdAt = new Date(loan?.createdAt || 0);
     const disbursedAt = new Date(pickDisbursementDate(loan) || 0);
-    if (!Number.isNaN(createdAt.getTime()) && !Number.isNaN(disbursedAt.getTime())) {
+    if (
+      !Number.isNaN(createdAt.getTime()) &&
+      !Number.isNaN(disbursedAt.getTime())
+    ) {
       const tat = Math.max(
         0,
-        Math.round((disbursedAt.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24)),
+        Math.round(
+          (disbursedAt.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24),
+        ),
       );
       dealerNode.tatDaysTotal += tat;
       dealerNode.tatSamples += 1;
@@ -1841,7 +1981,10 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
       missingRegCount += 1;
     }
 
-    if (stageRank(loan?.currentStage) >= stageRank("delivery") || isDisbursedLoan(loan)) {
+    if (
+      stageRank(loan?.currentStage) >= stageRank("delivery") ||
+      isDisbursedLoan(loan)
+    ) {
       if (missingDeliveryFields(loan).length > 0) {
         missingDeliveryCount += 1;
       }
@@ -1867,7 +2010,8 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
   const disbursedAmountTrend = months.map((m) => ({
     bucket: m.key,
     label: m.label,
-    amount: Math.round((disbursedAmountByMonth.get(m.key)?.amount || 0) * 100) / 100,
+    amount:
+      Math.round((disbursedAmountByMonth.get(m.key)?.amount || 0) * 100) / 100,
     count: disbursedAmountByMonth.get(m.key)?.count || 0,
   }));
 
@@ -1890,7 +2034,10 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
   const sourcePerformance = Array.from(sourceMap.values())
     .map((row) => ({
       ...row,
-      conversionRate: row.total > 0 ? Number(((row.disbursed / row.total) * 100).toFixed(1)) : 0,
+      conversionRate:
+        row.total > 0
+          ? Number(((row.disbursed / row.total) * 100).toFixed(1))
+          : 0,
     }))
     .sort((a, b) => b.total - a.total);
 
@@ -1901,7 +2048,9 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
       disbursed: row.disbursed,
       totalLoanAmount: Math.round((row.totalLoanAmount || 0) * 100) / 100,
       avgTatDays:
-        row.tatSamples > 0 ? Number((row.tatDaysTotal / row.tatSamples).toFixed(1)) : null,
+        row.tatSamples > 0
+          ? Number((row.tatDaysTotal / row.tatSamples).toFixed(1))
+          : null,
     }))
     .sort((a, b) => b.total - a.total)
     .slice(0, 20);
@@ -1914,7 +2063,9 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
     .map((row) => ({
       ...row,
       avgLoanAmount:
-        row.total > 0 ? Math.round((row.totalLoanAmount / row.total) * 100) / 100 : 0,
+        row.total > 0
+          ? Math.round((row.totalLoanAmount / row.total) * 100) / 100
+          : 0,
       totalLoanAmount: Math.round((row.totalLoanAmount || 0) * 100) / 100,
     }))
     .sort((a, b) => b.total - a.total)
@@ -1931,9 +2082,16 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
     filters,
     totals: {
       totalCases: loans.length,
-      totalLoanAmount: loans.reduce((acc, loan) => acc + pickLoanAmount(loan), 0),
+      totalLoanAmount: loans.reduce(
+        (acc, loan) => acc + pickLoanAmount(loan),
+        0,
+      ),
       totalDisbursedAmount: loans.reduce(
-        (acc, loan) => acc + (isDisbursedLoan(loan) ? pickDisbursedAmount(loan) || pickLoanAmount(loan) : 0),
+        (acc, loan) =>
+          acc +
+          (isDisbursedLoan(loan)
+            ? pickDisbursedAmount(loan) || pickLoanAmount(loan)
+            : 0),
         0,
       ),
     },
@@ -1959,7 +2117,10 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
       vehicleSegmentTrends,
       repeatedCustomers,
       bankWiseTotalLoanAmount: bankPipeline
-        .map((row) => ({ bankName: row.bankName, totalLoanAmount: row.totalLoanAmount }))
+        .map((row) => ({
+          bankName: row.bankName,
+          totalLoanAmount: row.totalLoanAmount,
+        }))
         .sort((a, b) => b.totalLoanAmount - a.totalLoanAmount),
     },
     meta: {
@@ -1976,8 +2137,12 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
 const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
   const { range, start, end } = parseAnalyticsRange(req.query);
   const filters = parseAnalyticsFilters(req.query);
-  const widget = String(req.query.widget || "").trim().toLowerCase();
-  const key = String(req.query.key || "").trim().toLowerCase();
+  const widget = String(req.query.widget || "")
+    .trim()
+    .toLowerCase();
+  const key = String(req.query.key || "")
+    .trim()
+    .toLowerCase();
   const bucket = String(req.query.bucket || "").trim();
   const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
   const skip = Math.max(Number(req.query.skip) || 0, 0);
@@ -2000,19 +2165,26 @@ const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
   } else if (widget === "missing_delivery_fields") {
     filtered = loans.filter(
       (loan) =>
-        (stageRank(loan?.currentStage) >= stageRank("delivery") || isDisbursedLoan(loan)) &&
+        (stageRank(loan?.currentStage) >= stageRank("delivery") ||
+          isDisbursedLoan(loan)) &&
         missingDeliveryFields(loan).length > 0,
     );
   } else if (widget === "loan_type_mix" && key) {
     filtered = loans.filter((loan) => pickLoanType(loan).toLowerCase() === key);
-  } else if ((widget === "bank_pipeline" || widget === "bank_total_amount") && key) {
+  } else if (
+    (widget === "bank_pipeline" || widget === "bank_total_amount") &&
+    key
+  ) {
     filtered = loans.filter((loan) => pickBankName(loan).toLowerCase() === key);
   } else if (widget === "source_performance" && key) {
     filtered = loans.filter((loan) => pickSource(loan).toLowerCase() === key);
   } else if (widget === "dealer_performance" && key) {
     filtered = loans.filter((loan) => {
       const dealer = String(
-        loan?.dealerName || loan?.showroomDealerName || loan?.showroomName || "Unknown",
+        loan?.dealerName ||
+          loan?.showroomDealerName ||
+          loan?.showroomName ||
+          "Unknown",
       ).toLowerCase();
       return dealer === key;
     });
@@ -2039,12 +2211,20 @@ const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
     counter.forEach((count, mobile) => {
       if (count > 1) duplicateMobiles.add(mobile);
     });
-    filtered = loans.filter((loan) => duplicateMobiles.has(String(loan?.primaryMobile || "").replace(/\D/g, "")));
+    filtered = loans.filter((loan) =>
+      duplicateMobiles.has(
+        String(loan?.primaryMobile || "").replace(/\D/g, ""),
+      ),
+    );
   }
 
   filtered = filtered
     .slice()
-    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt || b.createdAt || 0) -
+        new Date(a.updatedAt || a.createdAt || 0),
+    );
 
   const total = filtered.length;
   const paged = filtered.slice(skip, skip + limit);
@@ -2111,7 +2291,10 @@ const createLoanCustomWidget = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("Unsupported groupBy field for custom widget");
   }
-  if ((metric === "sum" || metric === "avg") && !allowedMetricFields.has(metricField)) {
+  if (
+    (metric === "sum" || metric === "avg") &&
+    !allowedMetricFields.has(metricField)
+  ) {
     res.status(400);
     throw new Error("Unsupported metricField for custom widget");
   }
@@ -2127,11 +2310,17 @@ const createLoanCustomWidget = asyncHandler(async (req, res) => {
     if (groupBy === "stage") return normalizeStage(loan?.currentStage);
     if (groupBy === "dealer")
       return (
-        String(loan?.dealerName || loan?.showroomDealerName || loan?.showroomName || "Unknown")
-          .trim() || "Unknown"
+        String(
+          loan?.dealerName ||
+            loan?.showroomDealerName ||
+            loan?.showroomName ||
+            "Unknown",
+        ).trim() || "Unknown"
       );
-    if (groupBy === "vehicleMake") return String(loan?.vehicleMake || "Unknown").trim() || "Unknown";
-    if (groupBy === "vehicleModel") return String(loan?.vehicleModel || "Unknown").trim() || "Unknown";
+    if (groupBy === "vehicleMake")
+      return String(loan?.vehicleMake || "Unknown").trim() || "Unknown";
+    if (groupBy === "vehicleModel")
+      return String(loan?.vehicleModel || "Unknown").trim() || "Unknown";
     return "Unknown";
   };
 
@@ -2183,7 +2372,8 @@ const createLoanCustomReport = asyncHandler(async (req, res) => {
   const filters = parseAnalyticsFilters(body.filters || {});
   const fieldsInput = Array.isArray(body.fields) ? body.fields : [];
   const sortBy = String(body.sortBy || "updatedAt").trim();
-  const sortDir = String(body.sortDir || "desc").toLowerCase() === "asc" ? "asc" : "desc";
+  const sortDir =
+    String(body.sortDir || "desc").toLowerCase() === "asc" ? "asc" : "desc";
   const limit = Math.min(Math.max(Number(body.limit) || 500, 1), 10000);
   const skip = Math.max(Number(body.skip) || 0, 0);
 
@@ -2211,7 +2401,11 @@ const createLoanCustomReport = asyncHandler(async (req, res) => {
     if (av == null && bv == null) return 0;
     if (av == null) return sortDir === "asc" ? -1 : 1;
     if (bv == null) return sortDir === "asc" ? 1 : -1;
-    if (av instanceof Date || bv instanceof Date || sortBy.toLowerCase().includes("date")) {
+    if (
+      av instanceof Date ||
+      bv instanceof Date ||
+      sortBy.toLowerCase().includes("date")
+    ) {
       const ta = new Date(av).getTime();
       const tb = new Date(bv).getTime();
       return sortDir === "asc" ? ta - tb : tb - ta;
@@ -2370,7 +2564,8 @@ const getLoanById = asyncHandler(async (req, res) => {
 const createLoan = asyncHandler(async (req, res) => {
   const { numberOfCars, ...loanData } = req.body;
   const normalizedLoanData = normalizeCustomerFields(loanData);
-  const instrumentSanitizedLoanData = sanitizeInstrumentForPersistence(normalizedLoanData);
+  const instrumentSanitizedLoanData =
+    sanitizeInstrumentForPersistence(normalizedLoanData);
 
   // ---------------------------------------------------------
   // 1️⃣ VALIDATE / LINK CUSTOMER (AUTO-CREATE IF NEEDED)
@@ -2509,9 +2704,15 @@ const createLoan = asyncHandler(async (req, res) => {
           bulkCount: count,
         });
         try {
-          await upsertChannelPartnerFromLoan({ ...loanPayload, ...loan.toObject() });
+          await upsertChannelPartnerFromLoan({
+            ...loanPayload,
+            ...loan.toObject(),
+          });
         } catch (channelErr) {
-          console.warn("Channel partner upsert skipped (bulk item):", channelErr?.message);
+          console.warn(
+            "Channel partner upsert skipped (bulk item):",
+            channelErr?.message,
+          );
         }
         await ensureLinkedRecords(loan);
         await syncVehicleMasterRecord(loan);
@@ -2528,9 +2729,15 @@ const createLoan = asyncHandler(async (req, res) => {
             bulkCount: count,
           });
           try {
-            await upsertChannelPartnerFromLoan({ ...loanPayload, ...loan.toObject() });
+            await upsertChannelPartnerFromLoan({
+              ...loanPayload,
+              ...loan.toObject(),
+            });
           } catch (channelErr) {
-            console.warn("Channel partner upsert skipped (bulk fallback item):", channelErr?.message);
+            console.warn(
+              "Channel partner upsert skipped (bulk fallback item):",
+              channelErr?.message,
+            );
           }
           await ensureLinkedRecords(loan);
           await syncVehicleMasterRecord(loan);
@@ -2578,7 +2785,10 @@ const createLoan = asyncHandler(async (req, res) => {
     try {
       await upsertChannelPartnerFromLoan(finalPayload);
     } catch (channelErr) {
-      console.warn("Channel partner upsert skipped (create):", channelErr?.message);
+      console.warn(
+        "Channel partner upsert skipped (create):",
+        channelErr?.message,
+      );
     }
   } catch (error) {
     if (error.code === 11000) {
@@ -2592,9 +2802,15 @@ const createLoan = asyncHandler(async (req, res) => {
         loanId: incId,
       });
       try {
-        await upsertChannelPartnerFromLoan({ ...loanPayload, ...loan.toObject() });
+        await upsertChannelPartnerFromLoan({
+          ...loanPayload,
+          ...loan.toObject(),
+        });
       } catch (channelErr) {
-        console.warn("Channel partner upsert skipped (create fallback):", channelErr?.message);
+        console.warn(
+          "Channel partner upsert skipped (create fallback):",
+          channelErr?.message,
+        );
       }
     } else if (error.name === "ValidationError") {
       console.error(
@@ -2667,7 +2883,8 @@ const updateLoan = asyncHandler(async (req, res) => {
       step = "normalize-body";
       // 1. Update Loan (store full payload, including customer fields)
       const normalizedBody = normalizeCustomerFields(req.body || {});
-      const instrumentSanitizedBody = sanitizeInstrumentForPersistence(normalizedBody);
+      const instrumentSanitizedBody =
+        sanitizeInstrumentForPersistence(normalizedBody);
 
       step = "clean-body";
       // Remove immutable/system fields
@@ -2718,11 +2935,17 @@ const updateLoan = asyncHandler(async (req, res) => {
         const filter = loan?._id
           ? { _id: loan._id }
           : { loanId: req.params.id };
-        const { setPayload, unsetPayload } = splitUndefinedForMongo(cleanedBody);
+        const { setPayload, unsetPayload } =
+          splitUndefinedForMongo(cleanedBody);
 
         updatedLoan = await Loan.findOneAndUpdate(
           filter,
-          { $set: setPayload, ...(Object.keys(unsetPayload).length ? { $unset: unsetPayload } : {}) },
+          {
+            $set: setPayload,
+            ...(Object.keys(unsetPayload).length
+              ? { $unset: unsetPayload }
+              : {}),
+          },
           { new: true, runValidators: false },
         );
 
@@ -2735,9 +2958,14 @@ const updateLoan = asyncHandler(async (req, res) => {
       // Auto-sync bank details to global Bank collection for future auto-fill
       await syncBankCollection(normalizedBody);
       try {
-        await upsertChannelPartnerFromLoan(updatedLoan?.toObject?.() || normalizedBody);
+        await upsertChannelPartnerFromLoan(
+          updatedLoan?.toObject?.() || normalizedBody,
+        );
       } catch (channelErr) {
-        console.warn("Channel partner upsert skipped (update):", channelErr?.message);
+        console.warn(
+          "Channel partner upsert skipped (update):",
+          channelErr?.message,
+        );
       }
 
       step = "sync-customer";
@@ -3077,7 +3305,11 @@ const getAllBanks = asyncHandler(async (req, res) => {
   // Keep API shape backward-compatible with previous `Bank` model.
   const banks = docs.map((row) => ({
     _id: row._id,
-    name: row.bankName || inferBankNameFromIfsc(row.ifsc) || inferBankNameFromMicr(row.micr) || "",
+    name:
+      row.bankName ||
+      inferBankNameFromIfsc(row.ifsc) ||
+      inferBankNameFromMicr(row.micr) ||
+      "",
     ifsc: row.ifsc || "",
     branch: row.branch || row.address || "",
     address: row.address || row.branch || "",
@@ -3136,9 +3368,22 @@ const resolveBankLookup = asyncHandler(async (req, res) => {
         data: {
           ifsc: saved?.ifsc || fetched.ifsc,
           micr: saved?.micr || fetched.micr || "",
-          bankName: saved?.bankName || fetched.bankName || inferBankNameFromIfsc(ifsc),
-          branch: saved?.branch || fetched.branch || saved?.address || fetched.address || bankMaster?.address || "",
-          address: saved?.address || fetched.address || saved?.branch || fetched.branch || bankMaster?.address || "",
+          bankName:
+            saved?.bankName || fetched.bankName || inferBankNameFromIfsc(ifsc),
+          branch:
+            saved?.branch ||
+            fetched.branch ||
+            saved?.address ||
+            fetched.address ||
+            bankMaster?.address ||
+            "",
+          address:
+            saved?.address ||
+            fetched.address ||
+            saved?.branch ||
+            fetched.branch ||
+            bankMaster?.address ||
+            "",
           city: saved?.city || fetched.city || "",
           state: saved?.state || fetched.state || "",
           district: saved?.district || fetched.district || "",
@@ -3156,7 +3401,9 @@ const resolveBankLookup = asyncHandler(async (req, res) => {
       await upsertBankDirectoryEntry({
         ifsc,
         bankName: inferred,
-        source: fetched?.notFound ? "ifsc-code-fallback-notfound" : "ifsc-code-fallback",
+        source: fetched?.notFound
+          ? "ifsc-code-fallback-notfound"
+          : "ifsc-code-fallback",
         active: fetched?.notFound ? false : true,
         raw: fetched || null,
       });
@@ -3173,7 +3420,9 @@ const resolveBankLookup = asyncHandler(async (req, res) => {
           district: "",
           contact: "",
           active: fetched?.notFound ? false : true,
-          source: fetched?.notFound ? "ifsc-code-fallback-notfound" : "ifsc-code-fallback",
+          source: fetched?.notFound
+            ? "ifsc-code-fallback-notfound"
+            : "ifsc-code-fallback",
           lastVerifiedAt: new Date(),
         },
       });
@@ -3184,7 +3433,9 @@ const resolveBankLookup = asyncHandler(async (req, res) => {
   }
 
   // 2) MICR path (cache-first + bank-code fallback)
-  const cachedByMicr = await BankDirectory.findOne({ micr }).sort({ updatedAt: -1 });
+  const cachedByMicr = await BankDirectory.findOne({ micr }).sort({
+    updatedAt: -1,
+  });
   if (cachedByMicr) {
     const fallbackBranch = cachedByMicr.branch || cachedByMicr.address || "";
     const fallbackAddress = cachedByMicr.address || cachedByMicr.branch || "";
@@ -3202,7 +3453,8 @@ const resolveBankLookup = asyncHandler(async (req, res) => {
         contact: cachedByMicr.contact || "",
         active: cachedByMicr.active !== false,
         source: "cache-micr",
-        lastVerifiedAt: cachedByMicr.lastVerifiedAt || cachedByMicr.updatedAt || null,
+        lastVerifiedAt:
+          cachedByMicr.lastVerifiedAt || cachedByMicr.updatedAt || null,
       },
     });
   }
@@ -3246,7 +3498,10 @@ const createBank = asyncHandler(async (req, res) => {
   const existing = normalizedIfsc
     ? await BankDirectory.findOne({ ifsc: normalizedIfsc })
     : normalizedMicr
-      ? await BankDirectory.findOne({ micr: normalizedMicr, bankName: String(name || "").trim() })
+      ? await BankDirectory.findOne({
+          micr: normalizedMicr,
+          bankName: String(name || "").trim(),
+        })
       : null;
   if (existing) {
     res.status(400);
