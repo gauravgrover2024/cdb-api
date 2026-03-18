@@ -108,6 +108,8 @@ const loanSchema = mongoose.Schema(
     co_currentExperience: { type: Number },
     co_totalExp: { type: Number }, // In years - numeric
     co_totalExperience: { type: Number },
+    co_yearsAtCurrentResidence: { type: Number },
+    co_yearsInCurrentResidence: { type: Number }, // legacy alias
     co_companyName: { type: String },
     co_companyAddress: { type: String },
     co_companyPincode: { type: String },
@@ -270,6 +272,8 @@ const loanSchema = mongoose.Schema(
     // ===== APPROVAL STAGE (Only approval data, NO payout yet) =====
     approval_bankId: { type: String },
     approval_bankName: { type: String },
+    approval_loanBookedIn: { type: String }, // "Direct Code" | "Indirect Code"
+    approval_brokerName: { type: String }, // Broker / Corporate DSA name when indirect
     approval_loanAmountApproved: { type: Number },
     approval_roi: { type: Number },
     approval_tenureMonths: { type: Number },
@@ -396,6 +400,7 @@ const loanSchema = mongoose.Schema(
     
     // Additional KYC Documents
     aadhaarNumber: { type: String },
+    aadharNumber: { type: String },
     panNumber: { type: String },
     passportNumber: { type: String },
     dlNumber: { type: String },

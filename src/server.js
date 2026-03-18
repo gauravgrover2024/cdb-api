@@ -61,6 +61,16 @@ app.use(
 
 app.use(morgan("dev"));
 
+// Ensure Mongo connection is ready for every serverless request on Vercel.
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Routes
 app.use("/api/banks", bankRoutes);
 app.use("/api/customers", customerRoutes);
