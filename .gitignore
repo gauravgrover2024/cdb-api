@@ -1,2 +1,8 @@
 .vercel
-.node_modules
+node_modules/
+.DS_Store
+.env.local
+.env.*.local
+*.log
+.vscode/
+.idea/
