@@ -1,8 +1,14 @@
 .vercel
 node_modules/
 .DS_Store
+**/.DS_Store
 .env.local
 .env.*.local
 *.log
 .vscode/
 .idea/
+
+# Ignore API request scratch files/folders
+api/*.http
+api/**/*.http
+api/http/
