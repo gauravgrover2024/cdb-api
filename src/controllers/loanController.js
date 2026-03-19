@@ -1073,7 +1073,8 @@ const escapeRegex = (value = "") =>
 
 const LIST_COUNT_CACHE_TTL_MS = 45 * 1000;
 const DASHBOARD_STATS_CACHE_TTL_MS = 60 * 1000;
-const ANALYTICS_CACHE_TTL_MS = 60 * 1000;
+const ANALYTICS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
+const ANALYTICS_QUERY_MAX_MS = 45000; // 45s timeout
 const listCountCache = new Map();
 let dashboardStatsCache = { ts: 0, data: null };
 const analyticsCache = new Map();
@@ -1099,11 +1100,14 @@ const ANALYTICS_DRILLDOWN_FIELDS = [
   "primaryMobile",
   "typeOfLoan",
   "loanType",
+  "caseType",
+  "isFinanced",
   "currentStage",
   "status",
   "approval_status",
   "approval_bankName",
   "postfile_bankName",
+  "bankName",
   "approval_brokerName",
   "recordSource",
   "source",
@@ -1282,6 +1286,31 @@ const pickLoanType = (loan) =>
     loan?.typeOfLoan || loan?.loanType || loan?.caseType || "Unknown",
   ).trim() || "Unknown";
 
+const normalizeLoanTypeText = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const isCashDeliveryBasedCase = (loan) => {
+  const loanType = normalizeLoanTypeText(
+    loan?.typeOfLoan || loan?.loanType || loan?.caseType,
+  );
+  const financed = normalizeLoanTypeText(loan?.isFinanced);
+  const bankText = normalizeLoanTypeText(
+    loan?.approval_bankName || loan?.postfile_bankName || loan?.bankName,
+  );
+
+  if (bankText.includes("cash sale bank")) return true;
+  if (loanType.includes("cash-in") || loanType.includes("cash in")) return false;
+  if (financed === "no" && !loanType.includes("refinance")) return true;
+  if (!loanType) return false;
+  return (
+    loanType === "cash" ||
+    loanType.includes("cash car") ||
+    loanType.includes("cash sale")
+  );
+};
+
 const pickRegNo = (loan) =>
   String(
     loan?.rc_redg_no || loan?.registrationNumber || loan?.vehicleRegNo || "",
@@ -1294,6 +1323,12 @@ const pickDisbursementDate = (loan) =>
   loan?.approval_disbursedDate ||
   loan?.disburse_date ||
   null;
+
+const pickCashBusinessDate = (loan) =>
+  loan?.delivery_date || loan?.invoice_date || pickDisbursementDate(loan) || null;
+
+const isCashBusinessCompleted = (loan) =>
+  isCashDeliveryBasedCase(loan) && Boolean(pickCashBusinessDate(loan));
 
 const isDisbursedLoan = (loan) => {
   const status = normalizeStatus(loan);
@@ -1563,10 +1598,6 @@ const getLoans = asyncHandler(async (req, res) => {
     searchLength: safeSearch.length,
   };
 
-  if (process.env.NODE_ENV !== "production") {
-    console.info("[LoansAPI:getLoans]", responseMeta);
-  }
-
   res.json({
     data,
     total,
@@ -1764,7 +1795,7 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
   res.json(response);
 });
 
-const fetchAnalyticsLoans = async ({ start, end, filters }) => {
+const fetchAnalyticsLoans = async ({ start, end, filters, fields = ANALYTICS_DRILLDOWN_FIELDS }) => {
   const query = {
     createdAt: {
       $gte: start,
@@ -1772,9 +1803,58 @@ const fetchAnalyticsLoans = async ({ start, end, filters }) => {
     },
   };
 
-  const rows = await Loan.find(query).select(ANALYTICS_DRILLDOWN_FIELDS).lean();
+  const rows = await Loan.find(query)
+    .select(fields)
+    .hint({ createdAt: 1, _id: 1 })
+    .maxTimeMS(ANALYTICS_QUERY_MAX_MS)
+    .lean();
   return applyAnalyticsFilters(rows, filters);
 };
+
+// Slimmer field set for overview - fewer fields = faster transfer & less memory
+const ANALYTICS_OVERVIEW_FIELDS = [
+  "loanId",
+  "primaryMobile",
+  "panNumber",
+  "gstNumber",
+  "currentStage",
+  "status",
+  "approval_status",
+  "typeOfLoan",
+  "loanType",
+  "caseType",
+  "isFinanced",
+  "approval_bankName",
+  "postfile_bankName",
+  "bankName",
+  "dealerName",
+  "showroomDealerName",
+  "showroomName",
+  "recordSource",
+  "source",
+  "approval_loanBookedIn",
+  "vehicleMake",
+  "vehicleModel",
+  "vehicleVariant",
+  "approval_loanAmountApproved",
+  "approval_loanAmountDisbursed",
+  "disburse_amount",
+  "loanAmount",
+  "financeExpectation",
+  "rc_redg_no",
+  "registrationNumber",
+  "vehicleRegNo",
+  "invoice_number",
+  "invoice_date",
+  "insurance_policy_number",
+  "insurance_policy_start_date",
+  "insurance_company_name",
+  "delivery_date",
+  "createdAt",
+  "disbursement_date",
+  "approval_disbursedDate",
+  "disburse_date",
+].join(" ");
 
 const collectRepeatedCustomerStats = (loans) => {
   const keyToLoanIds = new Map();
@@ -1840,7 +1920,7 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
   }
 
   const startedAt = Date.now();
-  const loans = await fetchAnalyticsLoans({ start, end, filters });
+  const loans = await fetchAnalyticsLoans({ start, end, filters, fields: ANALYTICS_OVERVIEW_FIELDS });
 
   const months = buildMonthBuckets(start, end);
   const totalLoansByMonth = new Map(months.map((m) => [m.key, 0]));
@@ -1862,6 +1942,10 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
   let approvalPendingAmount = 0;
   let missingRegCount = 0;
   let missingDeliveryCount = 0;
+  let cashCarTotal = 0;
+  let cashCarDelivered = 0;
+  let cashCarPending = 0;
+  let cashCarAmount = 0;
 
   for (const loan of loans) {
     const createdMonth = monthKey(loan?.createdAt);
@@ -1882,23 +1966,31 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
     const loanType = pickLoanType(loan);
     loanTypeMap.set(loanType, (loanTypeMap.get(loanType) || 0) + 1);
 
-    const bankName = pickBankName(loan);
-    if (!bankMap.has(bankName)) {
-      bankMap.set(bankName, {
-        bankName,
-        total: 0,
-        approved: 0,
-        disbursed: 0,
-        pending: 0,
-        totalLoanAmount: 0,
-      });
+    const isCashCase = isCashDeliveryBasedCase(loan);
+    if (isCashCase) {
+      cashCarTotal += 1;
+      cashCarAmount += pickLoanAmount(loan);
+      if (isCashBusinessCompleted(loan)) cashCarDelivered += 1;
+      else cashCarPending += 1;
+    } else {
+      const bankName = pickBankName(loan);
+      if (!bankMap.has(bankName)) {
+        bankMap.set(bankName, {
+          bankName,
+          total: 0,
+          approved: 0,
+          disbursed: 0,
+          pending: 0,
+          totalLoanAmount: 0,
+        });
+      }
+      const bankNode = bankMap.get(bankName);
+      bankNode.total += 1;
+      bankNode.totalLoanAmount += pickLoanAmount(loan);
+      if (status === "approved") bankNode.approved += 1;
+      if (status === "pending") bankNode.pending += 1;
+      if (isDisbursedLoan(loan)) bankNode.disbursed += 1;
     }
-    const bankNode = bankMap.get(bankName);
-    bankNode.total += 1;
-    bankNode.totalLoanAmount += pickLoanAmount(loan);
-    if (status === "approved") bankNode.approved += 1;
-    if (status === "pending") bankNode.pending += 1;
-    if (isDisbursedLoan(loan)) bankNode.disbursed += 1;
 
     const source = pickSource(loan);
     if (!sourceMap.has(source)) {
@@ -1990,8 +2082,10 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
       }
     }
 
-    if (isDisbursedLoan(loan)) {
-      const dateForTrend = pickDisbursementDate(loan) || loan?.createdAt;
+    if (isDisbursedLoan(loan) || isCashBusinessCompleted(loan)) {
+      const dateForTrend = isCashCase
+        ? pickCashBusinessDate(loan) || loan?.createdAt
+        : pickDisbursementDate(loan) || loan?.createdAt;
       const dMonth = monthKey(dateForTrend);
       if (dMonth && disbursedAmountByMonth.has(dMonth)) {
         const node = disbursedAmountByMonth.get(dMonth);
@@ -2089,7 +2183,7 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
       totalDisbursedAmount: loans.reduce(
         (acc, loan) =>
           acc +
-          (isDisbursedLoan(loan)
+          (isDisbursedLoan(loan) || isCashBusinessCompleted(loan)
             ? pickDisbursedAmount(loan) || pickLoanAmount(loan)
             : 0),
         0,
@@ -2108,6 +2202,12 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
       },
       missingCriticalDeliveryFields: {
         count: missingDeliveryCount,
+      },
+      cashCarSummary: {
+        total: cashCarTotal,
+        delivered: cashCarDelivered,
+        pending: cashCarPending,
+        amount: Math.round(cashCarAmount * 100) / 100,
       },
       loanTypeMix,
       bankPipeline,
@@ -2155,8 +2255,11 @@ const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
     filtered = loans.filter((loan) => monthKey(loan?.createdAt) === bucket);
   } else if (widget === "disbursed_amount_trend" && bucket) {
     filtered = loans.filter((loan) => {
-      const d = pickDisbursementDate(loan) || loan?.createdAt;
-      return isDisbursedLoan(loan) && monthKey(d) === bucket;
+      const isCashCase = isCashDeliveryBasedCase(loan);
+      const d = isCashCase
+        ? pickCashBusinessDate(loan) || loan?.createdAt
+        : pickDisbursementDate(loan) || loan?.createdAt;
+      return (isDisbursedLoan(loan) || isCashBusinessCompleted(loan)) && monthKey(d) === bucket;
     });
   } else if (widget === "approval_pending_disbursal") {
     filtered = loans.filter((loan) => isApprovedPendingDisbursal(loan));
@@ -2176,6 +2279,14 @@ const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
     key
   ) {
     filtered = loans.filter((loan) => pickBankName(loan).toLowerCase() === key);
+  } else if (widget === "cash_car_all") {
+    filtered = loans.filter((loan) => isCashDeliveryBasedCase(loan));
+  } else if (widget === "cash_car_delivered") {
+    filtered = loans.filter((loan) => isCashBusinessCompleted(loan));
+  } else if (widget === "cash_car_pending_delivery") {
+    filtered = loans.filter(
+      (loan) => isCashDeliveryBasedCase(loan) && !isCashBusinessCompleted(loan),
+    );
   } else if (widget === "source_performance" && key) {
     filtered = loans.filter((loan) => pickSource(loan).toLowerCase() === key);
   } else if (widget === "dealer_performance" && key) {

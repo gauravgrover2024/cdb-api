@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node src/server.js",
-    "dev:watch": "node --watch src/server.js",
+    "dev": "nodemon src/server.js",
+    "dev:watch": "nodemon src/server.js",
     "indexes:loan": "node src/scripts/ensureLoanIndexes.js",
     "indexes:vehicle": "node src/scripts/ensureVehicleIndexes.js",
     "backfill:latest-business": "node src/scripts/backfillLatestBusinessDate.js",
@@ -32,5 +32,8 @@
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
   }
 }

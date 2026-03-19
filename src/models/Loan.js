@@ -873,6 +873,7 @@ loanSchema.index({ status: 1 });
 loanSchema.index({ currentStage: 1 });
 loanSchema.index({ loanType: 1 });
 loanSchema.index({ createdAt: -1 });
+loanSchema.index({ createdAt: 1, _id: 1 }); // Analytics range queries
 loanSchema.index({ primaryMobile: 1 });
 loanSchema.index({ updatedAt: -1, _id: -1 });
 loanSchema.index({ disbursement_date: -1, _id: -1 });
