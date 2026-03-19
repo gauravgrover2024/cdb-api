@@ -2,6 +2,7 @@ import express from 'express';
 const router = express.Router();
 import {
   getVehicles,
+  searchVehicleRecords,
   getVehicleById,
   createVehicle,
   updateVehicle,
@@ -25,6 +26,8 @@ import {
 router.route('/')
   .get(getVehicles)
   .post(createVehicle);
+
+router.get('/records/search', searchVehicleRecords);
 
 router.route('/bulk')
   .post(bulkUploadVehicles);

@@ -184,6 +184,7 @@ const buildVehicleRecordPayload = async (loanDoc) => {
 
     registrationNumber,
     registrationNumberNormalized: normalizeRegNo(registrationNumber),
+    registrationNumberLast4: normalizeRegNo(registrationNumber).slice(-4),
     make,
     model,
     variant,

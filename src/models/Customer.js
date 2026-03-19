@@ -1,5 +1,19 @@
 import mongoose from 'mongoose';
 
+const bankDetailSchema = new mongoose.Schema(
+  {
+    bankName: { type: String },
+    accountNumber: { type: String },
+    ifscCode: { type: String },
+    ifsc: { type: String },
+    branch: { type: String },
+    accountType: { type: String },
+    accountSinceYears: { type: Number },
+    openedIn: { type: Number },
+  },
+  { _id: false },
+);
+
 const customerSchema = mongoose.Schema(
   {
     customerId: { type: String, unique: true },
@@ -133,6 +147,7 @@ const customerSchema = mongoose.Schema(
     accountType: { type: String },
     accountSinceYears: { type: Number },
     openedIn: { type: Number },
+    bankDetails: { type: [bankDetailSchema], default: [] },
 
     // Additional fields for compatibility
     currentAddress: { type: String },
@@ -202,6 +217,8 @@ const customerSchema = mongoose.Schema(
 
 // Index for search
 customerSchema.index({ customerName: 'text', primaryMobile: 'text', panNumber: 'text', city: 'text' });
+customerSchema.index({ "bankDetails.ifscCode": 1 });
+customerSchema.index({ "bankDetails.accountNumber": 1 });
 
 const Customer = mongoose.model('Customer', customerSchema);
 

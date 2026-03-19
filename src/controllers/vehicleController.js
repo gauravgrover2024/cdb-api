@@ -1,6 +1,7 @@
 import asyncHandler from 'express-async-handler';
 import mongoose from 'mongoose';
 import Vehicle from '../models/Vehicle.js';
+import VehicleRecord from '../models/VehicleRecord.js';
 
 const VEHICLE_LIST_PROJECTION = {
   make: 1,
@@ -98,6 +99,10 @@ const canonicalizeMake = (value) => {
 };
 
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const normalizeRegNo = (value) =>
+  String(value || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
 
 const trimLeading = (value, prefix) => {
   const source = String(value || '').trim();
@@ -329,6 +334,108 @@ const getVehicles = asyncHandler(async (req, res) => {
     ? docs.map(normalizeVehicleRecord)
     : docs.map(toVehicleListItem);
   res.json({ success: true, count: count ?? data.length, data });
+});
+
+const searchVehicleRecords = asyncHandler(async (req, res) => {
+  const rawQ = String(req.query.q || req.query.search || '').trim();
+  const q = normalizeRegNo(rawQ);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+
+  if (q.length < 2) {
+    return res.json({ success: true, count: 0, data: [] });
+  }
+
+  const escaped = escapeRegex(q);
+  const suffix = q.slice(-4);
+  const clauses = [
+    { registrationNumberNormalized: new RegExp(`^${escaped}`, 'i') },
+    { registrationNumberNormalized: new RegExp(escaped, 'i') },
+  ];
+  if (suffix.length === 4) {
+    clauses.unshift({ registrationNumberLast4: suffix });
+    clauses.push({ registrationNumberNormalized: new RegExp(`${escaped}$`, 'i') });
+  }
+
+  const rows = await VehicleRecord.find({ $or: clauses })
+    .select({
+      registrationNumber: 1,
+      registrationNumberNormalized: 1,
+      registrationNumberLast4: 1,
+      make: 1,
+      model: 1,
+      variant: 1,
+      yearOfManufacture: 1,
+      manufactureMonth: 1,
+      engineNumber: 1,
+      chassisNumber: 1,
+      registrationDate: 1,
+      registrationCity: 1,
+      hypothecation: 1,
+      cubicCapacityCc: 1,
+      updatedAt: 1,
+      createdAt: 1,
+    })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(Math.max(limit * 4, 40))
+    .lean();
+
+  const scored = rows
+    .map((row) => {
+      const normalized = normalizeRegNo(
+        row?.registrationNumberNormalized || row?.registrationNumber,
+      );
+      if (!normalized) return null;
+
+      let score = 0;
+      if (normalized === q) score += 150;
+      if (normalized.startsWith(q)) score += 110;
+      if (normalized.includes(q)) score += 50;
+      if (suffix.length === 4 && row?.registrationNumberLast4 === suffix) score += 80;
+      if (suffix.length === 4 && normalized.endsWith(suffix)) score += 40;
+      if (!score) return null;
+
+      return {
+        ...row,
+        registrationNumber:
+          String(row?.registrationNumber || '').trim() || normalized,
+        registrationNumberNormalized: normalized,
+        score,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aTs = Date.parse(a.updatedAt || a.createdAt || '') || 0;
+      const bTs = Date.parse(b.updatedAt || b.createdAt || '') || 0;
+      return bTs - aTs;
+    });
+
+  const deduped = [];
+  const seen = new Set();
+  for (const row of scored) {
+    const key = row.registrationNumberNormalized;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push({
+      _id: row._id,
+      registrationNumber: row.registrationNumber,
+      registrationNumberNormalized: row.registrationNumberNormalized,
+      make: row.make || '',
+      model: row.model || '',
+      variant: row.variant || '',
+      yearOfManufacture: row.yearOfManufacture || '',
+      manufactureMonth: row.manufactureMonth || '',
+      engineNumber: row.engineNumber || '',
+      chassisNumber: row.chassisNumber || '',
+      registrationDate: row.registrationDate || null,
+      registrationCity: row.registrationCity || '',
+      hypothecation: row.hypothecation || '',
+      cubicCapacityCc: row.cubicCapacityCc,
+    });
+    if (deduped.length >= limit) break;
+  }
+
+  res.json({ success: true, count: deduped.length, data: deduped });
 });
 
 const getVehicleById = asyncHandler(async (req, res) => {
@@ -667,6 +774,7 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
 
 export {
   getVehicles,
+  searchVehicleRecords,
   getVehicleById,
   createVehicle,
   updateVehicle,

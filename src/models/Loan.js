@@ -1,5 +1,19 @@
 import mongoose from 'mongoose';
 
+const bankDetailSchema = new mongoose.Schema(
+  {
+    bankName: { type: String },
+    accountNumber: { type: String },
+    ifscCode: { type: String },
+    ifsc: { type: String },
+    branch: { type: String },
+    accountType: { type: String },
+    accountSinceYears: { type: Number },
+    openedIn: { type: Number },
+  },
+  { _id: false },
+);
+
 const loanSchema = mongoose.Schema(
   {
     loanId: { type: String, required: true, index: true }, // Custom ID e.g. "LN-2024-001"
@@ -762,6 +776,7 @@ const loanSchema = mongoose.Schema(
     branch: { type: String },
     accountSinceYears: { type: Number },
     openedIn: { type: Number },
+    bankDetails: { type: [bankDetailSchema], default: [] },
     maritalStatus: { type: String },
     dependents: { type: Number },
     education: { type: String },
@@ -891,6 +906,8 @@ loanSchema.index({ registrationNumber: 1 });
 loanSchema.index({ rc_redg_no: 1 });
 loanSchema.index({ approval_bankName: 1 });
 loanSchema.index({ postfile_bankName: 1 });
+loanSchema.index({ "bankDetails.ifscCode": 1 });
+loanSchema.index({ "bankDetails.accountNumber": 1 });
 loanSchema.index({ customerName: 1, primaryMobile: 1 });
 loanSchema.index({ customerName: 1, panNumber: 1 });
 loanSchema.index({ panNumber: 1, primaryMobile: 1 });

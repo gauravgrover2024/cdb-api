@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import BankDirectory from "../models/BankDirectory.js";
 import Loan from "../models/Loan.js";
 import Customer from "../models/Customer.js";
+import Counter from "../models/Counter.js";
 import Channel from "../models/Channel.js";
 import DeliveryOrder from "../models/DeliveryOrder.js";
 import Payment from "../models/Payment.js";
@@ -112,6 +113,9 @@ const CUSTOMER_SYNC_FIELDS = [
   "ifsc",
   "branch",
   "accountType",
+  "accountSinceYears",
+  "openedIn",
+  "bankDetails",
   "loan_notes",
   "kycStatus",
   "referenceName",
@@ -165,6 +169,9 @@ const MICR_BANK_CODE_MAP = {
   760: "IDFC First Bank",
 };
 
+const RC_INV_COUNTER_KEY = "loan_rc_inv_storage_sequence";
+const RC_INV_COUNTER_MIN = 4068;
+
 const normalizeIfsc = (value) =>
   String(value || "")
     .toUpperCase()
@@ -186,6 +193,113 @@ const inferBankNameFromMicr = (value) => {
   const micr = normalizeMicr(value);
   if (micr.length !== 9) return "";
   return MICR_BANK_CODE_MAP[micr.slice(3, 6)] || "";
+};
+
+const MAX_BANK_DETAILS = 3;
+
+const hasBankEntryValue = (entry = {}) =>
+  Boolean(
+    String(entry?.bankName || "").trim() ||
+      String(entry?.accountNumber || "").trim() ||
+      normalizeIfsc(entry?.ifscCode || entry?.ifsc) ||
+      String(entry?.branch || "").trim() ||
+      String(entry?.accountType || "").trim(),
+  );
+
+const normalizeBankEntry = (entry = {}) => {
+  const ifscCode = normalizeIfsc(entry?.ifscCode || entry?.ifsc);
+  const accountSinceYears = Number(entry?.accountSinceYears);
+  const openedIn = Number(entry?.openedIn);
+  return {
+    bankName: String(entry?.bankName || "").trim(),
+    accountNumber: String(entry?.accountNumber || "").trim(),
+    ifscCode,
+    ifsc: ifscCode,
+    branch: String(entry?.branch || "").trim(),
+    accountType: String(entry?.accountType || "").trim(),
+    accountSinceYears: Number.isFinite(accountSinceYears)
+      ? accountSinceYears
+      : undefined,
+    openedIn: Number.isFinite(openedIn) ? openedIn : undefined,
+  };
+};
+
+const mergeBankEntry = (preferred = {}, fallback = {}) => {
+  const left = normalizeBankEntry(preferred);
+  const right = normalizeBankEntry(fallback);
+  return {
+    bankName: left.bankName || right.bankName || "",
+    accountNumber: left.accountNumber || right.accountNumber || "",
+    ifscCode: left.ifscCode || right.ifscCode || "",
+    ifsc: left.ifsc || right.ifsc || "",
+    branch: left.branch || right.branch || "",
+    accountType: left.accountType || right.accountType || "",
+    accountSinceYears:
+      left.accountSinceYears !== undefined
+        ? left.accountSinceYears
+        : right.accountSinceYears,
+    openedIn: left.openedIn !== undefined ? left.openedIn : right.openedIn,
+  };
+};
+
+const applyNormalizedBankDetails = (normalized = {}) => {
+  const stored = Array.isArray(normalized?.bankDetails)
+    ? normalized.bankDetails
+    : [];
+  const additional = Array.isArray(normalized?.additionalBankDetails)
+    ? normalized.additionalBankDetails
+    : [];
+
+  const normalizedStored = [...stored, ...additional]
+    .map((entry) => normalizeBankEntry(entry))
+    .filter((entry) => hasBankEntryValue(entry))
+    .slice(0, MAX_BANK_DETAILS);
+
+  const primaryFlat = normalizeBankEntry({
+    bankName: normalized?.bankName,
+    accountNumber: normalized?.accountNumber,
+    ifscCode: normalized?.ifscCode,
+    ifsc: normalized?.ifsc,
+    branch: normalized?.branch,
+    accountType: normalized?.accountType,
+    accountSinceYears: normalized?.accountSinceYears,
+    openedIn: normalized?.openedIn,
+  });
+
+  const firstStored = normalizedStored[0];
+  const primary = hasBankEntryValue(primaryFlat)
+    ? mergeBankEntry(primaryFlat, firstStored || {})
+    : firstStored || primaryFlat;
+
+  const additionalBanks = normalizedStored.slice(firstStored ? 1 : 0);
+  const bankDetails = [primary, ...additionalBanks]
+    .filter((entry) => hasBankEntryValue(entry))
+    .slice(0, MAX_BANK_DETAILS);
+
+  normalized.bankDetails = bankDetails;
+
+  const top = bankDetails[0];
+  if (top && hasBankEntryValue(top)) {
+    normalized.bankName = top.bankName || normalized.bankName || "";
+    normalized.accountNumber = top.accountNumber || normalized.accountNumber || "";
+    normalized.ifscCode = top.ifscCode || normalized.ifscCode || normalized.ifsc || "";
+    normalized.ifsc = top.ifsc || normalized.ifscCode || normalized.ifsc || "";
+    normalized.branch = top.branch || normalized.branch || "";
+    normalized.accountType = top.accountType || normalized.accountType || "";
+    normalized.accountSinceYears =
+      top.accountSinceYears !== undefined
+        ? top.accountSinceYears
+        : normalized.accountSinceYears;
+    normalized.openedIn =
+      top.openedIn !== undefined ? top.openedIn : normalized.openedIn;
+  }
+
+  if (normalized.ifsc && !normalized.ifscCode) normalized.ifscCode = normalized.ifsc;
+  if (normalized.ifscCode && !normalized.ifsc) normalized.ifsc = normalized.ifscCode;
+
+  delete normalized.additionalBankDetails;
+  delete normalized.hasAdditionalBankDetails;
+  return normalized;
 };
 
 const fetchIfscFromRazorpay = async (ifsc) => {
@@ -449,6 +563,7 @@ const normalizeCustomerFields = (payload) => {
     normalized.gu_ifsc = normalizeIfsc(normalized.gu_ifsc);
   if (normalized.gu_ifscCode)
     normalized.gu_ifscCode = normalizeIfsc(normalized.gu_ifscCode);
+  applyNormalizedBankDetails(normalized);
   if (normalized.ecs_micrCode)
     normalized.ecs_micrCode = normalizeMicr(normalized.ecs_micrCode);
   const inferredMainBank = inferBankNameFromIfsc(
@@ -462,6 +577,11 @@ const normalizeCustomerFields = (payload) => {
       normalized.postfile_bankName = inferredMainBank;
     if (!normalized.disburse_bankName)
       normalized.disburse_bankName = inferredMainBank;
+    if (Array.isArray(normalized.bankDetails) && normalized.bankDetails.length) {
+      if (!normalized.bankDetails[0].bankName) {
+        normalized.bankDetails[0].bankName = inferredMainBank;
+      }
+    }
   }
   const inferredEcsBank = inferBankNameFromMicr(normalized.ecs_micrCode);
   if (inferredEcsBank && !normalized.ecs_bankName)
@@ -796,6 +916,12 @@ const upsertBankDirectoryEntry = async ({
 // Resolve customer by ObjectId or custom customerId
 // Helper to sync bank details with Bank collection
 const syncBankCollection = async (payload) => {
+  const primaryBankDetails = Array.isArray(payload?.bankDetails)
+    ? payload.bankDetails
+        .map((entry) => normalizeBankEntry(entry))
+        .filter((entry) => hasBankEntryValue(entry))
+    : [];
+
   const banksToSync = [
     {
       name: payload.bankName,
@@ -821,9 +947,24 @@ const syncBankCollection = async (payload) => {
       address: "",
       micr: payload.ecs_micrCode,
     },
+    ...primaryBankDetails.map((entry) => ({
+      name: entry.bankName,
+      ifsc: entry.ifscCode || entry.ifsc,
+      address: entry.branch,
+      micr: undefined,
+    })),
   ];
 
-  for (const bank of banksToSync) {
+  const dedupedBanks = [];
+  const seen = new Set();
+  banksToSync.forEach((bank) => {
+    const key = `${String(bank?.name || "").trim().toLowerCase()}|${normalizeIfsc(bank?.ifsc)}|${normalizeMicr(bank?.micr)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    dedupedBanks.push(bank);
+  });
+
+  for (const bank of dedupedBanks) {
     if (bank.name && (bank.ifsc || bank.micr)) {
       try {
         await upsertBankDirectoryEntry({
@@ -1593,6 +1734,7 @@ const getLoans = asyncHandler(async (req, res) => {
     "approval_loanBookedIn",
     "approval_brokerName",
     "postfile_bankName",
+    "bankDetails",
     "approval_banksData",
     "approval_loanAmountDisbursed",
     "approval_loanAmountApproved",
@@ -3753,6 +3895,69 @@ const createBank = asyncHandler(async (req, res) => {
   }
 });
 
+const parseRcInvStorageNumber = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const match = raw.match(/\d+/g);
+  if (!match) return null;
+  const parsed = Number(match.join(""));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const getMaxRcInvStorageNumberFromLoans = async () => {
+  const cursor = Loan.find({
+    rc_inv_storage_number: { $exists: true, $nin: [null, ""] },
+  })
+    .select("rc_inv_storage_number")
+    .lean()
+    .cursor();
+
+  let max = 0;
+  for await (const row of cursor) {
+    const parsed = parseRcInvStorageNumber(row?.rc_inv_storage_number);
+    if (parsed !== null && parsed > max) {
+      max = parsed;
+    }
+  }
+  return max;
+};
+
+const reserveNextRcInvStorageNumber = async () => {
+  const bumpedExisting = await Counter.findOneAndUpdate(
+    { key: RC_INV_COUNTER_KEY },
+    { $inc: { value: 1 } },
+    { new: true, lean: true },
+  );
+  if (bumpedExisting?.value) return bumpedExisting.value;
+
+  const maxFromLoans = await getMaxRcInvStorageNumberFromLoans();
+  const seed = Math.max(maxFromLoans, RC_INV_COUNTER_MIN - 1);
+
+  try {
+    await Counter.create({ key: RC_INV_COUNTER_KEY, value: seed });
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+  }
+
+  const bumped = await Counter.findOneAndUpdate(
+    { key: RC_INV_COUNTER_KEY },
+    { $inc: { value: 1 } },
+    { new: true, upsert: true, setDefaultsOnInsert: true, lean: true },
+  );
+
+  return bumped?.value || RC_INV_COUNTER_MIN;
+};
+
+const getNextRcInvStorageNumber = asyncHandler(async (req, res) => {
+  const next = await reserveNextRcInvStorageNumber();
+  res.json({
+    success: true,
+    data: {
+      rcInvStorageNumber: String(next),
+    },
+  });
+});
+
 export {
   getLoans,
   getLoanDashboardStats,
@@ -3767,6 +3972,7 @@ export {
   disburseLoan,
   getBanksData,
   saveBanksData,
+  getNextRcInvStorageNumber,
   getAllBanks,
   resolveBankLookup,
   createBank,

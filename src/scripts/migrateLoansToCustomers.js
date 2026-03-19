@@ -144,7 +144,27 @@ const run = async () => {
       accountNumber:
         loan.applicantBank?.accountNumber || loan.accountNumber || "",
       ifscCode: loan.applicantBank?.ifscCode || loan.ifscCode || "",
+      ifsc: loan.applicantBank?.ifscCode || loan.ifscCode || loan.ifsc || "",
       branch: loan.applicantBank?.branch || loan.branch || "",
+      bankDetails: (() => {
+        const fromLoan = Array.isArray(loan.bankDetails) ? loan.bankDetails : [];
+        if (fromLoan.length) return fromLoan.slice(0, 3);
+        const primary = {
+          bankName: loan.applicantBank?.bankName || loan.bankName || "",
+          accountNumber: loan.applicantBank?.accountNumber || loan.accountNumber || "",
+          ifscCode: loan.applicantBank?.ifscCode || loan.ifscCode || "",
+          ifsc: loan.applicantBank?.ifscCode || loan.ifscCode || loan.ifsc || "",
+          branch: loan.applicantBank?.branch || loan.branch || "",
+          accountType: loan.applicantBank?.accountType || loan.accountType || "",
+          accountSinceYears:
+            loan.applicantBank?.accountSinceYears || loan.accountSinceYears || undefined,
+          openedIn: loan.applicantBank?.openedIn || loan.openedIn || undefined,
+        };
+        const hasPrimary = Boolean(
+          primary.bankName || primary.accountNumber || primary.ifscCode || primary.branch,
+        );
+        return hasPrimary ? [primary] : [];
+      })(),
 
       // Loan intent (optional)
       typeOfLoan: loan.typeOfLoan || loan.finance?.typeOfLoan || "",
