@@ -269,17 +269,26 @@ const isVehicleDiscontinued = (vehicle) =>
   hasDiscontinuedDate(vehicle?.discontinued_date ?? vehicle?.discontinuedDate);
 
 const ACTIVE_VARIANT_FILTER = {
-  $nor: [
-    { is_discontinued: true },
-    { is_discontinued: 1 },
-    { is_discontinued: 'true' },
-    { is_discontinued: 'True' },
-    { isDiscontinued: true },
-    { isDiscontinued: 1 },
-    { isDiscontinued: 'true' },
-    { isDiscontinued: 'True' },
-    { discontinued_date: { $exists: true, $nin: [null, '', 'null', 'NULL'] } },
-    { discontinuedDate: { $exists: true, $nin: [null, '', 'null', 'NULL'] } },
+  $and: [
+    {
+      // Keep this branch cast-safe for the schema-typed boolean field.
+      $or: [
+        { is_discontinued: { $exists: false } },
+        { is_discontinued: false },
+        { is_discontinued: 0 },
+        { is_discontinued: null },
+      ],
+    },
+    {
+      $nor: [
+        { isDiscontinued: true },
+        { isDiscontinued: 1 },
+        { isDiscontinued: 'true' },
+        { isDiscontinued: 'True' },
+        { discontinued_date: { $exists: true, $nin: [null, '', 'null', 'NULL'] } },
+        { discontinuedDate: { $exists: true, $nin: [null, '', 'null', 'NULL'] } },
+      ],
+    },
   ],
 };
 
@@ -339,7 +348,13 @@ const getVehicles = asyncHandler(async (req, res) => {
 const searchVehicleRecords = asyncHandler(async (req, res) => {
   const rawQ = String(req.query.q || req.query.search || '').trim();
   const q = normalizeRegNo(rawQ);
-  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+  const isFourDigitSuffixSearch = /^\d{4}$/.test(q);
+  const requestedLimit = Number(req.query.limit);
+  const defaultLimit = isFourDigitSuffixSearch ? 5000 : 20;
+  const limit = Math.min(
+    Math.max(Number.isFinite(requestedLimit) ? requestedLimit : defaultLimit, 1),
+    10000,
+  );
 
   if (q.length < 2) {
     return res.json({ success: true, count: 0, data: [] });
@@ -347,14 +362,17 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
 
   const escaped = escapeRegex(q);
   const suffix = q.slice(-4);
-  const clauses = [
-    { registrationNumberNormalized: new RegExp(`^${escaped}`, 'i') },
-    { registrationNumberNormalized: new RegExp(escaped, 'i') },
-  ];
-  if (suffix.length === 4) {
-    clauses.unshift({ registrationNumberLast4: suffix });
-    clauses.push({ registrationNumberNormalized: new RegExp(`${escaped}$`, 'i') });
-  }
+  const clauses = isFourDigitSuffixSearch
+    ? [
+        { registrationNumberLast4: suffix },
+        { registrationNumberNormalized: new RegExp(`${escaped}$`, 'i') },
+      ]
+    : [
+        { registrationNumberNormalized: new RegExp(`^${escaped}`, 'i') },
+        { registrationNumberNormalized: new RegExp(escaped, 'i') },
+      ];
+
+  const fetchLimit = isFourDigitSuffixSearch ? limit : Math.max(limit * 4, 40);
 
   const rows = await VehicleRecord.find({ $or: clauses })
     .select({
@@ -376,7 +394,7 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
       createdAt: 1,
     })
     .sort({ updatedAt: -1, createdAt: -1 })
-    .limit(Math.max(limit * 4, 40))
+    .limit(fetchLimit)
     .lean();
 
   const scored = rows
@@ -390,8 +408,10 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
       if (normalized === q) score += 150;
       if (normalized.startsWith(q)) score += 110;
       if (normalized.includes(q)) score += 50;
-      if (suffix.length === 4 && row?.registrationNumberLast4 === suffix) score += 80;
-      if (suffix.length === 4 && normalized.endsWith(suffix)) score += 40;
+      if (isFourDigitSuffixSearch && row?.registrationNumberLast4 === suffix) score += 220;
+      if (isFourDigitSuffixSearch && normalized.endsWith(suffix)) score += 170;
+      if (!isFourDigitSuffixSearch && suffix.length === 4 && row?.registrationNumberLast4 === suffix) score += 80;
+      if (!isFourDigitSuffixSearch && suffix.length === 4 && normalized.endsWith(suffix)) score += 40;
       if (!score) return null;
 
       return {

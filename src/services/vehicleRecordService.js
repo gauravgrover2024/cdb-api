@@ -148,7 +148,7 @@ const resolveCcFromVehicleDatabases = async ({ make, model, variant }) => {
   return ccFromVehicle || null;
 };
 
-const buildVehicleRecordPayload = async (loanDoc) => {
+export const buildVehicleRecordPayload = async (loanDoc) => {
   if (!loanDoc) return null;
 
   const registrationNumber = cleanText(

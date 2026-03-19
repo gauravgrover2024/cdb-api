@@ -1126,20 +1126,70 @@ const getNextId = async (Model, prefix, fieldName = "loanId") => {
   return `${prefix}-${year}-${String(nextNum).padStart(4, "0")}`;
 };
 
-// Determine if loan is for New Car
-const isNewCarLoan = (loanDoc) => {
+const LEGACY_LINKED_RECORDS_CUTOFF = new Date("2026-02-01T00:00:00.000Z");
+
+const parseValidDate = (value) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const normalizeLoanType = (loanDoc = {}) => {
   const raw =
-    loanDoc?.vehicleType || loanDoc?.loanType || loanDoc?.typeOfLoan || "";
-  const normalized = String(raw)
+    loanDoc?.typeOfLoan ||
+    loanDoc?.loanType ||
+    loanDoc?.caseType ||
+    loanDoc?.vehicleType ||
+    "";
+  return String(raw)
     .trim()
-    .toUpperCase()
+    .toLowerCase()
     .replace(/[-_\s]+/g, " ");
+};
+
+// Determine if loan is for New Car
+const isNewCarLoan = (loanDoc = {}) => {
+  const normalized = normalizeLoanType(loanDoc);
+  if (!normalized) return false;
+
+  if (
+    normalized.includes("used") ||
+    normalized.includes("refinance") ||
+    normalized.includes("cash in")
+  ) {
+    return false;
+  }
+
   return (
-    normalized === "NEW CAR" ||
-    normalized === "NEWCAR" ||
-    normalized === "NEW CAR LOAN" ||
-    normalized === "NEW"
+    normalized === "new" ||
+    normalized.includes("new car") ||
+    normalized.includes("newcar")
   );
+};
+
+const hasLegacyBusinessEventDate = (loanDoc = {}) => {
+  const candidates = [
+    loanDoc?.latestBusinessDate,
+    loanDoc?.delivery_date,
+    loanDoc?.deliveryDate,
+    loanDoc?.do_date,
+    loanDoc?.doDate,
+    loanDoc?.invoice_date,
+    loanDoc?.invoiceDate,
+    loanDoc?.disbursement_date,
+    loanDoc?.approval_disbursedDate,
+    loanDoc?.disburse_date,
+    loanDoc?.disbursementDate,
+    loanDoc?.disbursedDate,
+    loanDoc?.postfile_disbursementDate,
+  ];
+
+  for (const value of candidates) {
+    const parsed = parseValidDate(value);
+    if (parsed && parsed < LEGACY_LINKED_RECORDS_CUTOFF) return true;
+  }
+
+  return false;
 };
 
 // Ensure DO + Payment exist for a loan with proper data population
@@ -1147,6 +1197,12 @@ const ensureLinkedRecords = async (loanDoc) => {
   if (!loanDoc?.loanId) return;
 
   if (!isNewCarLoan(loanDoc)) {
+    return;
+  }
+
+  // Business rule: do not auto-create DO/Payment records for legacy loans
+  // that were already delivered/disbursed before 1 Feb 2026.
+  if (hasLegacyBusinessEventDate(loanDoc)) {
     return;
   }
   try {
@@ -3538,25 +3594,27 @@ const disburseLoan = asyncHandler(async (req, res) => {
   // =====================================
   let payment;
   try {
-    payment = await Payment.findOneAndUpdate(
-      { loanId: loan.loanId },
-      {
-        loanId: loan.loanId,
-        payoutRecords: {
-          receivables: payoutData.receivables,
-          payables: payoutData.payables,
+    if (!hasLegacyBusinessEventDate(loan)) {
+      payment = await Payment.findOneAndUpdate(
+        { loanId: loan.loanId },
+        {
+          loanId: loan.loanId,
+          payoutRecords: {
+            receivables: payoutData.receivables,
+            payables: payoutData.payables,
+          },
+          disbursementDetails: {
+            status: "Disbursed",
+            bankName: disbursedBankName,
+            amount: parseFloat(disburseAmount),
+            date: loan.disburse_date,
+            payoutCalculatedAt: new Date(),
+          },
+          createdBy: req.user?.id || null,
         },
-        disbursementDetails: {
-          status: "Disbursed",
-          bankName: disbursedBankName,
-          amount: parseFloat(disburseAmount),
-          date: loan.disburse_date,
-          payoutCalculatedAt: new Date(),
-        },
-        createdBy: req.user?.id || null,
-      },
-      { upsert: true, new: true },
-    );
+        { upsert: true, new: true },
+      );
+    }
   } catch (err) {
     // Payment record is supplementary, disbursement still successful
   }
