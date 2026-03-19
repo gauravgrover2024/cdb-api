@@ -1,7 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
 import helmet from "helmet";
-import morgan from "morgan";
 import connectDB from "./config/db.js";
 
 import customerRoutes from "./routes/customerRoutes.js";
@@ -58,8 +57,6 @@ app.use(
     crossOriginEmbedderPolicy: false,
   }),
 );
-
-app.use(morgan("dev"));
 
 // Ensure Mongo connection is ready for every serverless request on Vercel.
 app.use(async (req, res, next) => {
