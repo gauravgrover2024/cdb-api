@@ -869,12 +869,18 @@ loanSchema.index({
 
 // Single field indexes for performance
 loanSchema.index({ customerId: 1 });
+loanSchema.index({ customerId: 1, updatedAt: -1 });
+loanSchema.index({ customerId: 1, latestBusinessDate: -1 });
+loanSchema.index({ customerId: 1, createdAt: -1 });
 loanSchema.index({ status: 1 });
 loanSchema.index({ currentStage: 1 });
 loanSchema.index({ loanType: 1 });
 loanSchema.index({ createdAt: -1 });
 loanSchema.index({ createdAt: 1, _id: 1 }); // Analytics range queries
 loanSchema.index({ primaryMobile: 1 });
+loanSchema.index({ primaryMobile: 1, updatedAt: -1 });
+loanSchema.index({ panNumber: 1 });
+loanSchema.index({ panNumber: 1, updatedAt: -1 });
 loanSchema.index({ updatedAt: -1, _id: -1 });
 loanSchema.index({ disbursement_date: -1, _id: -1 });
 loanSchema.index({ delivery_date: -1, _id: -1 });
@@ -885,6 +891,9 @@ loanSchema.index({ registrationNumber: 1 });
 loanSchema.index({ rc_redg_no: 1 });
 loanSchema.index({ approval_bankName: 1 });
 loanSchema.index({ postfile_bankName: 1 });
+loanSchema.index({ customerName: 1, primaryMobile: 1 });
+loanSchema.index({ customerName: 1, panNumber: 1 });
+loanSchema.index({ panNumber: 1, primaryMobile: 1 });
 loanSchema.index({ currentStage: 1, status: 1 });
 loanSchema.index({ status: 1, updatedAt: -1 });
 loanSchema.index({ approval_approvalDate: -1 });

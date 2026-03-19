@@ -1432,6 +1432,11 @@ const getLoans = asyncHandler(async (req, res) => {
     view = "",
     sortBy = "",
     sortDir = "desc",
+    sortOrder = "",
+    customerId = "",
+    customerName = "",
+    primaryMobile = "",
+    panNumber = "",
   } = req.query;
 
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
@@ -1441,20 +1446,66 @@ const getLoans = asyncHandler(async (req, res) => {
       ? Number(skip)
       : (safePage - 1) * safeLimit;
   const safeSearch = String(search || q || "").trim();
+  const safeCustomerId = String(customerId || "").trim();
+  const safeCustomerName = String(customerName || "").trim();
+  const safePrimaryMobile = String(primaryMobile || "").replace(/\D/g, "");
+  const safePanNumber = String(panNumber || "")
+    .replace(/\s+/g, "")
+    .toUpperCase();
   const viewMode = String(view || "").toLowerCase();
-  const direction = String(sortDir).toLowerCase() === "asc" ? 1 : -1;
+  const direction =
+    String(sortDir || sortOrder).toLowerCase() === "asc" ? 1 : -1;
   const sortField =
     String(sortBy || "").trim() ||
     (viewMode === "dashboard" ? "latestBusiness" : "updatedAt");
 
-  let query = {};
+  const andFilters = [];
+
+  if (safeCustomerId) {
+    const resolvedCustomerIds = new Set();
+    if (mongoose.Types.ObjectId.isValid(safeCustomerId)) {
+      resolvedCustomerIds.add(new mongoose.Types.ObjectId(safeCustomerId));
+    }
+
+    if (resolvedCustomerIds.size === 0 || safeCustomerId.includes("-")) {
+      const customerByCustomId = await Customer.findOne({
+        customerId: safeCustomerId,
+      })
+        .select("_id")
+        .lean();
+      if (customerByCustomId?._id) {
+        resolvedCustomerIds.add(customerByCustomId._id);
+      }
+    }
+
+    if (resolvedCustomerIds.size > 0) {
+      andFilters.push({ customerId: { $in: [...resolvedCustomerIds] } });
+    } else {
+      // Fast no-match guard when caller passes an unknown customer id
+      andFilters.push({ _id: null });
+    }
+  }
+
+  if (safePrimaryMobile) {
+    andFilters.push({ primaryMobile: new RegExp(`^${escapeRegex(safePrimaryMobile)}`) });
+  }
+
+  if (safePanNumber) {
+    andFilters.push({ panNumber: safePanNumber });
+  }
+
+  if (safeCustomerName) {
+    andFilters.push({ customerName: new RegExp(`^${escapeRegex(safeCustomerName)}$`, "i") });
+  }
+
+  let searchFilter = null;
   if (safeSearch) {
     const escaped = escapeRegex(safeSearch);
     const isMostlyNumeric = /^[\d-]+$/.test(safeSearch);
 
     if (isMostlyNumeric) {
       // Prefix/exact style searches hit B-tree indexes and are much faster than global /i regex.
-      query = {
+      searchFilter = {
         $or: [
           { loanId: new RegExp(`^${escaped}`) },
           { loan_number: new RegExp(`^${escaped}`) },
@@ -1465,9 +1516,21 @@ const getLoans = asyncHandler(async (req, res) => {
       };
     } else {
       // Use text index for fast free-text lookups.
-      query = { $text: { $search: safeSearch } };
+      searchFilter = { $text: { $search: safeSearch } };
     }
   }
+  if (searchFilter) {
+    andFilters.push(searchFilter);
+  }
+  const query =
+    andFilters.length === 0
+      ? {}
+      : andFilters.length === 1
+        ? andFilters[0]
+        : { $and: andFilters };
+  const hasStructuredFilters = Boolean(
+    safeCustomerId || safeCustomerName || safePrimaryMobile || safePanNumber,
+  );
 
   const dashboardFields = [
     "_id",
@@ -1536,13 +1599,20 @@ const getLoans = asyncHandler(async (req, res) => {
     "updatedAt",
   ];
   const dashboardSelect = dashboardFields.join(" ");
-  const countKey = JSON.stringify({ viewMode, search: safeSearch });
+  const countKey = JSON.stringify({
+    viewMode,
+    search: safeSearch,
+    customerId: safeCustomerId,
+    customerName: safeCustomerName,
+    primaryMobile: safePrimaryMobile,
+    panNumber: safePanNumber,
+  });
   const cachedCount = listCountCache.get(countKey);
   const useCachedCount =
     cachedCount && Date.now() - cachedCount.ts < LIST_COUNT_CACHE_TTL_MS;
   const totalPromise = useCachedCount
     ? Promise.resolve(cachedCount.total)
-    : !safeSearch && viewMode === "dashboard"
+    : !safeSearch && !hasStructuredFilters && viewMode === "dashboard"
       ? Loan.estimatedDocumentCount()
       : Loan.countDocuments(query);
   let dataPromise;
