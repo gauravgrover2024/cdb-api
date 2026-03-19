@@ -3,17 +3,107 @@ import mongoose from "mongoose";
 import connectDB from "../config/db.js";
 import Loan from "../models/Loan.js";
 import VehicleRecord from "../models/VehicleRecord.js";
-import { buildVehicleRecordPayload } from "../services/vehicleRecordService.js";
 
 dotenv.config();
 
 const APPLY = process.argv.includes("--apply");
 const SAMPLE_LIMIT = 25;
 
+const normalizeReg = (value) =>
+  String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+const firstValue = (...values) =>
+  values.find(
+    (value) =>
+      value !== undefined && value !== null && String(value).trim() !== "",
+  );
+
 const toEpoch = (value) => {
   const parsed = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(parsed.getTime())) return 0;
   return parsed.getTime();
+};
+
+const buildLightVehiclePayload = (loan = {}) => {
+  const registrationNumber = String(
+    firstValue(
+      loan.registrationNumber,
+      loan.rc_redg_no,
+      loan.vehicleRegNo,
+      loan.vehicleRegdNumber,
+    ) || "",
+  ).trim();
+  const registrationNumberNormalized = normalizeReg(registrationNumber);
+  const make = String(firstValue(loan.vehicleMake, loan.make) || "").trim();
+  const model = String(firstValue(loan.vehicleModel, loan.model) || "").trim();
+  const variant = String(firstValue(loan.vehicleVariant, loan.variant) || "").trim();
+  const engineNumber = String(
+    firstValue(loan.engineNumber, loan.rc_engine_no, loan.vehicleEngineNo) || "",
+  ).trim();
+  const chassisNumber = String(
+    firstValue(loan.chassisNumber, loan.rc_chassis_no, loan.vehicleChassisNo) || "",
+  ).trim();
+
+  const hasCoreIdentity = Boolean(
+    registrationNumberNormalized ||
+      make ||
+      model ||
+      variant ||
+      engineNumber ||
+      chassisNumber,
+  );
+  if (!hasCoreIdentity) return null;
+
+  const registrationDateRaw = firstValue(
+    loan.rc_redg_date,
+    loan.registrationDate,
+    loan.regdDate,
+  );
+  const registrationDate = registrationDateRaw
+    ? new Date(registrationDateRaw)
+    : null;
+
+  return {
+    loanId: String(loan.loanId || "").trim(),
+    customerId: loan.customerId || undefined,
+    customerName: String(loan.customerName || "").trim(),
+    primaryMobile: String(loan.primaryMobile || "").trim(),
+    registrationNumber:
+      registrationNumber || registrationNumberNormalized || undefined,
+    registrationNumberNormalized: registrationNumberNormalized || undefined,
+    registrationNumberLast4: registrationNumberNormalized
+      ? registrationNumberNormalized.slice(-4)
+      : undefined,
+    make: make || undefined,
+    model: model || undefined,
+    variant: variant || undefined,
+    engineNumber: engineNumber || undefined,
+    chassisNumber: chassisNumber || undefined,
+    manufactureMonth: String(
+      firstValue(loan.manufactureMonth, loan.manufacturingMonth, loan.mfgMonth) ||
+        "",
+    ).trim() || undefined,
+    yearOfManufacture: String(
+      firstValue(loan.yearOfManufacture, loan.manufacturingYear, loan.yearOfReg) ||
+        "",
+    ).trim() || undefined,
+    registrationDate:
+      registrationDate && !Number.isNaN(registrationDate.getTime())
+        ? registrationDate
+        : undefined,
+    hypothecation: String(
+      firstValue(loan.hypothecationBank, loan.hypothecation) || "",
+    ).trim() || undefined,
+    registrationCity: String(
+      firstValue(loan.registrationCity, loan.postfile_regd_city, loan.city) || "",
+    ).trim() || undefined,
+    sourceLoanType: String(firstValue(loan.typeOfLoan, loan.loanType) || "").trim() || undefined,
+    sourceCaseType: String(loan.caseType || "").trim() || undefined,
+    sourceLoanUpdatedAt: loan.updatedAt || undefined,
+    lastSyncedAt: new Date(),
+  };
 };
 
 const pickProjection = {
@@ -83,7 +173,7 @@ const run = async () => {
   const noRegPayloads = [];
 
   for (const loan of loans) {
-    const payload = await buildVehicleRecordPayload(loan);
+    const payload = buildLightVehiclePayload(loan);
     if (!payload) continue;
 
     const reg = String(payload.registrationNumberNormalized || "").trim();
@@ -214,4 +304,3 @@ run()
       // noop
     }
   });
-

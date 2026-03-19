@@ -171,6 +171,8 @@ const MICR_BANK_CODE_MAP = {
 
 const RC_INV_COUNTER_KEY = "loan_rc_inv_storage_sequence";
 const RC_INV_COUNTER_MIN = 4068;
+const LOAN_ID_COUNTER_PREFIX = "loan_id_sequence";
+const LOAN_ID_PREFIX = "LN";
 
 const normalizeIfsc = (value) =>
   String(value || "")
@@ -1125,6 +1127,76 @@ const getNextId = async (Model, prefix, fieldName = "loanId") => {
   }
   return `${prefix}-${year}-${String(nextNum).padStart(4, "0")}`;
 };
+
+const parseLoanIdParts = (value) => {
+  const match = String(value || "")
+    .trim()
+    .match(/^([A-Z]+)-(\d{4})-(\d+)$/i);
+  if (!match) return null;
+  return {
+    prefix: String(match[1] || "").toUpperCase(),
+    year: Number(match[2]),
+    sequence: Number(match[3]),
+  };
+};
+
+const buildLoanId = (year, sequence) =>
+  `${LOAN_ID_PREFIX}-${year}-${String(sequence).padStart(4, "0")}`;
+
+const getLoanCounterKey = (year) => `${LOAN_ID_COUNTER_PREFIX}_${year}`;
+
+const getMaxLoanSequenceFromLoans = async (year) => {
+  const regex = new RegExp(`^${LOAN_ID_PREFIX}-${year}-\\d+$`, "i");
+  const cursor = Loan.find({ loanId: { $regex: regex } })
+    .select("loanId")
+    .lean()
+    .cursor();
+
+  let max = 0;
+  for await (const doc of cursor) {
+    const parsed = parseLoanIdParts(doc?.loanId);
+    if (!parsed || parsed.year !== Number(year)) continue;
+    if (parsed.sequence > max) max = parsed.sequence;
+  }
+  return max;
+};
+
+const reserveNextLoanIdForYear = async (yearInput) => {
+  const year = Number(yearInput) || new Date().getFullYear();
+  const key = getLoanCounterKey(year);
+
+  const bumpedExisting = await Counter.findOneAndUpdate(
+    { key },
+    { $inc: { value: 1 } },
+    { returnDocument: "after", lean: true },
+  );
+  if (bumpedExisting?.value) return buildLoanId(year, bumpedExisting.value);
+
+  const maxFromLoans = await getMaxLoanSequenceFromLoans(year);
+  const seed = Math.max(maxFromLoans, 0);
+
+  try {
+    await Counter.create({ key, value: seed });
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+  }
+
+  const bumped = await Counter.findOneAndUpdate(
+    { key },
+    { $inc: { value: 1 } },
+    {
+      returnDocument: "after",
+      upsert: true,
+      setDefaultsOnInsert: true,
+      lean: true,
+    },
+  );
+
+  return buildLoanId(year, bumped?.value || 1);
+};
+
+const reserveNextLoanId = async (preferredYear) =>
+  reserveNextLoanIdForYear(preferredYear || new Date().getFullYear());
 
 const LEGACY_LINKED_RECORDS_CUTOFF = new Date("2026-02-01T00:00:00.000Z");
 
@@ -3103,16 +3175,9 @@ const createLoan = asyncHandler(async (req, res) => {
     const count = Number(numberOfCars);
     const createdLoans = [];
 
-    // Get base ID
-    let currentLoanIdStr = await getNextId(Loan, "LN", "loanId");
-    // Parse the number back out to increment locally loop
-    let currentBase = parseInt(currentLoanIdStr.split("-")[2], 10);
-
     for (let i = 0; i < count; i++) {
-      const nextNum = currentBase + i;
-      const uniqueLoanId = `LN-${new Date().getFullYear()}-${String(nextNum).padStart(4, "0")}`;
-
       try {
+        const uniqueLoanId = await reserveNextLoanId();
         const loan = await Loan.create({
           ...loanPayload,
           loanId: uniqueLoanId,
@@ -3134,33 +3199,7 @@ const createLoan = asyncHandler(async (req, res) => {
         await syncVehicleMasterRecord(loan);
         createdLoans.push(loan);
       } catch (err) {
-        // Collision fallback: try one with offset
-        const fallbackNum = currentBase + count + i + 10;
-        const fallbackId = `LN-${new Date().getFullYear()}-${String(fallbackNum).padStart(4, "0")}`;
-        try {
-          const loan = await Loan.create({
-            ...loanPayload,
-            loanId: fallbackId,
-            isBulk: true,
-            bulkCount: count,
-          });
-          try {
-            await upsertChannelPartnerFromLoan({
-              ...loanPayload,
-              ...loan.toObject(),
-            });
-          } catch (channelErr) {
-            console.warn(
-              "Channel partner upsert skipped (bulk fallback item):",
-              channelErr?.message,
-            );
-          }
-          await ensureLinkedRecords(loan);
-          await syncVehicleMasterRecord(loan);
-          createdLoans.push(loan);
-        } catch (e) {
-          console.error("Failed to create bulk loan item", e);
-        }
+        console.error("Failed to create bulk loan item", err);
       }
     }
 
@@ -3179,8 +3218,17 @@ const createLoan = asyncHandler(async (req, res) => {
   // ---------------------------------------------------------
   let { loanId } = loanPayload;
 
-  if (!loanId) {
-    loanId = await getNextId(Loan, "LN", "loanId");
+  const providedLoanId = String(loanId || "").trim();
+  if (providedLoanId) {
+    const providedParts = parseLoanIdParts(providedLoanId);
+    const exists = await Loan.exists({ loanId: providedLoanId });
+    if (providedParts && !exists) {
+      loanId = providedLoanId;
+    } else {
+      loanId = await reserveNextLoanId(providedParts?.year);
+    }
+  } else {
+    loanId = await reserveNextLoanId();
   }
 
   let loan;
@@ -3208,10 +3256,9 @@ const createLoan = asyncHandler(async (req, res) => {
     }
   } catch (error) {
     if (error.code === 11000) {
-      // Duplicate key error - Loan ID collision
-      const newId = await getNextId(Loan, "LN", "loanId");
-      const parts = newId.split("-");
-      const incId = `LN-${parts[1]}-${String(Number(parts[2]) + 1).padStart(4, "0")}`;
+      // Duplicate key error - retry with atomically reserved Loan ID.
+      const fallbackYear = parseLoanIdParts(loanId)?.year;
+      const incId = await reserveNextLoanId(fallbackYear);
 
       loan = await Loan.create({
         ...loanPayload,
@@ -3984,7 +4031,7 @@ const reserveNextRcInvStorageNumber = async () => {
   const bumpedExisting = await Counter.findOneAndUpdate(
     { key: RC_INV_COUNTER_KEY },
     { $inc: { value: 1 } },
-    { new: true, lean: true },
+    { returnDocument: "after", lean: true },
   );
   if (bumpedExisting?.value) return bumpedExisting.value;
 
@@ -4000,7 +4047,12 @@ const reserveNextRcInvStorageNumber = async () => {
   const bumped = await Counter.findOneAndUpdate(
     { key: RC_INV_COUNTER_KEY },
     { $inc: { value: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true, lean: true },
+    {
+      returnDocument: "after",
+      upsert: true,
+      setDefaultsOnInsert: true,
+      lean: true,
+    },
   );
 
   return bumped?.value || RC_INV_COUNTER_MIN;

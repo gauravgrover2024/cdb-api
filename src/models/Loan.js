@@ -16,7 +16,7 @@ const bankDetailSchema = new mongoose.Schema(
 
 const loanSchema = mongoose.Schema(
   {
-    loanId: { type: String, required: true, index: true }, // Custom ID e.g. "LN-2024-001"
+    loanId: { type: String, required: true, trim: true }, // Custom ID e.g. "LN-2024-001"
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
 
     // Denormalized customer info for quicker access (common in non-relational)
@@ -881,6 +881,7 @@ loanSchema.index({
   chassisNumber: 'text',
   engineNumber: 'text'
 });
+loanSchema.index({ loanId: 1 }, { unique: true, name: "loanId_1" });
 
 // Single field indexes for performance
 loanSchema.index({ customerId: 1 });

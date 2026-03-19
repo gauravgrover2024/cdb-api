@@ -247,21 +247,61 @@ export const upsertVehicleRecordFromLoan = async (loanDoc) => {
   const payload = await buildVehicleRecordPayload(loanDoc);
   if (!payload) return null;
 
-  const matchers = [];
-  if (payload.loanId) matchers.push({ loanId: payload.loanId });
-  if (payload.registrationNumberNormalized) {
-    matchers.push({ registrationNumberNormalized: payload.registrationNumberNormalized });
+  const reg = cleanText(payload.registrationNumberNormalized);
+  const loanId = cleanText(payload.loanId);
+
+  // 1) Prefer registration identity first.
+  if (reg) {
+    const existingByReg = await VehicleRecord.findOne({
+      registrationNumberNormalized: reg,
+    });
+    if (existingByReg) {
+      Object.assign(existingByReg, payload);
+      try {
+        return await existingByReg.save();
+      } catch (error) {
+        // Guard against conflicting loanId unique collisions.
+        if (error?.code === 11000 && loanId) {
+          existingByReg.loanId = existingByReg.loanId || undefined;
+          return await existingByReg.save();
+        }
+        throw error;
+      }
+    }
   }
 
-  let existing = null;
-  if (matchers.length) {
-    existing = await VehicleRecord.findOne({ $or: matchers });
+  // 2) Then match by loanId for legacy loan-level updates.
+  if (loanId) {
+    const existingByLoanId = await VehicleRecord.findOne({ loanId });
+    if (existingByLoanId) {
+      const existingLoanReg = normalizeReg(
+        existingByLoanId.registrationNumberNormalized ||
+          existingByLoanId.registrationNumber,
+      );
+
+      // LoanId reused across different vehicles: preserve both records.
+      if (reg && existingLoanReg && existingLoanReg !== reg) {
+        const createPayload = { ...payload };
+        delete createPayload.loanId;
+        return await VehicleRecord.create(createPayload);
+      }
+
+      Object.assign(existingByLoanId, payload);
+      return await existingByLoanId.save();
+    }
   }
 
-  if (existing) {
-    Object.assign(existing, payload);
-    return await existing.save();
+  // 3) Create fresh.
+  try {
+    return await VehicleRecord.create(payload);
+  } catch (error) {
+    // Final fallback: if loanId uniqueness collides, create without loanId
+    // so registration identity remains available in master records.
+    if (error?.code === 11000 && loanId) {
+      const createPayload = { ...payload };
+      delete createPayload.loanId;
+      return await VehicleRecord.create(createPayload);
+    }
+    throw error;
   }
-
-  return await VehicleRecord.create(payload);
 };

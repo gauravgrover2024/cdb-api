@@ -19,7 +19,8 @@
     "vehicles:clear": "node src/scripts/clearVehicles.js",
     "cleanup:legacy-do-payments": "node src/scripts/cleanupLegacyDoPayments.js",
     "audit:vehicle-master": "node src/scripts/auditVehicleMasterRecords.js",
-    "backfill:vehicle-master-missing": "node src/scripts/backfillMissingVehicleMasterRecords.js"
+    "backfill:vehicle-master-missing": "node src/scripts/backfillMissingVehicleMasterRecords.js",
+    "dedupe:loan-ids": "node src/scripts/dedupeLoanIds.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.840.0",
