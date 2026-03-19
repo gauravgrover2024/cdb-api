@@ -1437,6 +1437,8 @@ const getLoans = asyncHandler(async (req, res) => {
     customerName = "",
     primaryMobile = "",
     panNumber = "",
+    loanIds = "",
+    noCount = "",
   } = req.query;
 
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
@@ -1452,6 +1454,17 @@ const getLoans = asyncHandler(async (req, res) => {
   const safePanNumber = String(panNumber || "")
     .replace(/\s+/g, "")
     .toUpperCase();
+  const safeLoanIds = Array.from(
+    new Set(
+      String(Array.isArray(loanIds) ? loanIds.join(",") : loanIds || "")
+        .split(",")
+        .map((id) => String(id || "").trim())
+        .filter(Boolean),
+    ),
+  ).slice(0, 500);
+  const safeNoCount = new Set(["1", "true", "yes"]).has(
+    String(noCount || "").trim().toLowerCase(),
+  );
   const viewMode = String(view || "").toLowerCase();
   const direction =
     String(sortDir || sortOrder).toLowerCase() === "asc" ? 1 : -1;
@@ -1498,6 +1511,19 @@ const getLoans = asyncHandler(async (req, res) => {
     andFilters.push({ customerName: new RegExp(`^${escapeRegex(safeCustomerName)}$`, "i") });
   }
 
+  if (safeLoanIds.length) {
+    const objectIds = safeLoanIds
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new mongoose.Types.ObjectId(id));
+    const idOrFilters = [];
+    if (objectIds.length) {
+      idOrFilters.push({ _id: { $in: objectIds } });
+    }
+    idOrFilters.push({ loanId: { $in: safeLoanIds } });
+    idOrFilters.push({ loan_number: { $in: safeLoanIds } });
+    andFilters.push({ $or: idOrFilters });
+  }
+
   let searchFilter = null;
   if (safeSearch) {
     const escaped = escapeRegex(safeSearch);
@@ -1529,7 +1555,11 @@ const getLoans = asyncHandler(async (req, res) => {
         ? andFilters[0]
         : { $and: andFilters };
   const hasStructuredFilters = Boolean(
-    safeCustomerId || safeCustomerName || safePrimaryMobile || safePanNumber,
+    safeCustomerId ||
+      safeCustomerName ||
+      safePrimaryMobile ||
+      safePanNumber ||
+      safeLoanIds.length,
   );
 
   const dashboardFields = [
@@ -1606,12 +1636,15 @@ const getLoans = asyncHandler(async (req, res) => {
     customerName: safeCustomerName,
     primaryMobile: safePrimaryMobile,
     panNumber: safePanNumber,
+    loanIds: safeLoanIds.slice().sort().join("|"),
   });
   const cachedCount = listCountCache.get(countKey);
   const useCachedCount =
-    cachedCount && Date.now() - cachedCount.ts < LIST_COUNT_CACHE_TTL_MS;
+    !safeNoCount && cachedCount && Date.now() - cachedCount.ts < LIST_COUNT_CACHE_TTL_MS;
   const totalPromise = useCachedCount
     ? Promise.resolve(cachedCount.total)
+    : safeNoCount
+      ? Promise.resolve(null)
     : !safeSearch && !hasStructuredFilters && viewMode === "dashboard"
       ? Loan.estimatedDocumentCount()
       : Loan.countDocuments(query);
@@ -1649,8 +1682,11 @@ const getLoans = asyncHandler(async (req, res) => {
       .lean();
   }
 
-  const [data, total] = await Promise.all([dataPromise, totalPromise]);
-  if (!useCachedCount) {
+  const [data, countedTotal] = await Promise.all([dataPromise, totalPromise]);
+  const total = safeNoCount
+    ? safeSkip + data.length + (data.length === safeLimit ? 1 : 0)
+    : Number(countedTotal || 0);
+  if (!safeNoCount && !useCachedCount) {
     listCountCache.set(countKey, { total, ts: Date.now() });
   }
   const queryMs = Date.now() - startedAt;
@@ -1666,6 +1702,7 @@ const getLoans = asyncHandler(async (req, res) => {
     sortDir: direction === 1 ? "asc" : "desc",
     searched: Boolean(safeSearch),
     searchLength: safeSearch.length,
+    noCount: safeNoCount,
   };
 
   res.json({
@@ -1674,7 +1711,7 @@ const getLoans = asyncHandler(async (req, res) => {
     page: Math.floor(safeSkip / safeLimit) + 1,
     limit: safeLimit,
     skip: safeSkip,
-    hasMore: safeSkip + data.length < total,
+    hasMore: safeNoCount ? data.length === safeLimit : safeSkip + data.length < total,
     meta: responseMeta,
   });
 });
