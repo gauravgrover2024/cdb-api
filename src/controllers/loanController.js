@@ -1739,7 +1739,7 @@ const getLoans = asyncHandler(async (req, res) => {
     String(sortDir || sortOrder).toLowerCase() === "asc" ? 1 : -1;
   const sortField =
     String(sortBy || "").trim() ||
-    (viewMode === "dashboard" ? "latestBusiness" : "updatedAt");
+    (viewMode === "dashboard" ? "leadDate" : "updatedAt");
 
   const andFilters = [];
 
@@ -1882,6 +1882,8 @@ const getLoans = asyncHandler(async (req, res) => {
     "postfile_current_outstanding",
     "livePrincipalOutstanding",
     "principalOutstanding",
+    "leadDate",
+    "leadTime",
     "registrationNumber",
     "vehicleRegNo",
     "rc_redg_no",
@@ -1918,39 +1920,38 @@ const getLoans = asyncHandler(async (req, res) => {
     : !safeSearch && !hasStructuredFilters && viewMode === "dashboard"
       ? Loan.estimatedDocumentCount()
       : Loan.countDocuments(query);
-  let dataPromise;
+  const allowedSort = new Set([
+    "createdAt",
+    "updatedAt",
+    "loanId",
+    "loan_number",
+    "customerName",
+    "approval_loanAmountDisbursed",
+    "approval_loanAmountApproved",
+    "postfile_emiAmount",
+    "aging",
+    "disbursement_date",
+    "delivery_date",
+    "vehicleModel",
+    "leadDate",
+  ]);
+  const effectiveSortField =
+    sortField === "latestBusiness"
+      ? "latestBusiness"
+      : allowedSort.has(sortField)
+        ? sortField
+        : "updatedAt";
+  const sort =
+    effectiveSortField === "latestBusiness"
+      ? { latestBusinessDate: direction, _id: -1 }
+      : { [effectiveSortField]: direction, _id: -1 };
 
-  if (sortField === "latestBusiness") {
-    dataPromise = Loan.find(query)
-      .sort({ latestBusinessDate: direction, _id: -1 })
-      .skip(safeSkip)
-      .limit(safeLimit)
-      .select(viewMode === "dashboard" ? dashboardSelect : "")
-      .lean();
-  } else {
-    const allowedSort = new Set([
-      "createdAt",
-      "updatedAt",
-      "loanId",
-      "loan_number",
-      "customerName",
-      "approval_loanAmountDisbursed",
-      "approval_loanAmountApproved",
-      "postfile_emiAmount",
-      "aging",
-      "disbursement_date",
-      "delivery_date",
-      "vehicleModel",
-    ]);
-    const safeSortField = allowedSort.has(sortField) ? sortField : "updatedAt";
-    const sort = { [safeSortField]: direction, _id: -1 };
-    dataPromise = Loan.find(query)
-      .sort(sort)
-      .skip(safeSkip)
-      .limit(safeLimit)
-      .select(viewMode === "dashboard" ? dashboardSelect : "")
-      .lean();
-  }
+  const dataPromise = Loan.find(query)
+    .sort(sort)
+    .skip(safeSkip)
+    .limit(safeLimit)
+    .select(viewMode === "dashboard" ? dashboardSelect : "")
+    .lean();
 
   const [data, countedTotal] = await Promise.all([dataPromise, totalPromise]);
   const total = safeNoCount
@@ -1968,7 +1969,7 @@ const getLoans = asyncHandler(async (req, res) => {
     limit: safeLimit,
     skip: safeSkip,
     view: viewMode || "default",
-    sortBy: sortField,
+    sortBy: effectiveSortField,
     sortDir: direction === 1 ? "asc" : "desc",
     searched: Boolean(safeSearch),
     searchLength: safeSearch.length,
