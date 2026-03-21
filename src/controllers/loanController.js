@@ -1485,8 +1485,11 @@ const isBreakupFieldInUse = async (rawKey = "") => {
 const LIST_COUNT_CACHE_TTL_MS = 45 * 1000;
 const LOAN_LIST_RESPONSE_CACHE_TTL_MS = 20 * 1000;
 const DASHBOARD_STATS_CACHE_TTL_MS = 60 * 1000;
-const ANALYTICS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
+const ANALYTICS_CACHE_TTL_MS = 15 * 60 * 1000; // 15 min — fresh window
+const ANALYTICS_STALE_TTL_MS = 60 * 60 * 1000; // 1 hr — stale but still serveable
 const ANALYTICS_QUERY_MAX_MS = 45000; // 45s timeout
+// Keys being refreshed in the background (avoid duplicate parallel refreshes)
+const analyticsRefreshing = new Set();
 const listCountCache = new Map();
 const loanListResponseCache = new Map();
 let dashboardStatsCache = { ts: 0, data: null };
@@ -2653,32 +2656,8 @@ const collectRepeatedCustomerStats = (loans) => {
   };
 };
 
-const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
-  const { range, start, end } = parseAnalyticsRange(req.query);
-  const filters = parseAnalyticsFilters(req.query);
-  const cacheKey = JSON.stringify({
-    scope: "overview",
-    range,
-    start: start.toISOString(),
-    end: end.toISOString(),
-    filters,
-  });
-
-  const cached = analyticsCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < ANALYTICS_CACHE_TTL_MS) {
-    return res.json({
-      success: true,
-      data: cached.data,
-      meta: {
-        ...(cached.data?.meta || {}),
-        fromCache: true,
-      },
-    });
-  }
-
-  const startedAt = Date.now();
-  const loans = await fetchAnalyticsLoans({ start, end, filters, fields: ANALYTICS_OVERVIEW_FIELDS });
-
+// ── Pure computation: build overview response from pre-fetched loans ─────────
+const buildAnalyticsOverview = (loans, { start, end, range, filters, startedAt }) => {
   const months = buildMonthBuckets(start, end);
   const totalLoansByMonth = new Map(months.map((m) => [m.key, 0]));
   const disbursedAmountByMonth = new Map(
@@ -2981,11 +2960,60 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
         .sort((a, b) => b.totalLoanAmount - a.totalLoanAmount),
     },
     meta: {
-      queryMs: Date.now() - startedAt,
+      queryMs: startedAt != null ? Date.now() - startedAt : 0,
       fromCache: false,
       rowsAnalyzed: loans.length,
     },
   };
+
+  return response;
+};
+
+const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
+  const { range, start, end } = parseAnalyticsRange(req.query);
+  const filters = parseAnalyticsFilters(req.query);
+  const cacheKey = JSON.stringify({
+    scope: "overview",
+    range,
+    start: start.toISOString(),
+    end: end.toISOString(),
+    filters,
+  });
+
+  const cached = analyticsCache.get(cacheKey);
+  const cacheAge = cached ? Date.now() - cached.ts : Infinity;
+
+  // Serve stale cache immediately; kick off background refresh if needed
+  if (cached && cacheAge < ANALYTICS_STALE_TTL_MS) {
+    const isStale = cacheAge >= ANALYTICS_CACHE_TTL_MS;
+    res.json({
+      success: true,
+      data: cached.data,
+      meta: { ...(cached.data?.meta || {}), fromCache: true, stale: isStale },
+    });
+
+    // Background refresh: only if stale and not already refreshing
+    if (isStale && !analyticsRefreshing.has(cacheKey)) {
+      analyticsRefreshing.add(cacheKey);
+      setImmediate(async () => {
+        try {
+          const t0 = Date.now();
+          const loans = await fetchAnalyticsLoans({ start, end, filters, fields: ANALYTICS_OVERVIEW_FIELDS });
+          const refreshed = buildAnalyticsOverview(loans, { start, end, range, filters, startedAt: t0 });
+          analyticsCache.set(cacheKey, { ts: Date.now(), data: refreshed });
+        } catch (e) {
+          console.error('[Analytics] Background refresh failed:', e.message);
+        } finally {
+          analyticsRefreshing.delete(cacheKey);
+        }
+      });
+    }
+    return;
+  }
+
+  const startedAt = Date.now();
+  const loans = await fetchAnalyticsLoans({ start, end, filters, fields: ANALYTICS_OVERVIEW_FIELDS });
+  const response = buildAnalyticsOverview(loans, { start, end, range, filters, startedAt });
 
   analyticsCache.set(cacheKey, { ts: Date.now(), data: response });
   res.json({ success: true, data: response });
@@ -3029,6 +3057,8 @@ const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
           isDisbursedLoan(loan)) &&
         missingDeliveryFields(loan).length > 0,
     );
+  } else if (widget === "stage_funnel" && key) {
+    filtered = loans.filter((loan) => normalizeStage(loan?.currentStage) === key);
   } else if (widget === "loan_type_mix" && key) {
     filtered = loans.filter((loan) => pickLoanType(loan).toLowerCase() === key);
   } else if (
@@ -4143,14 +4173,37 @@ const saveBanksData = asyncHandler(async (req, res) => {
   });
 });
 
-// Get all banks
+// Get all banks — supports pagination, search, id filter, fields param
 const getAllBanks = asyncHandler(async (req, res) => {
-  const docs = await BankDirectory.find({})
+  const { skip = 0, limit = 100, search = "", id, fields } = req.query;
+
+  const query = {};
+
+  // Filter by specific ID
+  if (id) {
+    query._id = id;
+  }
+
+  // Search by bankName, ifsc, or branch
+  if (search) {
+    const safeSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rx = new RegExp(safeSearch, "i");
+    query.$or = [{ bankName: rx }, { ifsc: rx }, { branch: rx }];
+  }
+
+  const selectFields =
+    fields === "detail"
+      ? "bankName ifsc branch address city state district contact micr active lastVerifiedAt updatedAt createdAt"
+      : "bankName ifsc branch micr active updatedAt createdAt";
+
+  const total = await BankDirectory.countDocuments(query);
+  const docs = await BankDirectory.find(query)
     .sort({ bankName: 1, ifsc: 1 })
-    .select("bankName ifsc branch address micr active updatedAt createdAt")
+    .skip(Number(skip))
+    .limit(Number(limit))
+    .select(selectFields)
     .lean();
 
-  // Keep API shape backward-compatible with previous `Bank` model.
   const banks = docs.map((row) => ({
     _id: row._id,
     name:
@@ -4161,13 +4214,77 @@ const getAllBanks = asyncHandler(async (req, res) => {
     ifsc: row.ifsc || "",
     branch: row.branch || row.address || "",
     address: row.address || row.branch || "",
+    city: row.city || "",
+    state: row.state || "",
+    district: row.district || "",
+    contact: row.contact || "",
     micr: row.micr || "",
     active: row.active !== false,
+    lastVerifiedAt: row.lastVerifiedAt || null,
     updatedAt: row.updatedAt,
     createdAt: row.createdAt,
   }));
 
-  res.json(banks);
+  res.json({
+    success: true,
+    data: banks,
+    pagination: { total, skip: Number(skip), limit: Number(limit) },
+  });
+});
+
+// Update a bank by ID
+const updateBank = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { name, ifsc, branch, address, city, state, district, contact, micr, active } = req.body;
+
+  const bank = await BankDirectory.findById(id);
+  if (!bank) {
+    res.status(404);
+    throw new Error("Bank not found");
+  }
+
+  if (name !== undefined) bank.bankName = name;
+  if (ifsc !== undefined) bank.ifsc = ifsc.toUpperCase().trim();
+  if (branch !== undefined) bank.branch = branch;
+  if (address !== undefined) bank.address = address;
+  if (city !== undefined) bank.city = city;
+  if (state !== undefined) bank.state = state;
+  if (district !== undefined) bank.district = district;
+  if (contact !== undefined) bank.contact = contact;
+  if (micr !== undefined) bank.micr = micr;
+  if (active !== undefined) bank.active = active;
+
+  await bank.save();
+
+  res.json({
+    success: true,
+    data: {
+      _id: bank._id,
+      name: bank.bankName || "",
+      ifsc: bank.ifsc || "",
+      branch: bank.branch || "",
+      address: bank.address || "",
+      city: bank.city || "",
+      state: bank.state || "",
+      district: bank.district || "",
+      contact: bank.contact || "",
+      micr: bank.micr || "",
+      active: bank.active,
+      updatedAt: bank.updatedAt,
+      createdAt: bank.createdAt,
+    },
+  });
+});
+
+// Delete a bank by ID
+const deleteBank = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const bank = await BankDirectory.findByIdAndDelete(id);
+  if (!bank) {
+    res.status(404);
+    throw new Error("Bank not found");
+  }
+  res.json({ success: true, message: "Bank deleted successfully" });
 });
 
 const resolveBankLookup = asyncHandler(async (req, res) => {
@@ -4472,4 +4589,6 @@ export {
   getAllBanks,
   resolveBankLookup,
   createBank,
+  updateBank,
+  deleteBank,
 };

@@ -1,13 +1,12 @@
 import express from 'express';
-import { getAllBanks, createBank, resolveBankLookup } from '../controllers/loanController.js';
+import { getAllBanks, createBank, resolveBankLookup, updateBank, deleteBank } from '../controllers/loanController.js';
 
 const router = express.Router();
 
-// GET /api/banks
-router.get('/', getAllBanks);
 router.get('/lookup', resolveBankLookup);
-
-// POST /api/banks (Create new bank)
+router.get('/', getAllBanks);
 router.post('/', createBank);
+router.put('/:id', updateBank);
+router.delete('/:id', deleteBank);
 
 export default router;
