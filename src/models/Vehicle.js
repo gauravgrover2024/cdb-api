@@ -69,6 +69,10 @@ vehicleSchema.index({ model: 1 });
 vehicleSchema.index({ brand: 1 });
 vehicleSchema.index({ brand: 1, model: 1, city: 1 });
 vehicleSchema.index({ make: 1, model: 1, city: 1 });
+// Distinct dropdown acceleration indexes (make/model/variant with active-state filtering)
+vehicleSchema.index({ make: 1, city: 1, is_discontinued: 1 });
+vehicleSchema.index({ make: 1, model: 1, city: 1, is_discontinued: 1, variant: 1 });
+vehicleSchema.index({ brand: 1, model: 1, city: 1, is_discontinued: 1, variant: 1 });
 
 const Vehicle = mongoose.model("Vehicle", vehicleSchema);
 export default Vehicle;

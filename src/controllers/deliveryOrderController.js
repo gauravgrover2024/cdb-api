@@ -2,23 +2,46 @@ import asyncHandler from 'express-async-handler';
 import DeliveryOrder from '../models/DeliveryOrder.js';
 import Loan from '../models/Loan.js';
 
+const LEGACY_CUTOFF = new Date('2026-02-01T00:00:00.000Z');
+
 const normalizeLoanType = (loan = {}) => {
-  const raw = loan?.vehicleType || loan?.loanType || loan?.typeOfLoan || '';
+  const raw =
+    loan?.typeOfLoan ||
+    loan?.loanType ||
+    loan?.caseType ||
+    loan?.vehicleType ||
+    '';
   return String(raw).trim().toLowerCase().replace(/[-_\s]+/g, ' ');
 };
 
 const isNewCarLoan = (loan = {}) => {
   const normalized = normalizeLoanType(loan);
+  if (!normalized) return false;
+
+  if (
+    normalized.includes('used') ||
+    normalized.includes('refinance') ||
+    normalized.includes('cash in')
+  ) {
+    return false;
+  }
+
   return (
-    normalized === 'new car' ||
-    normalized === 'newcar' ||
-    normalized === 'new car loan' ||
-    normalized === 'new'
+    normalized === 'new' ||
+    normalized.includes('new car') ||
+    normalized.includes('newcar')
   );
 };
 
-const parseDisbursementDate = (loan = {}) => {
+const parseBusinessDate = (loan = {}) => {
   const candidates = [
+    loan?.latestBusinessDate,
+    loan?.delivery_date,
+    loan?.deliveryDate,
+    loan?.do_date,
+    loan?.doDate,
+    loan?.invoice_date,
+    loan?.invoiceDate,
     loan?.approval_disbursedDate,
     loan?.disbursement_date,
     loan?.disbursementDate,
@@ -38,9 +61,9 @@ const parseDisbursementDate = (loan = {}) => {
 
 const isLegacyNewCar = (loan = {}) => {
   if (!isNewCarLoan(loan)) return false;
-  const disbursementDate = parseDisbursementDate(loan);
-  if (!disbursementDate) return false;
-  return disbursementDate.getFullYear() <= 2025;
+  const businessDate = parseBusinessDate(loan);
+  if (!businessDate) return false;
+  return businessDate < LEGACY_CUTOFF;
 };
 
 // @desc    Get all DOs
@@ -88,14 +111,14 @@ const saveDeliveryOrder = asyncHandler(async (req, res) => {
 
   let doRecord = await DeliveryOrder.findOne({ loanId });
 
-  // Business rule: do not auto/create DO for New Car loans disbursed in or before 2025.
+  // Business rule: do not auto/create DO for New Car loans delivered/disbursed before 1 Feb 2026.
   if (!doRecord && isLegacyNewCar(loan)) {
     return res.status(200).json({
       success: true,
       data: null,
       skipped: true,
       message:
-        'DO creation is paused for New Car loans disbursed in 2025 or earlier.',
+        'DO creation is paused for New Car loans delivered/disbursed before 1 Feb 2026.',
     });
   }
 

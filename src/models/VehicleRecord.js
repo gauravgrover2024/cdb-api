@@ -2,13 +2,14 @@ import mongoose from "mongoose";
 
 const vehicleRecordSchema = mongoose.Schema(
   {
-    loanId: { type: String, sparse: true },
+    loanId: { type: String },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", index: true },
     customerName: { type: String },
     primaryMobile: { type: String },
 
     registrationNumber: { type: String },
     registrationNumberNormalized: { type: String },
+    registrationNumberLast4: { type: String },
     make: { type: String, index: true },
     model: { type: String, index: true },
     variant: { type: String, index: true },
@@ -34,6 +35,7 @@ const vehicleRecordSchema = mongoose.Schema(
 
 vehicleRecordSchema.index({ loanId: 1 }, { unique: true, sparse: true });
 vehicleRecordSchema.index({ registrationNumberNormalized: 1 });
+vehicleRecordSchema.index({ registrationNumberLast4: 1 });
 vehicleRecordSchema.index({ make: 1, model: 1, variant: 1 });
 
 const VehicleRecord = mongoose.model("VehicleRecord", vehicleRecordSchema);

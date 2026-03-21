@@ -1,6 +1,7 @@
 import asyncHandler from 'express-async-handler';
 import mongoose from 'mongoose';
 import Vehicle from '../models/Vehicle.js';
+import VehicleRecord from '../models/VehicleRecord.js';
 
 const VEHICLE_LIST_PROJECTION = {
   make: 1,
@@ -23,6 +24,8 @@ const VEHICLE_LIST_PROJECTION = {
   status: 1,
   is_discontinued: 1,
   isDiscontinued: 1,
+  discontinued_date: 1,
+  discontinuedDate: 1,
   image_url: 1,
   imageUrl: 1,
   color_name: 1,
@@ -34,6 +37,7 @@ const VEHICLE_LIST_PROJECTION = {
 
 const toVehicleListItem = (doc) => {
   const normalized = normalizeVehicleRecord(doc);
+  const discontinued = isVehicleDiscontinued(normalized);
   const tcs = Number(
     normalized.tcs ?? normalized.other_tcsCharges ?? normalized.otherCharges ?? 0,
   );
@@ -62,8 +66,10 @@ const toVehicleListItem = (doc) => {
       normalized.total_on_road_with_accessories ?? normalized.onRoadPrice ?? 0,
     ),
     status: normalized.status,
-    is_discontinued: Boolean(normalized.is_discontinued ?? normalized.isDiscontinued),
-    isDiscontinued: Boolean(normalized.isDiscontinued ?? normalized.is_discontinued),
+    is_discontinued: discontinued,
+    isDiscontinued: discontinued,
+    discontinued_date: normalized.discontinued_date ?? null,
+    discontinuedDate: normalized.discontinuedDate ?? null,
     image_url: normalized.image_url || normalized.imageUrl || '',
     imageUrl: normalized.imageUrl || normalized.image_url || '',
     color_name: normalized.color_name || '',
@@ -93,6 +99,10 @@ const canonicalizeMake = (value) => {
 };
 
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const normalizeRegNo = (value) =>
+  String(value || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
 
 const trimLeading = (value, prefix) => {
   const source = String(value || '').trim();
@@ -247,17 +257,67 @@ const parseBoolean = (value) => {
   return raw === '1' || raw === 'true' || raw === 'yes';
 };
 
+const hasDiscontinuedDate = (value) => {
+  if (value === undefined || value === null) return false;
+  const raw = String(value).trim();
+  if (!raw) return false;
+  return raw.toLowerCase() !== 'null';
+};
+
+const isVehicleDiscontinued = (vehicle) =>
+  parseBoolean(vehicle?.is_discontinued ?? vehicle?.isDiscontinued) ||
+  hasDiscontinuedDate(vehicle?.discontinued_date ?? vehicle?.discontinuedDate);
+
 const ACTIVE_VARIANT_FILTER = {
-  $nor: [
-    { is_discontinued: true },
-    { is_discontinued: 1 },
-    { is_discontinued: 'true' },
-    { is_discontinued: 'True' },
-    { isDiscontinued: true },
-    { isDiscontinued: 1 },
-    { isDiscontinued: 'true' },
-    { isDiscontinued: 'True' },
+  $and: [
+    {
+      // Keep this branch cast-safe for the schema-typed boolean field.
+      $or: [
+        { is_discontinued: { $exists: false } },
+        { is_discontinued: false },
+        { is_discontinued: 0 },
+        { is_discontinued: null },
+      ],
+    },
+    {
+      $nor: [
+        { isDiscontinued: true },
+        { isDiscontinued: 1 },
+        { isDiscontinued: 'true' },
+        { isDiscontinued: 'True' },
+        { discontinued_date: { $exists: true, $nin: [null, '', 'null', 'NULL'] } },
+        { discontinuedDate: { $exists: true, $nin: [null, '', 'null', 'NULL'] } },
+      ],
+    },
   ],
+};
+
+const DISTINCT_CACHE_TTL_MS = 5 * 60 * 1000;
+const DISTINCT_CACHE = new Map();
+
+const getDistinctCacheKey = (scope, params = {}) =>
+  JSON.stringify({
+    scope,
+    make: String(params.make || '').trim().toLowerCase(),
+    model: String(params.model || '').trim().toLowerCase(),
+    city: String(params.city || '').trim().toLowerCase(),
+    includeDiscontinued: Boolean(params.includeDiscontinued),
+  });
+
+const readDistinctCache = (scope, params = {}) => {
+  const key = getDistinctCacheKey(scope, params);
+  const entry = DISTINCT_CACHE.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > DISTINCT_CACHE_TTL_MS) {
+    DISTINCT_CACHE.delete(key);
+    return null;
+  }
+  return entry.data;
+};
+
+const writeDistinctCache = (scope, params = {}, data = []) => {
+  const key = getDistinctCacheKey(scope, params);
+  DISTINCT_CACHE.set(key, { ts: Date.now(), data });
 };
 
 const getVehicles = asyncHandler(async (req, res) => {
@@ -283,6 +343,119 @@ const getVehicles = asyncHandler(async (req, res) => {
     ? docs.map(normalizeVehicleRecord)
     : docs.map(toVehicleListItem);
   res.json({ success: true, count: count ?? data.length, data });
+});
+
+const searchVehicleRecords = asyncHandler(async (req, res) => {
+  const rawQ = String(req.query.q || req.query.search || '').trim();
+  const q = normalizeRegNo(rawQ);
+  const isFourDigitSuffixSearch = /^\d{4}$/.test(q);
+  const requestedLimit = Number(req.query.limit);
+  const defaultLimit = isFourDigitSuffixSearch ? 5000 : 20;
+  const limit = Math.min(
+    Math.max(Number.isFinite(requestedLimit) ? requestedLimit : defaultLimit, 1),
+    10000,
+  );
+
+  if (q.length < 2) {
+    return res.json({ success: true, count: 0, data: [] });
+  }
+
+  const escaped = escapeRegex(q);
+  const suffix = q.slice(-4);
+  const clauses = isFourDigitSuffixSearch
+    ? [
+        { registrationNumberLast4: suffix },
+        { registrationNumberNormalized: new RegExp(`${escaped}$`, 'i') },
+      ]
+    : [
+        { registrationNumberNormalized: new RegExp(`^${escaped}`, 'i') },
+        { registrationNumberNormalized: new RegExp(escaped, 'i') },
+      ];
+
+  const fetchLimit = isFourDigitSuffixSearch ? limit : Math.max(limit * 4, 40);
+
+  const rows = await VehicleRecord.find({ $or: clauses })
+    .select({
+      registrationNumber: 1,
+      registrationNumberNormalized: 1,
+      registrationNumberLast4: 1,
+      make: 1,
+      model: 1,
+      variant: 1,
+      yearOfManufacture: 1,
+      manufactureMonth: 1,
+      engineNumber: 1,
+      chassisNumber: 1,
+      registrationDate: 1,
+      registrationCity: 1,
+      hypothecation: 1,
+      cubicCapacityCc: 1,
+      updatedAt: 1,
+      createdAt: 1,
+    })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(fetchLimit)
+    .lean();
+
+  const scored = rows
+    .map((row) => {
+      const normalized = normalizeRegNo(
+        row?.registrationNumberNormalized || row?.registrationNumber,
+      );
+      if (!normalized) return null;
+
+      let score = 0;
+      if (normalized === q) score += 150;
+      if (normalized.startsWith(q)) score += 110;
+      if (normalized.includes(q)) score += 50;
+      if (isFourDigitSuffixSearch && row?.registrationNumberLast4 === suffix) score += 220;
+      if (isFourDigitSuffixSearch && normalized.endsWith(suffix)) score += 170;
+      if (!isFourDigitSuffixSearch && suffix.length === 4 && row?.registrationNumberLast4 === suffix) score += 80;
+      if (!isFourDigitSuffixSearch && suffix.length === 4 && normalized.endsWith(suffix)) score += 40;
+      if (!score) return null;
+
+      return {
+        ...row,
+        registrationNumber:
+          String(row?.registrationNumber || '').trim() || normalized,
+        registrationNumberNormalized: normalized,
+        score,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aTs = Date.parse(a.updatedAt || a.createdAt || '') || 0;
+      const bTs = Date.parse(b.updatedAt || b.createdAt || '') || 0;
+      return bTs - aTs;
+    });
+
+  const deduped = [];
+  const seen = new Set();
+  for (const row of scored) {
+    const key = row.registrationNumberNormalized;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push({
+      _id: row._id,
+      registrationNumber: row.registrationNumber,
+      registrationNumberNormalized: row.registrationNumberNormalized,
+      make: row.make || '',
+      model: row.model || '',
+      variant: row.variant || '',
+      yearOfManufacture: row.yearOfManufacture || '',
+      manufactureMonth: row.manufactureMonth || '',
+      engineNumber: row.engineNumber || '',
+      chassisNumber: row.chassisNumber || '',
+      registrationDate: row.registrationDate || null,
+      registrationCity: row.registrationCity || '',
+      hypothecation: row.hypothecation || '',
+      cubicCapacityCc: row.cubicCapacityCc,
+    });
+    if (deduped.length >= limit) break;
+  }
+
+  res.json({ success: true, count: deduped.length, data: deduped });
 });
 
 const getVehicleById = asyncHandler(async (req, res) => {
@@ -402,6 +575,10 @@ const bulkUploadVehicles = asyncHandler(async (req, res) => {
 const getUniqueMakes = asyncHandler(async (req, res) => {
   const { city } = req.query;
   const includeDiscontinued = parseBoolean(req.query.includeDiscontinued);
+  const cached = readDistinctCache('makes', { city, includeDiscontinued });
+  if (cached) {
+    return res.json({ success: true, data: cached, cached: true });
+  }
   const cityQuery = city ? buildVehicleQuery({ city }) : {};
   const baseQuery = includeDiscontinued
     ? cityQuery
@@ -419,6 +596,7 @@ const getUniqueMakes = asyncHandler(async (req, res) => {
         .filter(Boolean),
     ),
   ].sort((a, b) => a.localeCompare(b));
+  writeDistinctCache('makes', { city, includeDiscontinued }, makes);
 
   res.json({ success: true, data: makes });
 });
@@ -431,13 +609,26 @@ const getUniqueModels = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Make parameter is required');
   }
+  const cached = readDistinctCache('models', { make, city, includeDiscontinued });
+  if (cached) {
+    return res.json({ success: true, data: cached, cached: true });
+  }
 
   const query = buildVehicleQuery({ make, city });
   if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
-  const docs = await Vehicle.find(query).select({ make: 1, brand: 1, model: 1 }).lean();
-  const models = [...new Set(docs.map((doc) => normalizeVehicleRecord(doc).model).filter(Boolean))].sort(
-    (a, b) => a.localeCompare(b),
-  );
+  const rawModels = await Vehicle.distinct('model', {
+    ...query,
+    model: { $exists: true, $ne: null },
+  });
+  const models = [
+    ...new Set(
+      rawModels
+        .map((value) => String(value || '').trim())
+        .map((value) => trimLeading(value, make) || value)
+        .filter(Boolean),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+  writeDistinctCache('models', { make, city, includeDiscontinued }, models);
 
   res.json({ success: true, data: models });
 });
@@ -450,20 +641,36 @@ const getUniqueVariants = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Make and Model parameters are required');
   }
+  const cached = readDistinctCache('variants', {
+    make,
+    model,
+    city,
+    includeDiscontinued,
+  });
+  if (cached) {
+    return res.json({ success: true, data: cached, cached: true });
+  }
 
   const query = buildVehicleQuery({ make, model, city });
   if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
-
-  const docs = await Vehicle.find(query)
-    .select({ make: 1, brand: 1, model: 1, variant: 1 })
-    .lean();
-  const variants = [...new Set(
-    docs
-      .map((doc) => normalizeVehicleRecord(doc))
-      .filter((doc) => matchesExact(doc.model, model))
-      .map((doc) => doc.variant)
-      .filter(Boolean),
-  )].sort((a, b) => a.localeCompare(b));
+  const rawVariants = await Vehicle.distinct('variant', {
+    ...query,
+    variant: { $exists: true, $ne: null },
+  });
+  const variants = [
+    ...new Set(
+      rawVariants
+        .map((value) => String(value || '').trim())
+        .map((value) =>
+          trimLeading(value, `${make} ${model}`.trim()) ||
+          trimLeading(value, model) ||
+          trimLeading(value, make) ||
+          value,
+        )
+        .filter(Boolean),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+  writeDistinctCache('variants', { make, model, city, includeDiscontinued }, variants);
 
   res.json({ success: true, data: variants });
 });
@@ -587,6 +794,7 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
 
 export {
   getVehicles,
+  searchVehicleRecords,
   getVehicleById,
   createVehicle,
   updateVehicle,

@@ -7,12 +7,16 @@ import {
   createLoanCustomWidget,
   createLoanCustomReport,
   getLoanById,
+  getLoanBreakupFields,
+  createLoanBreakupField,
+  deleteLoanBreakupField,
   createLoan,
   updateLoan,
   deleteLoan,
   disburseLoan,
   getBanksData,
   saveBanksData,
+  getNextRcInvStorageNumber,
 } from '../controllers/loanController.js';
 
 const router = express.Router();
@@ -26,6 +30,10 @@ router.get('/analytics/overview', getLoanAnalyticsOverview);
 router.get('/analytics/drilldown', getLoanAnalyticsDrilldown);
 router.post('/analytics/custom-widget', createLoanCustomWidget);
 router.post('/analytics/custom-report', createLoanCustomReport);
+router.get('/counters/rc-inv/next', getNextRcInvStorageNumber);
+router.get('/breakup-fields', getLoanBreakupFields);
+router.post('/breakup-fields', createLoanBreakupField);
+router.delete('/breakup-fields/:key', deleteLoanBreakupField);
 
 router.route('/:id')
   .get(getLoanById)

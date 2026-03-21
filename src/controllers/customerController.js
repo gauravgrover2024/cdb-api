@@ -2,6 +2,104 @@ import asyncHandler from 'express-async-handler';
 import Customer from '../models/Customer.js';
 import Loan from '../models/Loan.js';
 
+const normalizeIfsc = (value) =>
+  String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 11);
+
+const hasBankEntryValue = (entry = {}) =>
+  Boolean(
+    String(entry?.bankName || "").trim() ||
+      String(entry?.accountNumber || "").trim() ||
+      normalizeIfsc(entry?.ifscCode || entry?.ifsc) ||
+      String(entry?.branch || "").trim() ||
+      String(entry?.accountType || "").trim(),
+  );
+
+const normalizeBankEntry = (entry = {}) => {
+  const ifscCode = normalizeIfsc(entry?.ifscCode || entry?.ifsc);
+  const accountSinceYears = Number(entry?.accountSinceYears);
+  const openedIn = Number(entry?.openedIn);
+  return {
+    bankName: String(entry?.bankName || "").trim(),
+    accountNumber: String(entry?.accountNumber || "").trim(),
+    ifscCode,
+    ifsc: ifscCode,
+    branch: String(entry?.branch || "").trim(),
+    accountType: String(entry?.accountType || "").trim(),
+    accountSinceYears: Number.isFinite(accountSinceYears)
+      ? accountSinceYears
+      : undefined,
+    openedIn: Number.isFinite(openedIn) ? openedIn : undefined,
+  };
+};
+
+const applyNormalizedBankDetails = (normalized = {}) => {
+  const stored = Array.isArray(normalized?.bankDetails)
+    ? normalized.bankDetails
+    : [];
+  const additional = Array.isArray(normalized?.additionalBankDetails)
+    ? normalized.additionalBankDetails
+    : [];
+
+  const normalizedStored = [...stored, ...additional]
+    .map((entry) => normalizeBankEntry(entry))
+    .filter((entry) => hasBankEntryValue(entry))
+    .slice(0, 3);
+
+  const primaryFlat = normalizeBankEntry({
+    bankName: normalized?.bankName,
+    accountNumber: normalized?.accountNumber,
+    ifscCode: normalized?.ifscCode,
+    ifsc: normalized?.ifsc,
+    branch: normalized?.branch,
+    accountType: normalized?.accountType,
+    accountSinceYears: normalized?.accountSinceYears,
+    openedIn: normalized?.openedIn,
+  });
+
+  const firstStored = normalizedStored[0];
+  const primary = hasBankEntryValue(primaryFlat)
+    ? {
+        ...firstStored,
+        ...Object.fromEntries(
+          Object.entries(primaryFlat).filter(([, value]) => value !== undefined && value !== ""),
+        ),
+      }
+    : firstStored || primaryFlat;
+
+  const additionalBanks = normalizedStored.slice(firstStored ? 1 : 0);
+  const bankDetails = [primary, ...additionalBanks]
+    .filter((entry) => hasBankEntryValue(entry))
+    .slice(0, 3);
+
+  normalized.bankDetails = bankDetails;
+
+  const top = bankDetails[0];
+  if (top && hasBankEntryValue(top)) {
+    normalized.bankName = top.bankName || normalized.bankName || "";
+    normalized.accountNumber = top.accountNumber || normalized.accountNumber || "";
+    normalized.ifscCode = top.ifscCode || normalized.ifscCode || normalized.ifsc || "";
+    normalized.ifsc = top.ifsc || normalized.ifscCode || normalized.ifsc || "";
+    normalized.branch = top.branch || normalized.branch || "";
+    normalized.accountType = top.accountType || normalized.accountType || "";
+    normalized.accountSinceYears =
+      top.accountSinceYears !== undefined
+        ? top.accountSinceYears
+        : normalized.accountSinceYears;
+    normalized.openedIn =
+      top.openedIn !== undefined ? top.openedIn : normalized.openedIn;
+  }
+
+  if (normalized.ifsc && !normalized.ifscCode) normalized.ifscCode = normalized.ifsc;
+  if (normalized.ifscCode && !normalized.ifsc) normalized.ifsc = normalized.ifscCode;
+
+  delete normalized.additionalBankDetails;
+  delete normalized.hasAdditionalBankDetails;
+  return normalized;
+};
+
 // Normalize customer data - same as loan controller for consistency
 const normalizeCustomerData = (payload) => {
   const normalized = { ...payload };
@@ -60,6 +158,7 @@ const normalizeCustomerData = (payload) => {
   if (normalized.currentExp !== undefined && normalized.experienceCurrent === undefined) normalized.experienceCurrent = normalized.currentExp;
   if (normalized.totalExperience !== undefined && normalized.totalExp === undefined) normalized.totalExp = normalized.totalExperience;
   if (normalized.totalExp !== undefined && normalized.totalExperience === undefined) normalized.totalExperience = normalized.totalExp;
+  applyNormalizedBankDetails(normalized);
 
   // Flatten reference1/reference2 objects to flat fields (DB schema uses reference1_name, etc.)
   if (normalized.reference1 && typeof normalized.reference1 === 'object') {
@@ -168,8 +267,15 @@ const getCustomerById = asyncHandler(async (req, res) => {
   if (customer) {
     // 🔗 FETCH LINKED LOANS - so customer updates are visible
     const linkedLoans = await Loan.find({ customerId: customer._id })
-      .select('_id loanId loanType vehicleType status currentStage vehicleModel loanAmount tenure approval_status approval_loanAmountApproved createdAt updatedAt customerName primaryMobile email panNumber occupationType monthlyIncome')
-      .sort({ createdAt: -1 });
+      .select(
+        '_id loanId loan_number typeOfLoan loanType caseType isFinanced status currentStage ' +
+        'customerName primaryMobile email panNumber source sourceName dealerName ' +
+        'vehicleMake vehicleModel vehicleVariant vehicleRegNo registrationNumber rc_redg_no registrationCity postfile_regd_city ' +
+        'bankName approval_bankName approval_loanAmountApproved approval_loanAmountDisbursed postfile_emiAmount ' +
+        'disbursement_date approval_disbursedDate delivery_date createdAt updatedAt bankDetails',
+      )
+      .sort({ createdAt: -1 })
+      .lean();
 
     const responseData = {
       ...customer.toObject(),
@@ -280,7 +386,12 @@ const getCustomerDashboard = asyncHandler(async (req, res) => {
         bankName: customer.bankName,
         accountNumber: customer.accountNumber,
         ifscCode: customer.ifscCode,
+        ifsc: customer.ifsc,
+        branch: customer.branch,
         accountType: customer.accountType,
+        accountSinceYears: customer.accountSinceYears,
+        openedIn: customer.openedIn,
+        bankDetails: customer.bankDetails,
         // References
         reference1_name: customer.reference1_name,
         reference1_mobile: customer.reference1_mobile,
