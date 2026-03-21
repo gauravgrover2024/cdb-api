@@ -1381,6 +1381,107 @@ const normalizeBreakupFieldKey = (value = "") => {
     .join("");
 };
 
+const getBreakupFieldUsageMap = async () => {
+  const usageRows = await Loan.aggregate([
+    {
+      $project: {
+        __breakupFields: {
+          $concatArrays: [
+            { $ifNull: ["$approval_breakup_custom", []] },
+            { $ifNull: ["$postfile_disbursed_custom", []] },
+          ],
+        },
+      },
+    },
+    { $unwind: "$__breakupFields" },
+    {
+      $project: {
+        key: {
+          $toLower: {
+            $trim: {
+              input: { $ifNull: ["$__breakupFields.key", ""] },
+            },
+          },
+        },
+        value: {
+          $convert: {
+            input: "$__breakupFields.value",
+            to: "double",
+            onError: 0,
+            onNull: 0,
+          },
+        },
+      },
+    },
+    {
+      $match: {
+        key: { $ne: "" },
+        value: { $gt: 0 },
+      },
+    },
+    {
+      $group: {
+        _id: "$key",
+        count: { $sum: 1 },
+      },
+    },
+  ]);
+
+  return new Map(
+    (Array.isArray(usageRows) ? usageRows : []).map((row) => [
+      String(row?._id || "").toLowerCase(),
+      Number(row?.count || 0),
+    ]),
+  );
+};
+
+const isBreakupFieldInUse = async (rawKey = "") => {
+  const normalizedKey = String(normalizeBreakupFieldKey(rawKey) || "").toLowerCase();
+  if (!normalizedKey) return false;
+
+  const usageRows = await Loan.aggregate([
+    {
+      $project: {
+        __breakupFields: {
+          $concatArrays: [
+            { $ifNull: ["$approval_breakup_custom", []] },
+            { $ifNull: ["$postfile_disbursed_custom", []] },
+          ],
+        },
+      },
+    },
+    { $unwind: "$__breakupFields" },
+    {
+      $project: {
+        key: {
+          $toLower: {
+            $trim: {
+              input: { $ifNull: ["$__breakupFields.key", ""] },
+            },
+          },
+        },
+        value: {
+          $convert: {
+            input: "$__breakupFields.value",
+            to: "double",
+            onError: 0,
+            onNull: 0,
+          },
+        },
+      },
+    },
+    {
+      $match: {
+        key: normalizedKey,
+        value: { $gt: 0 },
+      },
+    },
+    { $limit: 1 },
+  ]);
+
+  return Array.isArray(usageRows) && usageRows.length > 0;
+};
+
 const LIST_COUNT_CACHE_TTL_MS = 45 * 1000;
 const LOAN_LIST_RESPONSE_CACHE_TTL_MS = 20 * 1000;
 const DASHBOARD_STATS_CACHE_TTL_MS = 60 * 1000;
@@ -2070,8 +2171,13 @@ const getLoanBreakupFields = asyncHandler(async (_req, res) => {
   const customFields = await LoanBreakupField.find({ active: { $ne: false } })
     .sort({ order: 1, createdAt: 1, label: 1 })
     .lean();
+  const usageMap = await getBreakupFieldUsageMap();
 
-  const merged = [...DEFAULT_LOAN_BREAKUP_FIELDS];
+  const merged = DEFAULT_LOAN_BREAKUP_FIELDS.map((field) => ({
+    ...field,
+    canDelete: false,
+    inUseCount: 0,
+  }));
   const seen = new Set(
     DEFAULT_LOAN_BREAKUP_FIELDS.map((field) =>
       String(field.key || "")
@@ -2085,11 +2191,14 @@ const getLoanBreakupFields = asyncHandler(async (_req, res) => {
       .toLowerCase();
     if (!key || seen.has(key)) return;
     seen.add(key);
+    const inUseCount = Number(usageMap.get(key) || 0);
     merged.push({
       key: field.key,
       label: field.label,
       order: field.order,
       isDefault: false,
+      canDelete: inUseCount === 0,
+      inUseCount,
       createdAt: field.createdAt,
       updatedAt: field.updatedAt,
     });
@@ -2102,6 +2211,48 @@ const getLoanBreakupFields = asyncHandler(async (_req, res) => {
       if (orderDelta !== 0) return orderDelta;
       return String(a.label || "").localeCompare(String(b.label || ""));
     }),
+  });
+});
+
+// @desc    Delete a custom breakup field if no loan has data against it
+// @route   DELETE /api/loans/breakup-fields/:key
+// @access  Public
+const deleteLoanBreakupField = asyncHandler(async (req, res) => {
+  const rawKey = String(req.params?.key || req.body?.key || "").trim();
+  const normalizedKey = String(normalizeBreakupFieldKey(rawKey) || "").toLowerCase();
+
+  if (!normalizedKey) {
+    res.status(400);
+    throw new Error("Field key is required");
+  }
+
+  if (DEFAULT_LOAN_BREAKUP_KEY_SET.has(normalizedKey)) {
+    res.status(400);
+    throw new Error("Default breakup fields cannot be deleted");
+  }
+
+  const existing = await LoanBreakupField.findOne({ key: normalizedKey });
+  if (!existing) {
+    res.status(404);
+    throw new Error("Breakup field not found");
+  }
+
+  const inUse = await isBreakupFieldInUse(normalizedKey);
+  if (inUse) {
+    return res.status(409).json({
+      success: false,
+      deleted: false,
+      message: "This field has data in existing loan cases and cannot be deleted.",
+    });
+  }
+
+  await LoanBreakupField.deleteOne({ _id: existing._id });
+  clearLoanCaches();
+
+  return res.json({
+    success: true,
+    deleted: true,
+    key: normalizedKey,
   });
 });
 
@@ -4310,6 +4461,7 @@ export {
   getLoanById,
   getLoanBreakupFields,
   createLoanBreakupField,
+  deleteLoanBreakupField,
   createLoan,
   updateLoan,
   deleteLoan,

@@ -9,6 +9,7 @@ import {
   getLoanById,
   getLoanBreakupFields,
   createLoanBreakupField,
+  deleteLoanBreakupField,
   createLoan,
   updateLoan,
   deleteLoan,
@@ -32,6 +33,7 @@ router.post('/analytics/custom-report', createLoanCustomReport);
 router.get('/counters/rc-inv/next', getNextRcInvStorageNumber);
 router.get('/breakup-fields', getLoanBreakupFields);
 router.post('/breakup-fields', createLoanBreakupField);
+router.delete('/breakup-fields/:key', deleteLoanBreakupField);
 
 router.route('/:id')
   .get(getLoanById)
