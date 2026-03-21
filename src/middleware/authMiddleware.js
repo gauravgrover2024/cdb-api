@@ -26,6 +26,19 @@ const protect = asyncHandler(async (req, res, next) => {
       res.status(401);
       throw new Error('Not authorized, token failed');
     }
+
+    // Block deactivated or rejected accounts — checked AFTER try/catch so
+    // the status code is not overwritten by the catch block
+    if (req.user) {
+      if (req.user.status === 'deactivated') {
+        res.status(403);
+        throw new Error('Your account has been deactivated. Contact your administrator.');
+      }
+      if (req.user.status === 'rejected') {
+        res.status(403);
+        throw new Error('Your account has been rejected. Contact your administrator.');
+      }
+    }
   }
 
   if (!token) {
@@ -38,8 +51,17 @@ const admin = (req, res, next) => {
   if (req.user && (req.user.role === 'admin' || req.user.role === 'superadmin')) {
     next();
   } else {
-    res.status(401);
+    res.status(403);
     throw new Error('Not authorized as an admin/superadmin');
+  }
+};
+
+const staff = (req, res, next) => {
+  if (req.user && ['staff', 'admin', 'superadmin'].includes(req.user.role)) {
+    next();
+  } else {
+    res.status(403);
+    throw new Error('Not authorized');
   }
 };
 
@@ -52,4 +74,4 @@ const superadmin = (req, res, next) => {
   }
 };
 
-export { protect, admin, superadmin };
+export { protect, admin, superadmin, staff };

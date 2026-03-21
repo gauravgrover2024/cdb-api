@@ -5,11 +5,17 @@ const userSchema = mongoose.Schema(
   {
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    role: { 
-      type: String, 
-      enum: ['user', 'admin', 'superadmin', 'demo'],
-      default: 'user' 
+    password: { type: String }, // Optional — not set for Google/Firebase-only users
+    firebaseUid: { type: String, unique: true, sparse: true },
+    role: {
+      type: String,
+      enum: ['superadmin', 'admin', 'staff', 'user', 'demo'],
+      default: 'staff',
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'active', 'rejected', 'deactivated'],
+      default: 'active',
     },
   },
   {
@@ -17,14 +23,15 @@ const userSchema = mongoose.Schema(
   }
 );
 
-// Method to check password
+// Method to check password (only for email/password users)
 userSchema.methods.matchPassword = async function (enteredPassword) {
+  if (!this.password) return false;
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
-// Middleware to hash password pre-save
+// Hash password before save if it was modified
 userSchema.pre('save', async function () {
-  if (!this.isModified('password')) {
+  if (!this.isModified('password') || !this.password) {
     return;
   }
   const salt = await bcrypt.genSalt(10);
