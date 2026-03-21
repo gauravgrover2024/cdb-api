@@ -1341,14 +1341,17 @@ const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const LIST_COUNT_CACHE_TTL_MS = 45 * 1000;
+const LOAN_LIST_RESPONSE_CACHE_TTL_MS = 20 * 1000;
 const DASHBOARD_STATS_CACHE_TTL_MS = 60 * 1000;
 const ANALYTICS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
 const ANALYTICS_QUERY_MAX_MS = 45000; // 45s timeout
 const listCountCache = new Map();
+const loanListResponseCache = new Map();
 let dashboardStatsCache = { ts: 0, data: null };
 const analyticsCache = new Map();
 const clearLoanCaches = () => {
   listCountCache.clear();
+  loanListResponseCache.clear();
   dashboardStatsCache = { ts: 0, data: null };
   analyticsCache.clear();
 };
@@ -1838,38 +1841,29 @@ const getLoans = asyncHandler(async (req, res) => {
     "loanType",
     "typeOfLoan",
     "caseType",
-    "loan_type",
     "isFinanced",
-    "isFinanceRequired",
     "customerName",
     "primaryMobile",
     "city",
-    "permanentCity",
     "residenceAddress",
-    "permanentAddress",
-    "address",
     "source",
     "recordSource",
     "sourceName",
     "dealerName",
     "showroomDealerName",
     "delivery_dealerName",
-    "postfile_showroomDealerName",
-    "showroomName",
-    "showroom",
-    "showroom_name",
     "approval_bankName",
-    "approval_loanBookedIn",
-    "approval_brokerName",
-    "postfile_bankName",
-    "bankDetails",
-    "approval_banksData",
+    "approval_banksData.bankName",
+    "approval_banksData.loanAmount",
+    "approval_banksData.emiAmount",
+    "approval_banksData.roi",
+    "approval_banksData.tenureMonths",
+    "approval_banksData.status",
     "approval_loanAmountDisbursed",
     "approval_loanAmountApproved",
     "approval_roi",
     "approval_tenureMonths",
     "postfile_emiAmount",
-    "emiAmount",
     "financeExpectation",
     "loanTenureMonths",
     "disbursement_date",
@@ -1883,7 +1877,6 @@ const getLoans = asyncHandler(async (req, res) => {
     "livePrincipalOutstanding",
     "principalOutstanding",
     "leadDate",
-    "leadTime",
     "registrationNumber",
     "vehicleRegNo",
     "rc_redg_no",
@@ -1895,31 +1888,11 @@ const getLoans = asyncHandler(async (req, res) => {
     "status",
     "loanStatus",
     "isCashCase",
-    "latestBusinessDate",
     "currentStage",
     "createdAt",
     "updatedAt",
   ];
   const dashboardSelect = dashboardFields.join(" ");
-  const countKey = JSON.stringify({
-    viewMode,
-    search: safeSearch,
-    customerId: safeCustomerId,
-    customerName: safeCustomerName,
-    primaryMobile: safePrimaryMobile,
-    panNumber: safePanNumber,
-    loanIds: safeLoanIds.slice().sort().join("|"),
-  });
-  const cachedCount = listCountCache.get(countKey);
-  const useCachedCount =
-    !safeNoCount && cachedCount && Date.now() - cachedCount.ts < LIST_COUNT_CACHE_TTL_MS;
-  const totalPromise = useCachedCount
-    ? Promise.resolve(cachedCount.total)
-    : safeNoCount
-      ? Promise.resolve(null)
-    : !safeSearch && !hasStructuredFilters && viewMode === "dashboard"
-      ? Loan.estimatedDocumentCount()
-      : Loan.countDocuments(query);
   const allowedSort = new Set([
     "createdAt",
     "updatedAt",
@@ -1945,6 +1918,59 @@ const getLoans = asyncHandler(async (req, res) => {
     effectiveSortField === "latestBusiness"
       ? { latestBusinessDate: direction, _id: -1 }
       : { [effectiveSortField]: direction, _id: -1 };
+
+  const fastListCacheKey = JSON.stringify({
+    viewMode,
+    skip: safeSkip,
+    limit: safeLimit,
+    sortBy: effectiveSortField,
+    sortDir: direction,
+    noCount: safeNoCount,
+  });
+  const canUseFastListCache =
+    viewMode === "dashboard" &&
+    !safeSearch &&
+    !hasStructuredFilters &&
+    safeSkip === 0 &&
+    effectiveSortField === "leadDate" &&
+    direction === -1;
+  if (canUseFastListCache) {
+    const cachedListResponse = loanListResponseCache.get(fastListCacheKey);
+    if (
+      cachedListResponse &&
+      Date.now() - Number(cachedListResponse.ts || 0) <
+        LOAN_LIST_RESPONSE_CACHE_TTL_MS
+    ) {
+      return res.json({
+        ...(cachedListResponse.payload || {}),
+        meta: {
+          ...(cachedListResponse.payload?.meta || {}),
+          fromCache: true,
+          queryMs: Date.now() - startedAt,
+        },
+      });
+    }
+  }
+
+  const countKey = JSON.stringify({
+    viewMode,
+    search: safeSearch,
+    customerId: safeCustomerId,
+    customerName: safeCustomerName,
+    primaryMobile: safePrimaryMobile,
+    panNumber: safePanNumber,
+    loanIds: safeLoanIds.slice().sort().join("|"),
+  });
+  const cachedCount = listCountCache.get(countKey);
+  const useCachedCount =
+    !safeNoCount && cachedCount && Date.now() - cachedCount.ts < LIST_COUNT_CACHE_TTL_MS;
+  const totalPromise = useCachedCount
+    ? Promise.resolve(cachedCount.total)
+    : safeNoCount
+      ? Promise.resolve(null)
+    : !safeSearch && !hasStructuredFilters && viewMode === "dashboard"
+      ? Loan.estimatedDocumentCount()
+      : Loan.countDocuments(query);
 
   const dataPromise = Loan.find(query)
     .sort(sort)
@@ -1976,7 +2002,7 @@ const getLoans = asyncHandler(async (req, res) => {
     noCount: safeNoCount,
   };
 
-  res.json({
+  const response = {
     data,
     total,
     page: Math.floor(safeSkip / safeLimit) + 1,
@@ -1984,7 +2010,16 @@ const getLoans = asyncHandler(async (req, res) => {
     skip: safeSkip,
     hasMore: safeNoCount ? data.length === safeLimit : safeSkip + data.length < total,
     meta: responseMeta,
-  });
+  };
+
+  if (canUseFastListCache) {
+    loanListResponseCache.set(fastListCacheKey, {
+      ts: Date.now(),
+      payload: response,
+    });
+  }
+
+  res.json(response);
 });
 
 // @desc    Dashboard aggregate stats for all loans
