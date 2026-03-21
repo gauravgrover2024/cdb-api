@@ -7,6 +7,7 @@ import Counter from "../models/Counter.js";
 import Channel from "../models/Channel.js";
 import DeliveryOrder from "../models/DeliveryOrder.js";
 import Payment from "../models/Payment.js";
+import LoanBreakupField from "../models/LoanBreakupField.js";
 import {
   calculatePayoutsOnDisbursement,
   validateDisbursementData,
@@ -1340,6 +1341,46 @@ const parseAmount = (value) => {
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const DEFAULT_LOAN_BREAKUP_FIELDS = [
+  { key: "netLoanApproved", label: "Net Loan Amount Approved", order: 1, isDefault: true },
+  { key: "creditAssuredFinance", label: "Credit Assured Finance", order: 2, isDefault: true },
+  { key: "insuranceFinance", label: "Insurance Finance", order: 3, isDefault: true },
+  { key: "extendedWarrantyFinance", label: "Extended Warranty Finance", order: 4, isDefault: true },
+];
+
+const DEFAULT_LOAN_BREAKUP_KEY_SET = new Set(
+  DEFAULT_LOAN_BREAKUP_FIELDS.map((field) =>
+    String(field.key || "")
+      .trim()
+      .toLowerCase(),
+  ),
+);
+
+const formatBreakupLabelFromKey = (key = "") =>
+  String(key || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const normalizeBreakupFieldKey = (value = "") => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const cleaned = raw
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!cleaned) return "";
+  return cleaned
+    .split(/\s+/)
+    .map((part, index) =>
+      index === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1),
+    )
+    .join("");
+};
+
 const LIST_COUNT_CACHE_TTL_MS = 45 * 1000;
 const LOAN_LIST_RESPONSE_CACHE_TTL_MS = 20 * 1000;
 const DASHBOARD_STATS_CACHE_TTL_MS = 60 * 1000;
@@ -2020,6 +2061,158 @@ const getLoans = asyncHandler(async (req, res) => {
   }
 
   res.json(response);
+});
+
+// @desc    Get loan breakup field definitions (default + custom)
+// @route   GET /api/loans/breakup-fields
+// @access  Public
+const getLoanBreakupFields = asyncHandler(async (_req, res) => {
+  const customFields = await LoanBreakupField.find({ active: { $ne: false } })
+    .sort({ order: 1, createdAt: 1, label: 1 })
+    .lean();
+
+  const merged = [...DEFAULT_LOAN_BREAKUP_FIELDS];
+  const seen = new Set(
+    DEFAULT_LOAN_BREAKUP_FIELDS.map((field) =>
+      String(field.key || "")
+        .trim()
+        .toLowerCase(),
+    ),
+  );
+  (Array.isArray(customFields) ? customFields : []).forEach((field) => {
+    const key = String(field?.key || "")
+      .trim()
+      .toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    merged.push({
+      key: field.key,
+      label: field.label,
+      order: field.order,
+      isDefault: false,
+      createdAt: field.createdAt,
+      updatedAt: field.updatedAt,
+    });
+  });
+
+  res.json({
+    success: true,
+    data: merged.sort((a, b) => {
+      const orderDelta = Number(a.order || 0) - Number(b.order || 0);
+      if (orderDelta !== 0) return orderDelta;
+      return String(a.label || "").localeCompare(String(b.label || ""));
+    }),
+  });
+});
+
+// @desc    Create a persistent custom loan breakup field
+// @route   POST /api/loans/breakup-fields
+// @access  Public
+const createLoanBreakupField = asyncHandler(async (req, res) => {
+  const rawLabel = String(req.body?.label || "").trim();
+  const rawKey = String(req.body?.key || "").trim();
+
+  if (!rawLabel) {
+    res.status(400);
+    throw new Error("Field label is required");
+  }
+
+  const normalizedLabel = rawLabel.replace(/\s+/g, " ").trim();
+  let normalizedKey = normalizeBreakupFieldKey(rawKey || normalizedLabel);
+  if (!normalizedKey) {
+    res.status(400);
+    throw new Error("Invalid field label");
+  }
+
+  if (DEFAULT_LOAN_BREAKUP_KEY_SET.has(normalizedKey.toLowerCase())) {
+    res.status(400);
+    throw new Error("This field already exists as a default loan breakup field");
+  }
+
+  const existingByKey = await LoanBreakupField.findOne({
+    key: normalizedKey.toLowerCase(),
+  })
+    .select("key label order createdAt updatedAt")
+    .lean();
+  if (existingByKey) {
+    return res.status(200).json({
+      success: true,
+      created: false,
+      data: {
+        key: existingByKey.key,
+        label: existingByKey.label,
+        order: existingByKey.order,
+        isDefault: false,
+        createdAt: existingByKey.createdAt,
+        updatedAt: existingByKey.updatedAt,
+      },
+    });
+  }
+
+  const existingByLabel = await LoanBreakupField.findOne({
+    label: { $regex: `^${escapeRegex(normalizedLabel)}$`, $options: "i" },
+    active: { $ne: false },
+  })
+    .select("key label order createdAt updatedAt")
+    .lean();
+  if (existingByLabel) {
+    return res.status(200).json({
+      success: true,
+      created: false,
+      data: {
+        key: existingByLabel.key,
+        label: existingByLabel.label,
+        order: existingByLabel.order,
+        isDefault: false,
+        createdAt: existingByLabel.createdAt,
+        updatedAt: existingByLabel.updatedAt,
+      },
+    });
+  }
+
+  const maxOrder = await LoanBreakupField.findOne({ active: { $ne: false } })
+    .sort({ order: -1, createdAt: -1 })
+    .select("order")
+    .lean();
+  const nextOrder = Math.max(Number(maxOrder?.order || 1000) + 1, 1005);
+
+  let createdDoc = null;
+  let attempts = 0;
+  let candidateKey = normalizedKey.toLowerCase();
+  while (!createdDoc && attempts < 50) {
+    try {
+      createdDoc = await LoanBreakupField.create({
+        key: candidateKey,
+        label: normalizedLabel || formatBreakupLabelFromKey(candidateKey),
+        order: nextOrder + attempts,
+        active: true,
+        createdBy: req.body?.createdBy || req.body?.user || "user",
+      });
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+      attempts += 1;
+      candidateKey = `${normalizedKey.toLowerCase()}${attempts + 1}`;
+    }
+  }
+
+  if (!createdDoc) {
+    res.status(500);
+    throw new Error("Failed to create breakup field");
+  }
+
+  clearLoanCaches();
+  res.status(201).json({
+    success: true,
+    created: true,
+    data: {
+      key: createdDoc.key,
+      label: createdDoc.label,
+      order: createdDoc.order,
+      isDefault: false,
+      createdAt: createdDoc.createdAt,
+      updatedAt: createdDoc.updatedAt,
+    },
+  });
 });
 
 // @desc    Dashboard aggregate stats for all loans
@@ -3663,6 +3856,9 @@ const disburseLoan = asyncHandler(async (req, res) => {
   loan.postfile_disbursedInsurance =
     loan.approval_breakup_insuranceFinance || 0;
   loan.postfile_disbursedEw = loan.approval_breakup_ewFinance || 0;
+  loan.postfile_disbursed_custom = Array.isArray(loan.approval_breakup_custom)
+    ? loan.approval_breakup_custom
+    : [];
 
   // Store receivables and payables in loan
   loan.loan_receivables = payoutData.receivables;
@@ -4112,6 +4308,8 @@ export {
   createLoanCustomWidget,
   createLoanCustomReport,
   getLoanById,
+  getLoanBreakupFields,
+  createLoanBreakupField,
   createLoan,
   updateLoan,
   deleteLoan,

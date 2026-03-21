@@ -374,6 +374,7 @@ const loanSchema = mongoose.Schema(
     approval_breakup_creditAssured: { type: Number },
     approval_breakup_insuranceFinance: { type: Number },
     approval_breakup_ewFinance: { type: Number },
+    approval_breakup_custom: { type: [mongoose.Schema.Types.Mixed], default: [] },
 
     // --- Document Uploads (All Files & Images) ---
     // Identity & Address Proofs
@@ -471,6 +472,7 @@ const loanSchema = mongoose.Schema(
     postfile_disbursedCreditAssured: { type: Number },
     postfile_disbursedInsurance: { type: Number },
     postfile_disbursedEw: { type: Number },
+    postfile_disbursed_custom: { type: [mongoose.Schema.Types.Mixed], default: [] },
     postfile_disbursedLoanTotal: { type: Number }, // Alias
     postfile_tags: { type: [String], default: [] },
 

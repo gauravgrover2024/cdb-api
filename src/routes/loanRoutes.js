@@ -7,6 +7,8 @@ import {
   createLoanCustomWidget,
   createLoanCustomReport,
   getLoanById,
+  getLoanBreakupFields,
+  createLoanBreakupField,
   createLoan,
   updateLoan,
   deleteLoan,
@@ -28,6 +30,8 @@ router.get('/analytics/drilldown', getLoanAnalyticsDrilldown);
 router.post('/analytics/custom-widget', createLoanCustomWidget);
 router.post('/analytics/custom-report', createLoanCustomReport);
 router.get('/counters/rc-inv/next', getNextRcInvStorageNumber);
+router.get('/breakup-fields', getLoanBreakupFields);
+router.post('/breakup-fields', createLoanBreakupField);
 
 router.route('/:id')
   .get(getLoanById)
