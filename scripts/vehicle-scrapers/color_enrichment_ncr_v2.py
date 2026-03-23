@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 import requests
 from pymongo import UpdateOne
@@ -25,9 +25,16 @@ HEADERS = {
 }
 TODAY = date.today().isoformat()
 
-IMAGE_RE = re.compile(r"https?://[^\"'\s<>]+\.(?:jpg|jpeg|png)", re.IGNORECASE)
+IMAGE_RE = re.compile(
+    r"https?://[^\"'\s<>]+\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\"'\s<>]*)?",
+    re.IGNORECASE,
+)
 HEX_SUFFIX_RE = re.compile(r"(.+)_([0-9a-fA-F]{6})$")
 RESOLUTION_RE = re.compile(r"/(\d{2,4})x(\d{2,4})/")
+MEDIA_SIZE_RE = re.compile(
+    r"/images/(car-images|carexteriorimages)/(?:large|medium|\d{2,4}x\d{2,4})/",
+    re.IGNORECASE,
+)
 
 BAD_NAME_TOKENS = {
     "front",
@@ -44,6 +51,13 @@ BAD_NAME_TOKENS = {
     "car",
     "cars",
     "cardekho",
+}
+
+MAKE_ALIASES = {
+    "mercedes": "mercedes-benz",
+    "mercedes-benz": "mercedes-benz",
+    "maruti": "maruti-suzuki",
+    "maruti-suzuki": "maruti-suzuki",
 }
 
 
@@ -87,6 +101,7 @@ def clean_color_name(raw: str, brand_slug: str = "", model_slug: str = "") -> st
         return ""
     txt = normalize_spaces(str(raw).replace("-", " ").replace("_", " ")).strip()
     txt = re.sub(r"^\d+", "", txt).strip()
+    txt = re.sub(r"^[^a-zA-Z]+", "", txt).strip()
     txt_low = txt.lower()
 
     for noise in [brand_slug.replace("-", " "), model_slug.replace("-", " ")]:
@@ -103,12 +118,89 @@ def clean_color_name(raw: str, brand_slug: str = "", model_slug: str = "") -> st
     return normalize_spaces(" ".join(tokens)).title()
 
 
+def slug_tokens(value: str) -> List[str]:
+    text = normalize_spaces(value).lower()
+    text = text.replace("&", " and ")
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return [token for token in text.split("-") if token]
+
+
+def make_slug_variants(brand_slug: str) -> List[str]:
+    token = normalize_spaces(brand_slug).lower().replace(" ", "-")
+    canonical = MAKE_ALIASES.get(token, token)
+    variants = {token, canonical}
+    for k, v in MAKE_ALIASES.items():
+        if v == canonical:
+            variants.add(k)
+    return [item for item in variants if item]
+
+
+def model_slug_variants(model_slug: str) -> List[str]:
+    token = normalize_spaces(model_slug).lower().replace(" ", "-")
+    if not token:
+        return []
+    variants = {token}
+    variants.add(token.replace("-", ""))
+    return [item for item in variants if item]
+
+
+def canonicalize_image_url(raw_url: str, preferred_size: str = "930x620") -> str:
+    base = str(raw_url or "").split("?", 1)[0].strip()
+    if not base:
+        return ""
+
+    if "cardekho.com" not in base.lower():
+        return base
+
+    return MEDIA_SIZE_RE.sub(
+        lambda m: f"/images/{m.group(1)}/{preferred_size}/",
+        base,
+    )
+
+
+def url_matches_scope(url: str, brand_slug: str, model_slug: str) -> bool:
+    normalized = canonicalize_image_url(url)
+    if not normalized:
+        return False
+
+    parsed = urlparse(normalized)
+    path = unquote(parsed.path).lower()
+    normalized_path = re.sub(r"[^a-z0-9]+", "-", path)
+
+    make_variants = make_slug_variants(brand_slug)
+    model_variants = model_slug_variants(model_slug)
+    if not make_variants or not model_variants:
+        return False
+
+    has_make = any(
+        f"/{make}/" in path
+        or f"-{make}-" in normalized_path
+        or normalized_path.startswith(f"{make}-")
+        for make in make_variants
+    )
+    has_model = any(
+        f"/{model}/" in path
+        or f"-{model}-" in normalized_path
+        or normalized_path.endswith(f"-{model}")
+        for model in model_variants
+    )
+
+    return has_make and has_model
+
+
 def resolution_score(url: str) -> int:
     if not url:
         return 0
-    if "/large/" in url.lower():
-        return 10**9
-    match = RESOLUTION_RE.search(url)
+    normalized = canonicalize_image_url(url)
+    if "/930x620/" in normalized:
+        return 930 * 620
+    if "/630x420/" in normalized:
+        return 630 * 420
+    if "/360x240/" in normalized:
+        return 360 * 240
+    if "/large/" in normalized.lower():
+        return 500 * 320
+    match = RESOLUTION_RE.search(normalized)
     if match:
         return int(match.group(1)) * int(match.group(2))
     return 1
@@ -179,10 +271,12 @@ def extract_color_rows_from_html(
 
     found_urls = IMAGE_RE.findall(normalized_html)
     for raw_url in set(found_urls):
-        url = unquote(raw_url.split("?")[0])
+        url = canonicalize_image_url(unquote(raw_url))
         url_lower = url.lower()
 
         if "cardekho" not in url_lower:
+            continue
+        if not url_matches_scope(url, brand_slug, model_slug):
             continue
 
         likely_color_media = (
@@ -257,7 +351,33 @@ def dedupe_best_rows(rows: List[Dict]) -> List[Dict]:
         )
         if candidate_rank > current_rank:
             grouped[key] = row
-    return list(grouped.values())
+
+    # Second pass: if two color labels map to same hex for same model, keep the best media row.
+    by_hex: Dict[str, Dict] = {}
+    without_hex: List[Dict] = []
+    for row in grouped.values():
+        hex_code = str(row.get("hex") or "").strip().lower().lstrip("#")
+        if not hex_code:
+            without_hex.append(row)
+            continue
+
+        current = by_hex.get(hex_code)
+        candidate_rank = (
+            1 if row.get("image_url") else 0,
+            int(row.get("score") or 0),
+        )
+        if not current:
+            by_hex[hex_code] = row
+            continue
+
+        current_rank = (
+            1 if current.get("image_url") else 0,
+            int(current.get("score") or 0),
+        )
+        if candidate_rank >= current_rank:
+            by_hex[hex_code] = row
+
+    return [*without_hex, *by_hex.values()]
 
 
 def candidate_color_pages(brand_slug: str, model_slug: str) -> List[str]:
@@ -323,6 +443,81 @@ def color_key(brand: str, model: str, color_name: str) -> Tuple[str, str, str]:
         normalize_key(model),
         normalize_key(color_name),
     )
+
+
+def parse_dt(value) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    raw = str(value or "").strip()
+    if not raw:
+        return datetime.min
+
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo:
+            return parsed.astimezone().replace(tzinfo=None)
+        return parsed
+    except Exception:
+        pass
+
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except Exception:
+            continue
+
+    return datetime.min
+
+
+def dedupe_existing_hex_duplicates(dry_run: bool = False) -> Tuple[int, int]:
+    docs = list(
+        colors_collection.find(
+            {
+                "brand": {"$exists": True, "$ne": ""},
+                "model": {"$exists": True, "$ne": ""},
+                "hex": {"$exists": True, "$type": "string", "$ne": ""},
+            },
+            {
+                "_id": 1,
+                "brand": 1,
+                "model": 1,
+                "hex": 1,
+                "scrape_timestamp": 1,
+                "updatedAt": 1,
+                "last_updated": 1,
+            },
+        )
+    )
+
+    grouped: Dict[Tuple[str, str, str], List[Dict]] = {}
+    for doc in docs:
+        brand_key = normalize_key(doc.get("brand"))
+        model_key = normalize_key(doc.get("model"))
+        hex_key = str(doc.get("hex") or "").strip().lower().lstrip("#")
+        if not brand_key or not model_key or not hex_key:
+            continue
+        grouped.setdefault((brand_key, model_key, hex_key), []).append(doc)
+
+    duplicate_groups = [rows for rows in grouped.values() if len(rows) > 1]
+    removed = 0
+
+    for rows in duplicate_groups:
+        keep = max(
+            rows,
+            key=lambda row: (
+                parse_dt(row.get("scrape_timestamp")),
+                parse_dt(row.get("updatedAt")),
+                parse_dt(row.get("last_updated")),
+                str(row.get("_id")),
+            ),
+        )
+        delete_ids = [row.get("_id") for row in rows if row.get("_id") != keep.get("_id")]
+        delete_ids = [item for item in delete_ids if item is not None]
+        removed += len(delete_ids)
+        if not dry_run and delete_ids:
+            colors_collection.delete_many({"_id": {"$in": delete_ids}})
+
+    return len(duplicate_groups), removed
 
 
 def main() -> None:
@@ -433,6 +628,13 @@ def main() -> None:
     if not args.dry_run and operations:
         colors_collection.bulk_write(operations)
 
+    hex_duplicate_groups = 0
+    hex_duplicates_removed = 0
+    if operations or not args.dry_run:
+        hex_duplicate_groups, hex_duplicates_removed = dedupe_existing_hex_duplicates(
+            dry_run=args.dry_run
+        )
+
     runtime = time.time() - start
 
     print("\n===== NCR COLOR ENRICHMENT V2 SUMMARY =====")
@@ -445,6 +647,10 @@ def main() -> None:
     print(f"Updates: {updates}")
     print(f"Unchanged: {unchanged}")
     print(f"Upserts prepared: {len(operations)}")
+    print(f"Hex duplicate groups found: {hex_duplicate_groups}")
+    print(
+        f"Hex duplicates removed (latest timestamp retained): {hex_duplicates_removed}"
+    )
     print(f"Workers used: {workers}")
     print(f"Dry run: {args.dry_run}")
     print(f"Runtime: {runtime:.2f}s")

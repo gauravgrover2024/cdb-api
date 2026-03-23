@@ -167,6 +167,85 @@ const buildCityCandidates = (city) => {
   return [...new Set([token, ...(aliases[token] || [])])];
 };
 
+const slugTokens = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .split('-')
+    .filter(Boolean);
+
+const mediaUrlMatchesMakeModel = (url, make, model) => {
+  const raw = String(url || '').trim().toLowerCase();
+  if (!raw) return false;
+
+  const makeParts = slugTokens(make);
+  const modelParts = slugTokens(model);
+  if (!makeParts.length || !modelParts.length) return false;
+
+  const normalized = raw.replace(/[^a-z0-9]+/g, '-');
+  const hasMake = makeParts.some(
+    (part) =>
+      normalized.includes(`-${part}-`) ||
+      normalized.endsWith(`-${part}`) ||
+      normalized.startsWith(`${part}-`),
+  );
+  const hasModel = modelParts.some(
+    (part) =>
+      normalized.includes(`-${part}-`) ||
+      normalized.endsWith(`-${part}`) ||
+      normalized.startsWith(`${part}-`),
+  );
+
+  return hasMake && hasModel;
+};
+
+const normalizeHex = (value) => String(value || '').trim().replace(/^#/, '').toLowerCase();
+
+const parseTimestampValue = (value) => {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime() || 0;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const rowLatestTimestamp = (row) =>
+  Math.max(
+    parseTimestampValue(row?.scrape_timestamp),
+    parseTimestampValue(row?.updatedAt),
+    parseTimestampValue(row?.last_updated),
+  );
+
+const dedupeMediaRowsByHexLatest = (rows = []) => {
+  const byHex = new Map();
+  const withoutHex = [];
+
+  rows.forEach((row) => {
+    const hex = normalizeHex(row?.hex || row?.color_hex || row?.colour_hex || '');
+    if (!hex) {
+      withoutHex.push(row);
+      return;
+    }
+
+    const existing = byHex.get(hex);
+    if (!existing) {
+      byHex.set(hex, row);
+      return;
+    }
+
+    const existingTs = rowLatestTimestamp(existing);
+    const candidateTs = rowLatestTimestamp(row);
+    if (candidateTs >= existingTs) {
+      byHex.set(hex, row);
+    }
+  });
+
+  return [...withoutHex, ...byHex.values()].sort((a, b) =>
+    String(a?.color_name || '').localeCompare(String(b?.color_name || '')),
+  );
+};
+
 const normalizeVehicleRecord = (doc) => {
   const raw = doc?.toObject ? doc.toObject() : { ...(doc || {}) };
   const make = String(raw.make || raw.brand || '').trim();
@@ -832,6 +911,11 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
         matchesExact(doc.model, model) &&
         matchesExact(doc.variant, variant),
     )
+    .filter((doc) => {
+      const imageUrl = doc.image_url || doc.imageUrl || '';
+      if (!imageUrl) return true;
+      return mediaUrlMatchesMakeModel(imageUrl, make, model);
+    })
     .sort((a, b) => String(a.color_name || '').localeCompare(String(b.color_name || '')));
 
   const fallbackRows = rows.length
@@ -839,9 +923,14 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
     : docs
         .map((doc) => normalizeVehicleRecord(doc))
         .filter((doc) => matchesExact(doc.make, make) && matchesExact(doc.model, model))
+        .filter((doc) => {
+          const imageUrl = doc.image_url || doc.imageUrl || '';
+          if (!imageUrl) return true;
+          return mediaUrlMatchesMakeModel(imageUrl, make, model);
+        })
         .sort((a, b) => String(a.color_name || '').localeCompare(String(b.color_name || '')));
 
-  res.json({ success: true, data: fallbackRows });
+  res.json({ success: true, data: dedupeMediaRowsByHexLatest(fallbackRows) });
 });
 
 export {

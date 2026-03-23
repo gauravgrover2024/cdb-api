@@ -36,9 +36,16 @@ session = requests.Session()
 session.headers.update(HEADERS)
 
 XML_NS = {"ns": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-IMAGE_RE = re.compile(r"https?://[^\"'\s<>]+\.(?:jpg|jpeg|png)", re.IGNORECASE)
+IMAGE_RE = re.compile(
+    r"https?://[^\"'\s<>]+\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\"'\s<>]*)?",
+    re.IGNORECASE,
+)
 HEX_SUFFIX_RE = re.compile(r"(.+)_([0-9a-fA-F]{6})$")
 RESOLUTION_RE = re.compile(r"/(\d{2,4})x(\d{2,4})/")
+MEDIA_SIZE_RE = re.compile(
+    r"/images/(car-images|carexteriorimages)/(?:large|medium|\d{2,4}x\d{2,4})/",
+    re.IGNORECASE,
+)
 BAD_NAME_TOKENS = {
     "front",
     "rear",
@@ -54,6 +61,13 @@ BAD_NAME_TOKENS = {
     "car",
     "cars",
     "cardekho",
+}
+
+MAKE_ALIASES = {
+    "mercedes": "mercedes-benz",
+    "mercedes-benz": "mercedes-benz",
+    "maruti": "maruti-suzuki",
+    "maruti-suzuki": "maruti-suzuki",
 }
 
 
@@ -105,6 +119,7 @@ def clean_color_name(raw, brand_slug="", model_slug=""):
         return ""
     txt = normalize_whitespace(str(raw).replace("-", " ").replace("_", " ")).strip()
     txt = re.sub(r"^\d+", "", txt).strip()
+    txt = re.sub(r"^[^a-zA-Z]+", "", txt).strip()
     txt_low = txt.lower()
 
     # Remove brand/model noise if present.
@@ -123,12 +138,80 @@ def clean_color_name(raw, brand_slug="", model_slug=""):
 
 
 def resolution_score(url):
-    if "/large/" in url.lower():
-        return 10**9
-    m = RESOLUTION_RE.search(url)
+    normalized = canonicalize_image_url(url)
+    if "/930x620/" in normalized:
+        return 930 * 620
+    if "/630x420/" in normalized:
+        return 630 * 420
+    if "/360x240/" in normalized:
+        return 360 * 240
+    if "/large/" in normalized.lower():
+        return 500 * 320
+    m = RESOLUTION_RE.search(normalized)
     if m:
         return int(m.group(1)) * int(m.group(2))
     return 1
+
+
+def slug_tokens(value):
+    txt = normalize_whitespace(value).lower()
+    txt = txt.replace("&", " and ")
+    txt = re.sub(r"[^a-z0-9]+", "-", txt).strip("-")
+    return [token for token in txt.split("-") if token]
+
+
+def make_slug_variants(brand_slug):
+    token = normalize_whitespace(brand_slug).lower().replace(" ", "-")
+    canonical = MAKE_ALIASES.get(token, token)
+    variants = {token, canonical}
+    for k, v in MAKE_ALIASES.items():
+        if v == canonical:
+            variants.add(k)
+    return [item for item in variants if item]
+
+
+def model_slug_variants(model_slug):
+    token = normalize_whitespace(model_slug).lower().replace(" ", "-")
+    if not token:
+        return []
+    return [token, token.replace("-", "")]
+
+
+def canonicalize_image_url(raw_url, preferred_size="930x620"):
+    base = str(raw_url or "").split("?", 1)[0].strip()
+    if not base:
+        return ""
+    if "cardekho.com" not in base.lower():
+        return base
+    return MEDIA_SIZE_RE.sub(lambda m: f"/images/{m.group(1)}/{preferred_size}/", base)
+
+
+def url_matches_scope(url, brand_slug, model_slug):
+    normalized = canonicalize_image_url(url)
+    if not normalized:
+        return False
+
+    path = unquote(urlparse(normalized).path).lower()
+    normalized_path = re.sub(r"[^a-z0-9]+", "-", path)
+
+    make_variants = make_slug_variants(brand_slug)
+    model_variants = model_slug_variants(model_slug)
+    if not make_variants or not model_variants:
+        return False
+
+    has_make = any(
+        f"/{make}/" in path
+        or f"-{make}-" in normalized_path
+        or normalized_path.startswith(f"{make}-")
+        for make in make_variants
+    )
+    has_model = any(
+        f"/{model}/" in path
+        or f"-{model}-" in normalized_path
+        or normalized_path.endswith(f"-{model}")
+        for model in model_variants
+    )
+    return has_make and has_model
 
 
 def parse_color_from_filename(filename, brand_slug, model_slug):
@@ -296,10 +379,12 @@ def extract_color_rows_from_html(html, brand_slug, model_slug, source_page):
 
     # Use a set to reduce repeated URLs from same page scripts.
     for raw_url in set(found_urls):
-        u = unquote(raw_url.split("?")[0])
+        u = canonicalize_image_url(unquote(raw_url))
         ul = u.lower()
 
         if "cardekho" not in ul:
+            continue
+        if not url_matches_scope(u, brand_slug, model_slug):
             continue
 
         # Restrict to likely color media to avoid unrelated gallery noise.
