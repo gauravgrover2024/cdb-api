@@ -13,10 +13,18 @@ const initializeFirebaseAdmin = () => {
 
   // Option 1: Use environment variable (JSON string) — preferred for production/Vercel
   if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-    console.log('✅ Firebase Admin SDK initialized via env variable');
-    return admin.apps[0];
+    try {
+      const raw = String(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '').trim();
+      const serviceAccount = JSON.parse(raw);
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      console.log('✅ Firebase Admin SDK initialized via env variable');
+      return admin.apps[0];
+    } catch (error) {
+      console.warn(
+        `⚠️ FIREBASE_SERVICE_ACCOUNT_KEY is present but invalid JSON: ${error.message}`,
+      );
+      // Continue to file-based fallback below.
+    }
   }
 
   // Option 2: Use serviceAccountKey.json file in project root
