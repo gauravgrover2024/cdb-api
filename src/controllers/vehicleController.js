@@ -57,14 +57,25 @@ const VEHICLE_LIST_PROJECTION = {
   updatedAt: 1,
 };
 
+const parseAmount = (value) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const cleaned = value.replace(/[^0-9.-]/g, '');
+    if (!cleaned) return 0;
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
 const toVehicleListItem = (doc) => {
   const normalized = normalizeVehicleRecord(doc);
   const { rawVariant, rawModel, ...normalizedWithoutRaw } = normalized;
   const discontinued = isVehicleDiscontinued(normalized);
-  const tcs = Number(
+  const tcs = parseAmount(
     normalized.tcs ?? normalized.other_tcsCharges ?? normalized.otherCharges ?? 0,
   );
-  const rto = Number(normalized.rto ?? normalized.roadTax ?? 0);
+  const rto = parseAmount(normalized.rto ?? normalized.roadTax ?? 0);
 
   return {
     ...normalizedWithoutRaw,
@@ -77,7 +88,9 @@ const toVehicleListItem = (doc) => {
     fuel: normalized.fuel,
     fuel_type: normalized.fuel_type,
     exShowroom: normalized.exShowroom,
-    ex_showroom: Number(normalized.ex_showroom ?? normalized.exShowroom ?? 0),
+    ex_showroom: parseAmount(
+      normalized.ex_showroom ?? normalized.exShowroom ?? 0,
+    ),
     rto,
     roadTax: rto,
     insurance: normalized.insurance,
@@ -85,8 +98,10 @@ const toVehicleListItem = (doc) => {
     tcs,
     other_tcsCharges: tcs,
     onRoadPrice: normalized.onRoadPrice,
-    on_road_price_cardekho: Number(normalized.on_road_price_cardekho ?? normalized.onRoadPrice ?? 0),
-    total_on_road_with_accessories: Number(
+    on_road_price_cardekho: parseAmount(
+      normalized.on_road_price_cardekho ?? normalized.onRoadPrice ?? 0,
+    ),
+    total_on_road_with_accessories: parseAmount(
       normalized.total_on_road_with_accessories ?? normalized.onRoadPrice ?? 0,
     ),
     status: normalized.status,
@@ -175,11 +190,21 @@ const normalizeVehicleRecord = (doc) => {
     rawVariant,
     fuel: raw.fuel || raw.fuel_type || '',
     fuel_type: raw.fuel_type || raw.fuel || '',
-    exShowroom: Number(raw.exShowroom ?? raw.ex_showroom ?? 0),
-    onRoadPrice: Number(raw.onRoadPrice ?? raw.on_road_price_cardekho ?? raw.total_on_road_with_accessories ?? 0),
-    insurance: Number(raw.insurance ?? 0),
-    rto: Number(raw.rto ?? 0),
-    otherCharges: Number(raw.otherCharges ?? raw.other_totalOtherCharges ?? 0),
+    exShowroom: parseAmount(raw.exShowroom ?? raw.ex_showroom ?? 0),
+    onRoadPrice: parseAmount(
+      raw.onRoadPrice ??
+        raw.on_road_price_cardekho ??
+        raw.total_on_road_with_accessories ??
+        0,
+    ),
+    insurance: parseAmount(raw.insurance ?? 0),
+    rto: parseAmount(raw.rto ?? raw.rto_amount_cardekho ?? 0),
+    otherCharges: parseAmount(
+      raw.otherCharges ??
+        raw.other_totalOtherCharges ??
+        raw.other_tcsCharges ??
+        0,
+    ),
   };
 };
 
@@ -738,10 +763,13 @@ const getVariantOptionsByModel = asyncHandler(async (req, res) => {
       fuel: doc.fuel,
       exShowroom: doc.exShowroom,
       onRoadPrice:
-        doc.onRoadPrice || Number(doc.total_on_road_with_accessories || doc.on_road_price_cardekho || 0),
+        doc.onRoadPrice ||
+        parseAmount(
+          doc.total_on_road_with_accessories || doc.on_road_price_cardekho || 0,
+        ),
       insurance: doc.insurance,
       rto: doc.rto,
-      tcs: Number(doc.tcs || doc.other_tcsCharges || doc.otherCharges || 0),
+      tcs: parseAmount(doc.tcs || doc.other_tcsCharges || doc.otherCharges || 0),
       ...doc,
     });
   });
