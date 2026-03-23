@@ -59,6 +59,7 @@ const VEHICLE_LIST_PROJECTION = {
 
 const toVehicleListItem = (doc) => {
   const normalized = normalizeVehicleRecord(doc);
+  const { rawVariant, rawModel, ...normalizedWithoutRaw } = normalized;
   const discontinued = isVehicleDiscontinued(normalized);
   const tcs = Number(
     normalized.tcs ?? normalized.other_tcsCharges ?? normalized.otherCharges ?? 0,
@@ -66,7 +67,7 @@ const toVehicleListItem = (doc) => {
   const rto = Number(normalized.rto ?? normalized.roadTax ?? 0);
 
   return {
-    ...normalized,
+    ...normalizedWithoutRaw,
     _id: normalized._id,
     make: normalized.make,
     brand: normalized.brand,
