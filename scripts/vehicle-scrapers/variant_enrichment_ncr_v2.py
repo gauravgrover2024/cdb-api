@@ -4,7 +4,7 @@ import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import requests
 from pymongo import UpdateOne
@@ -49,7 +49,6 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Optional per-model variant limit for test runs",
     )
-    parser.add_argument("--grace-days", type=int, default=7, help="Discontinue grace period")
     parser.add_argument("--dry-run", action="store_true", help="No DB writes")
     parser.add_argument(
         "--include-discontinued",
@@ -72,32 +71,6 @@ def normalize_feature_name(name: str) -> str:
         if k in low:
             return v
     return raw
-
-
-
-def parse_last_seen_date(value) -> Optional[date]:
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, str):
-        txt = value.strip()
-        try:
-            return datetime.fromisoformat(txt.replace("Z", "+00:00")).date()
-        except Exception:
-            pass
-        try:
-            return datetime.strptime(txt[:10], "%Y-%m-%d").date()
-        except Exception:
-            return None
-    return None
-
-
-
-def key_tuple(brand: str, model: str, variant: str) -> Tuple[str, str, str]:
-    return (normalize_key(brand), normalize_key(model), normalize_key(variant))
 
 
 
@@ -216,7 +189,7 @@ def fetch_variant_features(
     brand_slug: str,
     model_slug: str,
     variant_slug: str,
-) -> List[Dict]:
+) -> tuple[bool, List[Dict]]:
     params = {
         "business_unit": "car",
         "country_code": "in",
@@ -233,7 +206,7 @@ def fetch_variant_features(
     for _ in range(6):
         payload = fetch_json(session, API_MODEL_SPECS, params=params)
         if not payload:
-            return []
+            return (False, [])
 
         redirect = payload.get("data", {}).get("redirect") or {}
         redirect_url = redirect.get("redirectURL")
@@ -246,9 +219,9 @@ def fetch_variant_features(
         for value in specs.values():
             if isinstance(value, list):
                 sections.extend(value)
-        return sections
+        return (True, sections)
 
-    return []
+    return (False, [])
 
 
 
@@ -286,7 +259,6 @@ def main() -> None:
 
     session = build_session()
     operations: List[UpdateOne] = []
-    today_keys = set()
 
     models_processed = 0
     models_skipped = 0
@@ -351,17 +323,19 @@ def main() -> None:
             for future in as_completed(futures):
                 variant_display, variant_slug = futures[future]
                 try:
-                    sections = future.result()
+                    success, sections = future.result()
                 except Exception:
-                    sections = []
+                    success, sections = (False, [])
+
+                if not success:
+                    variants_empty_features += 1
+                    continue
 
                 features = sections_to_feature_map(sections)
                 if not features:
                     variants_empty_features += 1
-                    continue
 
                 variants_resolved += 1
-                today_keys.add(key_tuple(brand_display, model_display, variant_display))
 
                 doc = {
                     "brand": brand_display,
@@ -372,11 +346,8 @@ def main() -> None:
                     "variant_slug": variant_slug,
                     "features": features,
                     "source": "ncr_variant_enrichment_v2",
-                    "LastSeenDate": TODAY,
                     "last_updated": TODAY,
                     "scrape_timestamp": datetime.now().isoformat(),
-                    "is_discontinued": False,
-                    "discontinued_date": None,
                 }
 
                 operations.append(
@@ -386,80 +357,15 @@ def main() -> None:
                             "model": model_display,
                             "variant": variant_display,
                         },
-                        {
-                            "$set": doc,
-                            "$unset": {"discontinued_date": ""},
-                        },
+                        {"$set": doc},
                         upsert=True,
                     )
                 )
 
         time.sleep(0.03 + random.uniform(0.01, 0.05))
 
-    discontinued_marked = 0
-    reactivated = 0
-
     if not args.dry_run and operations:
         features_collection.bulk_write(operations)
-
-    # Discontinue marking pass based on run results.
-    existing_docs = list(
-        features_collection.find(
-            {
-                "brand": {"$exists": True, "$ne": ""},
-                "model": {"$exists": True, "$ne": ""},
-                "variant": {"$exists": True, "$ne": ""},
-            },
-            {
-                "_id": 1,
-                "brand": 1,
-                "model": 1,
-                "variant": 1,
-                "is_discontinued": 1,
-                "LastSeenDate": 1,
-                "last_updated": 1,
-            },
-        )
-    )
-
-    today_date = date.today()
-    discontinue_ops = []
-
-    for doc in existing_docs:
-        k = key_tuple(doc.get("brand"), doc.get("model"), doc.get("variant"))
-        if k in today_keys:
-            if doc.get("is_discontinued"):
-                reactivated += 1
-                discontinue_ops.append(
-                    UpdateOne(
-                        {"_id": doc["_id"]},
-                        {
-                            "$set": {"is_discontinued": False, "LastSeenDate": TODAY},
-                            "$unset": {"discontinued_date": ""},
-                        },
-                    )
-                )
-            continue
-
-        last_seen = parse_last_seen_date(doc.get("LastSeenDate") or doc.get("last_updated"))
-        days_missing = (today_date - last_seen).days if last_seen else args.grace_days
-
-        if days_missing >= args.grace_days and not doc.get("is_discontinued"):
-            discontinued_marked += 1
-            discontinue_ops.append(
-                UpdateOne(
-                    {"_id": doc["_id"]},
-                    {
-                        "$set": {
-                            "is_discontinued": True,
-                            "discontinued_date": TODAY,
-                        }
-                    },
-                )
-            )
-
-    if not args.dry_run and discontinue_ops:
-        features_collection.bulk_write(discontinue_ops)
 
     runtime = time.time() - start
 
@@ -472,8 +378,6 @@ def main() -> None:
     print(f"Variants unresolved: {variants_unresolved}")
     print(f"Variants with empty features: {variants_empty_features}")
     print(f"Upserts prepared: {len(operations)}")
-    print(f"Reactivated docs: {reactivated}")
-    print(f"Marked discontinued: {discontinued_marked}")
     print(f"Workers used: {workers}")
     print(f"Dry run: {args.dry_run}")
     print(f"Runtime: {runtime:.2f}s")
