@@ -115,14 +115,8 @@ const searchShowrooms = asyncHandler(async (req, res) => {
 
     if (!looksLikeSameBrandSearch) {
       const re = safeRegex(term);
-      query.$or = [
-        { name: re },
-        { businessName: re },
-        { mobile: re },
-        { showroomId: re },
-        { city: re },
-        { address: re },
-      ];
+      // Strict showroom-name search only (contiguous typed sequence).
+      query.name = re;
     }
   }
 
