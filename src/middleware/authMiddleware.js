@@ -27,8 +27,7 @@ const protect = asyncHandler(async (req, res, next) => {
       throw new Error('Not authorized, token failed');
     }
 
-    // Block deactivated or rejected accounts — checked AFTER try/catch so
-    // the status code is not overwritten by the catch block
+    // Block deactivated, rejected, or pending accounts
     if (req.user) {
       if (req.user.status === 'deactivated') {
         res.status(403);
@@ -37,6 +36,10 @@ const protect = asyncHandler(async (req, res, next) => {
       if (req.user.status === 'rejected') {
         res.status(403);
         throw new Error('Your account has been rejected. Contact your administrator.');
+      }
+      if (req.user.status === 'pending') {
+        res.status(403);
+        throw new Error('Your account is pending approval. The administrator will review your account soon. Please check back later.');
       }
     }
   }
