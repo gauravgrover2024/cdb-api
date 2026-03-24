@@ -31,6 +31,7 @@ const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5173",
   "https://cdb-frontend-six.vercel.app",
+  "https://cdb.acillp.com"
 ];
 
 app.use((req, res, next) => {
