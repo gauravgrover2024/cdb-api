@@ -1,44 +1,52 @@
-import asyncHandler from 'express-async-handler';
-import Showroom from '../models/Showroom.js';
+import asyncHandler from "express-async-handler";
+import Showroom from "../models/Showroom.js";
 
-const cleanText = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+const cleanText = (value) =>
+  String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
 
 const canonicalBrandKey = (value) => {
-  const raw = cleanText(value).toLowerCase().replace(/[_-]+/g, ' ');
-  if (!raw) return '';
-  const compact = raw.replace(/[^a-z0-9]/g, '');
+  const raw = cleanText(value).toLowerCase().replace(/[_-]+/g, " ");
+  if (!raw) return "";
+  const compact = raw.replace(/[^a-z0-9]/g, "");
 
-  if (['maruti', 'marutisuzuki', 'suzuki', 'msil'].includes(compact)) return 'maruti';
-  if (['mercedes', 'mercedesbenz', 'benz', 'mercedesbenzcars'].includes(compact)) return 'mercedes-benz';
-  if (['bmw', 'bmwindia'].includes(compact)) return 'bmw';
-  if (['landrover', 'jaguarlandrover', 'jlr'].includes(compact)) return 'land-rover';
-  if (['volkswagen', 'vw'].includes(compact)) return 'volkswagen';
-  if (['mahindra', 'mahindramahindra'].includes(compact)) return 'mahindra';
-  if (['mg', 'morrisgarages', 'morrisgarage'].includes(compact)) return 'mg';
-  if (['tata', 'tatamotors'].includes(compact)) return 'tata';
-  if (['hyundai'].includes(compact)) return 'hyundai';
-  if (['kia'].includes(compact)) return 'kia';
-  if (['honda'].includes(compact)) return 'honda';
-  if (['toyota', 'toyotakirloskar'].includes(compact)) return 'toyota';
-  if (['renault'].includes(compact)) return 'renault';
-  if (['nissan'].includes(compact)) return 'nissan';
-  if (['skoda'].includes(compact)) return 'skoda';
-  if (['audi'].includes(compact)) return 'audi';
-  if (['jeep'].includes(compact)) return 'jeep';
-  if (['isuzu'].includes(compact)) return 'isuzu';
-  if (['citroen'].includes(compact)) return 'citroen';
-  if (['byd'].includes(compact)) return 'byd';
-  if (['force', 'forcemotors'].includes(compact)) return 'force';
-  if (['jaguar'].includes(compact)) return 'jaguar';
-  if (['astonmartin'].includes(compact)) return 'aston-martin';
-  if (['bentley'].includes(compact)) return 'bentley';
+  if (["maruti", "marutisuzuki", "suzuki", "msil"].includes(compact))
+    return "maruti";
+  if (
+    ["mercedes", "mercedesbenz", "benz", "mercedesbenzcars"].includes(compact)
+  )
+    return "mercedes-benz";
+  if (["bmw", "bmwindia"].includes(compact)) return "bmw";
+  if (["landrover", "jaguarlandrover", "jlr"].includes(compact))
+    return "land-rover";
+  if (["volkswagen", "vw"].includes(compact)) return "volkswagen";
+  if (["mahindra", "mahindramahindra"].includes(compact)) return "mahindra";
+  if (["mg", "morrisgarages", "morrisgarage"].includes(compact)) return "mg";
+  if (["tata", "tatamotors"].includes(compact)) return "tata";
+  if (["hyundai"].includes(compact)) return "hyundai";
+  if (["kia"].includes(compact)) return "kia";
+  if (["honda"].includes(compact)) return "honda";
+  if (["toyota", "toyotakirloskar"].includes(compact)) return "toyota";
+  if (["renault"].includes(compact)) return "renault";
+  if (["nissan"].includes(compact)) return "nissan";
+  if (["skoda"].includes(compact)) return "skoda";
+  if (["audi"].includes(compact)) return "audi";
+  if (["jeep"].includes(compact)) return "jeep";
+  if (["isuzu"].includes(compact)) return "isuzu";
+  if (["citroen"].includes(compact)) return "citroen";
+  if (["byd"].includes(compact)) return "byd";
+  if (["force", "forcemotors"].includes(compact)) return "force";
+  if (["jaguar"].includes(compact)) return "jaguar";
+  if (["astonmartin"].includes(compact)) return "aston-martin";
+  if (["bentley"].includes(compact)) return "bentley";
 
   return raw;
 };
 
 const safeRegex = (value) => {
-  const escaped = String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(escaped, 'i');
+  const escaped = String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(escaped, "i");
 };
 
 // @desc    Get all showrooms with search and filtering
@@ -89,7 +97,7 @@ const getShowroomById = asyncHandler(async (req, res) => {
     res.json({ success: true, data: showroom });
   } else {
     res.status(404);
-    throw new Error('Showroom not found');
+    throw new Error("Showroom not found");
   }
 });
 
@@ -97,34 +105,40 @@ const getShowroomById = asyncHandler(async (req, res) => {
 // @route   GET /api/showrooms/search
 // @access  Public
 const searchShowrooms = asyncHandler(async (req, res) => {
-  const term = cleanText(req.query.term || '');
-  const brand = cleanText(req.query.brand || '');
-  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 5000);
+  const term = cleanText(req.query.term || "");
+  const brand = cleanText(req.query.brand || "");
 
-  const query = { status: 'Active' };
+  const query = { status: "Active" };
 
   const brandKey = canonicalBrandKey(brand);
   if (brandKey) {
-    // Indexed array exact-match filter (fast)
     query.brandKeys = brandKey;
   }
 
-  if (term) {
-    const termKey = canonicalBrandKey(term);
-    const looksLikeSameBrandSearch = brandKey && termKey && termKey === brandKey;
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
 
-    if (!looksLikeSameBrandSearch) {
-      const re = safeRegex(term);
-      // Strict showroom-name search only (contiguous typed sequence).
-      query.name = re;
-    }
+  let showrooms = [];
+
+  if (!term) {
+    showrooms = await Showroom.find(query)
+      .sort({ name: 1 })
+      .limit(limit)
+      .select(
+        "showroomId name businessName mobile contactPerson city address brands brandKeys commissionRate outstandingCommission",
+      )
+      .lean();
+  } else {
+    showrooms = await Showroom.find({
+      ...query,
+      name: { $regex: term, $options: "i" },
+    })
+      .sort({ name: 1 })
+      .limit(limit)
+      .select(
+        "showroomId name businessName mobile contactPerson city address brands brandKeys commissionRate outstandingCommission",
+      )
+      .lean();
   }
-
-  const showrooms = await Showroom.find(query)
-    .sort({ name: 1, city: 1 })
-    .limit(limit)
-    .select('showroomId name businessName mobile contactPerson city address brands brandKeys commissionRate outstandingCommission')
-    .lean();
 
   res.json({
     success: true,
@@ -140,17 +154,21 @@ const createShowroom = asyncHandler(async (req, res) => {
 
   if (!name || !mobile || !address || !city) {
     res.status(400);
-    throw new Error('Please provide name, mobile, address, and city');
+    throw new Error("Please provide name, mobile, address, and city");
   }
 
   const showroomExists = await Showroom.findOne({ mobile });
   if (showroomExists) {
     res.status(400);
-    throw new Error('Showroom with this mobile number already exists');
+    throw new Error("Showroom with this mobile number already exists");
   }
 
   const brandKeys = Array.isArray(req.body?.brands)
-    ? [...new Set(req.body.brands.map((b) => canonicalBrandKey(b)).filter(Boolean))]
+    ? [
+        ...new Set(
+          req.body.brands.map((b) => canonicalBrandKey(b)).filter(Boolean),
+        ),
+      ]
     : [];
 
   const showroom = await Showroom.create({
@@ -163,7 +181,7 @@ const createShowroom = asyncHandler(async (req, res) => {
     res.status(201).json({ success: true, data: showroom });
   } else {
     res.status(400);
-    throw new Error('Invalid showroom data');
+    throw new Error("Invalid showroom data");
   }
 });
 
@@ -179,7 +197,11 @@ const updateShowroom = asyncHandler(async (req, res) => {
     });
 
     if (Array.isArray(req.body?.brands)) {
-      showroom.brandKeys = [...new Set(req.body.brands.map((b) => canonicalBrandKey(b)).filter(Boolean))];
+      showroom.brandKeys = [
+        ...new Set(
+          req.body.brands.map((b) => canonicalBrandKey(b)).filter(Boolean),
+        ),
+      ];
     }
 
     showroom.lastModifiedBy = req.user?._id;
@@ -188,7 +210,7 @@ const updateShowroom = asyncHandler(async (req, res) => {
     res.json({ success: true, data: updatedShowroom });
   } else {
     res.status(404);
-    throw new Error('Showroom not found');
+    throw new Error("Showroom not found");
   }
 });
 
@@ -199,13 +221,13 @@ const deleteShowroom = asyncHandler(async (req, res) => {
   const showroom = await Showroom.findById(req.params.id);
 
   if (showroom) {
-    showroom.status = 'Inactive';
+    showroom.status = "Inactive";
     await showroom.save();
 
-    res.json({ success: true, message: 'Showroom deactivated successfully' });
+    res.json({ success: true, message: "Showroom deactivated successfully" });
   } else {
     res.status(404);
-    throw new Error('Showroom not found');
+    throw new Error("Showroom not found");
   }
 });
 
@@ -217,10 +239,11 @@ const addShowroomPayment = asyncHandler(async (req, res) => {
 
   if (!showroom) {
     res.status(404);
-    throw new Error('Showroom not found');
+    throw new Error("Showroom not found");
   }
 
-  const { amount, excessAmount, adjustedAmount, loanId, paymentMode, remarks } = req.body;
+  const { amount, excessAmount, adjustedAmount, loanId, paymentMode, remarks } =
+    req.body;
 
   const paymentEntry = {
     date: new Date(),
@@ -253,7 +276,7 @@ const getShowroomStats = asyncHandler(async (req, res) => {
 
   if (!showroom) {
     res.status(404);
-    throw new Error('Showroom not found');
+    throw new Error("Showroom not found");
   }
 
   const stats = {
