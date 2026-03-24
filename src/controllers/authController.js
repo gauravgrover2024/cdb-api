@@ -62,7 +62,7 @@ const authUser = asyncHandler(async (req, res) => {
     }
   }
 
-  // Block deactivated/rejected users
+  // Block deactivated/rejected/pending users
   if (user.status === 'deactivated') {
     res.status(403);
     throw new Error('Your account has been deactivated. Contact your administrator.');
@@ -70,6 +70,10 @@ const authUser = asyncHandler(async (req, res) => {
   if (user.status === 'rejected') {
     res.status(403);
     throw new Error('Your account has been rejected. Contact your administrator.');
+  }
+  if (user.status === 'pending') {
+    res.status(403);
+    throw new Error('Your account is pending approval. The administrator will review your account soon. Please check back later.');
   }
 
   res.json({
@@ -122,6 +126,12 @@ const registerUser = asyncHandler(async (req, res) => {
   });
 
   if (user) {
+    // If pending, do not log them in
+    if (user.status === 'pending') {
+      res.status(403);
+      throw new Error('Your account is pending approval. The administrator will review your account soon. Please check back later.');
+    }
+
     res.status(201).json({
       success: true,
       data: {
@@ -175,6 +185,20 @@ const googleLogin = asyncHandler(async (req, res) => {
     // Sync firebaseUid if missing
     user.firebaseUid = decoded.uid;
     await user.save();
+  }
+
+  // Block deactivated/rejected/pending users
+  if (user.status === 'deactivated') {
+    res.status(403);
+    throw new Error('Your account has been deactivated. Contact your administrator.');
+  }
+  if (user.status === 'rejected') {
+    res.status(403);
+    throw new Error('Your account has been rejected. Contact your administrator.');
+  }
+  if (user.status === 'pending') {
+    res.status(403);
+    throw new Error('Your account is pending approval. The administrator will review your account soon. Please check back later.');
   }
 
   res.json({

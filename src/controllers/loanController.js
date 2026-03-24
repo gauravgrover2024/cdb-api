@@ -2394,6 +2394,26 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
   nextDay.setDate(nextDay.getDate() + 1);
   const agg = await Loan.aggregate([
     {
+      $project: {
+        status: 1,
+        currentStage: 1,
+        approval_loanAmountDisbursed: 1,
+        approval_loanAmountApproved: 1,
+        loanAmount: 1,
+        financeExpectation: 1,
+        "approval_banksData.emiAmount": 1,
+        "approval_banksData.emi": 1,
+        postfile_emiAmount: 1,
+        emiAmount: 1,
+        approval_approvalDate: 1,
+        updatedAt: 1,
+        rc_redg_no: 1,
+        vehicleRegNo: 1,
+        registrationNumber: 1,
+        vehicleNumber: 1,
+      },
+    },
+    {
       $addFields: {
         __statusLower: { $toLower: { $ifNull: ["$status", ""] } },
         __stageLower: { $toLower: { $ifNull: ["$currentStage", ""] } },

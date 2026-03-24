@@ -423,29 +423,37 @@ const ACTIVE_VARIANT_FILTER = {
 const DISTINCT_CACHE_TTL_MS = 5 * 60 * 1000;
 const DISTINCT_CACHE = new Map();
 
-const getDistinctCacheKey = (scope, params = {}) =>
+const VEHICLE_LIST_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes cache
+const VEHICLE_LIST_CACHE = new Map();
+
+const getCacheKey = (prefix, params = {}) =>
   JSON.stringify({
-    scope,
-    make: String(params.make || '').trim().toLowerCase(),
-    model: String(params.model || '').trim().toLowerCase(),
-    city: String(params.city || '').trim().toLowerCase(),
-    includeDiscontinued: Boolean(params.includeDiscontinued),
+    prefix,
+    ...params,
   });
 
-const readDistinctCache = (scope, params = {}) => {
-  const key = getDistinctCacheKey(scope, params);
-  const entry = DISTINCT_CACHE.get(key);
+const readCache = (cacheMap, ttl, prefix, params = {}) => {
+  const key = getCacheKey(prefix, params);
+  const entry = cacheMap.get(key);
   if (!entry) return null;
-  if (Date.now() - entry.ts > DISTINCT_CACHE_TTL_MS) {
-    DISTINCT_CACHE.delete(key);
+  if (Date.now() - entry.ts > ttl) {
+    cacheMap.delete(key);
     return null;
   }
   return entry.data;
 };
 
+const writeCache = (cacheMap, prefix, params = {}, data = []) => {
+  const key = getCacheKey(prefix, params);
+  cacheMap.set(key, { ts: Date.now(), data });
+};
+
+const readDistinctCache = (scope, params = {}) => {
+  return readCache(DISTINCT_CACHE, DISTINCT_CACHE_TTL_MS, scope, params);
+};
+
 const writeDistinctCache = (scope, params = {}, data = []) => {
-  const key = getDistinctCacheKey(scope, params);
-  DISTINCT_CACHE.set(key, { ts: Date.now(), data });
+  writeCache(DISTINCT_CACHE, scope, params, data);
 };
 
 const getVehicles = asyncHandler(async (req, res) => {
@@ -454,6 +462,12 @@ const getVehicles = asyncHandler(async (req, res) => {
   const skip = Number(req.query.skip) || 0;
   const includeFullPayload =
     String(req.query.full || '').toLowerCase() === 'true' || String(req.query.full || '') === '1';
+
+  const cacheParams = { q, make, model, variant, city, fuel, pageSize, skip, includeFullPayload };
+  const cached = readCache(VEHICLE_LIST_CACHE, VEHICLE_LIST_CACHE_TTL_MS, 'list', cacheParams);
+  if (cached) {
+    return res.json({ ...cached, fromCache: true });
+  }
 
   const query = buildVehicleQuery({ q, make, model, variant, city, fuel });
   const cursor = Vehicle.find(query).sort({ make: 1, model: 1, variant: 1 });
@@ -470,7 +484,11 @@ const getVehicles = asyncHandler(async (req, res) => {
   const data = includeFullPayload
     ? docs.map(normalizeVehicleRecord)
     : docs.map(toVehicleListItem);
-  res.json({ success: true, count: count ?? data.length, data });
+    
+  const response = { success: true, count: count ?? data.length, data };
+  writeCache(VEHICLE_LIST_CACHE, 'list', cacheParams, response);
+
+  res.json(response);
 });
 
 const searchVehicleRecords = asyncHandler(async (req, res) => {
@@ -812,6 +830,12 @@ const getVariantOptionsByModel = asyncHandler(async (req, res) => {
     throw new Error('Make and model are required');
   }
 
+  const cacheParams = { make, model, city, includeDiscontinued };
+  const cached = readCache(VEHICLE_LIST_CACHE, VEHICLE_LIST_CACHE_TTL_MS, 'variants-options', cacheParams);
+  if (cached) {
+    return res.json({ ...cached, fromCache: true });
+  }
+
   const baseQuery = buildVehicleQuery({ make, model });
   const cityQuery = city ? buildVehicleQuery({ make, model, city }) : null;
   if (!includeDiscontinued) {
@@ -853,7 +877,10 @@ const getVariantOptionsByModel = asyncHandler(async (req, res) => {
     });
   });
 
-  res.json({ success: true, data: Array.from(byVariant.values()) });
+  const response = { success: true, data: Array.from(byVariant.values()) };
+  writeCache(VEHICLE_LIST_CACHE, 'variants-options', cacheParams, response);
+
+  res.json(response);
 });
 
 const getVehicleByDetails = asyncHandler(async (req, res) => {
