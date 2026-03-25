@@ -70,7 +70,10 @@ const bankDirectorySchema = new mongoose.Schema(
 );
 
 bankDirectorySchema.index({ micr: 1, bankName: 1 });
+// Compound index that exactly matches the sort used in getAllBanks
+// { bankName:1, ifsc:1 } — lets MongoDB satisfy the sort via the index
+// so it never needs an in-memory sort (avoids the 32 MB limit).
+bankDirectorySchema.index({ bankName: 1, ifsc: 1 });
 
 const BankDirectory = mongoose.model("BankDirectory", bankDirectorySchema);
 export default BankDirectory;
-
