@@ -2415,25 +2415,43 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
   }
 
   const startedAt = Date.now();
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const nextDay = new Date(today);
-  nextDay.setDate(nextDay.getDate() + 1);
   const agg = await Loan.aggregate([
     {
       $project: {
         status: 1,
+        approval_status: 1,
         currentStage: 1,
         approval_loanAmountDisbursed: 1,
+        disburse_amount: 1,
+        disburseAmount: 1,
         approval_loanAmountApproved: 1,
+        approval_approvalDate: 1,
         loanAmount: 1,
         financeExpectation: 1,
+        disbursement_date: 1,
+        approval_disbursedDate: 1,
+        disburse_date: 1,
+        disbursedDate: 1,
+        disbursementDate: 1,
+        disburse_status: 1,
+        disbursementStatus: 1,
+        disbursement_status: 1,
+        isCashCase: 1,
+        isFinanced: 1,
+        typeOfLoan: 1,
+        loanType: 1,
+        caseType: 1,
+        loan_type: 1,
+        approval_bankName: 1,
+        postfile_bankName: 1,
+        bankName: 1,
+        exShowroom: 1,
+        exShowroomPrice: 1,
+        ex_showroom: 1,
         "approval_banksData.emiAmount": 1,
         "approval_banksData.emi": 1,
         postfile_emiAmount: 1,
         emiAmount: 1,
-        approval_approvalDate: 1,
-        updatedAt: 1,
         rc_redg_no: 1,
         vehicleRegNo: 1,
         registrationNumber: 1,
@@ -2443,19 +2461,64 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
     {
       $addFields: {
         __statusLower: { $toLower: { $ifNull: ["$status", ""] } },
+        __approvalStatusLower: {
+          $toLower: { $ifNull: ["$approval_status", ""] },
+        },
         __stageLower: { $toLower: { $ifNull: ["$currentStage", ""] } },
-        __bookValue: {
+        __disburseStatusLower: {
+          $toLower: {
+            $ifNull: [
+              "$disburse_status",
+              {
+                $ifNull: [
+                  "$disbursementStatus",
+                  { $ifNull: ["$disbursement_status", ""] },
+                ],
+              },
+            ],
+          },
+        },
+        __bankLower: {
+          $toLower: {
+            $ifNull: [
+              "$approval_bankName",
+              { $ifNull: ["$postfile_bankName", { $ifNull: ["$bankName", ""] }] },
+            ],
+          },
+        },
+        __loanTypeLower: {
+          $toLower: {
+            $ifNull: [
+              "$typeOfLoan",
+              {
+                $ifNull: [
+                  "$loanType",
+                  { $ifNull: ["$caseType", { $ifNull: ["$loan_type", ""] }] },
+                ],
+              },
+            ],
+          },
+        },
+        __isFinancedLower: { $toLower: { $ifNull: ["$isFinanced", ""] } },
+        __disbursedAmount: {
           $ifNull: [
-            "$approval_loanAmountDisbursed",
+            "$disburse_amount",
             {
               $ifNull: [
-                "$approval_loanAmountApproved",
-                {
-                  $ifNull: [
-                    "$loanAmount",
-                    { $ifNull: ["$financeExpectation", 0] },
-                  ],
-                },
+                "$disburseAmount",
+                { $ifNull: ["$approval_loanAmountDisbursed", 0] },
+              ],
+            },
+          ],
+        },
+        __approvedAmount: { $ifNull: ["$approval_loanAmountApproved", 0] },
+        __cashExShowroom: {
+          $ifNull: [
+            "$exShowroom",
+            {
+              $ifNull: [
+                "$exShowroomPrice",
+                { $ifNull: ["$ex_showroom", 0] },
               ],
             },
           ],
@@ -2479,75 +2542,158 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
       },
     },
     {
+      $addFields: {
+        __isCashCaseDerived: {
+          $cond: [
+            { $eq: ["$isCashCase", true] },
+            true,
+            {
+              $cond: [
+                {
+                  $regexMatch: {
+                    input: "$__bankLower",
+                    regex: "cash sale bank",
+                  },
+                },
+                true,
+                {
+                  $cond: [
+                    {
+                      $regexMatch: {
+                        input: "$__loanTypeLower",
+                        regex: "cash[-\\s]?in",
+                      },
+                    },
+                    false,
+                    {
+                      $cond: [
+                        {
+                          $and: [
+                            {
+                              $or: [
+                                { $eq: ["$__isFinancedLower", "no"] },
+                                { $eq: ["$__isFinancedLower", "false"] },
+                              ],
+                            },
+                            {
+                              $not: [
+                                {
+                                  $regexMatch: {
+                                    input: "$__loanTypeLower",
+                                    regex: "refinance",
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        true,
+                        {
+                          $cond: [
+                            { $eq: ["$__loanTypeLower", ""] },
+                            false,
+                            {
+                              $or: [
+                                { $eq: ["$__loanTypeLower", "cash"] },
+                                {
+                                  $regexMatch: {
+                                    input: "$__loanTypeLower",
+                                    regex: "cash\\s*car",
+                                  },
+                                },
+                                {
+                                  $regexMatch: {
+                                    input: "$__loanTypeLower",
+                                    regex: "cash\\s*sale",
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        __isDisbursed: {
+          $or: [
+            { $regexMatch: { input: "$__statusLower", regex: "disburs" } },
+            {
+              $regexMatch: { input: "$__approvalStatusLower", regex: "disburs" },
+            },
+            {
+              $regexMatch: { input: "$__disburseStatusLower", regex: "disburs" },
+            },
+            { $gt: [{ $ifNull: ["$__disbursedAmount", 0] }, 0] },
+            { $ne: [{ $ifNull: ["$disbursement_date", null] }, null] },
+            { $ne: [{ $ifNull: ["$approval_disbursedDate", null] }, null] },
+            { $ne: [{ $ifNull: ["$disburse_date", null] }, null] },
+            { $ne: [{ $ifNull: ["$disbursedDate", null] }, null] },
+            { $ne: [{ $ifNull: ["$disbursementDate", null] }, null] },
+          ],
+        },
+        __isApproved: {
+          $or: [
+            { $regexMatch: { input: "$__statusLower", regex: "approv" } },
+            { $regexMatch: { input: "$__approvalStatusLower", regex: "approv" } },
+            { $gt: [{ $ifNull: ["$__approvedAmount", 0] }, 0] },
+            { $ne: [{ $ifNull: ["$approval_approvalDate", null] }, null] },
+          ],
+        },
+      },
+    },
+    {
+      $addFields: {
+        __isPendingApproval: {
+          $and: [
+            { $eq: ["$__stageLower", "approval"] },
+            { $not: ["$__isApproved"] },
+            { $not: ["$__isDisbursed"] },
+          ],
+        },
+        __isPendingDisbursal: {
+          $and: [
+            "$__isApproved",
+            { $not: ["$__isDisbursed"] },
+            { $not: ["$__isCashCaseDerived"] },
+          ],
+        },
+        __bookValue: {
+          $cond: [
+            "$__isCashCaseDerived",
+            { $ifNull: ["$__cashExShowroom", 0] },
+            {
+              $cond: [
+                "$__isDisbursed",
+                { $ifNull: ["$__disbursedAmount", 0] },
+                0,
+              ],
+            },
+          ],
+        },
+      },
+    },
+    {
       $group: {
         _id: null,
         total: { $sum: 1 },
         pending: {
           $sum: {
-            $cond: [
-              {
-                $and: [
-                  { $eq: ["$__stageLower", "approval"] },
-                  {
-                    $or: [
-                      {
-                        $regexMatch: {
-                          input: "$__statusLower",
-                          regex: "pending",
-                        },
-                      },
-                      {
-                        $regexMatch: {
-                          input: "$__statusLower",
-                          regex: "progress",
-                        },
-                      },
-                    ],
-                  },
-                ],
-              },
-              1,
-              0,
-            ],
+            $cond: [{ $eq: ["$__isPendingApproval", true] }, 1, 0],
+          },
+        },
+        pendingDisbursal: {
+          $sum: {
+            $cond: [{ $eq: ["$__isPendingDisbursal", true] }, 1, 0],
           },
         },
         disbursed: {
           $sum: {
-            $cond: [
-              { $regexMatch: { input: "$__statusLower", regex: "disburs" } },
-              1,
-              0,
-            ],
-          },
-        },
-        approvedToday: {
-          $sum: {
-            $cond: [
-              {
-                $or: [
-                  {
-                    $and: [
-                      { $gte: ["$approval_approvalDate", today] },
-                      { $lt: ["$approval_approvalDate", nextDay] },
-                    ],
-                  },
-                  {
-                    $and: [
-                      { $gte: ["$updatedAt", today] },
-                      { $lt: ["$updatedAt", nextDay] },
-                      {
-                        $regexMatch: {
-                          input: "$__statusLower",
-                          regex: "approved",
-                        },
-                      },
-                    ],
-                  },
-                ],
-              },
-              1,
-              0,
-            ],
+            $cond: [{ $eq: ["$__isDisbursed", true] }, 1, 0],
           },
         },
         totalBookValue: { $sum: { $ifNull: ["$__bookValue", 0] } },
@@ -2582,7 +2728,9 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
   const response = {
     total: Number(row.total) || 0,
     pending: Number(row.pending) || 0,
-    approvedToday: Number(row.approvedToday) || 0,
+    pendingDisbursal: Number(row.pendingDisbursal) || 0,
+    // Backward compatibility for older frontends expecting the previous key.
+    approvedToday: Number(row.pendingDisbursal) || 0,
     disbursed: Number(row.disbursed) || 0,
     totalBookValue: Number(row.totalBookValue) || 0,
     emiCapturedCount: Number(row.emiCapturedCount) || 0,
