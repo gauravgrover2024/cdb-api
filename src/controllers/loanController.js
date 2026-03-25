@@ -1942,43 +1942,52 @@ const getLoans = asyncHandler(async (req, res) => {
   }
 
   let searchFilter = null;
-  if (safeSearch) {
+  if (safeSearch && safeSearch.length >= 3) {
     const escaped = escapeRegex(safeSearch);
-    const isMostlyNumeric = /^[\d-]+$/.test(safeSearch);
+    const safeSearchDigits = String(safeSearch || "").replace(/\D/g, "");
+    const escapedDigits = escapeRegex(safeSearchDigits);
+    const collapsedSearch = String(safeSearch || "").replace(
+      /[\s\-_/().]/g,
+      "",
+    );
+    const escapedCollapsed = escapeRegex(collapsedSearch);
+    const vehicleRegFields = [
+      "registrationNumber",
+      "vehicleRegNo",
+      "rc_redg_no",
+      "vehicleNumber",
+    ];
 
-    if (isMostlyNumeric) {
-      // Prefix/exact style searches hit B-tree indexes and are much faster than global /i regex.
-      searchFilter = {
-        $or: [
-          { loanId: new RegExp(`^${escaped}`) },
-          { loan_number: new RegExp(`^${escaped}`) },
-          { primaryMobile: new RegExp(`^${escaped}`) },
-          { registrationNumber: new RegExp(`^${escaped}`) },
-          { rc_redg_no: new RegExp(`^${escaped}`) },
-        ],
-      };
-    } else {
-      // Contiguous partial search (e.g. "des" matches "Desh..."), not scattered character matching.
-      const containsRegex = new RegExp(escaped, "i");
-      searchFilter = {
-        $or: [
-          { customerName: containsRegex },
-          { sourceName: containsRegex },
-          { dealerName: containsRegex },
-          { showroomDealerName: containsRegex },
-          { delivery_dealerName: containsRegex },
-          { loanId: containsRegex },
-          { loan_number: containsRegex },
-          { primaryMobile: containsRegex },
-          { registrationNumber: containsRegex },
-          { vehicleRegNo: containsRegex },
-          { rc_redg_no: containsRegex },
-          { vehicleMake: containsRegex },
-          { vehicleModel: containsRegex },
-          { vehicleVariant: containsRegex },
-        ],
-      };
+    const vehicleRegConditions = [];
+    for (const field of vehicleRegFields) {
+      // Full/contiguous registration matching.
+      vehicleRegConditions.push({ [field]: new RegExp(escaped, "i") });
+      // Match normalized entry variants without separators.
+      if (collapsedSearch && collapsedSearch !== safeSearch) {
+        vehicleRegConditions.push({ [field]: new RegExp(escapedCollapsed, "i") });
+      }
     }
+
+    // Last 4 digit vehicle registration search support.
+    if (safeSearchDigits.length === 4 && String(safeSearch).trim().length === 4) {
+      for (const field of vehicleRegFields) {
+        vehicleRegConditions.push({ [field]: new RegExp(`${escapedDigits}$`, "i") });
+      }
+    }
+
+    const mobileConditions = safeSearchDigits
+      ? [{ primaryMobile: new RegExp(escapedDigits) }]
+      : [];
+
+    searchFilter = {
+      $or: [
+        { customerName: new RegExp(escaped, "i") },
+        { loanId: new RegExp(escaped, "i") },
+        { loan_number: new RegExp(escaped, "i") },
+        ...mobileConditions,
+        ...vehicleRegConditions,
+      ],
+    };
   }
   if (searchFilter) {
     andFilters.push(searchFilter);
