@@ -2503,10 +2503,21 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
         __disbursedAmount: {
           $ifNull: [
             "$disburse_amount",
+            { $ifNull: ["$disburseAmount", 0] },
+          ],
+        },
+        __bookDisbursedAmount: {
+          $ifNull: [
+            "$disburse_amount",
             {
               $ifNull: [
                 "$disburseAmount",
-                { $ifNull: ["$approval_loanAmountDisbursed", 0] },
+                {
+                  $ifNull: [
+                    "$approval_loanAmountDisbursed",
+                    { $ifNull: ["$approval_loanAmountApproved", 0] },
+                  ],
+                },
               ],
             },
           ],
@@ -2669,7 +2680,7 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
             {
               $cond: [
                 "$__isDisbursed",
-                { $ifNull: ["$__disbursedAmount", 0] },
+                { $ifNull: ["$__bookDisbursedAmount", 0] },
                 0,
               ],
             },
