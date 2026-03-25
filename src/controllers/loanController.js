@@ -1958,8 +1958,26 @@ const getLoans = asyncHandler(async (req, res) => {
         ],
       };
     } else {
-      // Use text index for fast free-text lookups.
-      searchFilter = { $text: { $search: safeSearch } };
+      // Contiguous partial search (e.g. "des" matches "Desh..."), not scattered character matching.
+      const containsRegex = new RegExp(escaped, "i");
+      searchFilter = {
+        $or: [
+          { customerName: containsRegex },
+          { sourceName: containsRegex },
+          { dealerName: containsRegex },
+          { showroomDealerName: containsRegex },
+          { delivery_dealerName: containsRegex },
+          { loanId: containsRegex },
+          { loan_number: containsRegex },
+          { primaryMobile: containsRegex },
+          { registrationNumber: containsRegex },
+          { vehicleRegNo: containsRegex },
+          { rc_redg_no: containsRegex },
+          { vehicleMake: containsRegex },
+          { vehicleModel: containsRegex },
+          { vehicleVariant: containsRegex },
+        ],
+      };
     }
   }
   if (searchFilter) {
