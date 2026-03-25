@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const bankDetailSchema = new mongoose.Schema(
   {
@@ -374,7 +374,10 @@ const loanSchema = mongoose.Schema(
     approval_breakup_creditAssured: { type: Number },
     approval_breakup_insuranceFinance: { type: Number },
     approval_breakup_ewFinance: { type: Number },
-    approval_breakup_custom: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    approval_breakup_custom: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: [],
+    },
 
     // --- Document Uploads (All Files & Images) ---
     // Identity & Address Proofs
@@ -472,7 +475,10 @@ const loanSchema = mongoose.Schema(
     postfile_disbursedCreditAssured: { type: Number },
     postfile_disbursedInsurance: { type: Number },
     postfile_disbursedEw: { type: Number },
-    postfile_disbursed_custom: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    postfile_disbursed_custom: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: [],
+    },
     postfile_disbursedLoanTotal: { type: Number }, // Alias
     postfile_tags: { type: [String], default: [] },
 
@@ -875,13 +881,13 @@ loanSchema.pre("save", function computeBusinessFields() {
 
 // --- Indexes ---
 // Text index for global search
-loanSchema.index({ 
-  customerName: 'text', 
-  primaryMobile: 'text', 
-  loanId: 'text', 
-  registrationNumber: 'text',
-  chassisNumber: 'text',
-  engineNumber: 'text'
+loanSchema.index({
+  customerName: "text",
+  primaryMobile: "text",
+  loanId: "text",
+  registrationNumber: "text",
+  chassisNumber: "text",
+  engineNumber: "text",
 });
 loanSchema.index({ loanId: 1 }, { unique: true, name: "loanId_1" });
 
@@ -893,6 +899,8 @@ loanSchema.index({ customerId: 1, createdAt: -1 });
 loanSchema.index({ status: 1 });
 loanSchema.index({ currentStage: 1 });
 loanSchema.index({ loanType: 1 });
+loanSchema.index({ typeOfLoan: 1 });
+loanSchema.index({ approval_loanAmountDisbursed: 1 });
 loanSchema.index({ createdAt: -1 });
 loanSchema.index({ createdAt: 1, _id: 1 }); // Analytics range queries
 loanSchema.index({ primaryMobile: 1 });
@@ -920,7 +928,6 @@ loanSchema.index({ currentStage: 1, status: 1 });
 loanSchema.index({ status: 1, updatedAt: -1 });
 loanSchema.index({ approval_approvalDate: -1 });
 
-
-const Loan = mongoose.model('Loan', loanSchema);
+const Loan = mongoose.model("Loan", loanSchema);
 
 export default Loan;

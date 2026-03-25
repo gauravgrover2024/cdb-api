@@ -203,10 +203,10 @@ const MAX_BANK_DETAILS = 3;
 const hasBankEntryValue = (entry = {}) =>
   Boolean(
     String(entry?.bankName || "").trim() ||
-      String(entry?.accountNumber || "").trim() ||
-      normalizeIfsc(entry?.ifscCode || entry?.ifsc) ||
-      String(entry?.branch || "").trim() ||
-      String(entry?.accountType || "").trim(),
+    String(entry?.accountNumber || "").trim() ||
+    normalizeIfsc(entry?.ifscCode || entry?.ifsc) ||
+    String(entry?.branch || "").trim() ||
+    String(entry?.accountType || "").trim(),
   );
 
 const normalizeBankEntry = (entry = {}) => {
@@ -284,8 +284,10 @@ const applyNormalizedBankDetails = (normalized = {}) => {
   const top = bankDetails[0];
   if (top && hasBankEntryValue(top)) {
     normalized.bankName = top.bankName || normalized.bankName || "";
-    normalized.accountNumber = top.accountNumber || normalized.accountNumber || "";
-    normalized.ifscCode = top.ifscCode || normalized.ifscCode || normalized.ifsc || "";
+    normalized.accountNumber =
+      top.accountNumber || normalized.accountNumber || "";
+    normalized.ifscCode =
+      top.ifscCode || normalized.ifscCode || normalized.ifsc || "";
     normalized.ifsc = top.ifsc || normalized.ifscCode || normalized.ifsc || "";
     normalized.branch = top.branch || normalized.branch || "";
     normalized.accountType = top.accountType || normalized.accountType || "";
@@ -297,8 +299,10 @@ const applyNormalizedBankDetails = (normalized = {}) => {
       top.openedIn !== undefined ? top.openedIn : normalized.openedIn;
   }
 
-  if (normalized.ifsc && !normalized.ifscCode) normalized.ifscCode = normalized.ifsc;
-  if (normalized.ifscCode && !normalized.ifsc) normalized.ifsc = normalized.ifscCode;
+  if (normalized.ifsc && !normalized.ifscCode)
+    normalized.ifscCode = normalized.ifsc;
+  if (normalized.ifscCode && !normalized.ifsc)
+    normalized.ifsc = normalized.ifscCode;
 
   delete normalized.additionalBankDetails;
   delete normalized.hasAdditionalBankDetails;
@@ -580,7 +584,10 @@ const normalizeCustomerFields = (payload) => {
       normalized.postfile_bankName = inferredMainBank;
     if (!normalized.disburse_bankName)
       normalized.disburse_bankName = inferredMainBank;
-    if (Array.isArray(normalized.bankDetails) && normalized.bankDetails.length) {
+    if (
+      Array.isArray(normalized.bankDetails) &&
+      normalized.bankDetails.length
+    ) {
       if (!normalized.bankDetails[0].bankName) {
         normalized.bankDetails[0].bankName = inferredMainBank;
       }
@@ -961,7 +968,9 @@ const syncBankCollection = async (payload) => {
   const dedupedBanks = [];
   const seen = new Set();
   banksToSync.forEach((bank) => {
-    const key = `${String(bank?.name || "").trim().toLowerCase()}|${normalizeIfsc(bank?.ifsc)}|${normalizeMicr(bank?.micr)}`;
+    const key = `${String(bank?.name || "")
+      .trim()
+      .toLowerCase()}|${normalizeIfsc(bank?.ifsc)}|${normalizeMicr(bank?.micr)}`;
     if (seen.has(key)) return;
     seen.add(key);
     dedupedBanks.push(bank);
@@ -1342,10 +1351,30 @@ const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const DEFAULT_LOAN_BREAKUP_FIELDS = [
-  { key: "netLoanApproved", label: "Net Loan Amount Approved", order: 1, isDefault: true },
-  { key: "creditAssuredFinance", label: "Credit Assured Finance", order: 2, isDefault: true },
-  { key: "insuranceFinance", label: "Insurance Finance", order: 3, isDefault: true },
-  { key: "extendedWarrantyFinance", label: "Extended Warranty Finance", order: 4, isDefault: true },
+  {
+    key: "netLoanApproved",
+    label: "Net Loan Amount Approved",
+    order: 1,
+    isDefault: true,
+  },
+  {
+    key: "creditAssuredFinance",
+    label: "Credit Assured Finance",
+    order: 2,
+    isDefault: true,
+  },
+  {
+    key: "insuranceFinance",
+    label: "Insurance Finance",
+    order: 3,
+    isDefault: true,
+  },
+  {
+    key: "extendedWarrantyFinance",
+    label: "Extended Warranty Finance",
+    order: 4,
+    isDefault: true,
+  },
 ];
 
 const DEFAULT_LOAN_BREAKUP_KEY_SET = new Set(
@@ -1436,7 +1465,9 @@ const getBreakupFieldUsageMap = async () => {
 };
 
 const isBreakupFieldInUse = async (rawKey = "") => {
-  const normalizedKey = String(normalizeBreakupFieldKey(rawKey) || "").toLowerCase();
+  const normalizedKey = String(
+    normalizeBreakupFieldKey(rawKey) || "",
+  ).toLowerCase();
   if (!normalizedKey) return false;
 
   const usageRows = await Loan.aggregate([
@@ -1718,7 +1749,8 @@ const isCashDeliveryBasedCase = (loan) => {
   );
 
   if (bankText.includes("cash sale bank")) return true;
-  if (loanType.includes("cash-in") || loanType.includes("cash in")) return false;
+  if (loanType.includes("cash-in") || loanType.includes("cash in"))
+    return false;
   if (financed === "no" && !loanType.includes("refinance")) return true;
   if (!loanType) return false;
   return (
@@ -1742,7 +1774,10 @@ const pickDisbursementDate = (loan) =>
   null;
 
 const pickCashBusinessDate = (loan) =>
-  loan?.delivery_date || loan?.invoice_date || pickDisbursementDate(loan) || null;
+  loan?.delivery_date ||
+  loan?.invoice_date ||
+  pickDisbursementDate(loan) ||
+  null;
 
 const isCashBusinessCompleted = (loan) =>
   isCashDeliveryBasedCase(loan) && Boolean(pickCashBusinessDate(loan));
@@ -1856,14 +1891,23 @@ const getLoans = asyncHandler(async (req, res) => {
     panNumber = "",
     loanIds = "",
     noCount = "",
+    filterLoanType = "",
+    filterAmountMin = "",
+    filterAmountMax = "",
+    filterPendingApproval = "",
+    filterPendingDisbursal = "",
+    filterDisbursed = "",
+    filterCashCars = "",
+    filterRegNoPending = "",
+    filterLoanNoPending = "",
+    filterRcPending = "",
+    filterInvoicePending = "",
   } = req.query;
 
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
   const safePage = Math.max(Number(page) || 1, 1);
   const hasExplicitSkip =
-    rawSkip !== undefined &&
-    rawSkip !== null &&
-    String(rawSkip).trim() !== "";
+    rawSkip !== undefined && rawSkip !== null && String(rawSkip).trim() !== "";
   const parsedSkip = hasExplicitSkip ? Number(rawSkip) : NaN;
   const safeSkip =
     hasExplicitSkip && Number.isFinite(parsedSkip) && parsedSkip >= 0
@@ -1885,8 +1929,51 @@ const getLoans = asyncHandler(async (req, res) => {
     ),
   ).slice(0, 500);
   const safeNoCount = new Set(["1", "true", "yes"]).has(
-    String(noCount || "").trim().toLowerCase(),
+    String(noCount || "")
+      .trim()
+      .toLowerCase(),
   );
+
+  // --- Sanitize new server-side filter params ---
+  const safeFilterLoanType = String(filterLoanType || "").trim();
+  const _amtMinRaw = String(filterAmountMin || "").trim();
+  const _amtMaxRaw = String(filterAmountMax || "").trim();
+  const safeFilterAmountMin =
+    _amtMinRaw !== "" && Number.isFinite(Number(_amtMinRaw))
+      ? Number(_amtMinRaw)
+      : null;
+  const safeFilterAmountMax =
+    _amtMaxRaw !== "" && Number.isFinite(Number(_amtMaxRaw))
+      ? Number(_amtMaxRaw)
+      : null;
+  const _parseBoolFilter = (v) =>
+    new Set(["1", "true", "yes"]).has(
+      String(v || "")
+        .trim()
+        .toLowerCase(),
+    );
+  const safeFilterPendingApproval = _parseBoolFilter(filterPendingApproval);
+  const safeFilterPendingDisbursal = _parseBoolFilter(filterPendingDisbursal);
+  const safeFilterDisbursed = _parseBoolFilter(filterDisbursed);
+  const safeFilterCashCars = _parseBoolFilter(filterCashCars);
+  const safeFilterRegNoPending = _parseBoolFilter(filterRegNoPending);
+  const safeFilterLoanNoPending = _parseBoolFilter(filterLoanNoPending);
+  const safeFilterRcPending = _parseBoolFilter(filterRcPending);
+  const safeFilterInvoicePending = _parseBoolFilter(filterInvoicePending);
+  const hasActiveFilters = Boolean(
+    safeFilterLoanType ||
+    safeFilterAmountMin !== null ||
+    safeFilterAmountMax !== null ||
+    safeFilterPendingApproval ||
+    safeFilterPendingDisbursal ||
+    safeFilterDisbursed ||
+    safeFilterCashCars ||
+    safeFilterRegNoPending ||
+    safeFilterLoanNoPending ||
+    safeFilterRcPending ||
+    safeFilterInvoicePending,
+  );
+
   const viewMode = String(view || "").toLowerCase();
   const direction =
     String(sortDir || sortOrder).toLowerCase() === "asc" ? 1 : -1;
@@ -1922,7 +2009,9 @@ const getLoans = asyncHandler(async (req, res) => {
   }
 
   if (safePrimaryMobile) {
-    andFilters.push({ primaryMobile: new RegExp(`^${escapeRegex(safePrimaryMobile)}`) });
+    andFilters.push({
+      primaryMobile: new RegExp(`^${escapeRegex(safePrimaryMobile)}`),
+    });
   }
 
   if (safePanNumber) {
@@ -1930,7 +2019,9 @@ const getLoans = asyncHandler(async (req, res) => {
   }
 
   if (safeCustomerName) {
-    andFilters.push({ customerName: new RegExp(`^${escapeRegex(safeCustomerName)}$`, "i") });
+    andFilters.push({
+      customerName: new RegExp(`^${escapeRegex(safeCustomerName)}$`, "i"),
+    });
   }
 
   if (safeLoanIds.length) {
@@ -1969,14 +2060,21 @@ const getLoans = asyncHandler(async (req, res) => {
       vehicleRegConditions.push({ [field]: new RegExp(escaped, "i") });
       // Match normalized entry variants without separators.
       if (collapsedSearch && collapsedSearch !== safeSearch) {
-        vehicleRegConditions.push({ [field]: new RegExp(escapedCollapsed, "i") });
+        vehicleRegConditions.push({
+          [field]: new RegExp(escapedCollapsed, "i"),
+        });
       }
     }
 
     // Last 4 digit vehicle registration search support.
-    if (safeSearchDigits.length === 4 && String(safeSearch).trim().length === 4) {
+    if (
+      safeSearchDigits.length === 4 &&
+      String(safeSearch).trim().length === 4
+    ) {
       for (const field of vehicleRegFields) {
-        vehicleRegConditions.push({ [field]: new RegExp(`${escapedDigits}$`, "i") });
+        vehicleRegConditions.push({
+          [field]: new RegExp(`${escapedDigits}$`, "i"),
+        });
       }
     }
 
@@ -1997,6 +2095,200 @@ const getLoans = asyncHandler(async (req, res) => {
   if (searchFilter) {
     andFilters.push(searchFilter);
   }
+
+  // ── Server-side filter params ─────────────────────────────────────────────
+
+  // filterLoanType: comma-separated list of "New Car", "Used Car", "Refinance", "Car Cash-in"
+  if (safeFilterLoanType) {
+    const loanTypeValues = safeFilterLoanType
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const loanTypeOrConds = [];
+    for (const val of loanTypeValues) {
+      const lc = val.toLowerCase();
+      let pattern;
+      if (/new.?car/.test(lc)) {
+        pattern = /new.?car/i;
+      } else if (/used.?car/.test(lc)) {
+        pattern = /used.?car/i;
+      } else if (/refin/.test(lc)) {
+        pattern = /refin/i;
+      } else if (/cash.?in|cashin/.test(lc)) {
+        pattern = /cash.?in|cashin/i;
+      }
+      if (pattern) {
+        for (const field of [
+          "typeOfLoan",
+          "loanType",
+          "caseType",
+          "loan_type",
+        ]) {
+          loanTypeOrConds.push({ [field]: pattern });
+        }
+      }
+    }
+    if (loanTypeOrConds.length) {
+      andFilters.push({ $or: loanTypeOrConds });
+    }
+  }
+
+  // filterAmountMin / filterAmountMax: effective loan amount range
+  if (safeFilterAmountMin !== null || safeFilterAmountMax !== null) {
+    const amountFields = [
+      "loanAmount",
+      "approval_loanAmountDisbursed",
+      "approval_loanAmountApproved",
+      "financeExpectation",
+    ];
+    const amountRangeCond = {};
+    if (safeFilterAmountMin !== null)
+      amountRangeCond.$gte = safeFilterAmountMin;
+    if (safeFilterAmountMax !== null)
+      amountRangeCond.$lte = safeFilterAmountMax;
+    andFilters.push({
+      $or: amountFields.map((f) => ({ [f]: amountRangeCond })),
+    });
+  }
+
+  // filterPendingApproval: loan has NO approval data yet
+  if (safeFilterPendingApproval) {
+    andFilters.push({
+      $nor: [
+        { approval_loanAmountApproved: { $gt: 0 } },
+        { approval_loanAmountDisbursed: { $gt: 0 } },
+        { approval_approvalDate: { $exists: true, $ne: null } },
+        { status: /approv/i },
+      ],
+    });
+  }
+
+  // filterPendingDisbursal: approved but not yet disbursed
+  if (safeFilterPendingDisbursal) {
+    andFilters.push({
+      $and: [
+        {
+          $or: [
+            { approval_loanAmountApproved: { $gt: 0 } },
+            { approval_approvalDate: { $exists: true, $ne: null } },
+          ],
+        },
+        {
+          $nor: [
+            { status: /disburs/i },
+            { disburse_status: /disburs/i },
+            { approval_loanAmountDisbursed: { $gt: 0 } },
+            { disbursement_date: { $exists: true, $ne: null } },
+            { approval_disbursedDate: { $exists: true, $ne: null } },
+          ],
+        },
+      ],
+    });
+  }
+
+  // filterDisbursed: loan IS disbursed (excluding cash cars)
+  if (safeFilterDisbursed) {
+    andFilters.push({
+      $or: [
+        { status: /disburs/i },
+        { disburse_status: /disburs/i },
+        { approval_loanAmountDisbursed: { $gt: 0 } },
+        { disbursement_date: { $exists: true, $ne: null } },
+        { approval_disbursedDate: { $exists: true, $ne: null } },
+      ],
+    });
+    andFilters.push({
+      $nor: [{ isCashCase: true }, { typeOfLoan: /cash/i }],
+    });
+  }
+
+  // filterCashCars: cash / non-financed cases
+  if (safeFilterCashCars) {
+    andFilters.push({
+      $or: [
+        { isCashCase: true },
+        { isFinanced: /^no$/i },
+        { typeOfLoan: /cash/i },
+        { loanType: /cash/i },
+        { approval_bankName: /^cash$/i },
+      ],
+    });
+  }
+
+  // filterRegNoPending: all registration number fields are empty/null
+  if (safeFilterRegNoPending) {
+    andFilters.push({
+      $and: [
+        {
+          $or: [
+            { registrationNumber: null },
+            { registrationNumber: "" },
+            { registrationNumber: { $exists: false } },
+          ],
+        },
+        {
+          $or: [
+            { vehicleRegNo: null },
+            { vehicleRegNo: "" },
+            { vehicleRegNo: { $exists: false } },
+          ],
+        },
+        {
+          $or: [
+            { rc_redg_no: null },
+            { rc_redg_no: "" },
+            { rc_redg_no: { $exists: false } },
+          ],
+        },
+      ],
+    });
+  }
+
+  // filterLoanNoPending: no bank-assigned loan number (only auto-generated loanId)
+  if (safeFilterLoanNoPending) {
+    andFilters.push({
+      $and: [
+        {
+          $or: [
+            { loan_number: null },
+            { loan_number: "" },
+            { loan_number: { $exists: false } },
+          ],
+        },
+        { loanId: /^LN-\d{4}-\d+$/i },
+      ],
+    });
+  }
+
+  // filterRcPending: RC has not been received for delivery/post-file/disbursed loans
+  if (safeFilterRcPending) {
+    andFilters.push({
+      currentStage: /delivery|post.?file|disburse/i,
+      $or: [
+        { rc_received_date: { $in: [null, ""] } },
+        { rc_received_date: { $exists: false } },
+        { postfile_rc_received_date: { $in: [null, ""] } },
+        { postfile_rc_received_date: { $exists: false } },
+      ],
+    });
+  }
+
+  // filterInvoicePending: no invoice number on delivery/post-file loans
+  if (safeFilterInvoicePending) {
+    andFilters.push({
+      $or: [{ currentStage: /delivery|post.?file/i }],
+      $and: [
+        {
+          $or: [
+            { invoice_number: null },
+            { invoice_number: "" },
+            { invoice_number: { $exists: false } },
+          ],
+        },
+      ],
+    });
+  }
+
   const query =
     andFilters.length === 0
       ? {}
@@ -2005,10 +2297,10 @@ const getLoans = asyncHandler(async (req, res) => {
         : { $and: andFilters };
   const hasStructuredFilters = Boolean(
     safeCustomerId ||
-      safeCustomerName ||
-      safePrimaryMobile ||
-      safePanNumber ||
-      safeLoanIds.length,
+    safeCustomerName ||
+    safePrimaryMobile ||
+    safePanNumber ||
+    safeLoanIds.length,
   );
 
   const dashboardFields = [
@@ -2108,6 +2400,7 @@ const getLoans = asyncHandler(async (req, res) => {
     viewMode === "dashboard" &&
     !safeSearch &&
     !hasStructuredFilters &&
+    !hasActiveFilters &&
     safeSkip === 0 &&
     effectiveSortField === "leadDate" &&
     direction === -1;
@@ -2137,17 +2430,33 @@ const getLoans = asyncHandler(async (req, res) => {
     primaryMobile: safePrimaryMobile,
     panNumber: safePanNumber,
     loanIds: safeLoanIds.slice().sort().join("|"),
+    filterLoanType: safeFilterLoanType,
+    filterAmountMin: safeFilterAmountMin,
+    filterAmountMax: safeFilterAmountMax,
+    filterPendingApproval: safeFilterPendingApproval,
+    filterPendingDisbursal: safeFilterPendingDisbursal,
+    filterDisbursed: safeFilterDisbursed,
+    filterCashCars: safeFilterCashCars,
+    filterRegNoPending: safeFilterRegNoPending,
+    filterLoanNoPending: safeFilterLoanNoPending,
+    filterRcPending: safeFilterRcPending,
+    filterInvoicePending: safeFilterInvoicePending,
   });
   const cachedCount = listCountCache.get(countKey);
   const useCachedCount =
-    !safeNoCount && cachedCount && Date.now() - cachedCount.ts < LIST_COUNT_CACHE_TTL_MS;
+    !safeNoCount &&
+    cachedCount &&
+    Date.now() - cachedCount.ts < LIST_COUNT_CACHE_TTL_MS;
   const totalPromise = useCachedCount
     ? Promise.resolve(cachedCount.total)
     : safeNoCount
       ? Promise.resolve(null)
-    : !safeSearch && !hasStructuredFilters && viewMode === "dashboard"
-      ? Loan.estimatedDocumentCount()
-      : Loan.countDocuments(query);
+      : !safeSearch &&
+          !hasStructuredFilters &&
+          !hasActiveFilters &&
+          viewMode === "dashboard"
+        ? Loan.estimatedDocumentCount()
+        : Loan.countDocuments(query);
 
   const dataPromise = Loan.find(query)
     .sort(sort)
@@ -2185,7 +2494,9 @@ const getLoans = asyncHandler(async (req, res) => {
     page: Math.floor(safeSkip / safeLimit) + 1,
     limit: safeLimit,
     skip: safeSkip,
-    hasMore: safeNoCount ? data.length === safeLimit : safeSkip + data.length < total,
+    hasMore: safeNoCount
+      ? data.length === safeLimit
+      : safeSkip + data.length < total,
     meta: responseMeta,
   };
 
@@ -2254,7 +2565,9 @@ const getLoanBreakupFields = asyncHandler(async (_req, res) => {
 // @access  Public
 const deleteLoanBreakupField = asyncHandler(async (req, res) => {
   const rawKey = String(req.params?.key || req.body?.key || "").trim();
-  const normalizedKey = String(normalizeBreakupFieldKey(rawKey) || "").toLowerCase();
+  const normalizedKey = String(
+    normalizeBreakupFieldKey(rawKey) || "",
+  ).toLowerCase();
 
   if (!normalizedKey) {
     res.status(400);
@@ -2277,7 +2590,8 @@ const deleteLoanBreakupField = asyncHandler(async (req, res) => {
     return res.status(409).json({
       success: false,
       deleted: false,
-      message: "This field has data in existing loan cases and cannot be deleted.",
+      message:
+        "This field has data in existing loan cases and cannot be deleted.",
     });
   }
 
@@ -2312,7 +2626,9 @@ const createLoanBreakupField = asyncHandler(async (req, res) => {
 
   if (DEFAULT_LOAN_BREAKUP_KEY_SET.has(normalizedKey.toLowerCase())) {
     res.status(400);
-    throw new Error("This field already exists as a default loan breakup field");
+    throw new Error(
+      "This field already exists as a default loan breakup field",
+    );
   }
 
   const existingByKey = await LoanBreakupField.findOne({
@@ -2487,7 +2803,9 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
           $toLower: {
             $ifNull: [
               "$approval_bankName",
-              { $ifNull: ["$postfile_bankName", { $ifNull: ["$bankName", ""] }] },
+              {
+                $ifNull: ["$postfile_bankName", { $ifNull: ["$bankName", ""] }],
+              },
             ],
           },
         },
@@ -2506,10 +2824,7 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
         },
         __isFinancedLower: { $toLower: { $ifNull: ["$isFinanced", ""] } },
         __disbursedAmount: {
-          $ifNull: [
-            "$disburse_amount",
-            { $ifNull: ["$disburseAmount", 0] },
-          ],
+          $ifNull: ["$disburse_amount", { $ifNull: ["$disburseAmount", 0] }],
         },
         __bookDisbursedAmount: {
           $ifNull: [
@@ -2532,10 +2847,7 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
           $ifNull: [
             "$exShowroom",
             {
-              $ifNull: [
-                "$exShowroomPrice",
-                { $ifNull: ["$ex_showroom", 0] },
-              ],
+              $ifNull: ["$exShowroomPrice", { $ifNull: ["$ex_showroom", 0] }],
             },
           ],
         },
@@ -2639,10 +2951,16 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
           $or: [
             { $regexMatch: { input: "$__statusLower", regex: "disburs" } },
             {
-              $regexMatch: { input: "$__approvalStatusLower", regex: "disburs" },
+              $regexMatch: {
+                input: "$__approvalStatusLower",
+                regex: "disburs",
+              },
             },
             {
-              $regexMatch: { input: "$__disburseStatusLower", regex: "disburs" },
+              $regexMatch: {
+                input: "$__disburseStatusLower",
+                regex: "disburs",
+              },
             },
             { $gt: [{ $ifNull: ["$__disbursedAmount", 0] }, 0] },
             { $ne: [{ $ifNull: ["$disbursement_date", null] }, null] },
@@ -2655,7 +2973,9 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
         __isApproved: {
           $or: [
             { $regexMatch: { input: "$__statusLower", regex: "approv" } },
-            { $regexMatch: { input: "$__approvalStatusLower", regex: "approv" } },
+            {
+              $regexMatch: { input: "$__approvalStatusLower", regex: "approv" },
+            },
             { $gt: [{ $ifNull: ["$__approvedAmount", 0] }, 0] },
             { $ne: [{ $ifNull: ["$approval_approvalDate", null] }, null] },
           ],
@@ -2781,7 +3101,12 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
   res.json(response);
 });
 
-const fetchAnalyticsLoans = async ({ start, end, filters, fields = ANALYTICS_DRILLDOWN_FIELDS }) => {
+const fetchAnalyticsLoans = async ({
+  start,
+  end,
+  filters,
+  fields = ANALYTICS_DRILLDOWN_FIELDS,
+}) => {
   const query = {
     createdAt: {
       $gte: start,
@@ -2883,7 +3208,10 @@ const collectRepeatedCustomerStats = (loans) => {
 };
 
 // ── Pure computation: build overview response from pre-fetched loans ─────────
-const buildAnalyticsOverview = (loans, { start, end, range, filters, startedAt }) => {
+const buildAnalyticsOverview = (
+  loans,
+  { start, end, range, filters, startedAt },
+) => {
   const months = buildMonthBuckets(start, end);
   const totalLoansByMonth = new Map(months.map((m) => [m.key, 0]));
   const disbursedAmountByMonth = new Map(
@@ -3224,11 +3552,22 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
       setImmediate(async () => {
         try {
           const t0 = Date.now();
-          const loans = await fetchAnalyticsLoans({ start, end, filters, fields: ANALYTICS_OVERVIEW_FIELDS });
-          const refreshed = buildAnalyticsOverview(loans, { start, end, range, filters, startedAt: t0 });
+          const loans = await fetchAnalyticsLoans({
+            start,
+            end,
+            filters,
+            fields: ANALYTICS_OVERVIEW_FIELDS,
+          });
+          const refreshed = buildAnalyticsOverview(loans, {
+            start,
+            end,
+            range,
+            filters,
+            startedAt: t0,
+          });
           analyticsCache.set(cacheKey, { ts: Date.now(), data: refreshed });
         } catch (e) {
-          console.error('[Analytics] Background refresh failed:', e.message);
+          console.error("[Analytics] Background refresh failed:", e.message);
         } finally {
           analyticsRefreshing.delete(cacheKey);
         }
@@ -3238,8 +3577,19 @@ const getLoanAnalyticsOverview = asyncHandler(async (req, res) => {
   }
 
   const startedAt = Date.now();
-  const loans = await fetchAnalyticsLoans({ start, end, filters, fields: ANALYTICS_OVERVIEW_FIELDS });
-  const response = buildAnalyticsOverview(loans, { start, end, range, filters, startedAt });
+  const loans = await fetchAnalyticsLoans({
+    start,
+    end,
+    filters,
+    fields: ANALYTICS_OVERVIEW_FIELDS,
+  });
+  const response = buildAnalyticsOverview(loans, {
+    start,
+    end,
+    range,
+    filters,
+    startedAt,
+  });
 
   analyticsCache.set(cacheKey, { ts: Date.now(), data: response });
   res.json({ success: true, data: response });
@@ -3270,7 +3620,10 @@ const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
       const d = isCashCase
         ? pickCashBusinessDate(loan) || loan?.createdAt
         : pickDisbursementDate(loan) || loan?.createdAt;
-      return (isDisbursedLoan(loan) || isCashBusinessCompleted(loan)) && monthKey(d) === bucket;
+      return (
+        (isDisbursedLoan(loan) || isCashBusinessCompleted(loan)) &&
+        monthKey(d) === bucket
+      );
     });
   } else if (widget === "approval_pending_disbursal") {
     filtered = loans.filter((loan) => isApprovedPendingDisbursal(loan));
@@ -3284,7 +3637,9 @@ const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
         missingDeliveryFields(loan).length > 0,
     );
   } else if (widget === "stage_funnel" && key) {
-    filtered = loans.filter((loan) => normalizeStage(loan?.currentStage) === key);
+    filtered = loans.filter(
+      (loan) => normalizeStage(loan?.currentStage) === key,
+    );
   } else if (widget === "loan_type_mix" && key) {
     filtered = loans.filter((loan) => pickLoanType(loan).toLowerCase() === key);
   } else if (
@@ -4401,7 +4756,21 @@ const saveBanksData = asyncHandler(async (req, res) => {
 
 // Get all banks — supports pagination, search, id filter, fields param
 const getAllBanks = asyncHandler(async (req, res) => {
-  const { skip = 0, limit = 100, search = "", id, fields } = req.query;
+  const {
+    skip = 0,
+    limit = 100,
+    search = "",
+    id,
+    fields,
+    sortBy = "name",
+    sortOrder = "asc",
+    // allowDiskUse param accepted but we always enable it server-side
+  } = req.query;
+
+  // Hard-cap to prevent memory exhaustion — the index will cover normal sorts,
+  // but allowDiskUse(true) acts as a safety net for edge cases.
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 10000);
+  const safeSkip = Math.max(Number(skip) || 0, 0);
 
   const query = {};
 
@@ -4422,12 +4791,31 @@ const getAllBanks = asyncHandler(async (req, res) => {
       ? "bankName ifsc branch address city state district contact micr active lastVerifiedAt updatedAt createdAt"
       : "bankName ifsc branch micr active updatedAt createdAt";
 
+  // Resolve sort field from query param so the frontend sortBy=name works too
+  const ALLOWED_SORT_FIELDS = {
+    name: "bankName",
+    bankName: "bankName",
+    ifsc: "ifsc",
+    branch: "branch",
+    updatedAt: "updatedAt",
+    createdAt: "createdAt",
+  };
+  const resolvedSortField = ALLOWED_SORT_FIELDS[sortBy] || "bankName";
+  const sortDir = String(sortOrder).toLowerCase() === "desc" ? -1 : 1;
+  // Use the compound index { bankName:1, ifsc:1 } when possible so MongoDB
+  // satisfies the sort via an index scan (no in-memory sort → no 32 MB limit).
+  const sortSpec =
+    resolvedSortField === "bankName"
+      ? { bankName: sortDir, ifsc: sortDir }
+      : { [resolvedSortField]: sortDir };
+
   const total = await BankDirectory.countDocuments(query);
   const docs = await BankDirectory.find(query)
-    .sort({ bankName: 1, ifsc: 1 })
-    .skip(Number(skip))
-    .limit(Number(limit))
+    .sort(sortSpec)
+    .skip(safeSkip)
+    .limit(safeLimit)
     .select(selectFields)
+    .allowDiskUse(true) // fallback: spill to disk if index scan isn't enough
     .lean();
 
   const banks = docs.map((row) => ({
@@ -4454,14 +4842,25 @@ const getAllBanks = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     data: banks,
-    pagination: { total, skip: Number(skip), limit: Number(limit) },
+    pagination: { total, skip: safeSkip, limit: safeLimit },
   });
 });
 
 // Update a bank by ID
 const updateBank = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { name, ifsc, branch, address, city, state, district, contact, micr, active } = req.body;
+  const {
+    name,
+    ifsc,
+    branch,
+    address,
+    city,
+    state,
+    district,
+    contact,
+    micr,
+    active,
+  } = req.body;
 
   const bank = await BankDirectory.findById(id);
   if (!bank) {
