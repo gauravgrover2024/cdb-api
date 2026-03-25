@@ -2702,6 +2702,11 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
             $cond: [{ $eq: ["$__isPendingDisbursal", true] }, 1, 0],
           },
         },
+        cashCars: {
+          $sum: {
+            $cond: [{ $eq: ["$__isCashCaseDerived", true] }, 1, 0],
+          },
+        },
         disbursed: {
           $sum: {
             $cond: [{ $eq: ["$__isDisbursed", true] }, 1, 0],
@@ -2740,6 +2745,7 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
     total: Number(row.total) || 0,
     pending: Number(row.pending) || 0,
     pendingDisbursal: Number(row.pendingDisbursal) || 0,
+    cashCars: Number(row.cashCars) || 0,
     // Backward compatibility for older frontends expecting the previous key.
     approvedToday: Number(row.pendingDisbursal) || 0,
     disbursed: Number(row.disbursed) || 0,
