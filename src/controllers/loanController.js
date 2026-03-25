@@ -1843,7 +1843,7 @@ const getLoans = asyncHandler(async (req, res) => {
   const {
     search = "",
     q = "",
-    skip = 0,
+    skip: rawSkip,
     page = 1,
     limit = 200,
     view = "",
@@ -1860,9 +1860,14 @@ const getLoans = asyncHandler(async (req, res) => {
 
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
   const safePage = Math.max(Number(page) || 1, 1);
+  const hasExplicitSkip =
+    rawSkip !== undefined &&
+    rawSkip !== null &&
+    String(rawSkip).trim() !== "";
+  const parsedSkip = hasExplicitSkip ? Number(rawSkip) : NaN;
   const safeSkip =
-    Number.isFinite(Number(skip)) && Number(skip) >= 0
-      ? Number(skip)
+    hasExplicitSkip && Number.isFinite(parsedSkip) && parsedSkip >= 0
+      ? parsedSkip
       : (safePage - 1) * safeLimit;
   const safeSearch = String(search || q || "").trim();
   const safeCustomerId = String(customerId || "").trim();
@@ -2709,7 +2714,16 @@ const getLoanDashboardStats = asyncHandler(async (req, res) => {
         },
         disbursed: {
           $sum: {
-            $cond: [{ $eq: ["$__isDisbursed", true] }, 1, 0],
+            $cond: [
+              {
+                $and: [
+                  { $eq: ["$__isDisbursed", true] },
+                  { $ne: ["$__isCashCaseDerived", true] },
+                ],
+              },
+              1,
+              0,
+            ],
           },
         },
         totalBookValue: { $sum: { $ifNull: ["$__bookValue", 0] } },
