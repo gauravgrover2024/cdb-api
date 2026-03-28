@@ -13,10 +13,6 @@ node_modules/
 api/*.http
 api/**/*.http
 api/http/
-<<<<<<< HEAD
 
 package-lock.json
 serviceAccountKey.json
-=======
-.env
->>>>>>> f593a1e (msg)
