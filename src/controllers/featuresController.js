@@ -180,6 +180,18 @@ export const getFeaturesBySelection = asyncHandler(async (req, res) => {
   const variantKey = normalizeVariantForJoin(rawVariant);
   const joinKey = `${brandKey}|${modelKey}|${variantKey}`;
 
+  // Serve from in-memory cache when available (avoids DB round-trip).
+  // Use stored _joinKey for direct comparison — re-normalizing the presentation-form
+  // variant would produce a different key than buildFullJoin's raw-variant-based key.
+  if (_vwpfCache) {
+    const cached = _vwpfCache.data.find((v) => v._joinKey === joinKey);
+    return res.json({
+      success: true,
+      data: cached?.features ?? [],
+    });
+  }
+
+  // Cache miss: fall back to DB query
   const featureDocs = await VehicleFeature.find({
     brand: new RegExp(`^${escapeRegex(brand)}$`, 'i'),
   }).lean();
@@ -197,76 +209,151 @@ export const getFeaturesBySelection = asyncHandler(async (req, res) => {
   });
 });
 
+// In-memory cache: full unfiltered join result, refreshed every 10 minutes.
+// Filtered requests always served from this cache (no extra DB round-trip).
+const VWPF_CACHE_TTL_MS = 10 * 60 * 1000; // 10 min
+let _vwpfCache = null; // { data: Array, ts: number }
+
+// Extract a single summary value from the raw features object for a given keyword.
+// Used to populate card pills (airbags, NCAP, screen size) without sending the
+// full features array to the client on initial list load.
+const extractFeatureSummary = (featuresObj, keyword) => {
+  if (!featuresObj || typeof featuresObj !== "object") return null;
+  const lc = keyword.toLowerCase();
+  for (const [fullKey, value] of Object.entries(featuresObj)) {
+    if (fullKey.toLowerCase().includes(lc) && value && value !== "Not Available") {
+      return String(value);
+    }
+  }
+  return null;
+};
+
+const buildFullJoin = async () => {
+  // 1) Load all feature docs — brand index makes this scan-free after index creation
+  const featureDocs = await VehicleFeature.find({}).lean();
+  const featureIndex = {};
+  featureDocs.forEach((f) => {
+    const brandKey = normalizeBrandForJoin(f.brand);
+    const modelKey = normalizeModelForJoin(brandKey, f.model);
+    const variantKey = normalizeVariantForJoin(f.variant);
+    featureIndex[`${brandKey}|${modelKey}|${variantKey}`] = f;
+  });
+
+  // 2) Load vehicles with only the fields needed for pricing (lean + projection)
+  const vehicles = await Vehicle.find({}).select(
+    "brand make model variant fuel fuel_type city ex_showroom exShowroom total_on_road_with_accessories onRoadPrice _id"
+  ).lean();
+
+  // 3) Join + dedupe per brand|model|variant — keep best-city row
+  const byKey = new Map();
+  vehicles.forEach((v) => {
+    const brand = v.brand || v.make;
+    const modelRaw = v.model;
+    const variantRaw = v.variant;
+    if (!brand || !modelRaw || !variantRaw) return;
+
+    const brandKey = normalizeBrandForJoin(brand);
+    const modelKey = normalizeModelForJoin(brandKey, modelRaw);
+    const variantKey = normalizeVariantForJoin(variantRaw);
+    const joinKey = `${brandKey}|${modelKey}|${variantKey}`;
+
+    const f = featureIndex[joinKey];
+    if (!f || !f.features || Object.keys(f.features).length === 0) return;
+
+    const currentCity = v.city || "";
+    const existing = byKey.get(joinKey);
+    if (!existing || scoreCity(currentCity) > scoreCity(existing.city)) {
+      // Pre-compute card pill values so the slim list can render badges without features
+      const rawFeatures = f.features || {};
+      const featuresArr = objectToFeaturesArray(rawFeatures);
+      byKey.set(joinKey, {
+        id: f._id.toString(),
+        _joinKey: joinKey,   // stored so getBySelection can do direct key comparison
+        make: presentMake(brand),
+        model: presentModel(brand, modelRaw),
+        variant: presentVariant(brand, modelRaw, variantRaw),
+        fuel: v.fuel || v.fuel_type || null,
+        tags: [],
+        exShowroom: v.ex_showroom || v.exShowroom,
+        onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
+        city: currentCity,
+        vehicleId: v._id,
+        // Summary fields — always present even in slim mode (tiny strings, not arrays)
+        _airbags: extractFeatureSummary(rawFeatures, "airbag"),
+        _ncap:    extractFeatureSummary(rawFeatures, "ncap"),
+        _screen:  extractFeatureSummary(rawFeatures, "touchscreen size"),
+        featureCount: featuresArr.length,
+        // Full features array — stripped in slim mode
+        features: featuresArr,
+      });
+    }
+  });
+
+  // 4) Sort: make+model alphabetically, then price ascending within group
+  const result = Array.from(byKey.values());
+  result.sort((a, b) => {
+    const keyA = `${a.make} ${a.model}`;
+    const keyB = `${b.make} ${b.model}`;
+    if (keyA !== keyB) return keyA.localeCompare(keyB);
+    return Number(a.exShowroom || a.onRoadPrice || 0) - Number(b.exShowroom || b.onRoadPrice || 0);
+  });
+
+  return result;
+};
+
+// Warm the cache immediately at module load in the background.
+// This means the very first user request is served from cache instead of
+// waiting for the expensive join to complete on-demand.
+_vwpfCache = null; // force rebuild so _joinKey is present in every entry
+setImmediate(() => {
+  if (_vwpfCache) return;
+  buildFullJoin()
+    .then((data) => {
+      if (!_vwpfCache) _vwpfCache = { data, ts: Date.now() };
+    })
+    .catch((err) => console.warn("[features] background cache warm failed:", err.message));
+});
+
 export const getVariantsWithPriceAndFeatures = asyncHandler(
   async (req, res) => {
-    // 1) Load all features and index by normalized brand|model|variant
-    const featureDocs = await VehicleFeature.find({});
-    const featureIndex = {};
-    featureDocs.forEach((f) => {
-      const brandKey = normalizeBrandForJoin(f.brand);
-      const modelKey = normalizeModelForJoin(brandKey, f.model);
-      const variantKey = normalizeVariantForJoin(f.variant);
-      const key = `${brandKey}|${modelKey}|${variantKey}`;
-      featureIndex[key] = f;
-    });
+    const { make = "", model = "", variant = "", fuel = "", q = "", search = "", slim = "" } = req.query;
+    const isSlim = slim === "1" || slim === "true";
 
-    // 2) Load all vehicles (all cities)
-    const vehicles = await Vehicle.find({});
+    // Serve from cache if fresh; otherwise rebuild (warm cache in background on first miss)
+    const now = Date.now();
+    if (!_vwpfCache || now - _vwpfCache.ts > VWPF_CACHE_TTL_MS) {
+      _vwpfCache = { data: await buildFullJoin(), ts: now };
+    }
 
-    // 3) Join and dedupe: one row per brand+model+variant (best city chosen)
-    const byKey = new Map();
+    let result = _vwpfCache.data;
 
-    vehicles.forEach((v) => {
-      const brand = v.brand || v.make;
-      const modelRaw = v.model;
-      const variantRaw = v.variant;
-      const presentBrand = presentMake(brand);
-      const presentModelValue = presentModel(brand, modelRaw);
-      const presentVariantValue = presentVariant(brand, modelRaw, variantRaw);
-      if (!brand || !modelRaw || !variantRaw) return;
+    // Server-side filter on the cached dataset (O(n) — fast in memory)
+    const safeMake     = String(make).trim().toLowerCase();
+    const safeModel    = String(model).trim().toLowerCase();
+    const safeVariant  = String(variant).trim().toLowerCase();
+    const safeFuel     = String(fuel).trim().toLowerCase();
+    const safeQ        = String(q || search).trim().toLowerCase();
 
-      const brandKey = normalizeBrandForJoin(brand);
-      const modelKey = normalizeModelForJoin(brandKey, modelRaw);
-      const variantKey = normalizeVariantForJoin(variantRaw);
+    if (safeMake)    result = result.filter(v => String(v.make || "").toLowerCase() === safeMake);
+    if (safeModel)   result = result.filter(v => String(v.model || "").toLowerCase() === safeModel);
+    if (safeVariant) result = result.filter(v => String(v.variant || "").toLowerCase() === safeVariant);
+    if (safeFuel)    result = result.filter(v => String(v.fuel || "").toLowerCase().includes(safeFuel));
+    if (safeQ) {
+      result = result.filter(v => {
+        const hay = `${v.make} ${v.model} ${v.variant} ${v.fuel || ""}`.toLowerCase();
+        return hay.includes(safeQ);
+      });
+    }
 
-      const joinKey = `${brandKey}|${modelKey}|${variantKey}`;
-      const f = featureIndex[joinKey];
-      if (!f || !f.features || Object.keys(f.features).length === 0) return;
+    // Strip internal fields + optionally the full features array from the HTTP response.
+    // _joinKey is never sent to the client — it's only used for in-process cache lookups.
+    const payload = isSlim
+      ? result.map(({ features, _joinKey, ...rest }) => rest)
+      : result.map(({ _joinKey, ...rest }) => rest);
 
-      const outKey = joinKey; // dedupe key without city
-      const currentCity = v.city || "";
-
-      const existing = byKey.get(outKey);
-      if (!existing || scoreCity(currentCity) > scoreCity(existing.city)) {
-        byKey.set(outKey, {
-          id: f._id.toString(), // feature doc id
-          make: presentBrand,
-          model: presentModelValue,
-          variant: presentVariantValue,
-          fuel: v.fuel || v.fuel_type || null,
-          transmission: "Automatic", // placeholder unless you add real field
-          tags: [],
-          exShowroom: v.ex_showroom || v.exShowroom,
-          onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
-          city: currentCity, // best city we found for this variant
-          vehicleId: v._id,
-          features: objectToFeaturesArray(f.features),
-        });
-      }
-    });
-
-    const result = Array.from(byKey.values());
-
-    // 4) Sort within make+model by price
-    result.sort((a, b) => {
-      const keyA = `${a.make} ${a.model}`;
-      const keyB = `${b.make} ${b.model}`;
-      if (keyA !== keyB) return keyA.localeCompare(keyB);
-      const priceA = Number(a.exShowroom || a.onRoadPrice || 0);
-      const priceB = Number(b.exShowroom || b.onRoadPrice || 0);
-      return priceA - priceB;
-    });
-
-    res.json({ success: true, count: result.length, data: result });
+    res.json({ success: true, count: payload.length, data: payload, fromCache: Boolean(_vwpfCache) });
   },
 );
+
+// Expose a way for other routes to invalidate the cache (e.g. after a vehicle upsert)
+export const invalidateVariantsCache = () => { _vwpfCache = null; };
