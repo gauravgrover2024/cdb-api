@@ -251,6 +251,87 @@ const extractFeatureSummary = (featuresObj, keyword) => {
   return null;
 };
 
+const extractFeatureSummaryByAnyKeyword = (featuresObj, keywords = []) => {
+  if (!featuresObj || typeof featuresObj !== "object") return null;
+  const needles = (keywords || [])
+    .map((value) => String(value || "").toLowerCase().trim())
+    .filter(Boolean);
+  if (!needles.length) return null;
+
+  for (const [fullKey, value] of Object.entries(featuresObj)) {
+    if (value == null) continue;
+    const hay = String(fullKey || "").toLowerCase();
+    if (!needles.some((needle) => hay.includes(needle))) continue;
+    const normalized = String(value).trim();
+    if (!normalized) continue;
+    if (["not available", "na", "n/a", "-", "null", "undefined"].includes(normalized.toLowerCase())) {
+      continue;
+    }
+    return normalized;
+  }
+  return null;
+};
+
+const normalizeFuelValue = (rawFuel) => {
+  const fuel = String(rawFuel || "").trim().toLowerCase();
+  if (!fuel) return null;
+  if (fuel.includes("petrol")) return "Petrol";
+  if (fuel.includes("diesel")) return "Diesel";
+  if (fuel.includes("cng")) return "CNG";
+  if (fuel.includes("electric") || fuel === "ev") return "Electric";
+  if (fuel.includes("hybrid")) return "Hybrid";
+  if (fuel.includes("lpg")) return "LPG";
+  return String(rawFuel || "").trim() || null;
+};
+
+const detectTransmissionFromText = (rawText) => {
+  const text = String(rawText || "").trim().toLowerCase();
+  if (!text) return null;
+
+  // Manual bucket
+  if (
+    /\bmt\b/.test(text) ||
+    /\bmanual\b/.test(text)
+  ) {
+    return "MT";
+  }
+
+  // Automatic bucket
+  if (
+    /\bat\b/.test(text) ||
+    /\bautomatic\b/.test(text) ||
+    /\bamt\b/.test(text) ||
+    /\bcvt\b/.test(text) ||
+    /\bdct\b/.test(text) ||
+    /\bivt\b/.test(text) ||
+    /\btorque\s*converter\b/.test(text)
+  ) {
+    return "AT";
+  }
+
+  return null;
+};
+
+const normalizeTransmissionValue = (vehicleDoc, featuresObj = {}) => {
+  const directTransmission =
+    vehicleDoc?.transmission ||
+    vehicleDoc?.transmission_type ||
+    vehicleDoc?.gearbox ||
+    null;
+  const fromDirect = detectTransmissionFromText(directTransmission);
+  if (fromDirect) return fromDirect;
+
+  const featureTransmission = extractFeatureSummaryByAnyKeyword(featuresObj, [
+    "transmission",
+    "gearbox",
+  ]);
+  const fromFeature = detectTransmissionFromText(featureTransmission);
+  if (fromFeature) return fromFeature;
+
+  const variantText = vehicleDoc?.variant || "";
+  return detectTransmissionFromText(variantText);
+};
+
 const buildFullJoin = async () => {
   // 1) Load all feature docs — brand index makes this scan-free after index creation
   const featureDocs = await VehicleFeature.find({}).lean();
@@ -264,7 +345,7 @@ const buildFullJoin = async () => {
 
   // 2) Load vehicles with only the fields needed for pricing (lean + projection)
   const vehicles = await Vehicle.find({}).select(
-    "brand make model variant fuel fuel_type city ex_showroom exShowroom total_on_road_with_accessories onRoadPrice is_discontinued isDiscontinued IsDiscontinued discontinued_date discontinuedDate _id",
+    "brand make model variant fuel fuel_type transmission transmission_type gearbox city ex_showroom exShowroom total_on_road_with_accessories onRoadPrice is_discontinued isDiscontinued IsDiscontinued discontinued_date discontinuedDate _id",
   ).lean();
 
   // 3) Join + dedupe per brand|model|variant — keep best-city row
@@ -296,7 +377,8 @@ const buildFullJoin = async () => {
         make: presentMake(brand),
         model: presentModel(brand, modelRaw),
         variant: presentVariant(brand, modelRaw, variantRaw),
-        fuel: v.fuel || v.fuel_type || null,
+        fuel: normalizeFuelValue(v.fuel || v.fuel_type || null),
+        transmission: normalizeTransmissionValue(v, rawFeatures),
         tags: [],
         exShowroom: v.ex_showroom || v.exShowroom,
         onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
