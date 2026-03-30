@@ -4538,7 +4538,12 @@ const disburseLoan = asyncHandler(async (req, res) => {
   // =====================================
   // 2. VERIFY LOAN IS APPROVED
   // =====================================
-  if (loan.approval_status !== "Approved") {
+  const hasApprovedBankInData = Array.isArray(loan.approval_banksData) &&
+    loan.approval_banksData.some((b) => {
+      const s = String(b?.status || "").toLowerCase();
+      return s === "approved" || s === "disbursed";
+    });
+  if (loan.approval_status !== "Approved" && !hasApprovedBankInData) {
     res.status(400);
     throw new Error(
       `Loan must be "Approved" before disbursement. Current status: ${loan.approval_status}`,
@@ -4729,6 +4734,15 @@ const saveBanksData = asyncHandler(async (req, res) => {
     banks.find((b) => String(b?.status || "").toLowerCase() === "approved") ||
     banks[0] ||
     null;
+
+  // Auto-set approval_status based on bank statuses
+  const hasApprovedOrDisbursedBank = banks.some((b) => {
+    const s = String(b?.status || "").toLowerCase();
+    return s === "approved" || s === "disbursed";
+  });
+  if (hasApprovedOrDisbursedBank && loan.approval_status !== "Approved") {
+    loan.approval_status = "Approved";
+  }
 
   if (primaryBank) {
     loan.approval_loanBookedIn = primaryBank.loanBookedIn || "Direct Code";
