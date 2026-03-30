@@ -23,7 +23,10 @@ const vehicleFeatureSchema = mongoose.Schema(
 // Indexes for fast brand-scoped queries (getVariantsWithPriceAndFeatures filters by brand first)
 vehicleFeatureSchema.index({ brand: 1 });
 vehicleFeatureSchema.index({ brand: 1, model: 1 });
-vehicleFeatureSchema.index({ brand: 1, model: 1, variant: 1 }, { unique: true, name: "brand_model_variant_unique" });
+vehicleFeatureSchema.index(
+  { brand: 1, model: 1, variant: 1 },
+  { unique: true, name: "brand_1_model_1_variant_1" },
+);
 vehicleFeatureSchema.index({ body_type_bucket: 1, seating_capacity: 1, brand: 1, model: 1 });
 vehicleFeatureSchema.index({ body_type_bucket: 1, seating_capacity: 1 });
 vehicleFeatureSchema.index(

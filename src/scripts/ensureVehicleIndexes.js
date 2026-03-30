@@ -2,20 +2,29 @@ import dotenv from "dotenv";
 import mongoose from "mongoose";
 import connectDB from "../config/db.js";
 import Vehicle from "../models/Vehicle.js";
+import VehicleFeature from "../models/VehicleFeature.js";
 
 dotenv.config();
 
 const run = async () => {
   try {
     await connectDB();
-    const result = await Vehicle.createIndexes();
-    const indexes = await Vehicle.collection.indexes();
+    const vehicleResult = await Vehicle.createIndexes();
+    const vehicleIndexes = await Vehicle.collection.indexes();
+    const featureResult = await VehicleFeature.createIndexes();
+    const featureIndexes = await VehicleFeature.collection.indexes();
 
     console.log("Vehicle indexes ensured.");
-    console.log("createIndexes result:", result);
+    console.log("vehicle createIndexes result:", vehicleResult);
     console.log(
-      "active indexes:",
-      indexes.map((idx) => idx.name),
+      "vehicle active indexes:",
+      vehicleIndexes.map((idx) => idx.name),
+    );
+    console.log("VehicleFeature indexes ensured.");
+    console.log("vehicleFeature createIndexes result:", featureResult);
+    console.log(
+      "vehicleFeature active indexes:",
+      featureIndexes.map((idx) => idx.name),
     );
   } catch (error) {
     console.error("Failed to ensure Vehicle indexes:", error);
