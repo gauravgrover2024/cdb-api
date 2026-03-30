@@ -220,7 +220,12 @@ export const calculatePayoutsOnDisbursement = async (loan, disbursementData) => 
   // ==========================================
   
   // Approval must exist before disbursement
-  if (loan.approval_status !== 'Approved') {
+  const hasApprovedBankInData = Array.isArray(loan.approval_banksData) &&
+    loan.approval_banksData.some((b) => {
+      const s = String(b?.status || "").toLowerCase();
+      return s === "approved" || s === "disbursed";
+    });
+  if (loan.approval_status !== 'Approved' && !hasApprovedBankInData) {
     throw new Error(
       `Loan must be in "Approved" status before disbursement. Current status: ${loan.approval_status}`
     );
