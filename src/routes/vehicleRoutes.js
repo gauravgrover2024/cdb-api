@@ -14,6 +14,7 @@ import {
   getVariantOptionsByModel,
   getVehicleByDetails,
   getVehicleMedia,
+  getSimilarModels,
 } from '../controllers/vehicleController.js';
 import {
   getScraperCatalog,
@@ -50,6 +51,9 @@ router.route('/by-details')
 
 router.route('/media')
   .get(getVehicleMedia);
+
+router.route('/similar-models')
+  .get(getSimilarModels);
 
 router.get("/scraper/catalog", getScraperCatalog);
 router.get("/scraper/summary", getScraperSummary);

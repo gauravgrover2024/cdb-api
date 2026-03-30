@@ -2,6 +2,7 @@ import asyncHandler from 'express-async-handler';
 import mongoose from 'mongoose';
 import Vehicle from '../models/Vehicle.js';
 import VehicleRecord from '../models/VehicleRecord.js';
+import VehicleFeature from '../models/VehicleFeature.js';
 
 const VEHICLE_LIST_PROJECTION = {
   make: 1,
@@ -454,6 +455,280 @@ const readDistinctCache = (scope, params = {}) => {
 
 const writeDistinctCache = (scope, params = {}, data = []) => {
   writeCache(DISTINCT_CACHE, scope, params, data);
+};
+
+const SIMILAR_BASE_CACHE_TTL_MS = 5 * 60 * 1000;
+const FEATURE_META_CACHE_TTL_MS = 10 * 60 * 1000;
+const SIMILAR_BASE_CACHE = new Map();
+let FEATURE_META_CACHE = { ts: 0, data: new Map() };
+
+const normalizeLooseToken = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+const normalizeModelNameForKey = (make, model) =>
+  normalizeLooseToken(trimLeading(model, make) || model);
+
+const buildMakeModelJoinKey = (make, model) => {
+  const mk = normalizeLooseToken(make);
+  const mdl = normalizeModelNameForKey(make, model);
+  if (!mk || !mdl) return '';
+  return `${mk}|${mdl}`;
+};
+
+const extractFeatureValueByKeywords = (featuresObj = {}, keywords = []) => {
+  if (!featuresObj || typeof featuresObj !== 'object') return '';
+  const needles = (keywords || [])
+    .map((value) => normalizeText(value))
+    .filter(Boolean);
+  if (!needles.length) return '';
+
+  for (const [key, value] of Object.entries(featuresObj)) {
+    const hay = normalizeText(key);
+    if (!hay) continue;
+    if (!needles.some((needle) => hay.includes(needle))) continue;
+    const raw = String(value ?? '').trim();
+    if (!raw) continue;
+    const normalized = raw.toLowerCase();
+    if (['not available', 'na', 'n/a', '-', 'null', 'undefined'].includes(normalized)) {
+      continue;
+    }
+    return raw;
+  }
+  return '';
+};
+
+const parseSeatCount = (value) => {
+  if (value == null) return null;
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.round(value);
+  }
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const match = raw.match(/(\d{1,2})/);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const normalizeBodyTypeBucket = (value) => {
+  const text = normalizeText(value);
+  if (!text) return '';
+  if (
+    text.includes('suv') ||
+    text.includes('crossover') ||
+    text.includes('sport utility')
+  ) {
+    return 'suv';
+  }
+  if (text.includes('sedan')) return 'sedan';
+  if (text.includes('hatch')) return 'hatchback';
+  if (text.includes('muv') || text.includes('mpv') || text.includes('people mover')) return 'mpv';
+  if (text.includes('coupe')) return 'coupe';
+  if (text.includes('convertible') || text.includes('cabriolet')) return 'convertible';
+  if (text.includes('pickup')) return 'pickup';
+  return text;
+};
+
+const formatBodyType = (value) => {
+  const text = String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  if (!text) return '';
+  return text
+    .split(' ')
+    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}` : ''))
+    .join(' ');
+};
+
+const buildBaseModelRowsSnapshot = async ({ city = '', includeDiscontinued = false } = {}) => {
+  const query = buildVehicleQuery({ city });
+  if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
+
+  const rows = await Vehicle.find(query)
+    .select({
+      _id: 1,
+      make: 1,
+      brand: 1,
+      model: 1,
+      variant: 1,
+      city: 1,
+      on_road_price_cardekho: 1,
+      total_on_road_with_accessories: 1,
+      onRoadPrice: 1,
+      ex_showroom: 1,
+      exShowroom: 1,
+    })
+    .lean();
+
+  const byModel = new Map();
+
+  rows.forEach((row) => {
+    const make = String(row?.make || row?.brand || '').trim();
+    const modelRaw = String(row?.model || '').trim();
+    const model = trimLeading(modelRaw, make) || modelRaw;
+    if (!make || !model) return;
+
+    const basePrice = parseAmount(
+      row?.on_road_price_cardekho ??
+        row?.total_on_road_with_accessories ??
+        row?.onRoadPrice ??
+        row?.ex_showroom ??
+        row?.exShowroom ??
+        0,
+    );
+    if (!basePrice || basePrice <= 0) return;
+
+    const key = buildMakeModelJoinKey(make, model);
+    if (!key) return;
+    const current = byModel.get(key);
+    if (!current || basePrice < current.basePrice) {
+      byModel.set(key, {
+        key,
+        make,
+        model,
+        city: row?.city || '',
+        basePrice,
+        variant: String(row?.variant || '').trim(),
+        vehicleId: String(row?._id || ''),
+      });
+    }
+  });
+
+  return Array.from(byModel.values());
+};
+
+const getBaseModelRowsCached = async ({ city = '', includeDiscontinued = false } = {}) => {
+  const key = JSON.stringify({
+    city: toCityToken(city || ''),
+    includeDiscontinued: Boolean(includeDiscontinued),
+  });
+  const cached = SIMILAR_BASE_CACHE.get(key);
+  if (cached && Date.now() - cached.ts <= SIMILAR_BASE_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  const data = await buildBaseModelRowsSnapshot({ city, includeDiscontinued });
+  SIMILAR_BASE_CACHE.set(key, { ts: Date.now(), data });
+  return data;
+};
+
+const buildFeatureMetaSnapshot = async () => {
+  const docs = await VehicleFeature.find({})
+    .select({
+      _id: 1,
+      brand: 1,
+      model: 1,
+      features: 1,
+      body_type_bucket: 1,
+      seating_capacity: 1,
+    })
+    .lean();
+
+  const byModel = new Map();
+  const backfillOps = [];
+
+  docs.forEach((doc) => {
+    const make = String(doc?.brand || '').trim();
+    const modelRaw = String(doc?.model || '').trim();
+    const model = trimLeading(modelRaw, make) || modelRaw;
+    const key = buildMakeModelJoinKey(make, model);
+    if (!key) return;
+
+    const rawBody =
+      String(doc?.body_type_bucket || '').trim() ||
+      extractFeatureValueByKeywords(doc?.features, [
+        'body type',
+        'bodytype',
+        'vehicle type',
+        'body style',
+        'segment',
+      ]);
+    const bodyBucket = normalizeBodyTypeBucket(rawBody);
+    const bodyLabel = formatBodyType(rawBody || bodyBucket);
+    const seatValue =
+      doc?.seating_capacity ??
+      extractFeatureValueByKeywords(doc?.features, [
+        'seating capacity',
+        'seat capacity',
+        'seating',
+        'number of seats',
+        'no of seats',
+        'no. of seats',
+        'seats',
+      ]);
+    const seatCount = parseSeatCount(seatValue);
+
+    if ((!doc?.body_type_bucket && bodyBucket) || (!doc?.seating_capacity && seatCount)) {
+      backfillOps.push({
+        updateOne: {
+          filter: { _id: doc._id },
+          update: {
+            $set: {
+              ...(bodyBucket ? { body_type_bucket: bodyBucket } : {}),
+              ...(seatCount ? { seating_capacity: seatCount } : {}),
+            },
+          },
+          upsert: false,
+        },
+      });
+    }
+
+    if (!byModel.has(key)) {
+      byModel.set(key, {
+        make,
+        model,
+        bodyCounts: new Map(),
+        bodyLabels: new Map(),
+        seatCounts: new Map(),
+      });
+    }
+    const entry = byModel.get(key);
+    if (bodyBucket) {
+      entry.bodyCounts.set(bodyBucket, (entry.bodyCounts.get(bodyBucket) || 0) + 1);
+      if (bodyLabel && !entry.bodyLabels.has(bodyBucket)) {
+        entry.bodyLabels.set(bodyBucket, bodyLabel);
+      }
+    }
+    if (seatCount) {
+      entry.seatCounts.set(seatCount, (entry.seatCounts.get(seatCount) || 0) + 1);
+    }
+  });
+
+  if (backfillOps.length) {
+    // Fire-and-forget background sync so next reads can use indexed columns directly.
+    void VehicleFeature.bulkWrite(backfillOps.slice(0, 5000), { ordered: false }).catch((error) => {
+      console.warn('[vehicles.similar] feature metadata backfill skipped:', error?.message || error);
+    });
+  }
+
+  const out = new Map();
+  byModel.forEach((entry, key) => {
+    const bodyBucket =
+      [...entry.bodyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+    const seatingCapacity =
+      [...entry.seatCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    out.set(key, {
+      make: entry.make,
+      model: entry.model,
+      bodyTypeBucket: bodyBucket,
+      bodyType: entry.bodyLabels.get(bodyBucket) || formatBodyType(bodyBucket),
+      seatingCapacity: seatingCapacity ? Number(seatingCapacity) : null,
+    });
+  });
+
+  return out;
+};
+
+const getFeatureMetaMapCached = async () => {
+  const isFresh = Date.now() - FEATURE_META_CACHE.ts <= FEATURE_META_CACHE_TTL_MS;
+  if (isFresh && FEATURE_META_CACHE.data?.size) {
+    return FEATURE_META_CACHE.data;
+  }
+  const data = await buildFeatureMetaSnapshot();
+  FEATURE_META_CACHE = { ts: Date.now(), data };
+  return data;
 };
 
 const getVehicles = asyncHandler(async (req, res) => {
@@ -960,6 +1235,145 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
   res.json({ success: true, data: dedupeMediaRowsByHexLatest(fallbackRows) });
 });
 
+const getSimilarModels = asyncHandler(async (req, res) => {
+  const startedAt = Date.now();
+  const make = String(req.query.make || '').trim();
+  const model = String(req.query.model || '').trim();
+  const city = String(req.query.city || '').trim();
+  const includeDiscontinued = parseBoolean(req.query.includeDiscontinued);
+  const toleranceRaw = Number(req.query.tolerance);
+  const tolerance =
+    Number.isFinite(toleranceRaw) && toleranceRaw > 0 && toleranceRaw <= 0.5
+      ? toleranceRaw
+      : 0.15;
+  const limitRaw = Number(req.query.limit);
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.round(limitRaw), 20)
+      : 5;
+
+  if (!make || !model) {
+    res.status(400);
+    throw new Error('Make and model are required');
+  }
+
+  const selectedKey = buildMakeModelJoinKey(make, model);
+  if (!selectedKey) {
+    return res.json({
+      success: true,
+      baseModel: null,
+      data: [],
+      meta: { queryMs: Date.now() - startedAt, reason: 'invalid_make_model' },
+    });
+  }
+
+  const [baseRowsCityScoped, baseRowsAllCities, featureMetaMap] = await Promise.all([
+    getBaseModelRowsCached({ city, includeDiscontinued }),
+    city ? getBaseModelRowsCached({ city: '', includeDiscontinued }) : Promise.resolve([]),
+    getFeatureMetaMapCached(),
+  ]);
+
+  const baseRows = baseRowsCityScoped?.length
+    ? baseRowsCityScoped
+    : baseRowsAllCities;
+
+  const selectedBase =
+    baseRows.find((row) => row?.key === selectedKey) ||
+    (baseRowsAllCities?.length
+      ? baseRowsAllCities.find((row) => row?.key === selectedKey)
+      : null);
+
+  if (!selectedBase) {
+    return res.json({
+      success: true,
+      baseModel: null,
+      data: [],
+      meta: {
+        queryMs: Date.now() - startedAt,
+        rowsScanned: baseRows?.length || 0,
+        reason: 'base_variant_not_found',
+      },
+    });
+  }
+
+  const selectedMeta = featureMetaMap.get(selectedKey) || null;
+  const selectedBodyKey = normalizeText(selectedMeta?.bodyTypeBucket || '');
+  const selectedSeat = Number(selectedMeta?.seatingCapacity || 0) || null;
+  const metadataReady = Boolean(selectedBodyKey && selectedSeat);
+
+  const baseModel = {
+    make: selectedBase.make,
+    model: selectedBase.model,
+    basePrice: selectedBase.basePrice,
+    baseVariant: selectedBase.variant,
+    city: selectedBase.city || city || '',
+    bodyType: selectedMeta?.bodyType || '',
+    bodyTypeBucket: selectedMeta?.bodyTypeBucket || '',
+    seatingCapacity: selectedSeat,
+    metadataReady,
+  };
+
+  if (!metadataReady) {
+    return res.json({
+      success: true,
+      baseModel,
+      data: [],
+      meta: {
+        queryMs: Date.now() - startedAt,
+        rowsScanned: baseRows?.length || 0,
+        reason: 'body_or_seating_missing',
+      },
+    });
+  }
+
+  const minPrice = selectedBase.basePrice * (1 - tolerance);
+  const maxPrice = selectedBase.basePrice * (1 + tolerance);
+
+  const similar = (baseRows || [])
+    .filter((row) => row?.key && row.key !== selectedKey)
+    .filter((row) => {
+      const price = Number(row?.basePrice || 0);
+      if (!price || price < minPrice || price > maxPrice) return false;
+      const meta = featureMetaMap.get(row.key);
+      if (!meta) return false;
+      if (normalizeText(meta?.bodyTypeBucket || '') !== selectedBodyKey) return false;
+      if ((Number(meta?.seatingCapacity || 0) || null) !== selectedSeat) return false;
+      return true;
+    })
+    .map((row) => {
+      const meta = featureMetaMap.get(row.key);
+      return {
+        make: row.make,
+        model: row.model,
+        startingPrice: Number(row.basePrice) || 0,
+        baseVariant: row.variant,
+        city: row.city || '',
+        bodyType: meta?.bodyType || '',
+        bodyTypeBucket: meta?.bodyTypeBucket || '',
+        seatingCapacity: Number(meta?.seatingCapacity || 0) || null,
+        priceDelta: (Number(row.basePrice) || 0) - selectedBase.basePrice,
+      };
+    })
+    .sort(
+      (a, b) =>
+        Math.abs(Number(a?.priceDelta || 0)) - Math.abs(Number(b?.priceDelta || 0)),
+    )
+    .slice(0, limit);
+
+  return res.json({
+    success: true,
+    baseModel,
+    data: similar,
+    meta: {
+      queryMs: Date.now() - startedAt,
+      rowsScanned: baseRows?.length || 0,
+      tolerance,
+      city: city || null,
+      includeDiscontinued: Boolean(includeDiscontinued),
+    },
+  });
+});
+
 export {
   getVehicles,
   searchVehicleRecords,
@@ -974,4 +1388,5 @@ export {
   getVariantOptionsByModel,
   getVehicleByDetails,
   getVehicleMedia,
+  getSimilarModels,
 };
