@@ -102,6 +102,29 @@ const scoreCity = (c) => {
   return 1;
 };
 
+const parseBoolean = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return ["1", "true", "yes", "y"].includes(normalized);
+};
+
+const hasDiscontinuedDate = (value) => {
+  if (value == null) return false;
+  const normalized = String(value).trim().toLowerCase();
+  return normalized !== "" && normalized !== "null" && normalized !== "undefined";
+};
+
+const isVehicleDiscontinued = (vehicle) =>
+  parseBoolean(
+    vehicle?.is_discontinued ??
+      vehicle?.isDiscontinued ??
+      vehicle?.IsDiscontinued,
+  ) ||
+  hasDiscontinuedDate(vehicle?.discontinued_date ?? vehicle?.discontinuedDate);
+
 // @desc  Get all raw feature details (id = feature doc _id)
 // @route GET /api/features/details
 // @access Public
@@ -241,7 +264,7 @@ const buildFullJoin = async () => {
 
   // 2) Load vehicles with only the fields needed for pricing (lean + projection)
   const vehicles = await Vehicle.find({}).select(
-    "brand make model variant fuel fuel_type city ex_showroom exShowroom total_on_road_with_accessories onRoadPrice _id"
+    "brand make model variant fuel fuel_type city ex_showroom exShowroom total_on_road_with_accessories onRoadPrice is_discontinued isDiscontinued IsDiscontinued discontinued_date discontinuedDate _id",
   ).lean();
 
   // 3) Join + dedupe per brand|model|variant — keep best-city row
@@ -262,6 +285,7 @@ const buildFullJoin = async () => {
 
     const currentCity = v.city || "";
     const existing = byKey.get(joinKey);
+    const currentIsDiscontinued = isVehicleDiscontinued(v);
     if (!existing || scoreCity(currentCity) > scoreCity(existing.city)) {
       // Pre-compute card pill values so the slim list can render badges without features
       const rawFeatures = f.features || {};
@@ -278,6 +302,8 @@ const buildFullJoin = async () => {
         onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
         city: currentCity,
         vehicleId: v._id,
+        // Preserve discontinuation truth even when best-city winner is a different row.
+        isDiscontinued: currentIsDiscontinued || Boolean(existing?.isDiscontinued),
         // Summary fields — always present even in slim mode (tiny strings, not arrays)
         _airbags: extractFeatureSummary(rawFeatures, "airbag"),
         _ncap:    extractFeatureSummary(rawFeatures, "ncap"),
@@ -285,6 +311,13 @@ const buildFullJoin = async () => {
         featureCount: featuresArr.length,
         // Full features array — stripped in slim mode
         features: featuresArr,
+      });
+    } else if (currentIsDiscontinued && !existing.isDiscontinued) {
+      // If another city-row for same make/model/variant is discontinued,
+      // keep that truth on the deduped canonical row.
+      byKey.set(joinKey, {
+        ...existing,
+        isDiscontinued: true,
       });
     }
   });
@@ -316,8 +349,18 @@ setImmediate(() => {
 
 export const getVariantsWithPriceAndFeatures = asyncHandler(
   async (req, res) => {
-    const { make = "", model = "", variant = "", fuel = "", q = "", search = "", slim = "" } = req.query;
+    const {
+      make = "",
+      model = "",
+      variant = "",
+      fuel = "",
+      q = "",
+      search = "",
+      slim = "",
+      includeDiscontinued = "0",
+    } = req.query;
     const isSlim = slim === "1" || slim === "true";
+    const showDiscontinued = parseBoolean(includeDiscontinued);
 
     // Serve from cache if fresh; otherwise rebuild (warm cache in background on first miss)
     const now = Date.now();
@@ -338,6 +381,9 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
     if (safeModel)   result = result.filter(v => String(v.model || "").toLowerCase() === safeModel);
     if (safeVariant) result = result.filter(v => String(v.variant || "").toLowerCase() === safeVariant);
     if (safeFuel)    result = result.filter(v => String(v.fuel || "").toLowerCase().includes(safeFuel));
+    if (!showDiscontinued) {
+      result = result.filter((v) => !Boolean(v.isDiscontinued));
+    }
     if (safeQ) {
       result = result.filter(v => {
         const hay = `${v.make} ${v.model} ${v.variant} ${v.fuel || ""}`.toLowerCase();
