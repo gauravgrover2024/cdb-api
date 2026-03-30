@@ -329,7 +329,12 @@ const normalizeTransmissionValue = (vehicleDoc, featuresObj = {}) => {
   if (fromFeature) return fromFeature;
 
   const variantText = vehicleDoc?.variant || "";
-  return detectTransmissionFromText(variantText);
+  const fromVariant = detectTransmissionFromText(variantText);
+  if (fromVariant) return fromVariant;
+
+  // Practical default for this domain: if not explicitly automatic,
+  // treat it as MT so manual variants don't disappear from filtering.
+  return "MT";
 };
 
 const buildFullJoin = async () => {
