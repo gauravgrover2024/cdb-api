@@ -35,6 +35,11 @@ deliveryOrderSchema.index({ updatedAt: -1, _id: -1 });
 deliveryOrderSchema.index({ status: 1, updatedAt: -1 });
 deliveryOrderSchema.index({ dealerName: 1, updatedAt: -1 });
 deliveryOrderSchema.index({ do_loanId: 1 });
+deliveryOrderSchema.index({ do_loanId: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ loanId: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ do_refNo: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ doNumber: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ vehicleModel: 1, updatedAt: -1 });
 
 const DeliveryOrder = mongoose.model('DeliveryOrder', deliveryOrderSchema);
 

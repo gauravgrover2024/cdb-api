@@ -188,11 +188,11 @@ const getDeliveryOrders = asyncHandler(async (req, res) => {
     dealerName = '',
     skip = 0,
     page = 1,
-    limit = 200,
+    limit = 1000,
     noCount = '',
   } = req.query;
 
-  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  const safeLimit = Math.min(Math.max(Number(limit) || 1000, 1), 5000);
   const safePage = Math.max(Number(page) || 1, 1);
   const safeSkip = Number.isFinite(Number(skip)) && Number(skip) >= 0
     ? Number(skip)
@@ -263,7 +263,12 @@ const getDeliveryOrders = asyncHandler(async (req, res) => {
 // @route   GET /api/do/:loanId
 // @access  Public
 const getDeliveryOrderByLoanId = asyncHandler(async (req, res) => {
-  const doRecord = await DeliveryOrder.findOne({ loanId: req.params.loanId }).lean();
+  const loanId = String(req.params.loanId || "").trim();
+  const doRecord = await DeliveryOrder.findOne({
+    $or: [{ loanId }, { do_loanId: loanId }],
+  })
+    .sort({ updatedAt: -1, _id: -1 })
+    .lean();
 
   if (doRecord) {
     res.json({ success: true, data: doRecord });
@@ -289,7 +294,9 @@ const saveDeliveryOrder = asyncHandler(async (req, res) => {
     throw new Error('Delivery Order is only allowed for New Car loans');
   }
 
-  let doRecord = await DeliveryOrder.findOne({ loanId });
+  let doRecord = await DeliveryOrder.findOne({
+    $or: [{ loanId }, { do_loanId: loanId }],
+  }).sort({ updatedAt: -1, _id: -1 });
 
   if (!doRecord && isLegacyNewCar(loan)) {
     return res.status(200).json({
@@ -301,7 +308,10 @@ const saveDeliveryOrder = asyncHandler(async (req, res) => {
   }
 
   if (doRecord) {
-    Object.assign(doRecord, req.body);
+    Object.assign(doRecord, req.body, {
+      loanId,
+      do_loanId: loanId,
+    });
     const updated = await doRecord.save();
     return res.json({ success: true, data: updated });
   }
@@ -309,6 +319,7 @@ const saveDeliveryOrder = asyncHandler(async (req, res) => {
   const created = await DeliveryOrder.create({
     ...req.body,
     loanId,
+    do_loanId: loanId,
   });
 
   return res.status(201).json({ success: true, data: created });
