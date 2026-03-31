@@ -600,14 +600,132 @@ const buildJoinedRows = async ({
 };
 
 const buildSlimRowsFast = async () => {
-  const vehicles = await Vehicle.find({})
-    .select(
-      "brand make model variant fuel fuel_type transmission transmission_type gearbox city ex_showroom exShowroom total_on_road_with_accessories onRoadPrice is_discontinued isDiscontinued IsDiscontinued discontinued_date discontinuedDate _id",
-    )
-    .lean();
+  // Keep this pipeline DB-side so we don't ship every city row to Node on cold start.
+  // We pick the best city row per raw make/model/variant and preserve discontinued truth.
+  const vehicles = await Vehicle.aggregate([
+    {
+      $project: {
+        brand: 1,
+        make: 1,
+        model: 1,
+        variant: 1,
+        fuel: 1,
+        fuel_type: 1,
+        transmission: 1,
+        transmission_type: 1,
+        gearbox: 1,
+        city: 1,
+        ex_showroom: 1,
+        exShowroom: 1,
+        total_on_road_with_accessories: 1,
+        onRoadPrice: 1,
+        is_discontinued: 1,
+        isDiscontinued: 1,
+        IsDiscontinued: 1,
+        discontinued_date: 1,
+        discontinuedDate: 1,
+        _id: 1,
+        _brandOrMake: { $ifNull: ["$brand", "$make"] },
+        _cityLower: { $toLower: { $ifNull: ["$city", ""] } },
+      },
+    },
+    {
+      $match: {
+        _brandOrMake: { $nin: [null, ""] },
+        model: { $nin: [null, ""] },
+        variant: { $nin: [null, ""] },
+      },
+    },
+    {
+      $addFields: {
+        _cityScore: {
+          $switch: {
+            branches: [
+              {
+                case: { $in: ["$_cityLower", ["new-delhi", "new delhi"]] },
+                then: 3,
+              },
+              {
+                case: { $eq: ["$_cityLower", "delhi"] },
+                then: 2,
+              },
+            ],
+            default: 1,
+          },
+        },
+      },
+    },
+    { $sort: { _brandOrMake: 1, model: 1, variant: 1, _cityScore: -1 } },
+    {
+      $group: {
+        _id: { brand: "$_brandOrMake", model: "$model", variant: "$variant" },
+        doc: { $first: "$$ROOT" },
+        anyDiscTyped: {
+          $max: {
+            $cond: [
+              { $in: ["$is_discontinued", [true, 1, "true", "True", "1"]] },
+              1,
+              0,
+            ],
+          },
+        },
+        anyDiscLoose: {
+          $max: {
+            $cond: [
+              { $in: ["$isDiscontinued", [true, 1, "true", "True", "1"]] },
+              1,
+              0,
+            ],
+          },
+        },
+        anyDiscDateA: {
+          $max: {
+            $cond: [
+              {
+                $and: [
+                  { $ne: [{ $ifNull: ["$discontinued_date", null] }, null] },
+                  { $ne: [{ $ifNull: ["$discontinued_date", ""] }, ""] },
+                  { $ne: [{ $toLower: { $ifNull: ["$discontinued_date", ""] } }, "null"] },
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+        anyDiscDateB: {
+          $max: {
+            $cond: [
+              {
+                $and: [
+                  { $ne: [{ $ifNull: ["$discontinuedDate", null] }, null] },
+                  { $ne: [{ $ifNull: ["$discontinuedDate", ""] }, ""] },
+                  { $ne: [{ $toLower: { $ifNull: ["$discontinuedDate", ""] } }, "null"] },
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+      },
+    },
+    {
+      $project: {
+        doc: 1,
+        isDiscontinuedAgg: {
+          $gt: [
+            { $add: ["$anyDiscTyped", "$anyDiscLoose", "$anyDiscDateA", "$anyDiscDateB"] },
+            0,
+          ],
+        },
+      },
+    },
+  ]);
 
   const byKey = new Map();
-  vehicles.forEach((v) => {
+  vehicles.forEach((entry) => {
+    const v = entry?.doc || {};
     const brand = v.brand || v.make;
     const modelRaw = v.model;
     const variantRaw = v.variant;
@@ -620,7 +738,8 @@ const buildSlimRowsFast = async () => {
 
     const currentCity = v.city || "";
     const existing = byKey.get(joinKey);
-    const currentIsDiscontinued = isVehicleDiscontinued(v);
+    const currentIsDiscontinued =
+      Boolean(entry?.isDiscontinuedAgg) || isVehicleDiscontinued(v);
     if (!existing || scoreCity(currentCity) > scoreCity(existing.city)) {
       byKey.set(joinKey, {
         id: joinKey,

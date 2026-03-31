@@ -461,6 +461,8 @@ const SIMILAR_BASE_CACHE_TTL_MS = 5 * 60 * 1000;
 const FEATURE_META_CACHE_TTL_MS = 10 * 60 * 1000;
 const SIMILAR_BASE_CACHE = new Map();
 let FEATURE_META_CACHE = { ts: 0, data: new Map() };
+const VEHICLE_MEDIA_CACHE_TTL_MS = 10 * 60 * 1000;
+const VEHICLE_MEDIA_CACHE = new Map();
 
 const normalizeLooseToken = (value) =>
   String(value || '')
@@ -1220,8 +1222,58 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
     throw new Error('Make and model are required');
   }
 
+  const cached = readCache(
+    VEHICLE_MEDIA_CACHE,
+    VEHICLE_MEDIA_CACHE_TTL_MS,
+    'media',
+    { make, model, variant },
+  );
+  if (cached) {
+    return res.json({ ...cached, fromCache: true });
+  }
+
   const collection = mongoose.connection.db.collection('vehicle_colors');
-  const docs = await collection.find({ brand: buildMakeRegex(make) }).toArray();
+  const makeValue = String(make || '').trim();
+  const modelCandidates = buildModelCandidates(make, model);
+  const variantCandidates = variant
+    ? buildVariantCandidates(make, model, variant)
+    : [];
+
+  // Fast exact path first (index-friendly).
+  let docs = await collection
+    .find(
+      {
+        brand: makeValue,
+        model: { $in: modelCandidates },
+        ...(variantCandidates.length
+          ? { variant: { $in: variantCandidates } }
+          : {}),
+      },
+    )
+    .toArray();
+
+  // Case-insensitive fallback for rows with casing drift.
+  if (!docs.length) {
+    docs = await collection
+      .find(
+        {
+          brand: makeValue,
+          model: { $in: modelCandidates },
+          ...(variantCandidates.length
+            ? { variant: { $in: variantCandidates } }
+            : {}),
+        },
+        {
+          collation: { locale: 'en', strength: 2 },
+        },
+      )
+      .toArray();
+  }
+
+  // Backward-compatible fallback for legacy rows where model/variant text is noisy.
+  if (!docs.length) {
+    docs = await collection.find({ brand: buildMakeRegex(make) }).toArray();
+  }
 
   const rows = docs
     .map((doc) => normalizeVehicleRecord(doc))
@@ -1250,7 +1302,12 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
         })
         .sort((a, b) => String(a.color_name || '').localeCompare(String(b.color_name || '')));
 
-  res.json({ success: true, data: dedupeMediaRowsByHexLatest(fallbackRows) });
+  const payload = {
+    success: true,
+    data: dedupeMediaRowsByHexLatest(fallbackRows),
+  };
+  writeCache(VEHICLE_MEDIA_CACHE, 'media', { make, model, variant }, payload);
+  res.json(payload);
 });
 
 const getSimilarModels = asyncHandler(async (req, res) => {

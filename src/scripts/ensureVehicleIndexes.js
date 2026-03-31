@@ -13,6 +13,11 @@ const run = async () => {
     const vehicleIndexes = await Vehicle.collection.indexes();
     const featureResult = await VehicleFeature.createIndexes();
     const featureIndexes = await VehicleFeature.collection.indexes();
+    const vehicleColorsCollection = mongoose.connection.db.collection("vehicle_colors");
+    await vehicleColorsCollection.createIndex({ brand: 1, model: 1, variant: 1 });
+    await vehicleColorsCollection.createIndex({ brand: 1, model: 1 });
+    await vehicleColorsCollection.createIndex({ brand: 1, model: 1, color_hex: 1, scrape_timestamp: -1 });
+    const vehicleColorsIndexes = await vehicleColorsCollection.indexes();
 
     console.log("Vehicle indexes ensured.");
     console.log("vehicle createIndexes result:", vehicleResult);
@@ -25,6 +30,10 @@ const run = async () => {
     console.log(
       "vehicleFeature active indexes:",
       featureIndexes.map((idx) => idx.name),
+    );
+    console.log(
+      "vehicle_colors active indexes:",
+      vehicleColorsIndexes.map((idx) => idx.name),
     );
   } catch (error) {
     console.error("Failed to ensure Vehicle indexes:", error);
