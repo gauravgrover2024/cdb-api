@@ -76,6 +76,8 @@ vehicleSchema.index({ brand: 1, model: 1, city: 1, is_discontinued: 1, variant: 
 // Similar-cars base variant scans (lowest price per make+model)
 vehicleSchema.index({ city: 1, is_discontinued: 1, make: 1, model: 1, on_road_price_cardekho: 1 });
 vehicleSchema.index({ city: 1, is_discontinued: 1, make: 1, model: 1, onRoadPrice: 1 });
+vehicleSchema.index({ city: 1, is_discontinued: 1, make: 1, model: 1, total_on_road_with_accessories: 1 });
+vehicleSchema.index({ city: 1, is_discontinued: 1, make: 1, model: 1, ex_showroom: 1 });
 
 const Vehicle = mongoose.model("Vehicle", vehicleSchema);
 export default Vehicle;

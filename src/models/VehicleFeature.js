@@ -27,6 +27,8 @@ vehicleFeatureSchema.index(
   { brand: 1, model: 1, variant: 1 },
   { unique: true, name: "brand_1_model_1_variant_1" },
 );
+vehicleFeatureSchema.index({ brand: 1, model: 1, body_type_bucket: 1, seating_capacity: 1 });
+vehicleFeatureSchema.index({ brand: 1, model: 1, variant: 1, updatedAt: -1 });
 vehicleFeatureSchema.index({ body_type_bucket: 1, seating_capacity: 1, brand: 1, model: 1 });
 vehicleFeatureSchema.index({ body_type_bucket: 1, seating_capacity: 1 });
 vehicleFeatureSchema.index(

@@ -135,6 +135,14 @@ const compactAlphaNum = (value) =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 
+const normalizeText = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const dedupeStrings = (items = []) =>
+  [...new Set(items.map((value) => String(value || "").trim()).filter(Boolean))];
+
 const canonicalVariantForCompare = (rawBrand, rawModel, rawVariant) => {
   const make = presentMake(rawBrand);
   const model = presentModel(rawBrand, rawModel);
@@ -195,6 +203,29 @@ const isVehicleDiscontinued = (vehicle) =>
       vehicle?.IsDiscontinued,
   ) ||
   hasDiscontinuedDate(vehicle?.discontinued_date ?? vehicle?.discontinuedDate);
+
+const ACTIVE_VARIANT_FILTER = {
+  $and: [
+    {
+      $or: [
+        { is_discontinued: { $exists: false } },
+        { is_discontinued: false },
+        { is_discontinued: 0 },
+        { is_discontinued: null },
+      ],
+    },
+    {
+      $nor: [
+        { isDiscontinued: true },
+        { isDiscontinued: 1 },
+        { isDiscontinued: "true" },
+        { isDiscontinued: "True" },
+        { discontinued_date: { $exists: true, $nin: [null, "", "null", "NULL"] } },
+        { discontinuedDate: { $exists: true, $nin: [null, "", "null", "NULL"] } },
+      ],
+    },
+  ],
+};
 
 // @desc  Get all raw feature details (id = feature doc _id)
 // @route GET /api/features/details
@@ -273,6 +304,13 @@ export const getFeaturesBySelection = asyncHandler(async (req, res) => {
   const modelKey = normalizeModelForJoin(brandKey, rawModel);
   const variantKey = normalizeVariantForJoin(rawVariant, brand, rawModel);
   const joinKey = `${brandKey}|${modelKey}|${variantKey}`;
+  const cachedSelection = _bySelectionCache.get(joinKey);
+  if (
+    cachedSelection &&
+    Date.now() - cachedSelection.ts <= BY_SELECTION_CACHE_TTL_MS
+  ) {
+    return res.json({ success: true, data: cachedSelection.data });
+  }
 
   const findFuzzyMatch = (rows = []) => {
     if (!Array.isArray(rows) || !rows.length) return null;
@@ -290,15 +328,49 @@ export const getFeaturesBySelection = asyncHandler(async (req, res) => {
   // Serve from in-memory cache when available (avoids DB round-trip).
   // Use stored _joinKey for direct comparison — re-normalizing the presentation-form
   // variant would produce a different key than buildFullJoin's raw-variant-based key.
-  if (_vwpfCache) {
-    const cached = findFuzzyMatch(_vwpfCache.data);
+  const cachedPool =
+    _vwpfCacheFull && Array.isArray(_vwpfCacheFull.data)
+      ? _vwpfCacheFull.data
+      : [];
+  if (cachedPool.length) {
+    const cached = findFuzzyMatch(cachedPool);
     return res.json({
       success: true,
       data: cached?.features ?? [],
     });
   }
 
-  // Cache miss: fall back to DB query
+  // Cache miss: try direct exact lookup first (index-friendly), then fuzzy fallback.
+  const modelCandidates = dedupeStrings([
+    rawModel,
+    presentModel(brand, rawModel),
+    `${presentMake(brand)} ${presentModel(brand, rawModel)}`.trim(),
+  ]);
+  const variantCandidates = dedupeStrings([
+    rawVariant,
+    presentVariant(brand, rawModel, rawVariant),
+    `${presentMake(brand)} ${presentVariant(brand, rawModel, rawVariant)}`.trim(),
+    `${presentModel(brand, rawModel)} ${presentVariant(brand, rawModel, rawVariant)}`.trim(),
+    `${presentMake(brand)} ${presentModel(brand, rawModel)} ${presentVariant(
+      brand,
+      rawModel,
+      rawVariant,
+    )}`.trim(),
+  ]);
+  const quickMatch = await VehicleFeature.findOne({
+    brand: { $in: dedupeStrings([brand, ...buildBrandRegexCandidates(brand)]) },
+    model: { $in: modelCandidates },
+    variant: { $in: variantCandidates },
+  })
+    .collation({ locale: "en", strength: 2 })
+    .lean();
+  if (quickMatch) {
+    const data = objectToFeaturesArray(quickMatch.features);
+    _bySelectionCache.set(joinKey, { ts: Date.now(), data });
+    return res.json({ success: true, data });
+  }
+
+  // Fallback fuzzy scan (brand-scoped)
   const brandCandidates = buildBrandRegexCandidates(brand);
   const featureDocs = await VehicleFeature.find({
     $or: brandCandidates.map((candidate) => ({
@@ -316,16 +388,23 @@ export const getFeaturesBySelection = asyncHandler(async (req, res) => {
     return variantsLikelySame(brand, rawModel, rawVariant, f.variant);
   });
 
-  res.json({
-    success: true,
-    data: match ? objectToFeaturesArray(match.features) : [],
-  });
+  const data = match ? objectToFeaturesArray(match.features) : [];
+  _bySelectionCache.set(joinKey, { ts: Date.now(), data });
+  res.json({ success: true, data });
 });
 
-// In-memory cache: full unfiltered join result, refreshed every 10 minutes.
-// Filtered requests always served from this cache (no extra DB round-trip).
+// In-memory caches for variants list endpoint:
+// - slim cache: fast list payload for initial catalog/EMI loads (no full feature arrays)
+// - full cache: includes features arrays (used when UI explicitly requests full rows)
 const VWPF_CACHE_TTL_MS = 10 * 60 * 1000; // 10 min
-let _vwpfCache = null; // { data: Array, ts: number }
+let _vwpfCacheSlim = null; // { data: Array, ts: number }
+let _vwpfCacheFull = null; // { data: Array, ts: number }
+let _vwpfCacheSlimPending = null;
+let _vwpfCacheFullPending = null;
+const BY_SELECTION_CACHE_TTL_MS = 30 * 60 * 1000;
+const _bySelectionCache = new Map(); // key: joinKey, value: {ts,data}
+const SCOPED_CACHE_TTL_MS = 5 * 60 * 1000;
+const _vwpfScopedCache = new Map(); // key: scoped filter key, value: {ts,data}
 
 // Extract a single summary value from the raw features object for a given keyword.
 // Used to populate card pills (airbags, NCAP, screen size) without sending the
@@ -427,9 +506,15 @@ const normalizeTransmissionValue = (vehicleDoc, featuresObj = {}) => {
   return "MT";
 };
 
-const buildFullJoin = async () => {
-  // 1) Load all feature docs — brand index makes this scan-free after index creation
-  const featureDocs = await VehicleFeature.find({}).lean();
+const buildJoinedRows = async ({
+  includeFeatures = false,
+  vehicleRows = null,
+  featureDocs: featureDocsOverride = null,
+} = {}) => {
+  // 1) Load feature docs (full or scoped set)
+  const featureDocs = Array.isArray(featureDocsOverride)
+    ? featureDocsOverride
+    : await VehicleFeature.find({}).lean();
   const featureIndex = {};
   featureDocs.forEach((f) => {
     const brandKey = normalizeBrandForJoin(f.brand);
@@ -439,9 +524,13 @@ const buildFullJoin = async () => {
   });
 
   // 2) Load vehicles with only the fields needed for pricing (lean + projection)
-  const vehicles = await Vehicle.find({}).select(
-    "brand make model variant fuel fuel_type transmission transmission_type gearbox city ex_showroom exShowroom total_on_road_with_accessories onRoadPrice is_discontinued isDiscontinued IsDiscontinued discontinued_date discontinuedDate _id",
-  ).lean();
+  const vehicles = Array.isArray(vehicleRows)
+    ? vehicleRows
+    : await Vehicle.find({})
+        .select(
+          "brand make model variant fuel fuel_type transmission transmission_type gearbox city ex_showroom exShowroom total_on_road_with_accessories onRoadPrice is_discontinued isDiscontinued IsDiscontinued discontinued_date discontinuedDate _id",
+        )
+        .lean();
 
   // 3) Join + dedupe per brand|model|variant — keep best-city row
   const byKey = new Map();
@@ -465,7 +554,7 @@ const buildFullJoin = async () => {
     if (!existing || scoreCity(currentCity) > scoreCity(existing.city)) {
       // Pre-compute card pill values so the slim list can render badges without features
       const rawFeatures = f.features || {};
-      const featuresArr = objectToFeaturesArray(rawFeatures);
+      const featureCount = Object.keys(rawFeatures || {}).length;
       byKey.set(joinKey, {
         id: f._id.toString(),
         _joinKey: joinKey,   // stored so getBySelection can do direct key comparison
@@ -485,9 +574,8 @@ const buildFullJoin = async () => {
         _airbags: extractFeatureSummary(rawFeatures, "airbag"),
         _ncap:    extractFeatureSummary(rawFeatures, "ncap"),
         _screen:  extractFeatureSummary(rawFeatures, "touchscreen size"),
-        featureCount: featuresArr.length,
-        // Full features array — stripped in slim mode
-        features: featuresArr,
+        featureCount,
+        ...(includeFeatures ? { features: objectToFeaturesArray(rawFeatures) } : {}),
       });
     } else if (currentIsDiscontinued && !existing.isDiscontinued) {
       // If another city-row for same make/model/variant is discontinued,
@@ -511,15 +599,318 @@ const buildFullJoin = async () => {
   return result;
 };
 
+const buildSlimRowsFast = async () => {
+  const vehicles = await Vehicle.find({})
+    .select(
+      "brand make model variant fuel fuel_type transmission transmission_type gearbox city ex_showroom exShowroom total_on_road_with_accessories onRoadPrice is_discontinued isDiscontinued IsDiscontinued discontinued_date discontinuedDate _id",
+    )
+    .lean();
+
+  const byKey = new Map();
+  vehicles.forEach((v) => {
+    const brand = v.brand || v.make;
+    const modelRaw = v.model;
+    const variantRaw = v.variant;
+    if (!brand || !modelRaw || !variantRaw) return;
+
+    const brandKey = normalizeBrandForJoin(brand);
+    const modelKey = normalizeModelForJoin(brandKey, modelRaw);
+    const variantKey = normalizeVariantForJoin(variantRaw, brand, modelRaw);
+    const joinKey = `${brandKey}|${modelKey}|${variantKey}`;
+
+    const currentCity = v.city || "";
+    const existing = byKey.get(joinKey);
+    const currentIsDiscontinued = isVehicleDiscontinued(v);
+    if (!existing || scoreCity(currentCity) > scoreCity(existing.city)) {
+      byKey.set(joinKey, {
+        id: joinKey,
+        _joinKey: joinKey,
+        make: presentMake(brand),
+        model: presentModel(brand, modelRaw),
+        variant: presentVariant(brand, modelRaw, variantRaw),
+        fuel: normalizeFuelValue(v.fuel || v.fuel_type || null),
+        transmission: normalizeTransmissionValue(v, {}),
+        tags: [],
+        exShowroom: v.ex_showroom || v.exShowroom,
+        onRoadPrice: v.total_on_road_with_accessories || v.onRoadPrice,
+        city: currentCity,
+        vehicleId: v._id,
+        isDiscontinued: currentIsDiscontinued || Boolean(existing?.isDiscontinued),
+        _airbags: null,
+        _ncap: null,
+        _screen: null,
+        featureCount: 0,
+      });
+    } else if (currentIsDiscontinued && !existing.isDiscontinued) {
+      byKey.set(joinKey, { ...existing, isDiscontinued: true });
+    }
+  });
+
+  const result = Array.from(byKey.values());
+  result.sort((a, b) => {
+    const keyA = `${a.make} ${a.model}`;
+    const keyB = `${b.make} ${b.model}`;
+    if (keyA !== keyB) return keyA.localeCompare(keyB);
+    return (
+      Number(a.exShowroom || a.onRoadPrice || 0) -
+      Number(b.exShowroom || b.onRoadPrice || 0)
+    );
+  });
+  return result;
+};
+
+const getFreshCache = (cache) =>
+  cache && Date.now() - cache.ts <= VWPF_CACHE_TTL_MS ? cache.data : null;
+
+const ensureCache = async ({ slim = true } = {}) => {
+  if (slim) {
+    const fresh = getFreshCache(_vwpfCacheSlim);
+    if (fresh) return fresh;
+    if (!_vwpfCacheSlimPending) {
+      _vwpfCacheSlimPending = buildSlimRowsFast()
+        .then((data) => {
+          _vwpfCacheSlim = { data, ts: Date.now() };
+          return data;
+        })
+        .finally(() => {
+          _vwpfCacheSlimPending = null;
+        });
+    }
+    return _vwpfCacheSlimPending;
+  }
+
+  const fresh = getFreshCache(_vwpfCacheFull);
+  if (fresh) return fresh;
+  if (!_vwpfCacheFullPending) {
+    _vwpfCacheFullPending = buildJoinedRows({ includeFeatures: true })
+      .then((data) => {
+        _vwpfCacheFull = { data, ts: Date.now() };
+        return data;
+      })
+      .finally(() => {
+        _vwpfCacheFullPending = null;
+      });
+  }
+  return _vwpfCacheFullPending;
+};
+
+const buildScopedRows = async ({
+  make = "",
+  model = "",
+  variant = "",
+  fuel = "",
+  q = "",
+  showDiscontinued = false,
+  includeFeatures = false,
+} = {}) => {
+  const makeNormalized = normalizeText(make);
+  const modelNormalized = normalizeText(model);
+  const variantNormalized = normalizeText(variant);
+  const fuelNormalized = normalizeText(fuel);
+  const queryNormalized = normalizeText(q);
+
+  const brandCandidates = dedupeStrings([
+    make,
+    ...buildBrandRegexCandidates(make),
+    normalizeBrandForJoin(make),
+  ]);
+  const modelCandidates = dedupeStrings([
+    model,
+    presentModel(make, model),
+    `${presentMake(make)} ${presentModel(make, model)}`.trim(),
+  ]);
+  const variantCandidates = dedupeStrings([
+    variant,
+    presentVariant(make, model, variant),
+    `${presentMake(make)} ${presentVariant(make, model, variant)}`.trim(),
+    `${presentModel(make, model)} ${presentVariant(make, model, variant)}`.trim(),
+  ]);
+
+  const baseQuery = {};
+  if (brandCandidates.length) {
+    baseQuery.$or = [
+      { brand: { $in: brandCandidates } },
+      { make: { $in: brandCandidates } },
+    ];
+  }
+  if (modelCandidates.length) {
+    baseQuery.model = { $in: modelCandidates };
+  }
+  if (variantCandidates.length && variantNormalized) {
+    baseQuery.variant = { $in: variantCandidates };
+  }
+  if (!showDiscontinued) {
+    baseQuery.$and = [...(baseQuery.$and || []), ACTIVE_VARIANT_FILTER];
+  }
+
+  const vehicleRows = await Vehicle.find(baseQuery)
+    .select(
+      "brand make model variant fuel fuel_type transmission transmission_type gearbox city ex_showroom exShowroom total_on_road_with_accessories onRoadPrice is_discontinued isDiscontinued IsDiscontinued discontinued_date discontinuedDate _id",
+    )
+    .collation({ locale: "en", strength: 2 })
+    .lean();
+
+  const filteredVehicles = vehicleRows.filter((row) => {
+    const rowMake = normalizeText(row?.brand || row?.make || "");
+    const rowModel = normalizeText(
+      presentModel(row?.brand || row?.make || "", row?.model || ""),
+    );
+    const rowVariant = normalizeText(
+      presentVariant(
+        row?.brand || row?.make || "",
+        row?.model || "",
+        row?.variant || "",
+      ),
+    );
+    const rowFuel = normalizeText(normalizeFuelValue(row?.fuel || row?.fuel_type || ""));
+    const hay = normalizeText(
+      `${row?.brand || row?.make || ""} ${row?.model || ""} ${row?.variant || ""} ${
+        row?.fuel || row?.fuel_type || ""
+      }`,
+    );
+
+    if (makeNormalized && rowMake !== makeNormalized && !rowMake.includes(makeNormalized)) {
+      return false;
+    }
+    if (modelNormalized && !rowModel.includes(modelNormalized)) return false;
+    if (variantNormalized && !rowVariant.includes(variantNormalized)) return false;
+    if (fuelNormalized && !rowFuel.includes(fuelNormalized)) return false;
+    if (queryNormalized && !hay.includes(queryNormalized)) return false;
+    return true;
+  });
+
+  const scopedBrandKeys = dedupeStrings(
+    filteredVehicles.map((row) => row?.brand || row?.make || ""),
+  );
+  const featureBrandCandidates = dedupeStrings([
+    ...scopedBrandKeys,
+    ...buildBrandRegexCandidates(make),
+    normalizeBrandForJoin(make),
+  ]);
+  const featureQuery = {};
+  if (featureBrandCandidates.length) {
+    featureQuery.brand = { $in: featureBrandCandidates };
+  }
+  if (modelCandidates.length) {
+    featureQuery.model = { $in: modelCandidates };
+  }
+  if (variantCandidates.length && variantNormalized) {
+    featureQuery.variant = { $in: variantCandidates };
+  }
+  const scopedFeatureDocs = await VehicleFeature.find(featureQuery)
+    .collation({ locale: "en", strength: 2 })
+    .lean();
+
+  return buildJoinedRows({
+    includeFeatures,
+    vehicleRows: filteredVehicles,
+    featureDocs: scopedFeatureDocs,
+  });
+};
+
+const buildScopedRowsFromSlim = async ({
+  slimRows = [],
+  make = "",
+  model = "",
+  variant = "",
+  fuel = "",
+  q = "",
+  showDiscontinued = false,
+} = {}) => {
+  const makeNormalized = normalizeText(make);
+  const modelNormalized = normalizeText(model);
+  const variantNormalized = normalizeText(variant);
+  const fuelNormalized = normalizeText(fuel);
+  const queryNormalized = normalizeText(q);
+
+  const filteredRows = (Array.isArray(slimRows) ? slimRows : []).filter((row) => {
+    const rowMake = normalizeText(row?.make || "");
+    const rowModel = normalizeText(row?.model || "");
+    const rowVariant = normalizeText(row?.variant || "");
+    const rowFuel = normalizeText(row?.fuel || "");
+    const hay = normalizeText(
+      `${row?.make || ""} ${row?.model || ""} ${row?.variant || ""} ${row?.fuel || ""}`,
+    );
+
+    if (!showDiscontinued && Boolean(row?.isDiscontinued)) return false;
+    if (makeNormalized && !rowMake.includes(makeNormalized)) return false;
+    if (modelNormalized && !rowModel.includes(modelNormalized)) return false;
+    if (variantNormalized && !rowVariant.includes(variantNormalized)) return false;
+    if (fuelNormalized && !rowFuel.includes(fuelNormalized)) return false;
+    if (queryNormalized && !hay.includes(queryNormalized)) return false;
+    return true;
+  });
+  if (!filteredRows.length) return [];
+
+  const modelCandidates = dedupeStrings([
+    model,
+    presentModel(make, model),
+    `${presentMake(make)} ${presentModel(make, model)}`.trim(),
+  ]);
+  const variantCandidates = dedupeStrings([
+    variant,
+    presentVariant(make, model, variant),
+    `${presentMake(make)} ${presentVariant(make, model, variant)}`.trim(),
+    `${presentModel(make, model)} ${presentVariant(make, model, variant)}`.trim(),
+  ]);
+  const featureBrandCandidates = dedupeStrings([
+    make,
+    ...buildBrandRegexCandidates(make),
+    normalizeBrandForJoin(make),
+  ]);
+
+  const featureQuery = {};
+  if (featureBrandCandidates.length) {
+    featureQuery.brand = { $in: featureBrandCandidates };
+  }
+  if (modelCandidates.length) {
+    featureQuery.model = { $in: modelCandidates };
+  }
+  if (variantCandidates.length && variantNormalized) {
+    featureQuery.variant = { $in: variantCandidates };
+  }
+
+  const featureDocs = await VehicleFeature.find(featureQuery)
+    .collation({ locale: "en", strength: 2 })
+    .lean();
+  if (!featureDocs.length) return [];
+
+  const featureIndex = new Map();
+  featureDocs.forEach((f) => {
+    const b = normalizeBrandForJoin(f.brand);
+    const m = normalizeModelForJoin(b, f.model);
+    const v = normalizeVariantForJoin(f.variant, f.brand, f.model);
+    featureIndex.set(`${b}|${m}|${v}`, f);
+  });
+
+  const out = [];
+  filteredRows.forEach((row) => {
+    const f = featureIndex.get(row?._joinKey);
+    if (!f) return;
+    const rawFeatures = f.features || {};
+    out.push({
+      ...row,
+      id: f._id?.toString() || row.id,
+      _airbags: extractFeatureSummary(rawFeatures, "airbag"),
+      _ncap: extractFeatureSummary(rawFeatures, "ncap"),
+      _screen: extractFeatureSummary(rawFeatures, "touchscreen size"),
+      featureCount: Object.keys(rawFeatures).length,
+      features: objectToFeaturesArray(rawFeatures),
+    });
+  });
+  return out;
+};
+
 // Warm the cache immediately at module load in the background.
 // This means the very first user request is served from cache instead of
 // waiting for the expensive join to complete on-demand.
-_vwpfCache = null; // force rebuild so _joinKey is present in every entry
+_vwpfCacheSlim = null;
+_vwpfCacheFull = null;
 setImmediate(() => {
-  if (_vwpfCache) return;
-  buildFullJoin()
+  if (_vwpfCacheSlim) return;
+  ensureCache({ slim: true })
     .then((data) => {
-      if (!_vwpfCache) _vwpfCache = { data, ts: Date.now() };
+      if (!_vwpfCacheSlim) _vwpfCacheSlim = { data, ts: Date.now() };
     })
     .catch((err) => console.warn("[features] background cache warm failed:", err.message));
 });
@@ -539,13 +930,64 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
     const isSlim = slim === "1" || slim === "true";
     const showDiscontinued = parseBoolean(includeDiscontinued);
 
-    // Serve from cache if fresh; otherwise rebuild (warm cache in background on first miss)
-    const now = Date.now();
-    if (!_vwpfCache || now - _vwpfCache.ts > VWPF_CACHE_TTL_MS) {
-      _vwpfCache = { data: await buildFullJoin(), ts: now };
-    }
+    const hasScopedFilter = Boolean(
+      String(make || "").trim() ||
+        String(model || "").trim() ||
+        String(variant || "").trim() ||
+        String(fuel || "").trim() ||
+        String(q || search || "").trim(),
+    );
 
-    let result = _vwpfCache.data;
+    let result = [];
+    if (hasScopedFilter && !isSlim) {
+      const scopedKey = JSON.stringify({
+        make: String(make || "").trim().toLowerCase(),
+        model: String(model || "").trim().toLowerCase(),
+        variant: String(variant || "").trim().toLowerCase(),
+        fuel: String(fuel || "").trim().toLowerCase(),
+        q: String(q || search || "").trim().toLowerCase(),
+        includeDiscontinued: Boolean(showDiscontinued),
+      });
+      const scopedCached = _vwpfScopedCache.get(scopedKey);
+      if (scopedCached && Date.now() - scopedCached.ts <= SCOPED_CACHE_TTL_MS) {
+        const payload = scopedCached.data.map(({ _joinKey, ...rest }) => rest);
+        return res.json({
+          success: true,
+          count: payload.length,
+          data: payload,
+          fromCache: true,
+        });
+      }
+
+      // Fast path: reuse already-cached slim rows for filtering and only fetch feature docs.
+      let slimRows = getFreshCache(_vwpfCacheSlim);
+      if (!slimRows) {
+        slimRows = await ensureCache({ slim: true });
+      }
+      result = await buildScopedRowsFromSlim({
+        slimRows,
+        make,
+        model,
+        variant,
+        fuel,
+        q: q || search,
+        showDiscontinued,
+      });
+      if (!result.length) {
+        result = await buildScopedRows({
+          make,
+          model,
+          variant,
+          fuel,
+          q: q || search,
+          showDiscontinued,
+          includeFeatures: !isSlim,
+        });
+      }
+      _vwpfScopedCache.set(scopedKey, { ts: Date.now(), data: result });
+    } else {
+      result = await ensureCache({ slim: isSlim });
+    }
 
     // Server-side filter on the cached dataset (O(n) — fast in memory)
     const safeMake     = String(make).trim().toLowerCase();
@@ -574,9 +1016,19 @@ export const getVariantsWithPriceAndFeatures = asyncHandler(
       ? result.map(({ features, _joinKey, ...rest }) => rest)
       : result.map(({ _joinKey, ...rest }) => rest);
 
-    res.json({ success: true, count: payload.length, data: payload, fromCache: Boolean(_vwpfCache) });
+    res.json({
+      success: true,
+      count: payload.length,
+      data: payload,
+      fromCache: !hasScopedFilter,
+    });
   },
 );
 
 // Expose a way for other routes to invalidate the cache (e.g. after a vehicle upsert)
-export const invalidateVariantsCache = () => { _vwpfCache = null; };
+export const invalidateVariantsCache = () => {
+  _vwpfCacheSlim = null;
+  _vwpfCacheFull = null;
+  _vwpfScopedCache.clear();
+  _bySelectionCache.clear();
+};

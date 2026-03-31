@@ -547,57 +547,57 @@ const buildBaseModelRowsSnapshot = async ({ city = '', includeDiscontinued = fal
   const query = buildVehicleQuery({ city });
   if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
 
-  const rows = await Vehicle.find(query)
-    .select({
-      _id: 1,
-      make: 1,
-      brand: 1,
-      model: 1,
-      variant: 1,
-      city: 1,
-      on_road_price_cardekho: 1,
-      total_on_road_with_accessories: 1,
-      onRoadPrice: 1,
-      ex_showroom: 1,
-      exShowroom: 1,
-    })
-    .lean();
+  const pipeline = [
+    { $match: query },
+    {
+      $project: {
+        _id: 1,
+        make: { $ifNull: ['$make', '$brand'] },
+        model: '$model',
+        variant: '$variant',
+        city: '$city',
+        basePrice: {
+          $ifNull: [
+            '$ex_showroom',
+            '$exShowroom',
+          ],
+        },
+      },
+    },
+    { $match: { basePrice: { $gt: 0 } } },
+    { $sort: { basePrice: 1 } },
+    {
+      $group: {
+        _id: { make: '$make', model: '$model' },
+        make: { $first: '$make' },
+        model: { $first: '$model' },
+        city: { $first: '$city' },
+        basePrice: { $first: '$basePrice' },
+        variant: { $first: '$variant' },
+        vehicleId: { $first: '$_id' },
+      },
+    },
+  ];
 
-  const byModel = new Map();
-
-  rows.forEach((row) => {
-    const make = String(row?.make || row?.brand || '').trim();
-    const modelRaw = String(row?.model || '').trim();
-    const model = trimLeading(modelRaw, make) || modelRaw;
-    if (!make || !model) return;
-
-    const basePrice = parseAmount(
-      row?.on_road_price_cardekho ??
-        row?.total_on_road_with_accessories ??
-        row?.onRoadPrice ??
-        row?.ex_showroom ??
-        row?.exShowroom ??
-        0,
-    );
-    if (!basePrice || basePrice <= 0) return;
-
-    const key = buildMakeModelJoinKey(make, model);
-    if (!key) return;
-    const current = byModel.get(key);
-    if (!current || basePrice < current.basePrice) {
-      byModel.set(key, {
+  const rows = await Vehicle.aggregate(pipeline);
+  return rows
+    .map((row) => {
+      const make = String(row?.make || '').trim();
+      const modelRaw = String(row?.model || '').trim();
+      const model = trimLeading(modelRaw, make) || modelRaw;
+      const key = buildMakeModelJoinKey(make, model);
+      if (!make || !model || !key) return null;
+      return {
         key,
         make,
         model,
         city: row?.city || '',
-        basePrice,
+        basePrice: Number(row?.basePrice || 0),
         variant: String(row?.variant || '').trim(),
-        vehicleId: String(row?._id || ''),
-      });
-    }
-  });
-
-  return Array.from(byModel.values());
+        vehicleId: String(row?.vehicleId || ''),
+      };
+    })
+    .filter((row) => row && row.basePrice > 0);
 };
 
 const getBaseModelRowsCached = async ({ city = '', includeDiscontinued = false } = {}) => {
@@ -620,14 +620,12 @@ const buildFeatureMetaSnapshot = async () => {
       _id: 1,
       brand: 1,
       model: 1,
-      features: 1,
       body_type_bucket: 1,
       seating_capacity: 1,
     })
     .lean();
 
   const byModel = new Map();
-  const backfillOps = [];
 
   docs.forEach((doc) => {
     const make = String(doc?.brand || '').trim();
@@ -636,44 +634,11 @@ const buildFeatureMetaSnapshot = async () => {
     const key = buildMakeModelJoinKey(make, model);
     if (!key) return;
 
-    const rawBody =
-      String(doc?.body_type_bucket || '').trim() ||
-      extractFeatureValueByKeywords(doc?.features, [
-        'body type',
-        'bodytype',
-        'vehicle type',
-        'body style',
-        'segment',
-      ]);
+    const rawBody = String(doc?.body_type_bucket || '').trim();
     const bodyBucket = normalizeBodyTypeBucket(rawBody);
     const bodyLabel = formatBodyType(rawBody || bodyBucket);
-    const seatValue =
-      doc?.seating_capacity ??
-      extractFeatureValueByKeywords(doc?.features, [
-        'seating capacity',
-        'seat capacity',
-        'seating',
-        'number of seats',
-        'no of seats',
-        'no. of seats',
-        'seats',
-      ]);
+    const seatValue = doc?.seating_capacity;
     const seatCount = parseSeatCount(seatValue);
-
-    if ((!doc?.body_type_bucket && bodyBucket) || (!doc?.seating_capacity && seatCount)) {
-      backfillOps.push({
-        updateOne: {
-          filter: { _id: doc._id },
-          update: {
-            $set: {
-              ...(bodyBucket ? { body_type_bucket: bodyBucket } : {}),
-              ...(seatCount ? { seating_capacity: seatCount } : {}),
-            },
-          },
-          upsert: false,
-        },
-      });
-    }
 
     if (!byModel.has(key)) {
       byModel.set(key, {
@@ -696,13 +661,6 @@ const buildFeatureMetaSnapshot = async () => {
     }
   });
 
-  if (backfillOps.length) {
-    // Fire-and-forget background sync so next reads can use indexed columns directly.
-    void VehicleFeature.bulkWrite(backfillOps.slice(0, 5000), { ordered: false }).catch((error) => {
-      console.warn('[vehicles.similar] feature metadata backfill skipped:', error?.message || error);
-    });
-  }
-
   const out = new Map();
   byModel.forEach((entry, key) => {
     const bodyBucket =
@@ -719,6 +677,66 @@ const buildFeatureMetaSnapshot = async () => {
   });
 
   return out;
+};
+
+const loadModelMetaOnDemand = async (make, model) => {
+  if (!make || !model) return null;
+  const brandRegex = new RegExp(`^${escapeRegex(String(make).trim())}$`, 'i');
+  const modelRegex = new RegExp(escapeRegex(String(model).trim()), 'i');
+  const docs = await VehicleFeature.find({
+    brand: brandRegex,
+    model: modelRegex,
+  })
+    .select({ body_type_bucket: 1, seating_capacity: 1, features: 1, brand: 1, model: 1 })
+    .limit(200)
+    .lean();
+
+  if (!docs.length) return null;
+  const bodyCounts = new Map();
+  const seatCounts = new Map();
+  let displayBody = '';
+
+  docs.forEach((doc) => {
+    const rawBody =
+      String(doc?.body_type_bucket || '').trim() ||
+      extractFeatureValueByKeywords(doc?.features, [
+        'body type',
+        'bodytype',
+        'vehicle type',
+        'body style',
+        'segment',
+      ]);
+    const bodyBucket = normalizeBodyTypeBucket(rawBody);
+    if (bodyBucket) {
+      bodyCounts.set(bodyBucket, (bodyCounts.get(bodyBucket) || 0) + 1);
+      if (!displayBody) displayBody = formatBodyType(rawBody || bodyBucket);
+    }
+
+    const seatValue =
+      doc?.seating_capacity ??
+      extractFeatureValueByKeywords(doc?.features, [
+        'seating capacity',
+        'seat capacity',
+        'seating',
+        'number of seats',
+        'no of seats',
+        'no. of seats',
+        'seats',
+      ]);
+    const seatCount = parseSeatCount(seatValue);
+    if (seatCount) {
+      seatCounts.set(seatCount, (seatCounts.get(seatCount) || 0) + 1);
+    }
+  });
+
+  const topBody = [...bodyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+  const topSeat = [...seatCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+  if (!topBody || !topSeat) return null;
+  return {
+    bodyTypeBucket: topBody,
+    bodyType: displayBody || formatBodyType(topBody),
+    seatingCapacity: Number(topSeat),
+  };
 };
 
 const getFeatureMetaMapCached = async () => {
@@ -1239,7 +1257,7 @@ const getSimilarModels = asyncHandler(async (req, res) => {
   const startedAt = Date.now();
   const make = String(req.query.make || '').trim();
   const model = String(req.query.model || '').trim();
-  const city = String(req.query.city || '').trim();
+  const city = 'new-delhi';
   const includeDiscontinued = parseBoolean(req.query.includeDiscontinued);
   const toleranceRaw = Number(req.query.tolerance);
   const tolerance =
@@ -1267,21 +1285,12 @@ const getSimilarModels = asyncHandler(async (req, res) => {
     });
   }
 
-  const [baseRowsCityScoped, baseRowsAllCities, featureMetaMap] = await Promise.all([
+  const [baseRows, featureMetaMap] = await Promise.all([
     getBaseModelRowsCached({ city, includeDiscontinued }),
-    city ? getBaseModelRowsCached({ city: '', includeDiscontinued }) : Promise.resolve([]),
     getFeatureMetaMapCached(),
   ]);
 
-  const baseRows = baseRowsCityScoped?.length
-    ? baseRowsCityScoped
-    : baseRowsAllCities;
-
-  const selectedBase =
-    baseRows.find((row) => row?.key === selectedKey) ||
-    (baseRowsAllCities?.length
-      ? baseRowsAllCities.find((row) => row?.key === selectedKey)
-      : null);
+  const selectedBase = baseRows.find((row) => row?.key === selectedKey);
 
   if (!selectedBase) {
     return res.json({
@@ -1296,7 +1305,19 @@ const getSimilarModels = asyncHandler(async (req, res) => {
     });
   }
 
-  const selectedMeta = featureMetaMap.get(selectedKey) || null;
+  let selectedMeta = featureMetaMap.get(selectedKey) || null;
+  if (!selectedMeta) {
+    const ondemand = await loadModelMetaOnDemand(selectedBase.make, selectedBase.model);
+    if (ondemand) {
+      selectedMeta = {
+        make: selectedBase.make,
+        model: selectedBase.model,
+        ...ondemand,
+      };
+      featureMetaMap.set(selectedKey, selectedMeta);
+    }
+  }
+
   const selectedBodyKey = normalizeText(selectedMeta?.bodyTypeBucket || '');
   const selectedSeat = Number(selectedMeta?.seatingCapacity || 0) || null;
   const metadataReady = Boolean(selectedBodyKey && selectedSeat);
@@ -1347,7 +1368,7 @@ const getSimilarModels = asyncHandler(async (req, res) => {
         model: row.model,
         startingPrice: Number(row.basePrice) || 0,
         baseVariant: row.variant,
-        city: row.city || '',
+      city: row.city || '',
         bodyType: meta?.bodyType || '',
         bodyTypeBucket: meta?.bodyTypeBucket || '',
         seatingCapacity: Number(meta?.seatingCapacity || 0) || null,
@@ -1373,6 +1394,12 @@ const getSimilarModels = asyncHandler(async (req, res) => {
       totalMatches: allSimilar.length,
     },
   });
+});
+
+// Warm similar-cars caches in background so first UI open is fast.
+setImmediate(() => {
+  void getBaseModelRowsCached({ city: 'new-delhi', includeDiscontinued: false }).catch(() => {});
+  void getFeatureMetaMapCached().catch(() => {});
 });
 
 export {
