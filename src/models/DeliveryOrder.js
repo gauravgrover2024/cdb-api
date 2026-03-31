@@ -30,6 +30,12 @@ const deliveryOrderSchema = mongoose.Schema(
   }
 );
 
+deliveryOrderSchema.index({ createdAt: -1, _id: -1 });
+deliveryOrderSchema.index({ updatedAt: -1, _id: -1 });
+deliveryOrderSchema.index({ status: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ dealerName: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ do_loanId: 1 });
+
 const DeliveryOrder = mongoose.model('DeliveryOrder', deliveryOrderSchema);
 
 export default DeliveryOrder;

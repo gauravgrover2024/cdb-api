@@ -73,6 +73,11 @@ const paymentSchema = mongoose.Schema(
   }
 );
 
+paymentSchema.index({ updatedAt: -1, _id: -1 });
+paymentSchema.index({ createdAt: -1, _id: -1 });
+paymentSchema.index({ showroomName: 1, updatedAt: -1 });
+paymentSchema.index({ channelName: 1, updatedAt: -1 });
+
 // Calculate outstanding amounts before saving
 paymentSchema.pre('save', function () {
   // Calculate outstanding commission from showroom

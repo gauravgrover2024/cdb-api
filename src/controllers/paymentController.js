@@ -7,6 +7,9 @@ import DeliveryOrder from '../models/DeliveryOrder.js';
 const LEGACY_CUTOFF = new Date('2026-02-01T00:00:00.000Z');
 const LOAN_ID_PREFIX = 'LN';
 
+const escapeRegex = (value = '') =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const normalizeLoanType = (loan = {}) => {
@@ -164,11 +167,79 @@ const createDirectPayment = asyncHandler(async (req, res) => {
 // @route   GET /api/payments
 // @access  Public
 const getPayments = asyncHandler(async (req, res) => {
-  const payments = await Payment.find({}).sort({ updatedAt: -1, createdAt: -1 });
+  const {
+    search = '',
+    showroomName = '',
+    channelName = '',
+    skip = 0,
+    page = 1,
+    limit = 200,
+    noCount = '',
+  } = req.query;
+
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  const safePage = Math.max(Number(page) || 1, 1);
+  const safeSkip = Number.isFinite(Number(skip)) && Number(skip) >= 0
+    ? Number(skip)
+    : (safePage - 1) * safeLimit;
+  const skipCount = new Set(['1', 'true', 'yes']).has(
+    String(noCount || '').trim().toLowerCase(),
+  );
+
+  const andFilters = [];
+  const safeSearch = String(search || '').trim();
+  if (safeSearch) {
+    const re = new RegExp(escapeRegex(safeSearch), 'i');
+    andFilters.push({
+      $or: [
+        { loanId: re },
+        { showroomName: re },
+        { channelName: re },
+      ],
+    });
+  }
+  if (String(showroomName || '').trim()) {
+    andFilters.push({
+      showroomName: new RegExp(escapeRegex(String(showroomName).trim()), 'i'),
+    });
+  }
+  if (String(channelName || '').trim()) {
+    andFilters.push({
+      channelName: new RegExp(escapeRegex(String(channelName).trim()), 'i'),
+    });
+  }
+
+  const query =
+    andFilters.length === 0
+      ? {}
+      : andFilters.length === 1
+        ? andFilters[0]
+        : { $and: andFilters };
+
+  const dataPromise = Payment.find(query)
+    .sort({ updatedAt: -1, _id: -1 })
+    .skip(safeSkip)
+    .limit(safeLimit)
+    .lean();
+  const totalPromise = skipCount
+    ? Promise.resolve(null)
+    : Payment.countDocuments(query);
+
+  const [payments, countedTotal] = await Promise.all([dataPromise, totalPromise]);
+  const total = skipCount
+    ? safeSkip + payments.length + (payments.length === safeLimit ? 1 : 0)
+    : Number(countedTotal || 0);
 
   res.json({
     success: true,
     data: payments,
+    total,
+    page: Math.floor(safeSkip / safeLimit) + 1,
+    limit: safeLimit,
+    skip: safeSkip,
+    hasMore: skipCount
+      ? payments.length === safeLimit
+      : safeSkip + payments.length < total,
   });
 });
 
@@ -178,7 +249,7 @@ const getPayments = asyncHandler(async (req, res) => {
 const getPaymentsByLoanId = asyncHandler(async (req, res) => {
   const { loanId } = req.params;
 
-  const paymentRecord = await Payment.findOne({ loanId });
+  const paymentRecord = await Payment.findOne({ loanId }).lean();
 
   if (paymentRecord) {
     res.json({ success: true, data: paymentRecord });
