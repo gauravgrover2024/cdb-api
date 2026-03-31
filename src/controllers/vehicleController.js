@@ -1329,7 +1329,7 @@ const getSimilarModels = asyncHandler(async (req, res) => {
   const minPrice = selectedBase.basePrice * (1 - tolerance);
   const maxPrice = selectedBase.basePrice * (1 + tolerance);
 
-  const similar = (baseRows || [])
+  const allSimilar = (baseRows || [])
     .filter((row) => row?.key && row.key !== selectedKey)
     .filter((row) => {
       const price = Number(row?.basePrice || 0);
@@ -1357,8 +1357,8 @@ const getSimilarModels = asyncHandler(async (req, res) => {
     .sort(
       (a, b) =>
         Math.abs(Number(a?.priceDelta || 0)) - Math.abs(Number(b?.priceDelta || 0)),
-    )
-    .slice(0, limit);
+    );
+  const similar = allSimilar.slice(0, limit);
 
   return res.json({
     success: true,
@@ -1370,6 +1370,7 @@ const getSimilarModels = asyncHandler(async (req, res) => {
       tolerance,
       city: city || null,
       includeDiscontinued: Boolean(includeDiscontinued),
+      totalMatches: allSimilar.length,
     },
   });
 });

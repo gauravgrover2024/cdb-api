@@ -43,26 +43,62 @@ const normalizeModelForJoin = (brand, rawModel) => {
   let m = String(rawModel).trim().toLowerCase();
   const b = normalizeBrandForJoin(brand);
 
-  // strip brand prefix: "aston martin db12" -> "db12"
-  const prefix = b + " ";
-  if (m.startsWith(prefix)) {
-    m = m.slice(prefix.length);
-  }
-
   // unify separators: "grand-vitara" -> "grand vitara"
   m = m.replace(/[-_]+/g, " ");
 
   // collapse spaces
   m = m.replace(/\s+/g, " ").trim();
 
+  // Strip brand-leading tokens robustly:
+  // "maruti swift" with brand "maruti suzuki" -> "swift"
+  // "mercedes benz glc" with brand "mercedes benz" -> "glc"
+  const brandTokens = b.split(" ").filter(Boolean);
+  const modelTokens = m.split(" ").filter(Boolean);
+  let idx = 0;
+  while (idx < modelTokens.length && brandTokens.includes(modelTokens[idx])) {
+    idx += 1;
+  }
+  if (idx > 0 && idx < modelTokens.length) {
+    m = modelTokens.slice(idx).join(" ");
+  }
+
   return m;
 };
 
-const normalizeVariantForJoin = (rawVariant) => {
+const normalizeVariantForJoin = (rawVariant, rawBrand = "", rawModel = "") => {
   if (!rawVariant) return "";
   let v = String(rawVariant).trim().toLowerCase();
 
-  // just normalize whitespace so long names line up
+  v = v
+    .replace(/\+/g, " plus ")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const brandNorm = normalizeBrandForJoin(rawBrand);
+  const modelNorm = normalizeModelForJoin(brandNorm, rawModel);
+  const prefixes = [
+    `${brandNorm} ${modelNorm}`.trim(),
+    modelNorm,
+    brandNorm,
+    String(rawModel || "").toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim(),
+    String(rawBrand || "").toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim(),
+  ].filter(Boolean);
+
+  // Strip repeatedly until no brand/model prefix remains.
+  // Example: "Maruti Baleno Delta" -> "Delta"
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const prefix of prefixes) {
+      if (v.startsWith(`${prefix} `)) {
+        v = v.slice(prefix.length).trim();
+        changed = true;
+      }
+    }
+  }
+
+  // normalize whitespace so long names line up
   v = v.replace(/\s+/g, " ").trim();
 
   return v;
@@ -92,6 +128,41 @@ const presentVariant = (rawBrand, rawModel, rawVariant) => {
     trimLeading(variant, make) ||
     variant
   );
+};
+
+const compactAlphaNum = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
+const canonicalVariantForCompare = (rawBrand, rawModel, rawVariant) => {
+  const make = presentMake(rawBrand);
+  const model = presentModel(rawBrand, rawModel);
+  const normalizedVariant = presentVariant(rawBrand, rawModel, rawVariant);
+
+  const candidates = [
+    normalizedVariant,
+    trimLeading(normalizedVariant, model),
+    trimLeading(normalizedVariant, `${make} ${model}`.trim()),
+    trimLeading(normalizedVariant, make),
+    rawVariant,
+  ].filter(Boolean);
+
+  return compactAlphaNum(candidates[0] || rawVariant || "");
+};
+
+const variantsLikelySame = (brand, model, leftVariant, rightVariant) => {
+  const left = canonicalVariantForCompare(brand, model, leftVariant);
+  const right = canonicalVariantForCompare(brand, model, rightVariant);
+  if (!left || !right) return false;
+  return left === right || left.includes(right) || right.includes(left);
+};
+
+const buildBrandRegexCandidates = (brand) => {
+  const raw = String(brand || "").trim().toLowerCase();
+  const canonical = normalizeBrandForJoin(raw);
+  const firstToken = canonical.split(" ").filter(Boolean)[0] || "";
+  return [...new Set([raw, canonical, firstToken].filter(Boolean))];
 };
 
 // Simple score so we prefer New-Delhi > Delhi > others when deduping
@@ -200,14 +271,27 @@ export const getFeaturesBySelection = asyncHandler(async (req, res) => {
 
   const brandKey = normalizeBrandForJoin(brand);
   const modelKey = normalizeModelForJoin(brandKey, rawModel);
-  const variantKey = normalizeVariantForJoin(rawVariant);
+  const variantKey = normalizeVariantForJoin(rawVariant, brand, rawModel);
   const joinKey = `${brandKey}|${modelKey}|${variantKey}`;
+
+  const findFuzzyMatch = (rows = []) => {
+    if (!Array.isArray(rows) || !rows.length) return null;
+    const exact = rows.find((row) => row?._joinKey === joinKey);
+    if (exact) return exact;
+
+    return rows.find((row) => {
+      const rowBrandKey = normalizeBrandForJoin(row?.make || row?.brand);
+      const rowModelKey = normalizeModelForJoin(rowBrandKey, row?.model);
+      if (rowBrandKey !== brandKey || rowModelKey !== modelKey) return false;
+      return variantsLikelySame(brand, rawModel, rawVariant, row?.variant);
+    });
+  };
 
   // Serve from in-memory cache when available (avoids DB round-trip).
   // Use stored _joinKey for direct comparison — re-normalizing the presentation-form
   // variant would produce a different key than buildFullJoin's raw-variant-based key.
   if (_vwpfCache) {
-    const cached = _vwpfCache.data.find((v) => v._joinKey === joinKey);
+    const cached = findFuzzyMatch(_vwpfCache.data);
     return res.json({
       success: true,
       data: cached?.features ?? [],
@@ -215,15 +299,21 @@ export const getFeaturesBySelection = asyncHandler(async (req, res) => {
   }
 
   // Cache miss: fall back to DB query
+  const brandCandidates = buildBrandRegexCandidates(brand);
   const featureDocs = await VehicleFeature.find({
-    brand: new RegExp(`^${escapeRegex(brand)}$`, 'i'),
+    $or: brandCandidates.map((candidate) => ({
+      brand: new RegExp(`^${escapeRegex(candidate)}$`, "i"),
+    })),
   }).lean();
 
   const match = featureDocs.find((f) => {
     const fBrandKey = normalizeBrandForJoin(f.brand);
     const fModelKey = normalizeModelForJoin(fBrandKey, f.model);
-    const fVariantKey = normalizeVariantForJoin(f.variant);
-    return `${fBrandKey}|${fModelKey}|${fVariantKey}` === joinKey;
+    const fVariantKey = normalizeVariantForJoin(f.variant, f.brand, f.model);
+    const candidateJoinKey = `${fBrandKey}|${fModelKey}|${fVariantKey}`;
+    if (candidateJoinKey === joinKey) return true;
+    if (fBrandKey !== brandKey || fModelKey !== modelKey) return false;
+    return variantsLikelySame(brand, rawModel, rawVariant, f.variant);
   });
 
   res.json({
@@ -344,7 +434,7 @@ const buildFullJoin = async () => {
   featureDocs.forEach((f) => {
     const brandKey = normalizeBrandForJoin(f.brand);
     const modelKey = normalizeModelForJoin(brandKey, f.model);
-    const variantKey = normalizeVariantForJoin(f.variant);
+    const variantKey = normalizeVariantForJoin(f.variant, f.brand, f.model);
     featureIndex[`${brandKey}|${modelKey}|${variantKey}`] = f;
   });
 
@@ -363,7 +453,7 @@ const buildFullJoin = async () => {
 
     const brandKey = normalizeBrandForJoin(brand);
     const modelKey = normalizeModelForJoin(brandKey, modelRaw);
-    const variantKey = normalizeVariantForJoin(variantRaw);
+    const variantKey = normalizeVariantForJoin(variantRaw, brand, modelRaw);
     const joinKey = `${brandKey}|${modelKey}|${variantKey}`;
 
     const f = featureIndex[joinKey];
