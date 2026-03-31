@@ -9,6 +9,21 @@ const LOAN_ID_PREFIX = 'LN';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+const normalizeLoanType = (loan = {}) => {
+  const raw = loan?.typeOfLoan || loan?.loanType || loan?.caseType || loan?.vehicleType || '';
+  return String(raw).trim().toLowerCase().replace(/[-_\s]+/g, ' ');
+};
+
+// Point 5: Payment only allowed for New Car (both financed and cash)
+const isNewCarLoan = (loan = {}) => {
+  const normalized = normalizeLoanType(loan);
+  if (!normalized) return false;
+  if (normalized.includes('used') || normalized.includes('refinance') || normalized.includes('cash in')) return false;
+  return normalized === 'new' || normalized.includes('new car') || normalized.includes('newcar');
+};
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 const reserveNextLoanId = async () => {
   const year = new Date().getFullYear();
   const key = `loan_id_sequence_${year}`;
@@ -182,6 +197,11 @@ const savePayment = asyncHandler(async (req, res) => {
 
   if (!paymentRecord) {
     const loan = await Loan.findOne({ loanId });
+    // Point 5: only New Car loans (financed + cash) allowed
+    if (loan && !isNewCarLoan(loan)) {
+      res.status(400);
+      throw new Error('Payment is only allowed for New Car loans (financed and cash)');
+    }
     if (loan && isLegacyCase(loan)) {
       return res.status(200).json({
         success: true,
