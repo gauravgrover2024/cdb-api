@@ -1,8 +1,42 @@
 import asyncHandler from 'express-async-handler';
 import Payment from '../models/Payment.js';
 import Loan from '../models/Loan.js';
+import Counter from '../models/Counter.js';
+import DeliveryOrder from '../models/DeliveryOrder.js';
 
 const LEGACY_CUTOFF = new Date('2026-02-01T00:00:00.000Z');
+const LOAN_ID_PREFIX = 'LN';
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const reserveNextLoanId = async () => {
+  const year = new Date().getFullYear();
+  const key = `loan_id_sequence_${year}`;
+  const regex = new RegExp(`^${LOAN_ID_PREFIX}-${year}-\\d+$`, 'i');
+
+  const bumped = await Counter.findOneAndUpdate(
+    { key },
+    { $inc: { value: 1 } },
+    { returnDocument: 'after', lean: true },
+  );
+  if (bumped?.value)
+    return `${LOAN_ID_PREFIX}-${year}-${String(bumped.value).padStart(4, '0')}`;
+
+  const lastLoan = await Loan.findOne({ loanId: { $regex: regex } })
+    .sort({ loanId: -1 })
+    .select('loanId')
+    .lean();
+  const lastSeq = lastLoan?.loanId ? Number(lastLoan.loanId.split('-')[2]) || 0 : 0;
+
+  try { await Counter.create({ key, value: lastSeq }); } catch (e) { if (e?.code !== 11000) throw e; }
+
+  const bumped2 = await Counter.findOneAndUpdate(
+    { key },
+    { $inc: { value: 1 } },
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true, lean: true },
+  );
+  return `${LOAN_ID_PREFIX}-${year}-${String(bumped2?.value || 1).padStart(4, '0')}`;
+};
 
 const parseBusinessDate = (loan = {}) => {
   const candidates = [
@@ -35,6 +69,81 @@ const isLegacyCase = (loan = {}) => {
   if (!businessDate) return false;
   return businessDate < LEGACY_CUTOFF;
 };
+
+// ── Controllers ───────────────────────────────────────────────────────────────
+
+// @desc    Create Payment directly — auto-creates loan file + DO skeleton
+// @route   POST /api/payments
+// @access  Public
+const createDirectPayment = asyncHandler(async (req, res) => {
+  const {
+    customerName,
+    primaryMobile,
+    vehicleMake,
+    vehicleModel,
+    vehicleVariant,
+    isFinanced,
+    typeOfLoan,
+    dealerName,
+    dealerAddress,
+    vehicleColor,
+    createdBy,
+  } = req.body;
+
+  if (!customerName || !primaryMobile) {
+    res.status(400);
+    throw new Error('customerName and primaryMobile are required');
+  }
+
+  const loanType = typeOfLoan || 'New Car';
+  const financed = isFinanced === false || isFinanced === 'No' ? 'No' : 'Yes';
+
+  const loanId = await reserveNextLoanId();
+
+  const loan = await Loan.create({
+    loanId,
+    customerName,
+    primaryMobile,
+    vehicleMake: vehicleMake || '',
+    vehicleModel: vehicleModel || '',
+    vehicleVariant: vehicleVariant || '',
+    typeOfLoan: loanType,
+    loanType,
+    isFinanced: financed,
+    currentStage: 'profile',
+    status: 'Pending',
+    createdBy: createdBy || undefined,
+  });
+
+  await DeliveryOrder.create({
+    loanId,
+    do_loanId: loanId,
+    dealerName: dealerName || '',
+    dealerAddress: dealerAddress || '',
+    vehicleModel: vehicleModel || '',
+    vehicleColor: vehicleColor || '',
+    createdBy: createdBy || undefined,
+  });
+
+  const payment = await Payment.create({
+    loanId,
+    showroomRows: [],
+    entryTotals: {},
+    isVerified: false,
+    autocreditsRows: [],
+    autocreditsTotals: {},
+    isAutocreditsVerified: false,
+    createdBy: createdBy || undefined,
+  });
+
+  return res.status(201).json({
+    success: true,
+    loanId,
+    data: payment,
+    loan: { loanId, customerName, primaryMobile },
+    message: `Loan file ${loanId} created with Payment and DO`,
+  });
+});
 
 // @desc    Get all payments
 // @route   GET /api/payments
@@ -71,7 +180,6 @@ const savePayment = asyncHandler(async (req, res) => {
 
   let paymentRecord = await Payment.findOne({ loanId });
 
-  // Business rule: do not auto/create payment for cases delivered/disbursed before 1 Feb 2026.
   if (!paymentRecord) {
     const loan = await Loan.findOne({ loanId });
     if (loan && isLegacyCase(loan)) {
@@ -79,8 +187,7 @@ const savePayment = asyncHandler(async (req, res) => {
         success: true,
         data: null,
         skipped: true,
-        message:
-          'Payment creation is paused for cases delivered/disbursed before 1 Feb 2026.',
+        message: 'Payment creation is paused for cases delivered/disbursed before 1 Feb 2026.',
       });
     }
   }
@@ -99,4 +206,4 @@ const savePayment = asyncHandler(async (req, res) => {
   return res.status(201).json({ success: true, data: created });
 });
 
-export { getPayments, getPaymentsByLoanId, savePayment };
+export { createDirectPayment, getPayments, getPaymentsByLoanId, savePayment };

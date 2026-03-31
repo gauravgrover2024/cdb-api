@@ -1,10 +1,11 @@
 import express from 'express';
-import { getDeliveryOrders, getDeliveryOrderByLoanId, saveDeliveryOrder } from '../controllers/deliveryOrderController.js';
+import { createDirectDO, getDeliveryOrders, getDeliveryOrderByLoanId, saveDeliveryOrder } from '../controllers/deliveryOrderController.js';
 
 const router = express.Router();
 
 router.route('/')
-  .get(getDeliveryOrders);
+  .get(getDeliveryOrders)
+  .post(createDirectDO);
 
 router.route('/:loanId')
   .get(getDeliveryOrderByLoanId)

@@ -1,10 +1,11 @@
 import express from 'express';
-import { getPayments, getPaymentsByLoanId, savePayment } from '../controllers/paymentController.js';
+import { createDirectPayment, getPayments, getPaymentsByLoanId, savePayment } from '../controllers/paymentController.js';
 
 const router = express.Router();
 
 router.route('/')
-  .get(getPayments);
+  .get(getPayments)
+  .post(createDirectPayment);
 
 router.route('/:loanId')
   .get(getPaymentsByLoanId)
