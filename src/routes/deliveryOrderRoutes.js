@@ -1,5 +1,11 @@
 import express from 'express';
-import { createDirectDO, getDeliveryOrders, getDeliveryOrderByLoanId, saveDeliveryOrder } from '../controllers/deliveryOrderController.js';
+import {
+  createDirectDO,
+  deleteDeliveryOrder,
+  getDeliveryOrders,
+  getDeliveryOrderByLoanId,
+  saveDeliveryOrder,
+} from '../controllers/deliveryOrderController.js';
 
 const router = express.Router();
 
@@ -10,6 +16,7 @@ router.route('/')
 router.route('/:loanId')
   .get(getDeliveryOrderByLoanId)
   .post(saveDeliveryOrder)
-  .put(saveDeliveryOrder);
+  .put(saveDeliveryOrder)
+  .delete(deleteDeliveryOrder);
 
 export default router;

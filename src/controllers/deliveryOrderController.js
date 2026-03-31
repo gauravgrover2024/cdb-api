@@ -325,4 +325,39 @@ const saveDeliveryOrder = asyncHandler(async (req, res) => {
   return res.status(201).json({ success: true, data: created });
 });
 
-export { createDirectDO, getDeliveryOrders, getDeliveryOrderByLoanId, saveDeliveryOrder };
+// @desc    Delete DO by loanId
+// @route   DELETE /api/do/:loanId
+// @access  Public
+const deleteDeliveryOrder = asyncHandler(async (req, res) => {
+  const loanId = String(req.params.loanId || '').trim();
+  if (!loanId) {
+    res.status(400);
+    throw new Error('loanId is required');
+  }
+
+  const record = await DeliveryOrder.findOne({
+    $or: [{ loanId }, { do_loanId: loanId }],
+  });
+
+  if (!record) {
+    return res.status(404).json({
+      success: false,
+      message: 'Delivery Order not found',
+    });
+  }
+
+  await record.deleteOne();
+  return res.json({
+    success: true,
+    message: 'Delivery Order deleted successfully',
+    loanId,
+  });
+});
+
+export {
+  createDirectDO,
+  getDeliveryOrders,
+  getDeliveryOrderByLoanId,
+  saveDeliveryOrder,
+  deleteDeliveryOrder,
+};
