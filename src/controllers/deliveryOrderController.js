@@ -7,6 +7,9 @@ import Payment from '../models/Payment.js';
 const LEGACY_CUTOFF = new Date('2026-02-01T00:00:00.000Z');
 const LOAN_ID_PREFIX = 'LN';
 
+const escapeRegex = (value = '') =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const reserveNextLoanId = async () => {
@@ -179,11 +182,80 @@ const createDirectDO = asyncHandler(async (req, res) => {
 // @route   GET /api/do
 // @access  Public
 const getDeliveryOrders = asyncHandler(async (req, res) => {
-  const dos = await DeliveryOrder.find({}).sort({ createdAt: -1 });
+  const {
+    search = '',
+    status = '',
+    dealerName = '',
+    skip = 0,
+    page = 1,
+    limit = 200,
+    noCount = '',
+  } = req.query;
+
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  const safePage = Math.max(Number(page) || 1, 1);
+  const safeSkip = Number.isFinite(Number(skip)) && Number(skip) >= 0
+    ? Number(skip)
+    : (safePage - 1) * safeLimit;
+  const skipCount = new Set(['1', 'true', 'yes']).has(
+    String(noCount || '').trim().toLowerCase(),
+  );
+
+  const andFilters = [];
+  const safeStatus = String(status || '').trim();
+  if (safeStatus) andFilters.push({ status: safeStatus });
+  const safeDealer = String(dealerName || '').trim();
+  if (safeDealer) {
+    andFilters.push({
+      dealerName: new RegExp(escapeRegex(safeDealer), 'i'),
+    });
+  }
+  const safeSearch = String(search || '').trim();
+  if (safeSearch) {
+    const re = new RegExp(escapeRegex(safeSearch), 'i');
+    andFilters.push({
+      $or: [
+        { loanId: re },
+        { do_loanId: re },
+        { dealerName: re },
+        { vehicleModel: re },
+        { doNumber: re },
+        { do_refNo: re },
+      ],
+    });
+  }
+
+  const query =
+    andFilters.length === 0
+      ? {}
+      : andFilters.length === 1
+        ? andFilters[0]
+        : { $and: andFilters };
+
+  const dataPromise = DeliveryOrder.find(query)
+    .sort({ updatedAt: -1, _id: -1 })
+    .skip(safeSkip)
+    .limit(safeLimit)
+    .lean();
+  const totalPromise = skipCount
+    ? Promise.resolve(null)
+    : DeliveryOrder.countDocuments(query);
+
+  const [dos, countedTotal] = await Promise.all([dataPromise, totalPromise]);
+  const total = skipCount
+    ? safeSkip + dos.length + (dos.length === safeLimit ? 1 : 0)
+    : Number(countedTotal || 0);
 
   res.json({
     success: true,
     data: dos,
+    total,
+    page: Math.floor(safeSkip / safeLimit) + 1,
+    limit: safeLimit,
+    skip: safeSkip,
+    hasMore: skipCount
+      ? dos.length === safeLimit
+      : safeSkip + dos.length < total,
   });
 });
 
@@ -191,7 +263,7 @@ const getDeliveryOrders = asyncHandler(async (req, res) => {
 // @route   GET /api/do/:loanId
 // @access  Public
 const getDeliveryOrderByLoanId = asyncHandler(async (req, res) => {
-  const doRecord = await DeliveryOrder.findOne({ loanId: req.params.loanId });
+  const doRecord = await DeliveryOrder.findOne({ loanId: req.params.loanId }).lean();
 
   if (doRecord) {
     res.json({ success: true, data: doRecord });

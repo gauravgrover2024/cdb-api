@@ -11,6 +11,7 @@
     "indexes:customer": "node src/scripts/ensureCustomerIndexes.js",
     "indexes:vehicle": "node src/scripts/ensureVehicleIndexes.js",
     "indexes:vehicle-record": "node src/scripts/ensureVehicleRecordIndexes.js",
+    "indexes:ops": "node src/scripts/ensureOperationsIndexes.js",
     "backfill:latest-business": "node src/scripts/backfillLatestBusinessDate.js",
     "banks:import": "node src/scripts/importBankDirectoryFromFile.js",
     "showrooms:import": "node src/scripts/importCardekhoShowrooms.js",

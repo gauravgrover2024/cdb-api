@@ -1,34 +1,98 @@
 // backend/routes/bookings.js
 import express from "express";
 import Booking from "../models/Booking.js";
+import Counter from "../models/Counter.js";
 
 const router = express.Router();
 
 // Generate bookingId like BKG-0001 using a counter in DB
 async function generateBookingId() {
-  // Count existing bookings and pad – simple but fine for now
-  const count = await Booking.countDocuments({});
-  const next = count + 1;
+  const key = "booking_id_sequence";
+  const bumped = await Counter.findOneAndUpdate(
+    { key },
+    { $inc: { value: 1 } },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  ).lean();
+  const next = Number(bumped?.value || 1);
   return `BKG-${String(next).padStart(4, "0")}`;
 }
+
+const escapeRegex = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // GET /api/bookings  -> list bookings with optional status filter
 router.get("/", async (req, res, next) => {
   try {
-    const { status, limit = 200, skip = 0 } = req.query;
+    const {
+      status,
+      search = "",
+      limit = 200,
+      skip = 0,
+      page = 1,
+      sortBy = "createdAt",
+      sortDir = "desc",
+      noCount = "",
+    } = req.query;
 
     const query = {};
     if (status) {
       // keep exact status (e.g. "Open", "Cancelled", "Converted")
       query.status = status;
     }
+    const safeSearch = String(search || "").trim();
+    if (safeSearch) {
+      const re = new RegExp(escapeRegex(safeSearch), "i");
+      query.$or = [
+        { bookingId: re },
+        { customerName: re },
+        { customerPhone: re },
+        { vehicleMake: re },
+        { vehicleModel: re },
+        { showroomName: re },
+      ];
+    }
 
-    const bookings = await Booking.find(query)
-      .sort({ createdAt: -1 })
-      .skip(Number(skip) || 0)
-      .limit(Number(limit) || 200);
+    const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+    const safePage = Math.max(Number(page) || 1, 1);
+    const safeSkip =
+      Number.isFinite(Number(skip)) && Number(skip) >= 0
+        ? Number(skip)
+        : (safePage - 1) * safeLimit;
+    const safeSortBy = new Set(["createdAt", "updatedAt", "bookingId"]).has(
+      String(sortBy || "").trim(),
+    )
+      ? String(sortBy).trim()
+      : "createdAt";
+    const safeSortDir =
+      String(sortDir || "").trim().toLowerCase() === "asc" ? 1 : -1;
+    const skipCount = new Set(["1", "true", "yes"]).has(
+      String(noCount || "").trim().toLowerCase(),
+    );
 
-    res.json(bookings);
+    const dataPromise = Booking.find(query)
+      .sort({ [safeSortBy]: safeSortDir, _id: -1 })
+      .skip(safeSkip)
+      .limit(safeLimit)
+      .lean();
+    const totalPromise = skipCount
+      ? Promise.resolve(null)
+      : Booking.countDocuments(query);
+    const [bookings, countedTotal] = await Promise.all([dataPromise, totalPromise]);
+    const total = skipCount
+      ? safeSkip + bookings.length + (bookings.length === safeLimit ? 1 : 0)
+      : Number(countedTotal || 0);
+
+    res.json({
+      success: true,
+      data: bookings,
+      total,
+      page: Math.floor(safeSkip / safeLimit) + 1,
+      limit: safeLimit,
+      skip: safeSkip,
+      hasMore: skipCount
+        ? bookings.length === safeLimit
+        : safeSkip + bookings.length < total,
+    });
   } catch (err) {
     next(err);
   }

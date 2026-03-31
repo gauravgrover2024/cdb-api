@@ -100,4 +100,11 @@ const bookingSchema = new mongoose.Schema(
   },
 );
 
+bookingSchema.index({ createdAt: -1, _id: -1 });
+bookingSchema.index({ status: 1, createdAt: -1, _id: -1 });
+bookingSchema.index({ customerName: 1, createdAt: -1 });
+bookingSchema.index({ customerPhone: 1, createdAt: -1 });
+bookingSchema.index({ linkedLoanId: 1 });
+bookingSchema.index({ linkedPaymentLoanId: 1 });
+
 export default mongoose.model("Booking", bookingSchema);
