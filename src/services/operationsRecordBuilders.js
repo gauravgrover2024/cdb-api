@@ -397,6 +397,7 @@ const buildDeliveryOrderSnapshot = (payload = {}, loan = {}, loanId = "") => {
       ["do_processingFees"],
       firstNumber(
         loan?.postfile_processingFees,
+        loan?.approval_processingFees,
         loan?.processingFees,
         loan?.postFile?.processingFees,
         loan?.postfile?.processingFees,
