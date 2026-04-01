@@ -20,6 +20,7 @@
     "vehicles:clear": "node src/scripts/clearVehicles.js",
     "cleanup:legacy-do-payments": "node src/scripts/cleanupLegacyDoPayments.js",
     "do:rebuild": "node src/scripts/rebuildDeliveryOrdersFromLoans.js",
+    "payments:rebuild": "node src/scripts/rebuildPaymentsFromDOs.js",
     "audit:vehicle-master": "node src/scripts/auditVehicleMasterRecords.js",
     "backfill:vehicle-master-missing": "node src/scripts/backfillMissingVehicleMasterRecords.js",
     "dedupe:loan-ids": "node src/scripts/dedupeLoanIds.js"

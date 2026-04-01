@@ -160,6 +160,16 @@ deliveryOrderSchema.index({ loanId: 1, updatedAt: -1 });
 deliveryOrderSchema.index({ do_refNo: 1, updatedAt: -1 });
 deliveryOrderSchema.index({ doNumber: 1, updatedAt: -1 });
 deliveryOrderSchema.index({ vehicleModel: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ customerName: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ do_customerName: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ primaryMobile: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ do_primaryMobile: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ do_dealerName: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ vehicleMake: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ do_vehicleModel: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ do_vehicleMake: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ vehicleVariant: 1, updatedAt: -1 });
+deliveryOrderSchema.index({ do_vehicleVariant: 1, updatedAt: -1 });
 
 const DeliveryOrder = mongoose.model('DeliveryOrder', deliveryOrderSchema);
 

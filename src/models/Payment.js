@@ -77,6 +77,14 @@ paymentSchema.index({ updatedAt: -1, _id: -1 });
 paymentSchema.index({ createdAt: -1, _id: -1 });
 paymentSchema.index({ showroomName: 1, updatedAt: -1 });
 paymentSchema.index({ channelName: 1, updatedAt: -1 });
+paymentSchema.index({ customerName: 1, updatedAt: -1 });
+paymentSchema.index({ primaryMobile: 1, updatedAt: -1 });
+paymentSchema.index({ vehicleMake: 1, updatedAt: -1 });
+paymentSchema.index({ vehicleModel: 1, updatedAt: -1 });
+paymentSchema.index({ vehicleVariant: 1, updatedAt: -1 });
+paymentSchema.index({ do_refNo: 1, updatedAt: -1 });
+paymentSchema.index({ doNumber: 1, updatedAt: -1 });
+paymentSchema.index({ loanId: 1, updatedAt: -1 });
 
 // Calculate outstanding amounts before saving
 paymentSchema.pre('save', function () {

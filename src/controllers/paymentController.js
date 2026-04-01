@@ -15,6 +15,12 @@ const LOAN_ID_PREFIX = 'LN';
 const escapeRegex = (value = '') =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const parseCsvIds = (value = '') =>
+  String(value || '')
+    .split(',')
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -170,13 +176,14 @@ const getPayments = asyncHandler(async (req, res) => {
     search = '',
     showroomName = '',
     channelName = '',
+    loanIds = '',
     skip = 0,
     page = 1,
-    limit = 200,
+    limit = 1000,
     noCount = '',
   } = req.query;
 
-  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  const safeLimit = Math.min(Math.max(Number(limit) || 1000, 1), 5000);
   const safePage = Math.max(Number(page) || 1, 1);
   const safeSkip = Number.isFinite(Number(skip)) && Number(skip) >= 0
     ? Number(skip)
@@ -186,14 +193,25 @@ const getPayments = asyncHandler(async (req, res) => {
   );
 
   const andFilters = [];
+  const safeLoanIds = parseCsvIds(loanIds);
+  if (safeLoanIds.length) {
+    andFilters.push({ loanId: { $in: safeLoanIds } });
+  }
   const safeSearch = String(search || '').trim();
   if (safeSearch) {
     const re = new RegExp(escapeRegex(safeSearch), 'i');
     andFilters.push({
       $or: [
         { loanId: re },
+        { customerName: re },
+        { primaryMobile: re },
+        { vehicleMake: re },
+        { vehicleModel: re },
+        { vehicleVariant: re },
         { showroomName: re },
         { channelName: re },
+        { do_refNo: re },
+        { doNumber: re },
       ],
     });
   }
