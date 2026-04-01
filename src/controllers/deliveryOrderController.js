@@ -3,8 +3,13 @@ import DeliveryOrder from '../models/DeliveryOrder.js';
 import Loan from '../models/Loan.js';
 import Counter from '../models/Counter.js';
 import Payment from '../models/Payment.js';
+import {
+  buildDeliveryOrderSnapshot,
+  buildPaymentSkeleton,
+  isLegacyNewCar,
+  isNewCarLoan,
+} from '../services/operationsRecordBuilders.js';
 
-const LEGACY_CUTOFF = new Date('2026-02-01T00:00:00.000Z');
 const LOAN_ID_PREFIX = 'LN';
 
 const escapeRegex = (value = '') =>
@@ -40,133 +45,6 @@ const reserveNextLoanId = async () => {
   );
   return `${LOAN_ID_PREFIX}-${year}-${String(bumped2?.value || 1).padStart(4, '0')}`;
 };
-
-const normalizeLoanType = (loan = {}) => {
-  const raw =
-    loan?.typeOfLoan ||
-    loan?.loanType ||
-    loan?.caseType ||
-    loan?.vehicleType ||
-    '';
-  return String(raw).trim().toLowerCase().replace(/[-_\s]+/g, ' ');
-};
-
-const isNewCarLoan = (loan = {}) => {
-  const normalized = normalizeLoanType(loan);
-  if (!normalized) return false;
-
-  if (
-    normalized.includes('used') ||
-    normalized.includes('refinance') ||
-    normalized.includes('cash in')
-  ) {
-    return false;
-  }
-
-  return (
-    normalized === 'new' ||
-    normalized.includes('new car') ||
-    normalized.includes('newcar')
-  );
-};
-
-const parseBusinessDate = (loan = {}) => {
-  const candidates = [
-    loan?.latestBusinessDate,
-    loan?.delivery_date,
-    loan?.deliveryDate,
-    loan?.do_date,
-    loan?.doDate,
-    loan?.invoice_date,
-    loan?.invoiceDate,
-    loan?.approval_disbursedDate,
-    loan?.disbursement_date,
-    loan?.disbursementDate,
-    loan?.disbursedDate,
-    loan?.disburseDate,
-    loan?.postfile_disbursementDate,
-  ];
-
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    const date = new Date(candidate);
-    if (!Number.isNaN(date.getTime())) return date;
-  }
-
-  return null;
-};
-
-const isLegacyNewCar = (loan = {}) => {
-  if (!isNewCarLoan(loan)) return false;
-  const businessDate = parseBusinessDate(loan);
-  if (!businessDate) return false;
-  return businessDate < LEGACY_CUTOFF;
-};
-
-const buildDeliveryOrderSnapshot = (payload = {}, loan = {}, loanId = '') => ({
-  ...payload,
-  loanId,
-  do_loanId: loanId,
-  customerName:
-    payload?.customerName ||
-    payload?.do_customerName ||
-    loan?.customerName ||
-    loan?.applicant_name ||
-    '',
-  primaryMobile:
-    payload?.primaryMobile ||
-    payload?.do_primaryMobile ||
-    loan?.primaryMobile ||
-    loan?.mobile ||
-    '',
-  dealerName:
-    payload?.dealerName ||
-    payload?.do_dealerName ||
-    loan?.showroomDealerName ||
-    loan?.delivery_dealerName ||
-    loan?.dealerName ||
-    '',
-  dealerAddress:
-    payload?.dealerAddress ||
-    payload?.do_dealerAddress ||
-    loan?.showroomDealerAddress ||
-    loan?.delivery_dealerAddress ||
-    loan?.dealerAddress ||
-    '',
-  dealerMobile:
-    payload?.dealerMobile ||
-    payload?.do_dealerMobile ||
-    loan?.delivery_dealerContactNumber ||
-    loan?.dealerMobile ||
-    '',
-  dealerContactPerson:
-    payload?.dealerContactPerson ||
-    payload?.do_dealerContactPerson ||
-    loan?.delivery_dealerContactPerson ||
-    loan?.dealerContactPerson ||
-    '',
-  vehicleMake:
-    payload?.vehicleMake ||
-    payload?.do_vehicleMake ||
-    loan?.vehicleMake ||
-    '',
-  vehicleModel:
-    payload?.vehicleModel ||
-    payload?.do_vehicleModel ||
-    loan?.vehicleModel ||
-    '',
-  vehicleVariant:
-    payload?.vehicleVariant ||
-    payload?.do_vehicleVariant ||
-    loan?.vehicleVariant ||
-    '',
-  vehicleColor:
-    payload?.vehicleColor ||
-    payload?.do_vehicleColor ||
-    payload?.do_colour ||
-    loan?.vehicleColor ||
-    '',
-});
 
 // ── Controllers ───────────────────────────────────────────────────────────────
 
@@ -213,42 +91,61 @@ const createDirectDO = asyncHandler(async (req, res) => {
     createdBy: createdBy || undefined,
   });
 
-  const doRecord = await DeliveryOrder.create({
-    ...buildDeliveryOrderSnapshot(
-      {
-        dealerName: dealerName || '',
-        do_dealerName: dealerName || '',
-        dealerAddress: dealerAddress || '',
-        do_dealerAddress: dealerAddress || '',
-        customerName,
-        do_customerName: customerName,
-        primaryMobile,
-        do_primaryMobile: primaryMobile,
-        vehicleMake: vehicleMake || '',
-        do_vehicleMake: vehicleMake || '',
-        vehicleModel: vehicleModel || '',
-        do_vehicleModel: vehicleModel || '',
-        vehicleVariant: vehicleVariant || '',
-        do_vehicleVariant: vehicleVariant || '',
-        vehicleColor: vehicleColor || '',
-        do_vehicleColor: vehicleColor || '',
-      },
-      loan,
-      loanId,
-    ),
-    createdBy: createdBy || undefined,
-  });
-
-  await Payment.create({
+  const doPayload = buildDeliveryOrderSnapshot(
+    {
+      dealerName: dealerName || '',
+      do_dealerName: dealerName || '',
+      dealerAddress: dealerAddress || '',
+      do_dealerAddress: dealerAddress || '',
+      customerName,
+      do_customerName: customerName,
+      primaryMobile,
+      do_primaryMobile: primaryMobile,
+      vehicleMake: vehicleMake || '',
+      do_vehicleMake: vehicleMake || '',
+      vehicleModel: vehicleModel || '',
+      do_vehicleModel: vehicleModel || '',
+      vehicleVariant: vehicleVariant || '',
+      do_vehicleVariant: vehicleVariant || '',
+      vehicleColor: vehicleColor || '',
+      do_vehicleColor: vehicleColor || '',
+      do_colour: vehicleColor || '',
+    },
+    loan,
     loanId,
-    showroomRows: [],
-    entryTotals: {},
-    isVerified: false,
-    autocreditsRows: [],
-    autocreditsTotals: {},
-    isAutocreditsVerified: false,
-    createdBy: createdBy || undefined,
-  });
+  );
+
+  const doRecord = await DeliveryOrder.findOneAndUpdate(
+    { loanId },
+    {
+      $set: {
+        ...doPayload,
+        createdBy: createdBy || undefined,
+      },
+    },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+  );
+
+  await Payment.findOneAndUpdate(
+    { loanId },
+    {
+      $setOnInsert: {
+        ...buildPaymentSkeleton(loanId, req.body, loan),
+        createdBy: createdBy || undefined,
+      },
+    },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+  );
+
+  await Loan.findOneAndUpdate(
+    { loanId },
+    {
+      $set: {
+        do_number: doRecord?.do_refNo || doRecord?.doNumber || '',
+        do_date: doRecord?.do_date || doRecord?.doDate || new Date(),
+      },
+    },
+  );
 
   return res.status(201).json({
     success: true,
@@ -391,12 +288,41 @@ const saveDeliveryOrder = asyncHandler(async (req, res) => {
   if (doRecord) {
     Object.assign(doRecord, buildDeliveryOrderSnapshot(req.body, loan, loanId));
     const updated = await doRecord.save();
+    await Payment.findOneAndUpdate(
+      { loanId },
+      { $setOnInsert: buildPaymentSkeleton(loanId, req.body, loan) },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+    );
+    await Loan.findOneAndUpdate(
+      { loanId },
+      {
+        $set: {
+          do_number: updated?.do_refNo || updated?.doNumber || '',
+          do_date: updated?.do_date || updated?.doDate || null,
+        },
+      },
+    );
     return res.json({ success: true, data: updated });
   }
 
   const created = await DeliveryOrder.create({
     ...buildDeliveryOrderSnapshot(req.body, loan, loanId),
   });
+
+  await Payment.findOneAndUpdate(
+    { loanId },
+    { $setOnInsert: buildPaymentSkeleton(loanId, req.body, loan) },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+  );
+  await Loan.findOneAndUpdate(
+    { loanId },
+    {
+      $set: {
+        do_number: created?.do_refNo || created?.doNumber || '',
+        do_date: created?.do_date || created?.doDate || null,
+      },
+    },
+  );
 
   return res.status(201).json({ success: true, data: created });
 });

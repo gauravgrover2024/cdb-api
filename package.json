@@ -19,6 +19,7 @@
     "vehicles:import": "node src/scripts/importVehicles.js",
     "vehicles:clear": "node src/scripts/clearVehicles.js",
     "cleanup:legacy-do-payments": "node src/scripts/cleanupLegacyDoPayments.js",
+    "do:rebuild": "node src/scripts/rebuildDeliveryOrdersFromLoans.js",
     "audit:vehicle-master": "node src/scripts/auditVehicleMasterRecords.js",
     "backfill:vehicle-master-missing": "node src/scripts/backfillMissingVehicleMasterRecords.js",
     "dedupe:loan-ids": "node src/scripts/dedupeLoanIds.js"

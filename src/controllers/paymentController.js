@@ -3,27 +3,19 @@ import Payment from '../models/Payment.js';
 import Loan from '../models/Loan.js';
 import Counter from '../models/Counter.js';
 import DeliveryOrder from '../models/DeliveryOrder.js';
+import {
+  buildDeliveryOrderSnapshot,
+  buildPaymentSkeleton,
+  isNewCarLoan,
+  parseBusinessDate,
+} from '../services/operationsRecordBuilders.js';
 
-const LEGACY_CUTOFF = new Date('2026-02-01T00:00:00.000Z');
 const LOAN_ID_PREFIX = 'LN';
 
 const escapeRegex = (value = '') =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-const normalizeLoanType = (loan = {}) => {
-  const raw = loan?.typeOfLoan || loan?.loanType || loan?.caseType || loan?.vehicleType || '';
-  return String(raw).trim().toLowerCase().replace(/[-_\s]+/g, ' ');
-};
-
-// Point 5: Payment only allowed for New Car (both financed and cash)
-const isNewCarLoan = (loan = {}) => {
-  const normalized = normalizeLoanType(loan);
-  if (!normalized) return false;
-  if (normalized.includes('used') || normalized.includes('refinance') || normalized.includes('cash in')) return false;
-  return normalized === 'new' || normalized.includes('new car') || normalized.includes('newcar');
-};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -56,36 +48,10 @@ const reserveNextLoanId = async () => {
   return `${LOAN_ID_PREFIX}-${year}-${String(bumped2?.value || 1).padStart(4, '0')}`;
 };
 
-const parseBusinessDate = (loan = {}) => {
-  const candidates = [
-    loan?.latestBusinessDate,
-    loan?.delivery_date,
-    loan?.deliveryDate,
-    loan?.do_date,
-    loan?.doDate,
-    loan?.invoice_date,
-    loan?.invoiceDate,
-    loan?.approval_disbursedDate,
-    loan?.disbursement_date,
-    loan?.disbursementDate,
-    loan?.disbursedDate,
-    loan?.disburseDate,
-    loan?.postfile_disbursementDate,
-  ];
-
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    const date = new Date(candidate);
-    if (!Number.isNaN(date.getTime())) return date;
-  }
-
-  return null;
-};
-
 const isLegacyCase = (loan = {}) => {
   const businessDate = parseBusinessDate(loan);
   if (!businessDate) return false;
-  return businessDate < LEGACY_CUTOFF;
+  return businessDate < new Date('2026-02-01T00:00:00.000Z');
 };
 
 // ── Controllers ───────────────────────────────────────────────────────────────
@@ -133,26 +99,59 @@ const createDirectPayment = asyncHandler(async (req, res) => {
     createdBy: createdBy || undefined,
   });
 
-  await DeliveryOrder.create({
-    loanId,
-    do_loanId: loanId,
-    dealerName: dealerName || '',
-    dealerAddress: dealerAddress || '',
-    vehicleModel: vehicleModel || '',
-    vehicleColor: vehicleColor || '',
-    createdBy: createdBy || undefined,
-  });
+  const doRecord = await DeliveryOrder.findOneAndUpdate(
+    { loanId },
+    {
+      $set: {
+        ...buildDeliveryOrderSnapshot(
+          {
+            dealerName: dealerName || '',
+            do_dealerName: dealerName || '',
+            dealerAddress: dealerAddress || '',
+            do_dealerAddress: dealerAddress || '',
+            customerName,
+            do_customerName: customerName,
+            primaryMobile,
+            do_primaryMobile: primaryMobile,
+            vehicleMake: vehicleMake || '',
+            do_vehicleMake: vehicleMake || '',
+            vehicleModel: vehicleModel || '',
+            do_vehicleModel: vehicleModel || '',
+            vehicleVariant: vehicleVariant || '',
+            do_vehicleVariant: vehicleVariant || '',
+            vehicleColor: vehicleColor || '',
+            do_vehicleColor: vehicleColor || '',
+            do_colour: vehicleColor || '',
+          },
+          loan,
+          loanId,
+        ),
+        createdBy: createdBy || undefined,
+      },
+    },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+  );
 
-  const payment = await Payment.create({
-    loanId,
-    showroomRows: [],
-    entryTotals: {},
-    isVerified: false,
-    autocreditsRows: [],
-    autocreditsTotals: {},
-    isAutocreditsVerified: false,
-    createdBy: createdBy || undefined,
-  });
+  const payment = await Payment.findOneAndUpdate(
+    { loanId },
+    {
+      $setOnInsert: {
+        ...buildPaymentSkeleton(loanId, req.body, loan),
+        createdBy: createdBy || undefined,
+      },
+    },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+  );
+
+  await Loan.findOneAndUpdate(
+    { loanId },
+    {
+      $set: {
+        do_number: doRecord?.do_refNo || doRecord?.doNumber || '',
+        do_date: doRecord?.do_date || doRecord?.doDate || new Date(),
+      },
+    },
+  );
 
   return res.status(201).json({
     success: true,

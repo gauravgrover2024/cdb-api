@@ -13,6 +13,10 @@ import {
   validateDisbursementData,
 } from "../services/payoutService.js";
 import { upsertVehicleRecordFromLoan } from "../services/vehicleRecordService.js";
+import {
+  buildDeliveryOrderSnapshot,
+  buildPaymentSkeleton,
+} from "../services/operationsRecordBuilders.js";
 
 // Fields to sync from Loan -> Customer (comprehensive list)
 const CUSTOMER_SYNC_FIELDS = [
@@ -1290,40 +1294,28 @@ const ensureLinkedRecords = async (loanDoc) => {
   try {
     // Create/Update DeliveryOrder with loan snapshot data.
     // Avoid transaction/session dependency so this stays safe in serverless/shared Mongo tiers.
-    const doPayload = {
-      loanId: loanDoc.loanId,
-      do_loanId: loanDoc.loanId, // Maintain both field names for compatibility
-      dealerName: loanDoc.dealerName,
-      dealerAddress: loanDoc.dealerAddress,
-      vehicleModel: loanDoc.vehicleModel,
-      vehicleColor: loanDoc.vehicleColor,
-      chassisNumber: loanDoc.chassisNumber,
-      engineNumber: loanDoc.engineNumber,
-      createdBy: loanDoc.createdBy || undefined,
-    };
-
     await DeliveryOrder.findOneAndUpdate(
       { loanId: loanDoc.loanId },
-      { $setOnInsert: doPayload },
-      { upsert: true, new: true },
+      {
+        $setOnInsert: {
+          ...buildDeliveryOrderSnapshot({}, loanDoc, loanDoc.loanId),
+          chassisNumber: loanDoc.chassisNumber,
+          engineNumber: loanDoc.engineNumber,
+          createdBy: loanDoc.createdBy || undefined,
+        },
+      },
+      { upsert: true, returnDocument: "after" },
     );
-
-    // Create Payment skeleton (idempotent upsert)
-    const paymentPayload = {
-      loanId: loanDoc.loanId,
-      showroomRows: [],
-      entryTotals: {},
-      isVerified: false,
-      autocreditsRows: [],
-      autocreditsTotals: {},
-      isAutocreditsVerified: false,
-      createdBy: loanDoc.createdBy || undefined,
-    };
 
     await Payment.findOneAndUpdate(
       { loanId: loanDoc.loanId },
-      { $setOnInsert: paymentPayload },
-      { upsert: true, new: true },
+      {
+        $setOnInsert: {
+          ...buildPaymentSkeleton(loanDoc.loanId, {}, loanDoc),
+          createdBy: loanDoc.createdBy || undefined,
+        },
+      },
+      { upsert: true, returnDocument: "after" },
     );
   } catch (err) {
     // Linked records are supplementary, never block loan save/update flow.

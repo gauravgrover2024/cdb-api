@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 const deliveryOrderSchema = mongoose.Schema(
   {
     loanId: { type: String, required: true, unique: true }, // One DO per loan usually
-    do_loanId: { type: String, index: true },
+    do_loanId: { type: String },
 
     // Customer snapshot
     customerId: { type: String },
