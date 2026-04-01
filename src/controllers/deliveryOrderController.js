@@ -103,6 +103,71 @@ const isLegacyNewCar = (loan = {}) => {
   return businessDate < LEGACY_CUTOFF;
 };
 
+const buildDeliveryOrderSnapshot = (payload = {}, loan = {}, loanId = '') => ({
+  ...payload,
+  loanId,
+  do_loanId: loanId,
+  customerName:
+    payload?.customerName ||
+    payload?.do_customerName ||
+    loan?.customerName ||
+    loan?.applicant_name ||
+    '',
+  primaryMobile:
+    payload?.primaryMobile ||
+    payload?.do_primaryMobile ||
+    loan?.primaryMobile ||
+    loan?.mobile ||
+    '',
+  dealerName:
+    payload?.dealerName ||
+    payload?.do_dealerName ||
+    loan?.showroomDealerName ||
+    loan?.delivery_dealerName ||
+    loan?.dealerName ||
+    '',
+  dealerAddress:
+    payload?.dealerAddress ||
+    payload?.do_dealerAddress ||
+    loan?.showroomDealerAddress ||
+    loan?.delivery_dealerAddress ||
+    loan?.dealerAddress ||
+    '',
+  dealerMobile:
+    payload?.dealerMobile ||
+    payload?.do_dealerMobile ||
+    loan?.delivery_dealerContactNumber ||
+    loan?.dealerMobile ||
+    '',
+  dealerContactPerson:
+    payload?.dealerContactPerson ||
+    payload?.do_dealerContactPerson ||
+    loan?.delivery_dealerContactPerson ||
+    loan?.dealerContactPerson ||
+    '',
+  vehicleMake:
+    payload?.vehicleMake ||
+    payload?.do_vehicleMake ||
+    loan?.vehicleMake ||
+    '',
+  vehicleModel:
+    payload?.vehicleModel ||
+    payload?.do_vehicleModel ||
+    loan?.vehicleModel ||
+    '',
+  vehicleVariant:
+    payload?.vehicleVariant ||
+    payload?.do_vehicleVariant ||
+    loan?.vehicleVariant ||
+    '',
+  vehicleColor:
+    payload?.vehicleColor ||
+    payload?.do_vehicleColor ||
+    payload?.do_colour ||
+    loan?.vehicleColor ||
+    '',
+});
+
 // ── Controllers ───────────────────────────────────────────────────────────────
 
 // @desc    Create DO directly — auto-creates loan file + payment skeleton
@@ -149,12 +214,28 @@ const createDirectDO = asyncHandler(async (req, res) => {
   });
 
   const doRecord = await DeliveryOrder.create({
-    loanId,
-    do_loanId: loanId,
-    dealerName: dealerName || '',
-    dealerAddress: dealerAddress || '',
-    vehicleModel: vehicleModel || '',
-    vehicleColor: vehicleColor || '',
+    ...buildDeliveryOrderSnapshot(
+      {
+        dealerName: dealerName || '',
+        do_dealerName: dealerName || '',
+        dealerAddress: dealerAddress || '',
+        do_dealerAddress: dealerAddress || '',
+        customerName,
+        do_customerName: customerName,
+        primaryMobile,
+        do_primaryMobile: primaryMobile,
+        vehicleMake: vehicleMake || '',
+        do_vehicleMake: vehicleMake || '',
+        vehicleModel: vehicleModel || '',
+        do_vehicleModel: vehicleModel || '',
+        vehicleVariant: vehicleVariant || '',
+        do_vehicleVariant: vehicleVariant || '',
+        vehicleColor: vehicleColor || '',
+        do_vehicleColor: vehicleColor || '',
+      },
+      loan,
+      loanId,
+    ),
     createdBy: createdBy || undefined,
   });
 
@@ -308,18 +389,13 @@ const saveDeliveryOrder = asyncHandler(async (req, res) => {
   }
 
   if (doRecord) {
-    Object.assign(doRecord, req.body, {
-      loanId,
-      do_loanId: loanId,
-    });
+    Object.assign(doRecord, buildDeliveryOrderSnapshot(req.body, loan, loanId));
     const updated = await doRecord.save();
     return res.json({ success: true, data: updated });
   }
 
   const created = await DeliveryOrder.create({
-    ...req.body,
-    loanId,
-    do_loanId: loanId,
+    ...buildDeliveryOrderSnapshot(req.body, loan, loanId),
   });
 
   return res.status(201).json({ success: true, data: created });
