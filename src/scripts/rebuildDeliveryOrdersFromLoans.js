@@ -115,10 +115,20 @@ const main = async () => {
 
   for (const loan of eligibleLoans) {
     const snapshot = buildDeliveryOrderSnapshot({}, loan, loan.loanId);
-    const created = await DeliveryOrder.create({
-      ...snapshot,
-      createdBy: loan?.createdBy || undefined,
-    });
+    const created = await DeliveryOrder.findOneAndUpdate(
+      { loanId: loan.loanId },
+      {
+        $set: {
+          ...snapshot,
+          createdBy: loan?.createdBy || undefined,
+        },
+      },
+      {
+        upsert: true,
+        returnDocument: "after",
+        setDefaultsOnInsert: true,
+      },
+    );
     rebuilt += 1;
 
     const paymentUpsert = await Payment.findOneAndUpdate(
