@@ -33,21 +33,23 @@ const pickDisbursedBankName = (loan = {}) => {
 
   const disbursedBank = banks.find(
     (row) =>
-      asText(row?.status).toLowerCase() === "disbursed" &&
-      firstMeaningfulText(row?.bankName),
+      asText(row?.status).toLowerCase().includes("disburs") &&
+      firstMeaningfulText(row?.bankName, row?.name),
   );
   const approvedBank = banks.find(
     (row) =>
-      asText(row?.status).toLowerCase() === "approved" &&
-      firstMeaningfulText(row?.bankName),
+      asText(row?.status).toLowerCase().includes("approv") &&
+      firstMeaningfulText(row?.bankName, row?.name),
   );
 
   return firstMeaningfulText(
     loan?.disburse_bankName,
     disbursedBank?.bankName,
+    disbursedBank?.name,
     loan?.postfile_bankName,
     loan?.approval_bankName,
     approvedBank?.bankName,
+    approvedBank?.name,
   );
 };
 
@@ -207,4 +209,3 @@ main().catch((error) => {
   console.error("fixHypothecationFromDisbursedBank failed:", error);
   process.exit(1);
 });
-

@@ -1763,7 +1763,116 @@ const pickDisbursementDate = (loan) =>
   loan?.disbursement_date ||
   loan?.approval_disbursedDate ||
   loan?.disburse_date ||
+  loan?.disbursementDate ||
+  loan?.disbursedDate ||
+  loan?.disburseDate ||
+  loan?.postfile_disbursementDate ||
   null;
+
+const asValidDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const ensureDisbursedStateConsistency = (loan) => {
+  if (!loan || isCashDeliveryBasedCase(loan)) return;
+
+  const disbursedDate = asValidDate(pickDisbursementDate(loan));
+  const disburseFlag =
+    String(loan?.disburse_status || "").toLowerCase().includes("disburs") ||
+    String(loan?.disbursementStatus || "").toLowerCase().includes("disburs") ||
+    String(loan?.disbursement_status || "").toLowerCase().includes("disburs");
+
+  if (!disbursedDate && !disburseFlag) return;
+
+  const disbursedBankName = String(
+    loan?.disburse_bankName || loan?.postfile_bankName || loan?.approval_bankName || "",
+  ).trim();
+
+  const toEvent = (status, at) => ({
+    status,
+    date: at.toISOString(),
+    changedAt: at.toISOString(),
+  });
+
+  const banks = Array.isArray(loan.approval_banksData)
+    ? loan.approval_banksData.map((bank) => ({ ...bank }))
+    : [];
+
+  if (!banks.length && disbursedBankName) {
+    loan.approval_banksData = [
+      {
+        id: 1,
+        bankName: disbursedBankName,
+        status: "Disbursed",
+        disbursedDate: disbursedDate?.toISOString?.() || undefined,
+        statusHistory: disbursedDate
+          ? [toEvent("Approved", disbursedDate), toEvent("Disbursed", disbursedDate)]
+          : [{ status: "Disbursed" }],
+      },
+    ];
+  } else if (banks.length) {
+    const hasDisbursedBank = banks.some((bank) =>
+      String(bank?.status || "").toLowerCase().includes("disburs"),
+    );
+
+    if (!hasDisbursedBank) {
+      const wanted = disbursedBankName.toLowerCase();
+      const targetIndex = disbursedBankName
+        ? banks.findIndex((bank) => String(bank?.bankName || "").trim().toLowerCase() === wanted)
+        : 0;
+      const index = targetIndex >= 0 ? targetIndex : 0;
+
+      const target = { ...(banks[index] || {}) };
+      target.status = "Disbursed";
+      if (!target.disbursedDate && disbursedDate) {
+        target.disbursedDate = disbursedDate.toISOString();
+      }
+
+      const history = Array.isArray(target.statusHistory) ? [...target.statusHistory] : [];
+      const hasApprovedHistory = history.some(
+        (entry) => String(entry?.status || "").toLowerCase() === "approved",
+      );
+      const hasDisbursedHistory = history.some(
+        (entry) => String(entry?.status || "").toLowerCase() === "disbursed",
+      );
+      if (disbursedDate && !hasApprovedHistory) {
+        history.push(toEvent("Approved", disbursedDate));
+      }
+      if (disbursedDate && !hasDisbursedHistory) {
+        history.push(toEvent("Disbursed", disbursedDate));
+      }
+      target.statusHistory = history;
+      banks[index] = target;
+    }
+
+    loan.approval_banksData = banks;
+  }
+
+  loan.disburse_status = "Disbursed";
+  loan.disbursementStatus = "Disbursed";
+  loan.disbursement_status = "Disbursed";
+
+  if (disbursedBankName && !loan.disburse_bankName) {
+    loan.disburse_bankName = disbursedBankName;
+  }
+  if (disbursedDate) {
+    loan.disburse_date = loan.disburse_date || disbursedDate;
+    loan.approval_disbursedDate = loan.approval_disbursedDate || disbursedDate;
+    loan.disbursement_date = loan.disbursement_date || disbursedDate;
+    loan.disbursementDate = loan.disbursementDate || disbursedDate;
+    loan.disbursedDate = loan.disbursedDate || disbursedDate;
+    loan.disburseDate = loan.disburseDate || disbursedDate;
+  }
+
+  loan.approval_status = "Disbursed";
+
+  const stage = String(loan.currentStage || "").trim().toLowerCase();
+  if (["", "profile", "prefile", "approval"].includes(stage)) {
+    loan.currentStage = "postfile";
+  }
+};
 
 const pickCashBusinessDate = (loan) =>
   loan?.delivery_date ||
@@ -2350,6 +2459,12 @@ const getLoans = asyncHandler(async (req, res) => {
     "loanStatus",
     "isCashCase",
     "currentStage",
+    // Receivables/Payables (needed by Collections dashboard)
+    "loan_receivables",
+    "loanReceivables",
+    "receivables",
+    "loan_payouts",
+    "loan_payables",
     "createdAt",
     "updatedAt",
   ];
@@ -4364,6 +4479,7 @@ const updateLoan = asyncHandler(async (req, res) => {
       // ASSIGN ALL FIELDS - ensure nothing is missed
       Object.assign(loan, cleanedBody);
       applyUndefinedOnDoc(loan, cleanedBody);
+      ensureDisbursedStateConsistency(loan);
 
       step = "save-loan-primary";
       // Save with retry for version conflicts.
@@ -4728,11 +4844,17 @@ const saveBanksData = asyncHandler(async (req, res) => {
     null;
 
   // Auto-set approval_status based on bank statuses
+  const hasDisbursedBank = banks.some((b) => {
+    const s = String(b?.status || "").toLowerCase();
+    return s === "disbursed";
+  });
   const hasApprovedOrDisbursedBank = banks.some((b) => {
     const s = String(b?.status || "").toLowerCase();
     return s === "approved" || s === "disbursed";
   });
-  if (hasApprovedOrDisbursedBank && loan.approval_status !== "Approved") {
+  if (hasDisbursedBank) {
+    loan.approval_status = "Disbursed";
+  } else if (hasApprovedOrDisbursedBank && loan.approval_status !== "Approved") {
     loan.approval_status = "Approved";
   }
 
@@ -4748,6 +4870,8 @@ const saveBanksData = asyncHandler(async (req, res) => {
       loan.dsaCode = primaryBank.dsaCode;
     }
   }
+
+  ensureDisbursedStateConsistency(loan);
 
   // Save with retry for version conflicts
   await saveWithRetry(loan);

@@ -25,6 +25,7 @@
     "fix:payment-loan-dates": "node src/scripts/fixPaymentLoanEntryDatesFromDisbursement.js",
     "audit:vehicle-master": "node src/scripts/auditVehicleMasterRecords.js",
     "backfill:vehicle-master-missing": "node src/scripts/backfillMissingVehicleMasterRecords.js",
+    "backfill:disbursed-status": "node src/scripts/backfillDisbursedStatusesFromDates.js --apply",
     "dedupe:loan-ids": "node src/scripts/dedupeLoanIds.js"
   },
   "dependencies": {

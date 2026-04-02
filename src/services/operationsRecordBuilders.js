@@ -309,10 +309,10 @@ const buildDeliveryOrderSnapshot = (payload = {}, loan = {}, loanId = "") => {
     ["vehicleColor", "do_vehicleColor", "do_colour"],
     firstMeaningfulText(loan?.vehicleColor, loan?.colour, loan?.color),
   );
-  const hypothecationBank = resolveField(
-    payload,
-    ["do_hypothecation", "hypothecationBank"],
+  const hypothecationBank = firstMeaningfulText(
+    // Always prefer the disbursed-bank source from Loan to avoid stale UI payloads.
     pickDisbursedBankName(loan),
+    resolveField(payload, ["do_hypothecation", "hypothecationBank"], undefined),
   );
 
   return {
