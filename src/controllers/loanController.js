@@ -1831,7 +1831,12 @@ const normalizeStatus = (loan) => {
   ).toLowerCase();
   if (!base) return "pending";
   if (base.includes("disburs")) return "disbursed";
-  if (base.includes("approv")) return "approved";
+  if (
+    base.includes("approv") ||
+    base.includes("accept") ||
+    base.includes("sanction")
+  )
+    return "approved";
   if (
     base.includes("reject") ||
     base.includes("declin") ||
@@ -5239,10 +5244,16 @@ const disburseLoan = asyncHandler(async (req, res) => {
   // =====================================
   // 2. VERIFY LOAN IS APPROVED
   // =====================================
-  const hasApprovedBankInData = Array.isArray(loan.approval_banksData) &&
+  const hasApprovedBankInData =
+    Array.isArray(loan.approval_banksData) &&
     loan.approval_banksData.some((b) => {
       const s = String(b?.status || "").toLowerCase();
-      return s === "approved" || s === "disbursed";
+      return (
+        s === "approved" ||
+        s === "accepted" ||
+        s === "sanctioned" ||
+        s === "disbursed"
+      );
     });
   if (loan.approval_status !== "Approved" && !hasApprovedBankInData) {
     res.status(400);
@@ -5409,7 +5420,9 @@ const disburseLoan = asyncHandler(async (req, res) => {
 const getBanksData = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const loan = await Loan.findById(id);
+  const loan = id?.match(/^[0-9a-fA-F]{24}$/)
+    ? await Loan.findById(id)
+    : await Loan.findOne({ loanId: id });
   if (!loan) {
     res.status(404);
     throw new Error("Loan not found");
@@ -5431,7 +5444,9 @@ const saveBanksData = asyncHandler(async (req, res) => {
     throw new Error("Banks data must be an array");
   }
 
-  const loan = await Loan.findById(id);
+  const loan = id?.match(/^[0-9a-fA-F]{24}$/)
+    ? await Loan.findById(id)
+    : await Loan.findOne({ loanId: id });
   if (!loan) {
     res.status(404);
     throw new Error("Loan not found");
