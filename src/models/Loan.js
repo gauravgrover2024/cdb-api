@@ -351,6 +351,7 @@ const loanSchema = mongoose.Schema(
     insurance_by: { type: String },
     insurance_company_name: { type: String },
     insurance_policy_number: { type: String },
+    insurance_premium: { type: Number },
     insurance_policy_start_date: { type: Date },
     insurance_policy_duration_od: { type: String },
     insurance_policy_end_date_od: { type: Date },

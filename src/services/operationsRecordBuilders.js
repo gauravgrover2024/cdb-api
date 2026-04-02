@@ -31,6 +31,30 @@ const firstNumber = (...values) => {
   return undefined;
 };
 
+const pickDisbursedBankName = (loan = {}) => {
+  const banks = Array.isArray(loan?.approval_banksData)
+    ? loan.approval_banksData
+    : [];
+  const disbursedBank = banks.find(
+    (row) =>
+      String(row?.status || "").trim().toLowerCase() === "disbursed" &&
+      firstMeaningfulText(row?.bankName),
+  );
+  const approvedBank = banks.find(
+    (row) =>
+      String(row?.status || "").trim().toLowerCase() === "approved" &&
+      firstMeaningfulText(row?.bankName),
+  );
+
+  return firstMeaningfulText(
+    loan?.disburse_bankName,
+    disbursedBank?.bankName,
+    loan?.postfile_bankName,
+    loan?.approval_bankName,
+    approvedBank?.bankName,
+  );
+};
+
 const parseValidDate = (value) => {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -285,6 +309,11 @@ const buildDeliveryOrderSnapshot = (payload = {}, loan = {}, loanId = "") => {
     ["vehicleColor", "do_vehicleColor", "do_colour"],
     firstMeaningfulText(loan?.vehicleColor, loan?.colour, loan?.color),
   );
+  const hypothecationBank = resolveField(
+    payload,
+    ["do_hypothecation", "hypothecationBank"],
+    pickDisbursedBankName(loan),
+  );
 
   return {
     ...payload,
@@ -412,6 +441,51 @@ const buildDeliveryOrderSnapshot = (payload = {}, loan = {}, loanId = "") => {
         loan?.loanAmount,
       ),
     ),
+    do_customer_insuranceCost: resolveField(
+      payload,
+      ["do_customer_insuranceCost"],
+      firstNumber(
+        loan?.insuranceCost,
+        loan?.insurance,
+        loan?.insurance_amount_cardekho,
+      ),
+    ),
+    do_customer_actualInsurancePremium: resolveField(
+      payload,
+      ["do_customer_actualInsurancePremium"],
+      firstNumber(loan?.insurance_premium),
+    ),
+    do_customer_insuranceBy: resolveField(
+      payload,
+      ["do_customer_insuranceBy"],
+      firstMeaningfulText(loan?.insurance_by, loan?.insuranceBy),
+    ),
+    do_customer_insuranceCompanyName: resolveField(
+      payload,
+      ["do_customer_insuranceCompanyName"],
+      firstMeaningfulText(loan?.insurance_company_name),
+    ),
+    do_customer_insurancePolicyNumber: resolveField(
+      payload,
+      ["do_customer_insurancePolicyNumber"],
+      firstMeaningfulText(loan?.insurance_policy_number),
+    ),
+    do_customer_insurancePolicyStartDate: resolveField(
+      payload,
+      ["do_customer_insurancePolicyStartDate"],
+      parseValidDate(loan?.insurance_policy_start_date),
+    ),
+    do_customer_insurancePolicyDurationOD: resolveField(
+      payload,
+      ["do_customer_insurancePolicyDurationOD"],
+      firstMeaningfulText(loan?.insurance_policy_duration_od),
+    ),
+    do_customer_insurancePolicyEndDateOD: resolveField(
+      payload,
+      ["do_customer_insurancePolicyEndDateOD"],
+      parseValidDate(loan?.insurance_policy_end_date_od),
+    ),
+    do_hypothecation: hypothecationBank,
   };
 };
 
