@@ -928,6 +928,33 @@ loanSchema.index({ panNumber: 1, primaryMobile: 1 });
 loanSchema.index({ currentStage: 1, status: 1 });
 loanSchema.index({ status: 1, updatedAt: -1 });
 loanSchema.index({ approval_approvalDate: -1 });
+// Collections dashboard / payout performance indexes
+loanSchema.index(
+  { "loan_receivables.payoutId": 1, leadDate: -1, _id: -1 },
+  { partialFilterExpression: { "loan_receivables.0": { $exists: true } } },
+);
+loanSchema.index(
+  {
+    "loan_receivables.meta_source": 1,
+    "loan_receivables.payout_status": 1,
+    leadDate: -1,
+    _id: -1,
+  },
+  { partialFilterExpression: { "loan_receivables.0": { $exists: true } } },
+);
+loanSchema.index(
+  { "loan_payouts.payoutId": 1, leadDate: -1, _id: -1 },
+  { partialFilterExpression: { "loan_payouts.0": { $exists: true } } },
+);
+loanSchema.index(
+  {
+    "approval_banksData.status": 1,
+    "approval_banksData.payoutPercent": 1,
+    leadDate: -1,
+    _id: -1,
+  },
+  { partialFilterExpression: { "approval_banksData.0": { $exists: true } } },
+);
 
 const Loan = mongoose.model("Loan", loanSchema);
 

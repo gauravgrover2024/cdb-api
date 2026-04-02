@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   getLoans,
+  getCollectionsReceivablesSnapshot,
   getLoanDashboardStats,
   getLoanAnalyticsOverview,
   getLoanAnalyticsDrilldown,
@@ -25,6 +26,7 @@ router.route('/')
   .get(getLoans)
   .post(createLoan);
 
+router.get('/collections/receivables', getCollectionsReceivablesSnapshot);
 router.get('/dashboard/stats', getLoanDashboardStats);
 router.get('/analytics/overview', getLoanAnalyticsOverview);
 router.get('/analytics/drilldown', getLoanAnalyticsDrilldown);

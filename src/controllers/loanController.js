@@ -2617,6 +2617,89 @@ const getLoans = asyncHandler(async (req, res) => {
   res.json(response);
 });
 
+// @desc    Fast collections receivables snapshot
+// @route   GET /api/loans/collections/receivables
+// @access  Public
+const getCollectionsReceivablesSnapshot = asyncHandler(async (req, res) => {
+  const startedAt = Date.now();
+  const limit = Math.min(Math.max(Number(req.query?.limit) || 10000, 1), 25000);
+  const skip = Math.max(Number(req.query?.skip) || 0, 0);
+  const includeCount = new Set(["1", "true", "yes"]).has(
+    String(req.query?.count || "")
+      .trim()
+      .toLowerCase(),
+  );
+
+  const match = {
+    $or: [
+      { "loan_receivables.0": { $exists: true } },
+      { "loanReceivables.0": { $exists: true } },
+      { "receivables.0": { $exists: true } },
+      { "loan_payouts.0": { $exists: true } },
+      {
+        approval_banksData: {
+          $elemMatch: {
+            status: { $regex: /^disbursed$/i },
+            payoutPercent: { $nin: [null, "", "0", 0, "0.0", "0.00"] },
+          },
+        },
+      },
+    ],
+  };
+
+  const selectFields = [
+    "_id",
+    "loanId",
+    "customerName",
+    "leadDate",
+    "createdAt",
+    "updatedAt",
+    "delivery_date",
+    "deliveryDate",
+    "vehicleDeliveryDate",
+    "approval_disbursedDate",
+    "disbursement_date",
+    "approval_bankName",
+    "disburse_bankName",
+    "approval_banksData.bankName",
+    "approval_banksData.status",
+    "approval_banksData.payoutPercent",
+    "approval_banksData.disbursedAmount",
+    "approval_banksData.loanAmount",
+    "loan_receivables",
+    "loanReceivables",
+    "receivables",
+    "loan_payouts",
+  ].join(" ");
+
+  const data = await Loan.find(match)
+    .sort({ leadDate: -1, _id: -1 })
+    .skip(skip)
+    .limit(limit)
+    .select(selectFields)
+    .lean();
+  const total = includeCount ? await Loan.countDocuments(match) : null;
+
+  const queryMs = Date.now() - startedAt;
+  const rowsCount = Array.isArray(data) ? data.length : 0;
+  res.json({
+    data,
+    total: includeCount ? Number(total || 0) : rowsCount,
+    skip,
+    limit,
+    hasMore: includeCount
+      ? skip + rowsCount < Number(total || 0)
+      : rowsCount === limit,
+    meta: {
+      queryMs,
+      rows: rowsCount,
+      total: includeCount ? Number(total || 0) : rowsCount,
+      view: "collections",
+      includeCount,
+    },
+  });
+});
+
 // @desc    Get loan breakup field definitions (default + custom)
 // @route   GET /api/loans/breakup-fields
 // @access  Public
@@ -5325,6 +5408,7 @@ const getNextRcInvStorageNumber = asyncHandler(async (req, res) => {
 
 export {
   getLoans,
+  getCollectionsReceivablesSnapshot,
   getLoanDashboardStats,
   getLoanAnalyticsOverview,
   getLoanAnalyticsDrilldown,
