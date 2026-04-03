@@ -31,6 +31,31 @@ const firstNumber = (...values) => {
   return undefined;
 };
 
+const asInt = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.trunc(n);
+};
+
+const isMeaningfulAutocreditsRow = (row = {}) => {
+  if (!row || typeof row !== "object") return false;
+  if (row?._auto) return true;
+  const amount = asInt(row?.receiptAmount || 0);
+  return Boolean(
+    amount > 0 ||
+      (Array.isArray(row?.receiptTypes) && row.receiptTypes.length > 0) ||
+      String(row?.insurancePaymentMadeBy || "").trim() ||
+      String(row?.receiptMode || "").trim() ||
+      row?.receiptDate ||
+      String(row?.transactionDetails || "").trim() ||
+      String(row?.bankName || "").trim() ||
+      String(row?.remarks || "").trim(),
+  );
+};
+
+const sanitizeAutocreditsRows = (rows = []) =>
+  (Array.isArray(rows) ? rows : []).filter(isMeaningfulAutocreditsRow);
+
 const pickDisbursedBankName = (loan = {}) => {
   const banks = Array.isArray(loan?.approval_banksData)
     ? loan.approval_banksData
@@ -497,9 +522,7 @@ const buildPaymentSkeleton = (loanId, payload = {}, loan = {}) => ({
       ? payload.entryTotals
       : {},
   isVerified: Boolean(payload?.isVerified),
-  autocreditsRows: Array.isArray(payload?.autocreditsRows)
-    ? payload.autocreditsRows
-    : [],
+  autocreditsRows: sanitizeAutocreditsRows(payload?.autocreditsRows),
   autocreditsTotals:
     payload?.autocreditsTotals && typeof payload.autocreditsTotals === "object"
       ? payload.autocreditsTotals

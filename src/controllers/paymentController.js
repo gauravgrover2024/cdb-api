@@ -22,6 +22,40 @@ const parseCsvIds = (value = '') =>
     .map((item) => String(item || '').trim())
     .filter(Boolean);
 
+const asInt = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.trunc(n);
+};
+
+const isMeaningfulAutocreditsRow = (row = {}) => {
+  if (!row || typeof row !== 'object') return false;
+  if (row?._auto) return true;
+  const amount = asInt(row?.receiptAmount || 0);
+  return Boolean(
+    amount > 0 ||
+      (Array.isArray(row?.receiptTypes) && row.receiptTypes.length > 0) ||
+      String(row?.insurancePaymentMadeBy || '').trim() ||
+      String(row?.receiptMode || '').trim() ||
+      row?.receiptDate ||
+      String(row?.transactionDetails || '').trim() ||
+      String(row?.bankName || '').trim() ||
+      String(row?.remarks || '').trim(),
+  );
+};
+
+const sanitizeAutocreditsRows = (rows = []) =>
+  (Array.isArray(rows) ? rows : []).filter(isMeaningfulAutocreditsRow);
+
+const sanitizePaymentForResponse = (payment = {}) => {
+  if (!payment || typeof payment !== 'object') return payment;
+  const next = { ...payment };
+  if (Array.isArray(next.autocreditsRows)) {
+    next.autocreditsRows = sanitizeAutocreditsRows(next.autocreditsRows);
+  }
+  return next;
+};
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -250,7 +284,7 @@ const getPayments = asyncHandler(async (req, res) => {
 
   res.json({
     success: true,
-    data: payments,
+    data: (payments || []).map(sanitizePaymentForResponse),
     total,
     page: Math.floor(safeSkip / safeLimit) + 1,
     limit: safeLimit,
@@ -270,7 +304,7 @@ const getPaymentsByLoanId = asyncHandler(async (req, res) => {
   const paymentRecord = await Payment.findOne({ loanId }).lean();
 
   if (paymentRecord) {
-    res.json({ success: true, data: paymentRecord });
+    res.json({ success: true, data: sanitizePaymentForResponse(paymentRecord) });
   } else {
     res.json({ success: true, data: null });
   }
@@ -281,6 +315,9 @@ const getPaymentsByLoanId = asyncHandler(async (req, res) => {
 // @access  Public
 const savePayment = asyncHandler(async (req, res) => {
   const { loanId } = req.params;
+  if (Array.isArray(req.body?.autocreditsRows)) {
+    req.body.autocreditsRows = sanitizeAutocreditsRows(req.body.autocreditsRows);
+  }
 
   let paymentRecord = await Payment.findOne({ loanId });
 
@@ -309,7 +346,7 @@ const savePayment = asyncHandler(async (req, res) => {
     } catch (syncError) {
       console.error("Payments commission receivable sync failed (update):", syncError);
     }
-    return res.json({ success: true, data: updated });
+    return res.json({ success: true, data: sanitizePaymentForResponse(updated?.toObject ? updated.toObject() : updated) });
   }
 
   const created = await Payment.create({
@@ -322,7 +359,9 @@ const savePayment = asyncHandler(async (req, res) => {
     console.error("Payments commission receivable sync failed (create):", syncError);
   }
 
-  return res.status(201).json({ success: true, data: created });
+  return res
+    .status(201)
+    .json({ success: true, data: sanitizePaymentForResponse(created?.toObject ? created.toObject() : created) });
 });
 
 export { createDirectPayment, getPayments, getPaymentsByLoanId, savePayment };
