@@ -18,9 +18,7 @@ import {
   buildDeliveryOrderSnapshot,
   buildPaymentSkeleton,
 } from "../services/operationsRecordBuilders.js";
-import {
-  upsertReceivablesFromLoan,
-} from "../services/receivableSyncService.js";
+import { upsertReceivablesFromLoan } from "../services/receivableSyncService.js";
 
 // Fields to sync from Loan -> Customer (comprehensive list)
 const CUSTOMER_SYNC_FIELDS = [
@@ -417,7 +415,9 @@ const buildReceivableDocPayload = ({
     normalizeReceivableKind(receivableKind) ||
     normalizeReceivableKind(incomingRow?.receivableKind) ||
     normalizeReceivableKind(existingDoc?.receivableKind) ||
-    inferReceivableKindFromType(incomingRow?.payout_type || existingDoc?.payout_type);
+    inferReceivableKindFromType(
+      incomingRow?.payout_type || existingDoc?.payout_type,
+    );
   const source =
     normalizeSourceModule(sourceModule) ||
     normalizeSourceModule(incomingRow?.sourceModule) ||
@@ -458,7 +458,9 @@ const buildReceivableDocPayload = ({
     net_payout_amount: asFiniteNumber(
       incomingRow?.net_payout_amount ?? existingDoc?.net_payout_amount,
     ),
-    tds_amount: asFiniteNumber(incomingRow?.tds_amount ?? existingDoc?.tds_amount),
+    tds_amount: asFiniteNumber(
+      incomingRow?.tds_amount ?? existingDoc?.tds_amount,
+    ),
     tds_percentage: asFiniteNumber(
       incomingRow?.tds_percentage ?? existingDoc?.tds_percentage,
     ),
@@ -466,7 +468,8 @@ const buildReceivableDocPayload = ({
       incomingRow?.payout_received_date ??
       existingDoc?.payout_received_date ??
       null,
-    created_date: incomingRow?.created_date ?? existingDoc?.created_date ?? null,
+    created_date:
+      incomingRow?.created_date ?? existingDoc?.created_date ?? null,
     payout_createdAt:
       incomingRow?.payout_createdAt ?? existingDoc?.payout_createdAt ?? null,
     payment_history: paymentHistory,
@@ -1949,14 +1952,23 @@ const ensureDisbursedStateConsistency = (loan) => {
 
   const disbursedDate = asValidDate(pickDisbursementDate(loan));
   const disburseFlag =
-    String(loan?.disburse_status || "").toLowerCase().includes("disburs") ||
-    String(loan?.disbursementStatus || "").toLowerCase().includes("disburs") ||
-    String(loan?.disbursement_status || "").toLowerCase().includes("disburs");
+    String(loan?.disburse_status || "")
+      .toLowerCase()
+      .includes("disburs") ||
+    String(loan?.disbursementStatus || "")
+      .toLowerCase()
+      .includes("disburs") ||
+    String(loan?.disbursement_status || "")
+      .toLowerCase()
+      .includes("disburs");
 
   if (!disbursedDate && !disburseFlag) return;
 
   const disbursedBankName = String(
-    loan?.disburse_bankName || loan?.postfile_bankName || loan?.approval_bankName || "",
+    loan?.disburse_bankName ||
+      loan?.postfile_bankName ||
+      loan?.approval_bankName ||
+      "",
   ).trim();
 
   const toEvent = (status, at) => ({
@@ -1977,19 +1989,29 @@ const ensureDisbursedStateConsistency = (loan) => {
         status: "Disbursed",
         disbursedDate: disbursedDate?.toISOString?.() || undefined,
         statusHistory: disbursedDate
-          ? [toEvent("Approved", disbursedDate), toEvent("Disbursed", disbursedDate)]
+          ? [
+              toEvent("Approved", disbursedDate),
+              toEvent("Disbursed", disbursedDate),
+            ]
           : [{ status: "Disbursed" }],
       },
     ];
   } else if (banks.length) {
     const hasDisbursedBank = banks.some((bank) =>
-      String(bank?.status || "").toLowerCase().includes("disburs"),
+      String(bank?.status || "")
+        .toLowerCase()
+        .includes("disburs"),
     );
 
     if (!hasDisbursedBank) {
       const wanted = disbursedBankName.toLowerCase();
       const targetIndex = disbursedBankName
-        ? banks.findIndex((bank) => String(bank?.bankName || "").trim().toLowerCase() === wanted)
+        ? banks.findIndex(
+            (bank) =>
+              String(bank?.bankName || "")
+                .trim()
+                .toLowerCase() === wanted,
+          )
         : 0;
       const index = targetIndex >= 0 ? targetIndex : 0;
 
@@ -1999,7 +2021,9 @@ const ensureDisbursedStateConsistency = (loan) => {
         target.disbursedDate = disbursedDate.toISOString();
       }
 
-      const history = Array.isArray(target.statusHistory) ? [...target.statusHistory] : [];
+      const history = Array.isArray(target.statusHistory)
+        ? [...target.statusHistory]
+        : [];
       const hasApprovedHistory = history.some(
         (entry) => String(entry?.status || "").toLowerCase() === "approved",
       );
@@ -2037,7 +2061,9 @@ const ensureDisbursedStateConsistency = (loan) => {
 
   loan.approval_status = "Disbursed";
 
-  const stage = String(loan.currentStage || "").trim().toLowerCase();
+  const stage = String(loan.currentStage || "")
+    .trim()
+    .toLowerCase();
   if (["", "profile", "prefile", "approval"].includes(stage)) {
     loan.currentStage = "postfile";
   }
@@ -2840,7 +2866,9 @@ const getCollectionsReceivablesSnapshot = asyncHandler(async (req, res) => {
       ].join(" "),
     )
     .lean();
-  const total = includeCount ? await Receivable.countDocuments(receivableMatch) : null;
+  const total = includeCount
+    ? await Receivable.countDocuments(receivableMatch)
+    : null;
 
   // Backward compatibility during migration:
   // if receivables collection is empty, fall back to legacy loan-embedded arrays.
@@ -2943,8 +2971,7 @@ const getCollectionsReceivablesSnapshot = asyncHandler(async (req, res) => {
       grouped.set(loanIdKey, {
         _id: loanDoc?._id || row?.loanMongoId || row?.loanId,
         loanId: loanIdKey,
-        customerName:
-          loanDoc?.customerName || row?.customerName || "",
+        customerName: loanDoc?.customerName || row?.customerName || "",
         delivery_date: loanDoc?.delivery_date || null,
         deliveryDate: loanDoc?.deliveryDate || null,
         vehicleDeliveryDate: loanDoc?.vehicleDeliveryDate || null,
@@ -2962,10 +2989,7 @@ const getCollectionsReceivablesSnapshot = asyncHandler(async (req, res) => {
     const target = grouped.get(loanIdKey);
     target.loan_receivables.push({
       ...(row?.payload && typeof row.payload === "object" ? row.payload : {}),
-      id:
-        row?.payload?.id ||
-        row?.payoutId ||
-        String(row?._id || ""),
+      id: row?.payload?.id || row?.payoutId || String(row?._id || ""),
       payoutId: row?.payoutId,
       payout_type: row?.payout_type,
       payout_party_name: row?.payout_party_name,
@@ -3191,7 +3215,10 @@ const deleteCollectionReceivable = asyncHandler(async (req, res) => {
     throw new Error("loanId and payoutId are required");
   }
 
-  const deleted = await Receivable.findOneAndDelete({ loanId, payoutId }).lean();
+  const deleted = await Receivable.findOneAndDelete({
+    loanId,
+    payoutId,
+  }).lean();
   res.json({ success: true, data: deleted || null });
 });
 
@@ -5454,8 +5481,14 @@ const saveBanksData = asyncHandler(async (req, res) => {
 
   loan.approval_banksData = banks;
   const primaryBank =
-    banks.find((b) => String(b?.status || "").toLowerCase() === "disbursed") ||
-    banks.find((b) => String(b?.status || "").toLowerCase() === "approved") ||
+    banks.find((b) => {
+      const s = String(b?.status || "").toLowerCase();
+      return s === "disbursed";
+    }) ||
+    banks.find((b) => {
+      const s = String(b?.status || "").toLowerCase();
+      return s === "approved" || s === "accepted" || s === "sanctioned";
+    }) ||
     banks[0] ||
     null;
 
@@ -5466,11 +5499,19 @@ const saveBanksData = asyncHandler(async (req, res) => {
   });
   const hasApprovedOrDisbursedBank = banks.some((b) => {
     const s = String(b?.status || "").toLowerCase();
-    return s === "approved" || s === "disbursed";
+    return (
+      s === "approved" ||
+      s === "accepted" ||
+      s === "sanctioned" ||
+      s === "disbursed"
+    );
   });
   if (hasDisbursedBank) {
     loan.approval_status = "Disbursed";
-  } else if (hasApprovedOrDisbursedBank && loan.approval_status !== "Approved") {
+  } else if (
+    hasApprovedOrDisbursedBank &&
+    loan.approval_status !== "Approved"
+  ) {
     loan.approval_status = "Approved";
   }
 
