@@ -467,17 +467,23 @@ const buildReceivableDocPayload = ({
     id: incomingRow?.id || existingPayload?.id || payoutId,
   };
 
+  const hasIncomingKey = (key) =>
+    Object.prototype.hasOwnProperty.call(incomingRow, key);
+  const normalizeOptionalDate = (value) => {
+    if (value === undefined || value === null) return null;
+    const text = String(value).trim();
+    return text ? value : null;
+  };
+
   const existingPaymentHistory = safeArray(existingDoc?.payment_history);
-  const incomingPaymentHistory = safeArray(incomingRow?.payment_history);
-  const paymentHistory =
-    incomingPaymentHistory.length > 0
-      ? incomingPaymentHistory
-      : existingPaymentHistory;
+  const paymentHistory = hasIncomingKey("payment_history")
+    ? safeArray(incomingRow?.payment_history)
+    : existingPaymentHistory;
 
   const existingActivityLog = safeArray(existingDoc?.activity_log);
-  const incomingActivityLog = safeArray(incomingRow?.activity_log);
-  const activityLog =
-    incomingActivityLog.length > 0 ? incomingActivityLog : existingActivityLog;
+  const activityLog = hasIncomingKey("activity_log")
+    ? safeArray(incomingRow?.activity_log)
+    : existingActivityLog;
 
   const expectedAmount = Math.max(
     0,
@@ -559,10 +565,9 @@ const buildReceivableDocPayload = ({
     tds_percentage: asFiniteNumber(
       incomingRow?.tds_percentage ?? existingDoc?.tds_percentage,
     ),
-    payout_received_date:
-      incomingRow?.payout_received_date ??
-      existingDoc?.payout_received_date ??
-      null,
+    payout_received_date: hasIncomingKey("payout_received_date")
+      ? normalizeOptionalDate(incomingRow?.payout_received_date)
+      : (existingDoc?.payout_received_date ?? null),
     created_date:
       incomingRow?.created_date ?? existingDoc?.created_date ?? null,
     payout_createdAt:
