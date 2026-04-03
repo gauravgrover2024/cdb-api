@@ -9,6 +9,7 @@ import {
   isNewCarLoan,
   parseBusinessDate,
 } from '../services/operationsRecordBuilders.js';
+import { syncPaymentsCommissionReceivableForLoan } from "../services/paymentsCommissionReceivableService.js";
 
 const LOAN_ID_PREFIX = 'LN';
 
@@ -303,6 +304,11 @@ const savePayment = asyncHandler(async (req, res) => {
   if (paymentRecord) {
     Object.assign(paymentRecord, req.body);
     const updated = await paymentRecord.save();
+    try {
+      await syncPaymentsCommissionReceivableForLoan({ loanId });
+    } catch (syncError) {
+      console.error("Payments commission receivable sync failed (update):", syncError);
+    }
     return res.json({ success: true, data: updated });
   }
 
@@ -310,6 +316,11 @@ const savePayment = asyncHandler(async (req, res) => {
     ...req.body,
     loanId,
   });
+  try {
+    await syncPaymentsCommissionReceivableForLoan({ loanId });
+  } catch (syncError) {
+    console.error("Payments commission receivable sync failed (create):", syncError);
+  }
 
   return res.status(201).json({ success: true, data: created });
 });

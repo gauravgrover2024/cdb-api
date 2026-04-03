@@ -9,6 +9,7 @@ import {
   isLegacyNewCar,
   isNewCarLoan,
 } from '../services/operationsRecordBuilders.js';
+import { syncPaymentsCommissionReceivableForLoan } from "../services/paymentsCommissionReceivableService.js";
 
 const LOAN_ID_PREFIX = 'LN';
 
@@ -152,6 +153,11 @@ const createDirectDO = asyncHandler(async (req, res) => {
       },
     },
   );
+  try {
+    await syncPaymentsCommissionReceivableForLoan({ loanId });
+  } catch (syncError) {
+    console.error("Payments commission receivable sync failed (direct DO create):", syncError);
+  }
 
   return res.status(201).json({
     success: true,
@@ -324,6 +330,11 @@ const saveDeliveryOrder = asyncHandler(async (req, res) => {
         },
       },
     );
+    try {
+      await syncPaymentsCommissionReceivableForLoan({ loanId });
+    } catch (syncError) {
+      console.error("Payments commission receivable sync failed (DO update):", syncError);
+    }
     return res.json({ success: true, data: updated });
   }
 
@@ -345,6 +356,11 @@ const saveDeliveryOrder = asyncHandler(async (req, res) => {
       },
     },
   );
+  try {
+    await syncPaymentsCommissionReceivableForLoan({ loanId });
+  } catch (syncError) {
+    console.error("Payments commission receivable sync failed (DO create):", syncError);
+  }
 
   return res.status(201).json({ success: true, data: created });
 });
