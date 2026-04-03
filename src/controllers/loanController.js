@@ -18,7 +18,9 @@ import {
   buildDeliveryOrderSnapshot,
   buildPaymentSkeleton,
 } from "../services/operationsRecordBuilders.js";
-import { upsertReceivablesFromLoan } from "../services/receivableSyncService.js";
+import {
+  upsertReceivablesFromLoan,
+} from "../services/receivableSyncService.js";
 
 // Fields to sync from Loan -> Customer (comprehensive list)
 const CUSTOMER_SYNC_FIELDS = [
@@ -2834,6 +2836,67 @@ const getCollectionsReceivablesSnapshot = asyncHandler(async (req, res) => {
     )
     .lean();
   const total = includeCount ? await Receivable.countDocuments(receivableMatch) : null;
+
+  // Backward compatibility during migration:
+  // if receivables collection is empty, fall back to legacy loan-embedded arrays.
+  if (!receivableRows.length) {
+    const legacyMatch = {
+      $or: [
+        { "loan_receivables.0": { $exists: true } },
+        { "loanReceivables.0": { $exists: true } },
+        { "receivables.0": { $exists: true } },
+        { "loan_payouts.0": { $exists: true } },
+      ],
+    };
+
+    const legacySelect = [
+      "_id",
+      "loanId",
+      "customerName",
+      "leadDate",
+      "createdAt",
+      "updatedAt",
+      "delivery_date",
+      "deliveryDate",
+      "vehicleDeliveryDate",
+      "approval_disbursedDate",
+      "disbursement_date",
+      "loan_receivables",
+      "loanReceivables",
+      "receivables",
+      "loan_payouts",
+    ].join(" ");
+
+    const legacyData = await Loan.find(legacyMatch)
+      .sort({ leadDate: -1, _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      .select(legacySelect)
+      .lean();
+    const legacyTotal = includeCount
+      ? await Loan.countDocuments(legacyMatch)
+      : null;
+    const queryMs = Date.now() - startedAt;
+    const rowsCount = Array.isArray(legacyData) ? legacyData.length : 0;
+    return res.json({
+      data: legacyData,
+      total: includeCount ? Number(legacyTotal || 0) : rowsCount,
+      skip,
+      limit,
+      hasMore: includeCount
+        ? skip + rowsCount < Number(legacyTotal || 0)
+        : rowsCount === limit,
+      meta: {
+        queryMs,
+        rows: rowsCount,
+        total: includeCount ? Number(legacyTotal || 0) : rowsCount,
+        view: "collections",
+        includeCount,
+        kind: requestedKind || "all",
+        fallback: "legacy-loan-embedded-receivables",
+      },
+    });
+  }
 
   const loanIds = Array.from(
     new Set(
