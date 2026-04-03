@@ -39,8 +39,8 @@ const asInt = (value) => {
 
 const isMeaningfulAutocreditsRow = (row = {}) => {
   if (!row || typeof row !== "object") return false;
-  if (row?._auto) return true;
   const amount = asInt(row?.receiptAmount || 0);
+  if (row?._auto && amount <= 0) return false;
   return Boolean(
     amount > 0 ||
       (Array.isArray(row?.receiptTypes) && row.receiptTypes.length > 0) ||
