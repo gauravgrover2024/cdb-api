@@ -2,6 +2,9 @@ import express from 'express';
 import {
   getLoans,
   getCollectionsReceivablesSnapshot,
+  upsertCollectionReceivable,
+  updateCollectionReceivable,
+  deleteCollectionReceivable,
   getLoanDashboardStats,
   getLoanAnalyticsOverview,
   getLoanAnalyticsDrilldown,
@@ -27,6 +30,9 @@ router.route('/')
   .post(createLoan);
 
 router.get('/collections/receivables', getCollectionsReceivablesSnapshot);
+router.post('/collections/receivables/upsert', upsertCollectionReceivable);
+router.patch('/collections/receivables/:payoutId', updateCollectionReceivable);
+router.delete('/collections/receivables/:payoutId', deleteCollectionReceivable);
 router.get('/dashboard/stats', getLoanDashboardStats);
 router.get('/analytics/overview', getLoanAnalyticsOverview);
 router.get('/analytics/drilldown', getLoanAnalyticsDrilldown);

@@ -8,6 +8,7 @@ import Channel from "../models/Channel.js";
 import DeliveryOrder from "../models/DeliveryOrder.js";
 import Payment from "../models/Payment.js";
 import LoanBreakupField from "../models/LoanBreakupField.js";
+import Receivable from "../models/Receivable.js";
 import {
   calculatePayoutsOnDisbursement,
   validateDisbursementData,
@@ -17,6 +18,7 @@ import {
   buildDeliveryOrderSnapshot,
   buildPaymentSkeleton,
 } from "../services/operationsRecordBuilders.js";
+import { upsertReceivablesFromLoan } from "../services/receivableSyncService.js";
 
 // Fields to sync from Loan -> Customer (comprehensive list)
 const CUSTOMER_SYNC_FIELDS = [
@@ -311,6 +313,166 @@ const applyNormalizedBankDetails = (normalized = {}) => {
   delete normalized.additionalBankDetails;
   delete normalized.hasAdditionalBankDetails;
   return normalized;
+};
+
+const safeArray = (value) => (Array.isArray(value) ? value : []);
+
+const normalizeReceivableKind = (value) => {
+  const kind = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!kind) return "";
+  if (kind.includes("commission")) return "commission";
+  if (kind.includes("insurance")) return "insurance";
+  if (kind.includes("loan")) return "loan";
+  return kind;
+};
+
+const inferReceivableKindFromType = (value) => {
+  const type = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (type.includes("commission")) return "commission";
+  if (type.includes("insurance")) return "insurance";
+  return "loan";
+};
+
+const normalizeSourceModule = (value, fallback = "loan") => {
+  const source = String(value || fallback || "")
+    .trim()
+    .toLowerCase();
+  return source || "loan";
+};
+
+const asFiniteNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const buildReceivableDocPayload = ({
+  loanId,
+  loanMongoId = null,
+  customerName = "",
+  payoutId,
+  sourceArrayKey = "loan_receivables",
+  receivableKind = "",
+  sourceModule = "",
+  row = {},
+  existingDoc = null,
+}) => {
+  const existingPayload =
+    existingDoc?.payload && typeof existingDoc.payload === "object"
+      ? existingDoc.payload
+      : {};
+  const incomingRow = row && typeof row === "object" ? row : {};
+  const payload = {
+    ...existingPayload,
+    ...incomingRow,
+    payoutId,
+    id: incomingRow?.id || existingPayload?.id || payoutId,
+  };
+
+  const existingPaymentHistory = safeArray(existingDoc?.payment_history);
+  const incomingPaymentHistory = safeArray(incomingRow?.payment_history);
+  const paymentHistory =
+    incomingPaymentHistory.length > 0
+      ? incomingPaymentHistory
+      : existingPaymentHistory;
+
+  const existingActivityLog = safeArray(existingDoc?.activity_log);
+  const incomingActivityLog = safeArray(incomingRow?.activity_log);
+  const activityLog =
+    incomingActivityLog.length > 0 ? incomingActivityLog : existingActivityLog;
+
+  const expectedAmount = Math.max(
+    0,
+    asFiniteNumber(
+      incomingRow?.net_payout_amount ??
+        incomingRow?.payout_amount ??
+        existingDoc?.net_payout_amount ??
+        existingDoc?.payout_amount ??
+        0,
+    ),
+  );
+  const historyTotal = paymentHistory.reduce(
+    (sum, item) => sum + asFiniteNumber(item?.amount || 0),
+    0,
+  );
+  const statusFromHistory =
+    historyTotal <= 0
+      ? "Expected"
+      : historyTotal >= expectedAmount
+        ? "Received"
+        : "Partial";
+  const requestedStatus = String(
+    incomingRow?.payout_status || existingDoc?.payout_status || "",
+  ).trim();
+  const payoutStatus =
+    requestedStatus ||
+    (paymentHistory.length > 0 ? statusFromHistory : "Expected");
+
+  const kind =
+    normalizeReceivableKind(receivableKind) ||
+    normalizeReceivableKind(incomingRow?.receivableKind) ||
+    normalizeReceivableKind(existingDoc?.receivableKind) ||
+    inferReceivableKindFromType(incomingRow?.payout_type || existingDoc?.payout_type);
+  const source =
+    normalizeSourceModule(sourceModule) ||
+    normalizeSourceModule(incomingRow?.sourceModule) ||
+    normalizeSourceModule(existingDoc?.sourceModule) ||
+    "loan";
+
+  return {
+    receivableKind: kind || "loan",
+    sourceModule: source || "loan",
+    loanId: String(loanId || "").trim(),
+    loanMongoId: loanMongoId || existingDoc?.loanMongoId || null,
+    customerName:
+      String(customerName || "").trim() ||
+      String(existingDoc?.customerName || "").trim(),
+    payoutId,
+    sourceArrayKey:
+      String(sourceArrayKey || "").trim() ||
+      String(existingDoc?.sourceArrayKey || "").trim() ||
+      "loan_receivables",
+    payload,
+
+    payout_type: String(
+      incomingRow?.payout_type || existingDoc?.payout_type || "",
+    ).trim(),
+    payout_party_name: String(
+      incomingRow?.payout_party_name || existingDoc?.payout_party_name || "",
+    ).trim(),
+    payout_direction: String(
+      incomingRow?.payout_direction || existingDoc?.payout_direction || "",
+    ).trim(),
+    payout_status: payoutStatus,
+    payout_percentage: String(
+      incomingRow?.payout_percentage || existingDoc?.payout_percentage || "",
+    ).trim(),
+    payout_amount: asFiniteNumber(
+      incomingRow?.payout_amount ?? existingDoc?.payout_amount,
+    ),
+    net_payout_amount: asFiniteNumber(
+      incomingRow?.net_payout_amount ?? existingDoc?.net_payout_amount,
+    ),
+    tds_amount: asFiniteNumber(incomingRow?.tds_amount ?? existingDoc?.tds_amount),
+    tds_percentage: asFiniteNumber(
+      incomingRow?.tds_percentage ?? existingDoc?.tds_percentage,
+    ),
+    payout_received_date:
+      incomingRow?.payout_received_date ??
+      existingDoc?.payout_received_date ??
+      null,
+    created_date: incomingRow?.created_date ?? existingDoc?.created_date ?? null,
+    payout_createdAt:
+      incomingRow?.payout_createdAt ?? existingDoc?.payout_createdAt ?? null,
+    payment_history: paymentHistory,
+    activity_log: activityLog,
+    meta_source: String(
+      incomingRow?.meta_source || existingDoc?.meta_source || "",
+    ).trim(),
+  };
 };
 
 const fetchIfscFromRazorpay = async (ifsc) => {
@@ -2629,56 +2791,137 @@ const getCollectionsReceivablesSnapshot = asyncHandler(async (req, res) => {
       .trim()
       .toLowerCase(),
   );
+  const requestedKind = String(req.query?.kind || "")
+    .trim()
+    .toLowerCase();
 
-  const match = {
-    $or: [
-      { "loan_receivables.0": { $exists: true } },
-      { "loanReceivables.0": { $exists: true } },
-      { "receivables.0": { $exists: true } },
-      { "loan_payouts.0": { $exists: true } },
-      {
-        approval_banksData: {
-          $elemMatch: {
-            status: { $regex: /^disbursed$/i },
-            payoutPercent: { $nin: [null, "", "0", 0, "0.0", "0.00"] },
-          },
-        },
-      },
-    ],
-  };
+  const receivableMatch = {};
+  if (requestedKind && requestedKind !== "all") {
+    receivableMatch.receivableKind = requestedKind;
+  }
 
-  const selectFields = [
-    "_id",
-    "loanId",
-    "customerName",
-    "leadDate",
-    "createdAt",
-    "updatedAt",
-    "delivery_date",
-    "deliveryDate",
-    "vehicleDeliveryDate",
-    "approval_disbursedDate",
-    "disbursement_date",
-    "approval_bankName",
-    "disburse_bankName",
-    "approval_banksData.bankName",
-    "approval_banksData.status",
-    "approval_banksData.payoutPercent",
-    "approval_banksData.disbursedAmount",
-    "approval_banksData.loanAmount",
-    "loan_receivables",
-    "loanReceivables",
-    "receivables",
-    "loan_payouts",
-  ].join(" ");
-
-  const data = await Loan.find(match)
-    .sort({ leadDate: -1, _id: -1 })
+  const receivableRows = await Receivable.find(receivableMatch)
+    .sort({ updatedAt: -1, _id: -1 })
     .skip(skip)
     .limit(limit)
-    .select(selectFields)
+    .select(
+      [
+        "_id",
+        "loanId",
+        "loanMongoId",
+        "customerName",
+        "payoutId",
+        "sourceArrayKey",
+        "receivableKind",
+        "sourceModule",
+        "payload",
+        "payout_type",
+        "payout_party_name",
+        "payout_direction",
+        "payout_status",
+        "payout_percentage",
+        "payout_amount",
+        "net_payout_amount",
+        "tds_amount",
+        "tds_percentage",
+        "payout_received_date",
+        "created_date",
+        "payout_createdAt",
+        "payment_history",
+        "activity_log",
+        "meta_source",
+      ].join(" "),
+    )
     .lean();
-  const total = includeCount ? await Loan.countDocuments(match) : null;
+  const total = includeCount ? await Receivable.countDocuments(receivableMatch) : null;
+
+  const loanIds = Array.from(
+    new Set(
+      receivableRows
+        .map((row) => String(row?.loanId || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const loanMap = new Map();
+  if (loanIds.length) {
+    const loanDocs = await Loan.find({ loanId: { $in: loanIds } })
+      .select(
+        [
+          "_id",
+          "loanId",
+          "customerName",
+          "delivery_date",
+          "deliveryDate",
+          "vehicleDeliveryDate",
+          "approval_disbursedDate",
+          "disbursement_date",
+          "leadDate",
+          "createdAt",
+          "updatedAt",
+        ].join(" "),
+      )
+      .lean();
+    loanDocs.forEach((doc) => {
+      loanMap.set(String(doc?.loanId || "").trim(), doc);
+    });
+  }
+
+  const grouped = new Map();
+  receivableRows.forEach((row) => {
+    const loanIdKey = String(row?.loanId || "").trim();
+    if (!loanIdKey) return;
+    const loanDoc = loanMap.get(loanIdKey) || {};
+    if (!grouped.has(loanIdKey)) {
+      grouped.set(loanIdKey, {
+        _id: loanDoc?._id || row?.loanMongoId || row?.loanId,
+        loanId: loanIdKey,
+        customerName:
+          loanDoc?.customerName || row?.customerName || "",
+        delivery_date: loanDoc?.delivery_date || null,
+        deliveryDate: loanDoc?.deliveryDate || null,
+        vehicleDeliveryDate: loanDoc?.vehicleDeliveryDate || null,
+        approval_disbursedDate: loanDoc?.approval_disbursedDate || null,
+        disbursement_date: loanDoc?.disbursement_date || null,
+        leadDate: loanDoc?.leadDate || null,
+        createdAt: loanDoc?.createdAt || null,
+        updatedAt: loanDoc?.updatedAt || null,
+        loan_receivables: [],
+        loanReceivables: null,
+        receivables: null,
+        loan_payouts: null,
+      });
+    }
+    const target = grouped.get(loanIdKey);
+    target.loan_receivables.push({
+      ...(row?.payload && typeof row.payload === "object" ? row.payload : {}),
+      id:
+        row?.payload?.id ||
+        row?.payoutId ||
+        String(row?._id || ""),
+      payoutId: row?.payoutId,
+      payout_type: row?.payout_type,
+      payout_party_name: row?.payout_party_name,
+      payout_direction: row?.payout_direction,
+      payout_status: row?.payout_status,
+      payout_percentage: row?.payout_percentage,
+      payout_amount: row?.payout_amount,
+      net_payout_amount: row?.net_payout_amount,
+      tds_amount: row?.tds_amount,
+      tds_percentage: row?.tds_percentage,
+      payout_received_date: row?.payout_received_date,
+      created_date: row?.created_date,
+      payout_createdAt: row?.payout_createdAt,
+      payment_history: safeArray(row?.payment_history),
+      activity_log: safeArray(row?.activity_log),
+      meta_source: row?.meta_source,
+      __receivableSourceKey: row?.sourceArrayKey || "loan_receivables",
+      __receivableSourceIndex: -1,
+      receivableKind: row?.receivableKind || "loan",
+      sourceModule: row?.sourceModule || "loan",
+      __receivableDocId: String(row?._id || ""),
+    });
+  });
+  const data = Array.from(grouped.values());
 
   const queryMs = Date.now() - startedAt;
   const rowsCount = Array.isArray(data) ? data.length : 0;
@@ -2696,8 +2939,192 @@ const getCollectionsReceivablesSnapshot = asyncHandler(async (req, res) => {
       total: includeCount ? Number(total || 0) : rowsCount,
       view: "collections",
       includeCount,
+      kind: requestedKind || "all",
     },
   });
+});
+
+// @desc    Upsert a receivable row in unified receivables collection
+// @route   POST /api/loans/collections/receivables/upsert
+// @access  Public
+const upsertCollectionReceivable = asyncHandler(async (req, res) => {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const loanId = String(body?.loanId || "").trim();
+  const receivable =
+    body?.receivable && typeof body.receivable === "object"
+      ? body.receivable
+      : {};
+  const payoutId = String(
+    body?.payoutId || receivable?.payoutId || receivable?.id || "",
+  ).trim();
+
+  if (!loanId || !payoutId) {
+    res.status(400);
+    throw new Error("loanId and payoutId are required for receivable upsert");
+  }
+
+  const [existingDoc, loanDoc] = await Promise.all([
+    Receivable.findOne({ loanId, payoutId }).lean(),
+    Loan.findOne({ loanId }).select("_id loanId customerName").lean(),
+  ]);
+
+  const nextDoc = buildReceivableDocPayload({
+    loanId,
+    loanMongoId: loanDoc?._id || existingDoc?.loanMongoId || null,
+    customerName: loanDoc?.customerName || existingDoc?.customerName || "",
+    payoutId,
+    sourceArrayKey:
+      body?.sourceArrayKey ||
+      receivable?.__receivableSourceKey ||
+      existingDoc?.sourceArrayKey ||
+      "loan_receivables",
+    receivableKind:
+      body?.receivableKind ||
+      receivable?.receivableKind ||
+      existingDoc?.receivableKind ||
+      "",
+    sourceModule:
+      body?.sourceModule ||
+      receivable?.sourceModule ||
+      existingDoc?.sourceModule ||
+      "loan",
+    row: receivable,
+    existingDoc,
+  });
+
+  const activityAction =
+    body?.activityAction && typeof body.activityAction === "object"
+      ? body.activityAction
+      : null;
+  if (activityAction?.action) {
+    nextDoc.activity_log = [
+      ...safeArray(nextDoc.activity_log),
+      {
+        timestamp: new Date().toISOString(),
+        action: String(activityAction.action).trim(),
+        details: String(activityAction.details || "").trim(),
+      },
+    ];
+  }
+
+  const saved = await Receivable.findOneAndUpdate(
+    { loanId, payoutId },
+    { $set: nextDoc },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+      runValidators: false,
+    },
+  ).lean();
+
+  res.json({ success: true, data: saved });
+});
+
+// @desc    Update an existing receivable row in unified receivables collection
+// @route   PATCH /api/loans/collections/receivables/:payoutId
+// @access  Public
+const updateCollectionReceivable = asyncHandler(async (req, res) => {
+  const payoutId = String(req.params?.payoutId || "").trim();
+  const loanId = String(req.body?.loanId || req.query?.loanId || "").trim();
+
+  if (!loanId || !payoutId) {
+    res.status(400);
+    throw new Error("loanId and payoutId are required");
+  }
+
+  const patch =
+    req.body?.patch && typeof req.body.patch === "object" ? req.body.patch : {};
+  const seedRow =
+    req.body?.seedRow && typeof req.body.seedRow === "object"
+      ? req.body.seedRow
+      : {};
+  const activityAction =
+    req.body?.activityAction && typeof req.body.activityAction === "object"
+      ? req.body.activityAction
+      : null;
+
+  const [existingDoc, loanDoc] = await Promise.all([
+    Receivable.findOne({ loanId, payoutId }).lean(),
+    Loan.findOne({ loanId }).select("_id loanId customerName").lean(),
+  ]);
+
+  const baseRow =
+    existingDoc?.payload && typeof existingDoc.payload === "object"
+      ? existingDoc.payload
+      : {};
+
+  const mergedRow = {
+    ...baseRow,
+    ...seedRow,
+    ...patch,
+    payoutId,
+    id: patch?.id || seedRow?.id || baseRow?.id || payoutId,
+  };
+
+  const nextDoc = buildReceivableDocPayload({
+    loanId,
+    loanMongoId: loanDoc?._id || existingDoc?.loanMongoId || null,
+    customerName: loanDoc?.customerName || existingDoc?.customerName || "",
+    payoutId,
+    sourceArrayKey:
+      patch?.__receivableSourceKey ||
+      seedRow?.__receivableSourceKey ||
+      existingDoc?.sourceArrayKey ||
+      "loan_receivables",
+    receivableKind:
+      patch?.receivableKind ||
+      seedRow?.receivableKind ||
+      existingDoc?.receivableKind ||
+      "",
+    sourceModule:
+      patch?.sourceModule ||
+      seedRow?.sourceModule ||
+      existingDoc?.sourceModule ||
+      "loan",
+    row: mergedRow,
+    existingDoc,
+  });
+
+  if (activityAction?.action) {
+    nextDoc.activity_log = [
+      ...safeArray(nextDoc.activity_log),
+      {
+        timestamp: new Date().toISOString(),
+        action: String(activityAction.action).trim(),
+        details: String(activityAction.details || "").trim(),
+      },
+    ];
+  }
+
+  const saved = await Receivable.findOneAndUpdate(
+    { loanId, payoutId },
+    { $set: nextDoc },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+      runValidators: false,
+    },
+  ).lean();
+
+  res.json({ success: true, data: saved });
+});
+
+// @desc    Delete a receivable row from unified receivables collection
+// @route   DELETE /api/loans/collections/receivables/:payoutId
+// @access  Public
+const deleteCollectionReceivable = asyncHandler(async (req, res) => {
+  const payoutId = String(req.params?.payoutId || "").trim();
+  const loanId = String(req.query?.loanId || req.body?.loanId || "").trim();
+
+  if (!loanId || !payoutId) {
+    res.status(400);
+    throw new Error("loanId and payoutId are required");
+  }
+
+  const deleted = await Receivable.findOneAndDelete({ loanId, payoutId }).lean();
+  res.json({ success: true, data: deleted || null });
 });
 
 // @desc    Get loan breakup field definitions (default + custom)
@@ -4470,6 +4897,14 @@ const createLoan = asyncHandler(async (req, res) => {
   if (loan) {
     await ensureLinkedRecords(loan);
     await syncVehicleMasterRecord(loan);
+    try {
+      await upsertReceivablesFromLoan(loan?.toObject?.() || loan);
+    } catch (receivableSyncErr) {
+      console.warn(
+        "Receivables sync skipped (create):",
+        receivableSyncErr?.message,
+      );
+    }
     clearLoanCaches();
 
     // Return comprehensive response confirming all details were saved
@@ -4643,6 +5078,18 @@ const updateLoan = asyncHandler(async (req, res) => {
       step = "sync-vehicle-record";
       // 4. Upsert vehicle master record
       await syncVehicleMasterRecord(updatedLoan);
+
+      step = "sync-receivables-collection";
+      try {
+        await upsertReceivablesFromLoan(
+          updatedLoan?.toObject?.() || updatedLoan,
+        );
+      } catch (receivableSyncErr) {
+        console.warn(
+          "Receivables sync skipped (update):",
+          receivableSyncErr?.message,
+        );
+      }
 
       step = "respond-success";
       res.json({
@@ -4824,6 +5271,14 @@ const disburseLoan = asyncHandler(async (req, res) => {
 
   // Save updated loan with retry for version conflicts
   await saveWithRetry(loan);
+  try {
+    await upsertReceivablesFromLoan(loan?.toObject?.() || loan);
+  } catch (receivableSyncErr) {
+    console.warn(
+      "Receivables sync skipped (disburse):",
+      receivableSyncErr?.message,
+    );
+  }
   clearLoanCaches();
 
   // =====================================
@@ -5409,6 +5864,9 @@ const getNextRcInvStorageNumber = asyncHandler(async (req, res) => {
 export {
   getLoans,
   getCollectionsReceivablesSnapshot,
+  upsertCollectionReceivable,
+  updateCollectionReceivable,
+  deleteCollectionReceivable,
   getLoanDashboardStats,
   getLoanAnalyticsOverview,
   getLoanAnalyticsDrilldown,

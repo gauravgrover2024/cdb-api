@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 
 const REQUIRED_KEYS = [
   "R2_ACCOUNT_ID",
@@ -93,5 +93,28 @@ export const uploadBufferToR2 = async ({ key, body, contentType }) => {
   return {
     key,
     url: buildR2PublicUrl(key),
+  };
+};
+
+export const getObjectFromR2 = async ({ key }) => {
+  const { client, env } = getR2Client();
+
+  if (!client) {
+    throw new Error(`Missing R2 environment variables: ${env.missing.join(", ")}`);
+  }
+
+  const result = await client.send(
+    new GetObjectCommand({
+      Bucket: env.bucket,
+      Key: key,
+    }),
+  );
+
+  return {
+    body: result.Body,
+    contentType: result.ContentType || "application/octet-stream",
+    contentLength: result.ContentLength,
+    etag: result.ETag,
+    lastModified: result.LastModified,
   };
 };
