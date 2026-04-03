@@ -349,6 +349,101 @@ const asFiniteNumber = (value) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+const PAYMENTS_AUTO_COMMISSION_META_SOURCE =
+  "payments_negative_balance_commission_auto";
+const COLLECTIONS_AUTO_PAYMENT_KEY_PREFIX = "collections_commission_receivable:";
+
+const buildAutoCommissionNarration = ({
+  payoutId = "",
+  amount = 0,
+  isoDate = null,
+  remarks = "",
+}) => {
+  const explicit = String(remarks || "").trim();
+  if (explicit) return explicit;
+  const dateObj = isoDate ? new Date(isoDate) : new Date();
+  const dateLabel = Number.isNaN(dateObj.getTime())
+    ? new Date().toISOString().slice(0, 10)
+    : dateObj.toISOString().slice(0, 10);
+  const amountLabel = `₹${Number(amount || 0).toLocaleString("en-IN")}`;
+  return `Auto receipt sync from Collections (${dateLabel}) • ${amountLabel} • Payout ${payoutId}`;
+};
+
+const buildCommissionRowsForPaymentSheet = ({
+  payoutId = "",
+  partyName = "",
+  paymentHistory = [],
+}) =>
+  safeArray(paymentHistory)
+    .map((payment, index) => {
+      const amount = asFiniteNumber(payment?.amount || 0);
+      if (!(amount > 0)) return null;
+      const paymentDateIso =
+        payment?.date ||
+        payment?.timestamp ||
+        new Date().toISOString();
+      const rowIdBase = String(payoutId || "")
+        .replace(/[^A-Za-z0-9]/g, "")
+        .toUpperCase();
+      return {
+        id: `COLL-COMM-${rowIdBase}-${index + 1}`,
+        paymentType: "Commission",
+        paymentMadeBy: "Showroom",
+        paymentMode: "Collections Dashboard",
+        paymentAmount: String(amount),
+        paymentDate: paymentDateIso,
+        transactionDetails: "",
+        bankName: String(partyName || "").trim(),
+        remarks: buildAutoCommissionNarration({
+          payoutId,
+          amount,
+          isoDate: paymentDateIso,
+          remarks: payment?.remarks,
+        }),
+        adjustmentDirection: null,
+        crossCaseId: null,
+        crossCaseLabel: "",
+        _auto: true,
+        _autoKey: `${COLLECTIONS_AUTO_PAYMENT_KEY_PREFIX}${payoutId}`,
+      };
+    })
+    .filter(Boolean);
+
+const syncAutoCommissionReceivableToPaymentSheet = async ({
+  loanId = "",
+  payoutId = "",
+  receivableRow = null,
+}) => {
+  const normalizedLoanId = String(loanId || "").trim();
+  const normalizedPayoutId = String(
+    payoutId || receivableRow?.payoutId || receivableRow?.id || "",
+  ).trim();
+  if (!normalizedLoanId || !normalizedPayoutId) return;
+
+  const paymentDoc = await Payment.findOne({ loanId: normalizedLoanId });
+  if (!paymentDoc) return;
+
+  const autoKey = `${COLLECTIONS_AUTO_PAYMENT_KEY_PREFIX}${normalizedPayoutId}`;
+  const currentRows = safeArray(paymentDoc?.showroomRows);
+  const keptRows = currentRows.filter(
+    (row) => String(row?._autoKey || "").trim() !== autoKey,
+  );
+  const shouldGenerate =
+    String(receivableRow?.meta_source || "").trim() ===
+    PAYMENTS_AUTO_COMMISSION_META_SOURCE;
+  const generatedRows = shouldGenerate
+    ? buildCommissionRowsForPaymentSheet({
+        payoutId: normalizedPayoutId,
+        partyName: receivableRow?.payout_party_name,
+        paymentHistory: safeArray(receivableRow?.payment_history),
+      })
+    : [];
+  const nextRows = [...keptRows, ...generatedRows];
+  if (JSON.stringify(currentRows) === JSON.stringify(nextRows)) return;
+  paymentDoc.showroomRows = nextRows;
+  await paymentDoc.save();
+};
+
 const buildReceivableDocPayload = ({
   loanId,
   loanMongoId = null,
@@ -3110,6 +3205,19 @@ const upsertCollectionReceivable = asyncHandler(async (req, res) => {
     },
   ).lean();
 
+  try {
+    await syncAutoCommissionReceivableToPaymentSheet({
+      loanId,
+      payoutId,
+      receivableRow: saved,
+    });
+  } catch (syncError) {
+    console.error(
+      "Collections -> Payment auto commission sync failed (upsert):",
+      syncError,
+    );
+  }
+
   res.json({ success: true, data: saved });
 });
 
@@ -3200,6 +3308,19 @@ const updateCollectionReceivable = asyncHandler(async (req, res) => {
     },
   ).lean();
 
+  try {
+    await syncAutoCommissionReceivableToPaymentSheet({
+      loanId,
+      payoutId,
+      receivableRow: saved,
+    });
+  } catch (syncError) {
+    console.error(
+      "Collections -> Payment auto commission sync failed (update):",
+      syncError,
+    );
+  }
+
   res.json({ success: true, data: saved });
 });
 
@@ -3219,6 +3340,19 @@ const deleteCollectionReceivable = asyncHandler(async (req, res) => {
     loanId,
     payoutId,
   }).lean();
+
+  try {
+    await syncAutoCommissionReceivableToPaymentSheet({
+      loanId,
+      payoutId,
+      receivableRow: deleted,
+    });
+  } catch (syncError) {
+    console.error(
+      "Collections -> Payment auto commission sync failed (delete):",
+      syncError,
+    );
+  }
   res.json({ success: true, data: deleted || null });
 });
 
