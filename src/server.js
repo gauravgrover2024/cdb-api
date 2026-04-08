@@ -13,6 +13,7 @@ import vehicleRoutes from "./routes/vehicleRoutes.js";
 import showroomRoutes from "./routes/showroomRoutes.js";
 import channelRoutes from "./routes/channelRoutes.js";
 import bankRoutes from "./routes/bankRoutes.js";
+import insuranceRoutes from "./routes/insuranceRoutes.js";
 import quotationsRouter from "./routes/quotations.js";
 import featuresRoutes from "./routes/featuresRoutes.js";
 import bookingsRouter from "./routes/bookings.js";
@@ -86,6 +87,7 @@ app.use("/api/channels", channelRoutes);
 app.use("/api/quotations", quotationsRouter);
 app.use("/api/features", featuresRoutes);
 app.use("/api/bookings", bookingsRouter);
+app.use("/api/insurance", insuranceRoutes);
 
 // Health check
 app.get("/", (req, res) => {

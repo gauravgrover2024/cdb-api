@@ -1,79 +1,86 @@
-import jwt from 'jsonwebtoken';
-import asyncHandler from 'express-async-handler';
-import User from '../models/User.js';
+import jwt from "jsonwebtoken";
+import asyncHandler from "express-async-handler";
+import User from "../models/User.js";
 
 const protect = asyncHandler(async (req, res, next) => {
   let token;
 
   const authHeader = req.headers.authorization || req.headers.Authorization;
 
-  if (authHeader && authHeader.toLowerCase().startsWith('bearer')) {
+  if (authHeader && authHeader.toLowerCase().startsWith("bearer")) {
     try {
-      token = authHeader.split(' ')[1];
+      token = authHeader.split(" ")[1];
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret123');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret123");
 
-      req.user = await User.findById(decoded.id).select('-password');
+      req.user = await User.findById(decoded.id).select("-password");
 
       if (!req.user) {
         res.status(401);
-        throw new Error('Not authorized, user not found');
+        throw new Error("Not authorized, user not found");
       }
 
-      next();
+      // Block deactivated, rejected, or pending accounts BEFORE calling next()
+      if (req.user.status === "deactivated") {
+        res.status(403);
+        throw new Error(
+          "Your account has been deactivated. Contact your administrator.",
+        );
+      }
+      if (req.user.status === "rejected") {
+        res.status(403);
+        throw new Error(
+          "Your account has been rejected. Contact your administrator.",
+        );
+      }
+      if (req.user.status === "pending") {
+        res.status(403);
+        throw new Error(
+          "Your account is pending approval. The administrator will review your account soon. Please check back later.",
+        );
+      }
+
+      return next();
     } catch (error) {
-      console.error('JWT Verification Error:', error.message);
+      console.error("JWT Verification Error:", error.message);
       res.status(401);
-      throw new Error('Not authorized, token failed');
-    }
-
-    // Block deactivated, rejected, or pending accounts
-    if (req.user) {
-      if (req.user.status === 'deactivated') {
-        res.status(403);
-        throw new Error('Your account has been deactivated. Contact your administrator.');
-      }
-      if (req.user.status === 'rejected') {
-        res.status(403);
-        throw new Error('Your account has been rejected. Contact your administrator.');
-      }
-      if (req.user.status === 'pending') {
-        res.status(403);
-        throw new Error('Your account is pending approval. The administrator will review your account soon. Please check back later.');
-      }
+      throw new Error("Not authorized, token failed");
     }
   }
 
   if (!token) {
     res.status(401);
-    throw new Error('Not authorized, no token provided in headers');
+    throw new Error("Not authorized, no token provided in headers");
   }
 });
 
 const admin = (req, res, next) => {
-  if (req.user && (req.user.role === 'admin' || req.user.role === 'superadmin')) {
+  if (
+    req.user &&
+    (req.user.role === "admin" || req.user.role === "superadmin")
+  ) {
     next();
   } else {
     res.status(403);
-    throw new Error('Not authorized as an admin/superadmin');
+    throw new Error("Not authorized as an admin/superadmin");
   }
 };
 
 const staff = (req, res, next) => {
-  if (req.user && ['staff', 'admin', 'superadmin'].includes(req.user.role)) {
+  if (req.user && ["staff", "admin", "superadmin"].includes(req.user.role)) {
     next();
   } else {
     res.status(403);
-    throw new Error('Not authorized');
+    throw new Error("Not authorized");
   }
 };
 
 const superadmin = (req, res, next) => {
-  if (req.user && req.user.role === 'superadmin') {
+  if (req.user && req.user.role === "superadmin") {
     next();
   } else {
     res.status(401);
-    throw new Error('Not authorized! Highly restricted to Superadmins only.');
+    throw new Error("Not authorized! Highly restricted to Superadmins only.");
   }
 };
 
