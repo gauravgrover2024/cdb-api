@@ -1,7 +1,15 @@
 import express from 'express';
-import { createDirectPayment, getPayments, getPaymentsByLoanId, savePayment } from '../controllers/paymentController.js';
+import {
+  createDirectPayment,
+  getPayments,
+  getPaymentsDashboardSnapshot,
+  getPaymentsByLoanId,
+  savePayment,
+} from '../controllers/paymentController.js';
 
 const router = express.Router();
+
+router.get('/dashboard/snapshot', getPaymentsDashboardSnapshot);
 
 router.route('/')
   .get(getPayments)
