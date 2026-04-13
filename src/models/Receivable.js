@@ -13,9 +13,11 @@ const receivableSchema = new mongoose.Schema(
       trim: true,
       default: "loan",
       index: true,
-    }, // LoanForm | Payments | DeliveryOrder | ...
-    loanId: { type: String, required: true, trim: true, index: true },
+    }, // LoanForm | Payments | DeliveryOrder | Insurance | ...
+    loanId: { type: String, trim: true, default: "", index: true },
     loanMongoId: { type: mongoose.Schema.Types.ObjectId, ref: "Loan" },
+    insuranceCaseId: { type: String, trim: true, default: "", index: true },
+    insuranceCaseMongoId: { type: mongoose.Schema.Types.ObjectId, ref: "InsuranceCase" },
     customerName: { type: String, trim: true, default: "" },
     payoutId: { type: String, required: true, trim: true },
     sourceArrayKey: { type: String, trim: true, default: "loan_receivables" },

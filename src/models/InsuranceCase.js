@@ -35,6 +35,30 @@ const insuranceDocumentSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const paymentHistorySchema = new mongoose.Schema(
+  {
+    amount: { type: Number, required: true },
+    date: { type: Date, required: true },
+    paymentType: { 
+      type: String, 
+      enum: ["customer", "inhouse"], 
+      required: true 
+    },
+    paymentMode: { 
+      type: String, 
+      enum: ["Cash", "Cheque", "NEFT", "RTGS", "UPI", "Card", "Other"],
+      default: "Cash"
+    },
+    bankName: { type: String, default: "" },
+    transactionRef: { type: String, default: "" },
+    remarks: { type: String, default: "" },
+    receivableId: { type: mongoose.Schema.Types.ObjectId, ref: "Receivable" },
+    recordedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    recordedAt: { type: Date, default: Date.now },
+  },
+  { _id: true, timestamps: true },
+);
+
 const customerSnapshotSchema = new mongoose.Schema(
   {
     customerName: { type: String, default: "" },
@@ -138,6 +162,26 @@ const insuranceCaseSchema = new mongoose.Schema(
 
     // Step 6: documents
     documents: { type: [insuranceDocumentSchema], default: [] },
+
+    // Payment tracking (for #66 - Fully Paid vs Payment Due logic)
+    customerPaymentExpected: { type: Number, default: 0 },
+    customerPaymentReceived: { type: Number, default: 0 },
+    inhousePaymentExpected: { type: Number, default: 0 },
+    inhousePaymentReceived: { type: Number, default: 0 },
+    paymentHistory: { type: [paymentHistorySchema], default: [] },
+
+    // Renewal tracking
+    isRenewal: { type: Boolean, default: false },
+    renewedFromCaseId: { type: mongoose.Schema.Types.ObjectId, ref: "InsuranceCase" },
+    renewedToCaseId: { type: mongoose.Schema.Types.ObjectId, ref: "InsuranceCase" },
+    renewalFollowUpStatus: { 
+      type: String, 
+      enum: ["pending", "contacted", "interested", "renewed", "lost", "not_applicable"],
+      default: "not_applicable"
+    },
+    renewalFollowUpNotes: { type: String, default: "" },
+    renewalLastContactedAt: { type: Date },
+    renewalNextFollowUpDate: { type: Date },
 
     // Audit
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },

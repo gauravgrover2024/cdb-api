@@ -5,6 +5,7 @@ import {
   getInsuranceCases,
   updateInsuranceCase,
   deleteInsuranceCase,
+  syncInsuranceReceivable,
 } from "../controllers/insuranceController.js";
 
 const router = express.Router();
@@ -16,5 +17,7 @@ router
   .get(getInsuranceCaseById)
   .put(updateInsuranceCase)
   .delete(deleteInsuranceCase);
+
+router.route("/:id/sync-receivable").post(syncInsuranceReceivable);
 
 export default router;
