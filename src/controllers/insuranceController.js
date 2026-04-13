@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Counter from "../models/Counter.js";
 import Customer from "../models/Customer.js";
 import InsuranceCase from "../models/InsuranceCase.js";
+import Receivable from "../models/Receivable.js";
 
 const INSURANCE_COUNTER_PREFIX = "insurance_case_id_sequence_";
 const INSURANCE_ID_PREFIX = "INS";
@@ -170,5 +171,98 @@ export const deleteInsuranceCase = asyncHandler(async (req, res) => {
     success: true,
     message: "Insurance case deleted successfully",
     data: { id: doc._id, caseId: doc.caseId },
+  });
+});
+
+// @desc    Sync insurance customer payment to receivables module
+// @route   POST /api/insurance/:id/sync-receivable
+// @access  Public
+export const syncInsuranceReceivable = asyncHandler(async (req, res) => {
+  const raw = safeString(req.params.id).trim();
+  const doc =
+    (mongoose.Types.ObjectId.isValid(raw)
+      ? await InsuranceCase.findById(raw)
+      : null) || (await InsuranceCase.findOne({ caseId: raw }));
+
+  if (!doc) {
+    res.status(404);
+    throw new Error("Insurance case not found");
+  }
+
+  const expectedAmount = Number(doc.customerPaymentExpected || 0);
+  if (expectedAmount <= 0) {
+    res.status(400);
+    throw new Error("No customer payment expected for this case");
+  }
+
+  const payoutId = `INS-RCV-${doc.caseId}`;
+  
+  const receivedAmount = Number(doc.customerPaymentReceived || 0);
+  const pendingAmount = Math.max(0, expectedAmount - receivedAmount);
+  
+  let status = "Expected";
+  if (receivedAmount >= expectedAmount && receivedAmount > 0) {
+    status = "Received";
+  } else if (receivedAmount > 0) {
+    status = "Partial";
+  }
+
+  const receivablePayload = {
+    receivableKind: "insurance",
+    sourceModule: "Insurance",
+    loanId: "",
+    insuranceCaseId: doc.caseId,
+    insuranceCaseMongoId: doc._id,
+    customerName: doc.customerName || doc.customerSnapshot?.customerName || "",
+    payoutId,
+    sourceArrayKey: "insurance_receivable",
+    payout_type: "Insurance Premium",
+    payout_party_name: doc.customerName || "Customer",
+    payout_direction: "Receivable",
+    payout_status: status,
+    payout_amount: expectedAmount,
+    net_payout_amount: expectedAmount,
+    tds_amount: 0,
+    tds_percentage: 0,
+    payout_received_date: receivedAmount >= expectedAmount ? new Date() : null,
+    created_date: doc.createdAt || new Date(),
+    payment_history: (doc.paymentHistory || [])
+      .filter((p) => p.paymentType === "customer")
+      .map((p) => ({
+        amount: p.amount,
+        date: p.date,
+        mode: p.paymentMode,
+        remarks: p.remarks,
+        transactionRef: p.transactionRef,
+      })),
+    activity_log: [],
+    meta_source: "Insurance Module",
+    payload: {
+      caseId: doc.caseId,
+      insuranceCompany: doc.newInsuranceCompany,
+      policyNumber: doc.newPolicyNumber,
+      registrationNumber: doc.registrationNumber,
+      vehicleMake: doc.vehicleMake,
+      vehicleModel: doc.vehicleModel,
+    },
+  };
+
+  const existing = await Receivable.findOne({
+    insuranceCaseId: doc.caseId,
+    payoutId,
+  });
+
+  let receivable;
+  if (existing) {
+    Object.assign(existing, receivablePayload);
+    receivable = await existing.save();
+  } else {
+    receivable = await Receivable.create(receivablePayload);
+  }
+
+  res.json({
+    success: true,
+    message: "Insurance receivable synced successfully",
+    data: receivable,
   });
 });

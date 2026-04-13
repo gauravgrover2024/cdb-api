@@ -219,11 +219,13 @@ const searchCustomers = asyncHandler(async (req, res) => {
   const customers = await Customer.find({
     $or: [
       { customerName: regex },
+      { companyName: regex },
+      { contactPersonName: regex },
       { primaryMobile: regex },
       { panNumber: regex },
       { city: regex },
-      { customerId: regex }
-    ]
+      { customerId: regex },
+    ],
   }).limit(20);
 
   res.json({
