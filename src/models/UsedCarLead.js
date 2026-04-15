@@ -256,6 +256,7 @@ const inspectionReportSchema = new mongoose.Schema(
   {
     reportVersion: { type: String, trim: true, default: "" },
     generatedAt: { type: Date, default: null },
+    customerName: { type: String, trim: true, default: "" },
     inspectionLocation: { type: String, trim: true, default: "" },
     registrationNumber: { type: String, trim: true, uppercase: true, default: "" },
     insuranceType: { type: String, trim: true, default: "" },

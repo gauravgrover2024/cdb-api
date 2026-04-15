@@ -333,6 +333,7 @@ const normalizeInspectionReport = (value = {}) => {
   return {
     reportVersion: normalizeText(firstPresent(report.reportVersion, report.version)),
     generatedAt: parseDate(firstPresent(report.generatedAt, report.updatedAt)),
+    customerName: normalizeText(report.customerName),
     inspectionLocation: normalizeText(report.inspectionLocation),
     registrationNumber: normalizeText(report.registrationNumber).toUpperCase(),
     insuranceType: normalizeText(report.insuranceType),
