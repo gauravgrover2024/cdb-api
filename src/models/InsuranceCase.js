@@ -127,6 +127,14 @@ const insuranceCaseSchema = new mongoose.Schema(
     typesOfVehicle: { type: String, default: "Four Wheeler" },
     manufactureMonth: { type: String, default: "" },
     manufactureYear: { type: String, default: "" },
+    manufactureDate: { type: String, default: "" },
+    regAuthority: { type: String, default: "" },
+    dateOfReg: { type: String, default: "" },
+    fuelType: { type: String, default: "" },
+    batteryNumber: { type: String, default: "" },
+    chargerNumber: { type: String, default: "" },
+    hypothecation: { type: String, default: "" },
+
 
     // Step 3: previous policy (renewals)
     previousInsuranceCompany: { type: String, default: "" },
@@ -160,6 +168,19 @@ const insuranceCaseSchema = new mongoose.Schema(
     newHypothecation: { type: String, default: "" },
     newRemarks: { type: String, default: "" },
 
+    // Policy details upgrade
+    exShowroomPrice: { type: Number, default: 0 },
+    dateOfSale: { type: String, default: "" },
+    dateOfPurchase: { type: String, default: "" },
+    odometerReading: { type: Number, default: 0 },
+    policyPurchaseDate: { type: String, default: "" },
+
+    // Extended Warranty
+    ewCommencementDate: { type: String, default: "" },
+    ewExpiryDate: { type: String, default: "" },
+    kmsCoverage: { type: Number, default: 0 },
+
+
     // Step 6: documents
     documents: { type: [insuranceDocumentSchema], default: [] },
 
@@ -169,6 +190,11 @@ const insuranceCaseSchema = new mongoose.Schema(
     inhousePaymentExpected: { type: Number, default: 0 },
     inhousePaymentReceived: { type: Number, default: 0 },
     paymentHistory: { type: [paymentHistorySchema], default: [] },
+
+    // Payout tracking (same as loans but for insurance)
+    insurance_receivables: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    insurance_payables: { type: [mongoose.Schema.Types.Mixed], default: [] },
+
 
     // Renewal tracking
     isRenewal: { type: Boolean, default: false },
