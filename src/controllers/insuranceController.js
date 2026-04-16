@@ -189,7 +189,9 @@ export const syncInsuranceReceivable = asyncHandler(async (req, res) => {
     throw new Error("Insurance case not found");
   }
 
-  const expectedAmount = Number(doc.customerPaymentExpected || 0);
+  const expectedAmount = Number(
+    doc.customerPaymentExpected ?? doc.customer_payment_expected ?? 0
+  );
   if (expectedAmount <= 0) {
     res.status(400);
     throw new Error("No customer payment expected for this case");
@@ -197,7 +199,9 @@ export const syncInsuranceReceivable = asyncHandler(async (req, res) => {
 
   const payoutId = `INS-RCV-${doc.caseId}`;
   
-  const receivedAmount = Number(doc.customerPaymentReceived || 0);
+  const receivedAmount = Number(
+    doc.customerPaymentReceived ?? doc.customer_payment_received ?? 0
+  );
   const pendingAmount = Math.max(0, expectedAmount - receivedAmount);
   
   let status = "Expected";
@@ -226,14 +230,19 @@ export const syncInsuranceReceivable = asyncHandler(async (req, res) => {
     tds_percentage: 0,
     payout_received_date: receivedAmount >= expectedAmount ? new Date() : null,
     created_date: doc.createdAt || new Date(),
-    payment_history: (doc.paymentHistory || [])
-      .filter((p) => p.paymentType === "customer")
+    payment_history: (Array.isArray(doc.paymentHistory)
+      ? doc.paymentHistory
+      : Array.isArray(doc.payment_history)
+        ? doc.payment_history
+        : []
+    )
+      .filter((p) => (p.paymentType ?? p.payment_type) === "customer")
       .map((p) => ({
         amount: p.amount,
         date: p.date,
-        mode: p.paymentMode,
+        mode: p.paymentMode ?? p.payment_mode,
         remarks: p.remarks,
-        transactionRef: p.transactionRef,
+        transactionRef: p.transactionRef ?? p.transaction_ref,
       })),
     activity_log: [],
     meta_source: "Insurance Module",
