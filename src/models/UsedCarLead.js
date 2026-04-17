@@ -306,6 +306,93 @@ const inspectionSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const backgroundCheckAuditSchema = new mongoose.Schema(
+  {
+    type: { type: String, trim: true, default: "saved" },
+    action: { type: String, trim: true, default: "Draft Saved" },
+    note: { type: String, trim: true, default: "" },
+    actor: { type: String, trim: true, default: "" },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
+const backgroundCheckFormSchema = new mongoose.Schema(
+  {
+    ownerName: { type: String, trim: true, default: "" },
+    hypothecation: { type: String, trim: true, default: "" },
+    hypothecationBank: { type: String, trim: true, default: "" },
+    ownershipSerialNo: { type: String, trim: true, default: "" },
+    make: { type: String, trim: true, default: "" },
+    model: { type: String, trim: true, default: "" },
+    variant: { type: String, trim: true, default: "" },
+    fuelType: { type: String, trim: true, default: "" },
+    mfgYear: { type: String, trim: true, default: "" },
+    regdDate: { type: Date, default: null },
+    rcExpiry: { type: Date, default: null },
+    roadTaxExpiry: { type: Date, default: null },
+    roadTaxSameAsRc: { type: Boolean, default: false },
+    blacklisted: { type: String, trim: true, default: "" },
+    blacklistedFiles: { type: [inspectionFileSchema], default: [] },
+    theft: { type: String, trim: true, default: "" },
+    theftFiles: { type: [inspectionFileSchema], default: [] },
+    roadTaxStatus: { type: String, trim: true, default: "" },
+    challanPending: { type: String, trim: true, default: "" },
+    echallanCount: { type: Number, default: null },
+    echallanAmount: { type: Number, default: null },
+    echallanFiles: { type: [inspectionFileSchema], default: [] },
+    dtpCount: { type: Number, default: null },
+    dtpAmount: { type: Number, default: null },
+    dtpFiles: { type: [inspectionFileSchema], default: [] },
+    rtoNocIssued: { type: String, trim: true, default: "" },
+    vahanComments: { type: String, trim: true, default: "" },
+    partyPeshi: { type: String, trim: true, default: "" },
+    partyPeshiDetail: { type: String, trim: true, default: "" },
+    serviceHistoryAvailable: { type: String, trim: true, default: "" },
+    accidentHistory: { type: String, trim: true, default: "" },
+    lastServiceDate: { type: Date, default: null },
+    lastServiceOdometer: { type: Number, default: null },
+    currentOdometer: { type: Number, default: null },
+    odometerStatus: { type: String, trim: true, default: "" },
+    floodedCar: { type: String, trim: true, default: "" },
+    totalLossVehicle: { type: String, trim: true, default: "" },
+    migratedVehicle: { type: String, trim: true, default: "" },
+    serviceComments: { type: String, trim: true, default: "" },
+  },
+  { _id: false, strict: false },
+);
+
+const backgroundCheckSchema = new mongoose.Schema(
+  {
+    status: {
+      type: String,
+      enum: [
+        "Pending",
+        "Vahan Done",
+        "BGC Complete",
+        "Approved",
+        "Rejected",
+        "Escalated",
+      ],
+      default: "Pending",
+      index: true,
+    },
+    formValues: { type: backgroundCheckFormSchema, default: () => ({}) },
+    evidenceVault: { type: [inspectionFileSchema], default: [] },
+    summary: {
+      vahanVerified: { type: Boolean, default: false },
+      serviceVerified: { type: Boolean, default: false },
+      legalClear: { type: Boolean, default: false },
+      riskFlags: { type: [String], default: [] },
+    },
+    notes: { type: String, trim: true, default: "" },
+    completedAt: { type: Date, default: null },
+    updatedAt: { type: Date, default: null },
+    auditTrail: { type: [backgroundCheckAuditSchema], default: [] },
+  },
+  { _id: false },
+);
+
 const usedCarLeadSchema = new mongoose.Schema(
   {
     internalLeadId: { type: String, required: true, unique: true, index: true },
@@ -335,6 +422,7 @@ const usedCarLeadSchema = new mongoose.Schema(
     activities: { type: [activitySchema], default: [] },
 
     inspection: { type: inspectionSchema, default: () => ({}) },
+    backgroundCheck: { type: backgroundCheckSchema, default: () => ({}) },
     stageData: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   {
@@ -354,6 +442,27 @@ usedCarLeadSchema.index({ "scheduling.nextFollowUpAt": 1, updatedAt: -1 });
 usedCarLeadSchema.index({ "inspection.inspectionId": 1 }, { sparse: true });
 usedCarLeadSchema.index({ "inspection.verdict": 1, updatedAt: -1 });
 usedCarLeadSchema.index({ "inspection.inspectedAt": -1 });
+usedCarLeadSchema.index({ "backgroundCheck.status": 1, updatedAt: -1 });
+usedCarLeadSchema.index({
+  "workflow.currentStage": 1,
+  "workflow.isClosed": 1,
+  "backgroundCheck.status": 1,
+  "assignment.assignedTo": 1,
+  updatedAt: -1,
+});
+usedCarLeadSchema.index({
+  "workflow.currentStage": 1,
+  "workflow.isClosed": 1,
+  "vehicle.regNo": 1,
+  updatedAt: -1,
+});
+usedCarLeadSchema.index({
+  "workflow.currentStage": 1,
+  "workflow.isClosed": 1,
+  "backgroundCheck.formValues.blacklisted": 1,
+  "backgroundCheck.formValues.theft": 1,
+  updatedAt: -1,
+});
 usedCarLeadSchema.index(
   {
     internalLeadId: "text",

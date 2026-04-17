@@ -363,6 +363,91 @@ const normalizeInspectionReport = (value = {}) => {
   };
 };
 
+const normalizeBackgroundCheckAudit = (value = {}) => ({
+  type: normalizeText(value.type) || "saved",
+  action: normalizeText(value.action) || "Draft Saved",
+  note: normalizeText(value.note),
+  actor: normalizeText(value.actor),
+  at: parseDate(value.at) || new Date(),
+});
+
+const normalizeBackgroundCheckFormValues = (value = {}) => {
+  const form = normalizeMapObject(value);
+  const parseOptionalNumber = (raw) => {
+    if (raw === "" || raw === null || raw === undefined) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  return {
+    ownerName: normalizeText(form.ownerName),
+    hypothecation: normalizeText(form.hypothecation),
+    hypothecationBank: normalizeText(form.hypothecationBank),
+    ownershipSerialNo: normalizeText(form.ownershipSerialNo),
+    make: normalizeText(form.make),
+    model: normalizeText(form.model),
+    variant: normalizeText(form.variant),
+    fuelType: normalizeText(form.fuelType),
+    mfgYear: normalizeText(form.mfgYear),
+    regdDate: parseDate(form.regdDate),
+    rcExpiry: parseDate(form.rcExpiry),
+    roadTaxExpiry: parseDate(form.roadTaxExpiry),
+    roadTaxSameAsRc: Boolean(form.roadTaxSameAsRc),
+    blacklisted: normalizeText(form.blacklisted),
+    blacklistedFiles: normalizeFileArray(form.blacklistedFiles),
+    theft: normalizeText(form.theft),
+    theftFiles: normalizeFileArray(form.theftFiles),
+    roadTaxStatus: normalizeText(form.roadTaxStatus),
+    challanPending: normalizeText(form.challanPending),
+    echallanCount: parseOptionalNumber(form.echallanCount),
+    echallanAmount: parseOptionalNumber(form.echallanAmount),
+    echallanFiles: normalizeFileArray(form.echallanFiles),
+    dtpCount: parseOptionalNumber(form.dtpCount),
+    dtpAmount: parseOptionalNumber(form.dtpAmount),
+    dtpFiles: normalizeFileArray(form.dtpFiles),
+    rtoNocIssued: normalizeText(form.rtoNocIssued),
+    vahanComments: normalizeText(form.vahanComments),
+    partyPeshi: normalizeText(form.partyPeshi),
+    partyPeshiDetail: normalizeText(form.partyPeshiDetail),
+    serviceHistoryAvailable: normalizeText(form.serviceHistoryAvailable),
+    accidentHistory: normalizeText(form.accidentHistory),
+    lastServiceDate: parseDate(form.lastServiceDate),
+    lastServiceOdometer: parseOptionalNumber(form.lastServiceOdometer),
+    currentOdometer: parseOptionalNumber(form.currentOdometer),
+    odometerStatus: normalizeText(form.odometerStatus),
+    floodedCar: normalizeText(form.floodedCar),
+    totalLossVehicle: normalizeText(form.totalLossVehicle),
+    migratedVehicle: normalizeText(form.migratedVehicle),
+    serviceComments: normalizeText(form.serviceComments),
+  };
+};
+
+const normalizeBackgroundCheck = (value = {}) => {
+  const payload = normalizeMapObject(value);
+  const summary = normalizeMapObject(payload.summary);
+  return {
+    status: normalizeText(payload.status) || "Pending",
+    formValues: normalizeBackgroundCheckFormValues(payload.formValues),
+    evidenceVault: normalizeFileArray(payload.evidenceVault),
+    summary: {
+      vahanVerified: Boolean(summary.vahanVerified),
+      serviceVerified: Boolean(summary.serviceVerified),
+      legalClear: Boolean(summary.legalClear),
+      riskFlags: Array.isArray(summary.riskFlags)
+        ? summary.riskFlags.map((entry) => normalizeText(entry)).filter(Boolean)
+        : [],
+    },
+    notes: normalizeText(payload.notes),
+    completedAt: parseDate(payload.completedAt),
+    updatedAt: parseDate(payload.updatedAt) || new Date(),
+    auditTrail: Array.isArray(payload.auditTrail)
+      ? payload.auditTrail
+          .map((entry) => normalizeBackgroundCheckAudit(entry))
+          .filter(Boolean)
+      : [],
+  };
+};
+
 const normalizeLeadPayload = (payload = {}) => {
   const mapped = Object.fromEntries(
     Object.entries(payload || {}).map(([key, value]) => [normalizeHeaderKey(key), value]),
@@ -511,6 +596,11 @@ const normalizeLeadPayload = (payload = {}) => {
     report: inspectionReport,
   };
 
+  const backgroundCheck = normalizeBackgroundCheck(
+    firstPresent(payload?.backgroundCheck, payload?.stageData?.backgroundCheck) ||
+      {},
+  );
+
   const activities = Array.isArray(payload.activities)
     ? payload.activities.map(buildActivity)
     : [];
@@ -543,6 +633,7 @@ const normalizeLeadPayload = (payload = {}) => {
     followUps,
     activities,
     inspection,
+    backgroundCheck,
     stageData: payload.stageData && typeof payload.stageData === "object" ? payload.stageData : {},
   };
 
@@ -751,6 +842,13 @@ const applyLeadUpdate = (doc, payload = {}) => {
     };
   }
 
+  if (hasAnyPath(payload, ["backgroundCheck", "stageData.backgroundCheck"])) {
+    doc.backgroundCheck = {
+      ...doc.backgroundCheck?.toObject?.(),
+      ...normalized.backgroundCheck,
+    };
+  }
+
   if (hasAnyPath(payload, ["stageData"])) {
     doc.stageData = { ...(doc.stageData || {}), ...(normalized.stageData || {}) };
   }
@@ -780,6 +878,687 @@ const resolveLead = async (raw = "") => {
     : null;
   return byObjectId || (await UsedCarLead.findOne({ internalLeadId: value }));
 };
+
+const escapeHtml = (value = "") =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const sanitizeFileName = (value = "inspection-report") =>
+  normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "inspection-report";
+
+const formatDateLabel = (value) => {
+  const date = parseDate(value);
+  if (!date) return "-";
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+};
+
+const formatCurrency = (value) => {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return "₹0";
+  return `₹${amount.toLocaleString("en-IN")}`;
+};
+
+const humanizeKey = (value = "") =>
+  String(value || "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const normalizeStatusListForReport = (status) => {
+  if (Array.isArray(status)) {
+    return status.map((entry) => normalizeText(entry)).filter(Boolean);
+  }
+  const single = normalizeText(status);
+  return single ? [single] : [];
+};
+
+const ISSUE_TOKENS = [
+  "scratch",
+  "dent",
+  "repaint",
+  "repair",
+  "replace",
+  "rust",
+  "mismatch",
+  "warning",
+  "not working",
+  "hard start",
+  "contaminated",
+  "low level",
+  "leak",
+  "deployed",
+  "missing",
+  "tampered",
+  "fault",
+  "partial",
+  "weak",
+  "broken",
+  "issue",
+  "dripping",
+];
+
+const isIssueStatus = (statuses = []) =>
+  statuses.some((entry) => {
+    const normalized = normalizeText(entry).toLowerCase();
+    if (!normalized) return false;
+    return ISSUE_TOKENS.some((token) => normalized.includes(token));
+  });
+
+const pickFileUrl = (file = {}) =>
+  normalizeText(
+    firstPresent(file.url, file.preview, file.thumbUrl, file.secure_url),
+  );
+
+const toEvidencePhoto = (file = {}, fallbackTag = "") => {
+  const url = pickFileUrl(file);
+  if (!url) return null;
+  return {
+    url,
+    tag: normalizeText(file.customTagName || file.evidenceTag || fallbackTag) || "Evidence",
+  };
+};
+
+const dedupePhotos = (photos = []) => {
+  const seen = new Set();
+  return photos.filter((photo) => {
+    const key = normalizeText(photo?.url);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const collectMandatoryPhotos = (report = {}) => {
+  const bucketLabels = {
+    frontView: "Front View",
+    rearView: "Rear View",
+    leftSideProfile: "Left Side Profile",
+    rightSideProfile: "Right Side Profile",
+    odometerCluster: "Odometer Cluster",
+    engineBayOpen: "Engine Bay Open",
+    rcDocuments: "RC Documents",
+    all4Tyres: "All 4 Tyres",
+    chassisNumberPlate: "Chassis Number",
+    dashboardInterior: "Dashboard Interior",
+    others: "Others",
+  };
+  const preferredOrder = Object.keys(bucketLabels);
+  const buckets = report?.photoBuckets || {};
+  const orderedKeys = [
+    ...preferredOrder,
+    ...Object.keys(buckets).filter((key) => !preferredOrder.includes(key)),
+  ];
+  const photos = orderedKeys.flatMap((key) =>
+    (Array.isArray(buckets[key]) ? buckets[key] : [])
+      .map((file) => toEvidencePhoto(file, bucketLabels[key] || humanizeKey(key)))
+      .filter(Boolean),
+  );
+  return dedupePhotos(photos);
+};
+
+const collectDefectPhotos = (report = {}) => {
+  const itemMap = report?.items || {};
+  const fromItems = Object.entries(itemMap).flatMap(([itemKey, itemValue]) => {
+    const statuses = normalizeStatusListForReport(itemValue?.status);
+    if (!isIssueStatus(statuses)) return [];
+    const files = Array.isArray(itemValue?.photos) ? itemValue.photos : [];
+    const tag = humanizeKey(itemKey);
+    return files.map((file) => toEvidencePhoto(file, tag)).filter(Boolean);
+  });
+
+  const mandatoryTagTokens = new Set(
+    collectMandatoryPhotos(report)
+      .map((photo) => normalizeText(photo.tag).toLowerCase())
+      .filter(Boolean),
+  );
+  const fromBulk = (Array.isArray(report?.bulkEvidence) ? report.bulkEvidence : [])
+    .map((file) => toEvidencePhoto(file, "Evidence"))
+    .filter(Boolean)
+    .filter((photo) => !mandatoryTagTokens.has(normalizeText(photo.tag).toLowerCase()));
+
+  return dedupePhotos([...fromItems, ...fromBulk]);
+};
+
+const collectChecklistRows = (report = {}) =>
+  Object.entries(report?.items || {}).map(([itemKey, itemValue]) => {
+    const statuses = normalizeStatusListForReport(itemValue?.status);
+    const statusText = statuses.length ? statuses.join(", ") : "Not Marked";
+    const issue = isIssueStatus(statuses);
+    return {
+      key: itemKey,
+      label: humanizeKey(itemKey),
+      statusText,
+      issue,
+    };
+  });
+
+const chunk = (arr = [], size = 1) => {
+  const safeSize = Math.max(1, Number(size) || 1);
+  const chunks = [];
+  for (let index = 0; index < arr.length; index += safeSize) {
+    chunks.push(arr.slice(index, index + safeSize));
+  }
+  return chunks;
+};
+
+const buildInspectionPdfHtml = (doc = {}) => {
+  const report = doc?.inspection?.report || {};
+  const checklistRows = collectChecklistRows(report);
+  const issueCount = checklistRows.filter((row) => row.issue).length;
+  const cleanCount = checklistRows.length - issueCount;
+  const mandatoryPhotos = collectMandatoryPhotos(report);
+  const defectPhotos = collectDefectPhotos(report);
+  const customerName = normalizeText(firstPresent(report.customerName, doc?.seller?.name, doc?.name));
+  const makeModelVariant = [
+    normalizeText(firstPresent(report.makeConfirmation, doc?.vehicle?.make, doc?.make)),
+    normalizeText(firstPresent(report.modelConfirmation, doc?.vehicle?.model, doc?.model)),
+    normalizeText(firstPresent(report.variantConfirmation, doc?.vehicle?.variant, doc?.variant)),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const inspectionId = normalizeText(
+    firstPresent(doc?.inspection?.inspectionId, doc?.internalLeadId, "Inspection"),
+  );
+  const verdict = normalizeText(firstPresent(doc?.inspection?.verdict, report?.verdict, "Pending"));
+  const topPhoto = mandatoryPhotos[0] || defectPhotos[0] || null;
+  const leadVerification = report?.leadVerification || {};
+  const verifiedCount = Object.values(leadVerification).filter(Boolean).length;
+
+  const summaryRows = [
+    ["Customer", customerName || "-"],
+    ["Mobile", normalizeText(firstPresent(doc?.seller?.mobile, doc?.mobile)) || "-"],
+    ["Inspection ID", inspectionId || "-"],
+    ["Registration", normalizeText(firstPresent(report.registrationNumber, doc?.vehicle?.regNo, doc?.regNo)) || "-"],
+    ["Insurance", normalizeText(firstPresent(report.insuranceType, doc?.vehicle?.insuranceCategory, doc?.vehicle?.insurance, doc?.insuranceCategory, doc?.insurance)) || "-"],
+    ["Insurance Expiry", formatDateLabel(firstPresent(report.insuranceExpiry, doc?.vehicle?.insuranceExpiry, doc?.insuranceExpiry))],
+    ["Generated At", formatDateLabel(firstPresent(report.generatedAt, doc?.inspection?.submittedAt, doc?.updatedAt))],
+    ["Verdict", verdict || "-"],
+    ["Refurb Cost", formatCurrency(firstPresent(report.estimatedRefurbCost, 0))],
+    ["Suggested Buy", formatCurrency(firstPresent(report.suggestedBuyPrice, 0))],
+  ];
+
+  const checklistPages = chunk(checklistRows, 28);
+  const mandatoryPhotoPages = chunk(mandatoryPhotos, 4);
+  const defectPhotoPages = chunk(defectPhotos, 4);
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(inspectionId)} Report</title>
+    <style>
+      :root {
+        --ink: #0f172a;
+        --muted: #64748b;
+        --line: #dbe3ef;
+        --brand: #165ec9;
+        --brand-soft: #e9f2ff;
+        --ok: #138f55;
+        --issue: #c83f2f;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: var(--ink);
+      }
+      .page {
+        width: 210mm;
+        min-height: 297mm;
+        padding: 12mm;
+        page-break-after: always;
+        background: #fff;
+      }
+      .page:last-child { page-break-after: auto; }
+      .cover {
+        background: linear-gradient(165deg, #e8f1ff 0%, #f8fbff 52%, #ffffff 100%);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        height: calc(297mm - 24mm);
+        padding: 14mm;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .badge {
+        display: inline-block;
+        background: #0b3a86;
+        color: #fff;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 10px 0 6px;
+        font-size: 40px;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+      }
+      h2 {
+        margin: 0;
+        font-size: 22px;
+        line-height: 1.2;
+      }
+      .sub {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .cover-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 22px;
+      }
+      .meta-card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 12px;
+        background: rgba(255,255,255,0.88);
+      }
+      .meta-card .label {
+        margin: 0;
+        font-size: 10px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .meta-card .value {
+        margin-top: 4px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .section-title {
+        margin: 0 0 10px;
+        font-size: 18px;
+        font-weight: 800;
+      }
+      .summary-grid {
+        display: grid;
+        grid-template-columns: 1.4fr 1fr;
+        gap: 12px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px;
+        background: #fff;
+      }
+      .hero-photo {
+        width: 100%;
+        height: 220px;
+        border-radius: 10px;
+        object-fit: cover;
+        border: 1px solid var(--line);
+        display: block;
+      }
+      .mini-stats {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .stat-chip {
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        padding: 8px;
+        background: #f9fcff;
+      }
+      .stat-chip .k {
+        font-size: 10px;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+      .stat-chip .v {
+        margin-top: 2px;
+        font-size: 15px;
+        font-weight: 800;
+      }
+      .kv {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .kv-item {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+      }
+      .kv-item .k {
+        margin: 0;
+        font-size: 10px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .kv-item .v {
+        margin-top: 3px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .table th, .table td {
+        border-bottom: 1px solid var(--line);
+        padding: 8px 10px;
+        font-size: 12px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .table th {
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #334155;
+        background: #f6f9ff;
+      }
+      .table tr:last-child td { border-bottom: none; }
+      .pill {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 700;
+      }
+      .pill.ok { background: #e8f8ef; color: var(--ok); border: 1px solid #b9e8cb; }
+      .pill.issue { background: #feeeee; color: var(--issue); border: 1px solid #f6c5c5; }
+      .photo-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .photo-card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .photo-card img {
+        width: 100%;
+        height: 250px;
+        object-fit: cover;
+        display: block;
+      }
+      .photo-tag {
+        padding: 8px 10px;
+        background: #fff;
+        border-top: 1px solid var(--line);
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .note-box {
+        margin-top: 10px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+        background: #fcfdff;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      @page {
+        size: A4;
+        margin: 8mm;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="page">
+      <div class="cover">
+        <div>
+          <span class="badge">Comprehensive Inspection Report</span>
+          <h1>Car Inspection Report</h1>
+          <h2>${escapeHtml(makeModelVariant || "Vehicle details pending")}</h2>
+          <p class="sub">Detailed evaluator summary with evidence-backed checklist and refurbishment recommendation.</p>
+          <div class="cover-meta">
+            <div class="meta-card"><p class="label">Inspection ID</p><p class="value">${escapeHtml(inspectionId || "-")}</p></div>
+            <div class="meta-card"><p class="label">Customer</p><p class="value">${escapeHtml(customerName || "-")}</p></div>
+            <div class="meta-card"><p class="label">Verdict</p><p class="value">${escapeHtml(verdict || "-")}</p></div>
+            <div class="meta-card"><p class="label">Generated</p><p class="value">${escapeHtml(formatDateLabel(firstPresent(report.generatedAt, doc?.inspection?.submittedAt, doc?.updatedAt)))}</p></div>
+          </div>
+        </div>
+        <div class="sub">
+          <strong>${escapeHtml(doc?.seller?.name || "")}</strong> · ${escapeHtml(normalizeText(doc?.seller?.mobile) || "-")}<br />
+          ${escapeHtml(normalizeText(firstPresent(report.inspectionLocation, doc?.seller?.address, doc?.address)) || "-")}
+        </div>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2 class="section-title">At a Glance</h2>
+      <div class="summary-grid">
+        <div class="card">
+          ${
+            topPhoto
+              ? `<img class="hero-photo" src="${escapeHtml(topPhoto.url)}" alt="Vehicle" />`
+              : `<div class="hero-photo" style="display:flex;align-items:center;justify-content:center;background:#f8fafc;color:#64748b;font-size:13px;">Photo not available</div>`
+          }
+          <div class="mini-stats">
+            <div class="stat-chip"><div class="k">Checklist</div><div class="v">${checklistRows.length}</div></div>
+            <div class="stat-chip"><div class="k">Clean</div><div class="v" style="color:var(--ok)">${cleanCount}</div></div>
+            <div class="stat-chip"><div class="k">Issues</div><div class="v" style="color:var(--issue)">${issueCount}</div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="kv">
+            ${summaryRows
+              .map(
+                ([label, value]) => `<div class="kv-item"><p class="k">${escapeHtml(label)}</p><div class="v">${escapeHtml(value)}</div></div>`,
+              )
+              .join("")}
+            <div class="kv-item"><p class="k">Lead Verification</p><div class="v">${verifiedCount}/${Object.keys(leadVerification || {}).length || 0} checks</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="note-box">
+        ${escapeHtml(
+          normalizeText(firstPresent(report.overallRemarks, doc?.inspection?.remarks)) ||
+            "No additional remarks shared by evaluator.",
+        )}
+      </div>
+    </section>
+
+    ${
+      checklistPages.length
+        ? checklistPages
+            .map(
+              (rows, pageIndex) => `
+      <section class="page">
+        <h2 class="section-title">Detailed Checklist ${checklistPages.length > 1 ? `· Part ${pageIndex + 1}/${checklistPages.length}` : ""}</h2>
+        <table class="table">
+          <thead>
+            <tr>
+              <th style="width:42%">Inspection Item</th>
+              <th style="width:44%">Observed Condition</th>
+              <th style="width:14%">Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows
+              .map(
+                (row) => `
+              <tr>
+                <td>${escapeHtml(row.label)}</td>
+                <td>${escapeHtml(row.statusText)}</td>
+                <td><span class="pill ${row.issue ? "issue" : "ok"}">${row.issue ? "Issue" : "OK"}</span></td>
+              </tr>`,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </section>`,
+            )
+            .join("")
+        : ""
+    }
+
+    ${
+      mandatoryPhotoPages.length
+        ? mandatoryPhotoPages
+            .map(
+              (photos, pageIndex) => `
+      <section class="page">
+        <h2 class="section-title">Mandatory Photo Pack ${mandatoryPhotoPages.length > 1 ? `· ${pageIndex + 1}/${mandatoryPhotoPages.length}` : ""}</h2>
+        <div class="photo-grid">
+          ${photos
+            .map(
+              (photo) => `
+            <div class="photo-card">
+              <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.tag)}" />
+              <div class="photo-tag">${escapeHtml(photo.tag)}</div>
+            </div>`,
+            )
+            .join("")}
+        </div>
+      </section>`,
+            )
+            .join("")
+        : ""
+    }
+
+    ${
+      defectPhotoPages.length
+        ? defectPhotoPages
+            .map(
+              (photos, pageIndex) => `
+      <section class="page">
+        <h2 class="section-title">Defect Evidence Pack ${defectPhotoPages.length > 1 ? `· ${pageIndex + 1}/${defectPhotoPages.length}` : ""}</h2>
+        <div class="photo-grid">
+          ${photos
+            .map(
+              (photo) => `
+            <div class="photo-card">
+              <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.tag)}" />
+              <div class="photo-tag">${escapeHtml(photo.tag)}</div>
+            </div>`,
+            )
+            .join("")}
+        </div>
+      </section>`,
+            )
+            .join("")
+        : ""
+    }
+  </body>
+</html>`;
+};
+
+const getPuppeteer = async () => {
+  try {
+    const mod = await import("puppeteer");
+    return mod?.default || mod;
+  } catch (error) {
+    const wrapped = new Error(
+      "Puppeteer package missing on backend. Please install `puppeteer` and restart API.",
+    );
+    wrapped.cause = error;
+    throw wrapped;
+  }
+};
+
+export const downloadUsedCarInspectionReportPdf = asyncHandler(async (req, res) => {
+  const doc = await resolveLead(req.params.id);
+  if (!doc) {
+    res.status(404);
+    throw new Error("Used car lead not found");
+  }
+
+  const html = buildInspectionPdfHtml(doc);
+  const puppeteer = await getPuppeteer();
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1240, height: 1754, deviceScaleFactor: 2 });
+    await page.setContent(html, { waitUntil: "networkidle0" });
+    await page.evaluate(async () => {
+      const images = Array.from(document.images || []);
+      await Promise.all(
+        images.map(
+          (img) =>
+            new Promise((resolve) => {
+              if (img.complete) {
+                resolve();
+                return;
+              }
+              img.onload = () => resolve();
+              img.onerror = () => resolve();
+            }),
+        ),
+      );
+    });
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      preferCSSPageSize: true,
+      margin: { top: "8mm", right: "8mm", bottom: "8mm", left: "8mm" },
+    });
+    const fallbackName = doc?.inspection?.inspectionId || doc?.internalLeadId || "inspection-report";
+    const fileName = `${sanitizeFileName(fallbackName)}-report.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.setHeader("Content-Length", String(pdfBuffer.length));
+    res.send(Buffer.from(pdfBuffer));
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+});
+
+const BGC_LIST_PROJECTION = [
+  "internalLeadId",
+  "leadDate",
+  "source",
+  "statusDate",
+  "statusUpdatedDate",
+  "subStatus",
+  "sourceStatus",
+  "executiveName",
+  "externalRefs",
+  "seller",
+  "vehicle",
+  "pricing",
+  "workflow",
+  "assignment",
+  "scheduling",
+  "latestCallSummary",
+  "latestDisposition",
+  "backgroundCheck",
+  "inspection.inspectionId",
+  "inspection.verdict",
+  "inspection.inspectedAt",
+  "inspection.report.overallScore",
+  "inspection.report.score",
+  "createdAt",
+  "updatedAt",
+].join(" ");
 
 export const listUsedCarLeads = asyncHandler(async (req, res) => {
   const limit = Math.min(5000, Math.max(1, Number(req.query.limit || 250)));
@@ -1006,6 +1785,145 @@ export const patchUsedCarLeadWorkflow = asyncHandler(async (req, res) => {
     followUpEntry: req.body?.followUpEntry,
     callLog: req.body?.callLog,
   });
+
+  await doc.save();
+  res.json({ success: true, data: doc });
+});
+
+export const listBackgroundCheckLeads = asyncHandler(async (req, res) => {
+  const limit = Math.min(5000, Math.max(1, Number(req.query.limit || 250)));
+  const skip = Math.max(0, Number(req.query.skip || 0));
+  const q = normalizeText(req.query.q);
+  const status = normalizeText(req.query.status);
+  const assignedTo = normalizeText(req.query.assignedTo);
+  const includeClosed =
+    normalizeText(req.query.includeClosed).toLowerCase() === "true";
+  const includeAllStages =
+    normalizeText(req.query.includeAllStages).toLowerCase() === "true";
+
+  const filter = {};
+  if (!includeClosed) filter["workflow.isClosed"] = { $ne: true };
+  if (!includeAllStages) filter["workflow.currentStage"] = "background-check";
+  if (status) filter["backgroundCheck.status"] = status;
+  if (assignedTo) filter["assignment.assignedTo"] = assignedTo;
+  if (q) {
+    filter.$or = [
+      { internalLeadId: new RegExp(escapeRegex(q), "i") },
+      { "externalRefs.c2bLeadId": new RegExp(escapeRegex(q), "i") },
+      { "seller.name": new RegExp(escapeRegex(q), "i") },
+      { "seller.mobile": new RegExp(escapeRegex(q), "i") },
+      { "vehicle.regNo": new RegExp(escapeRegex(q), "i") },
+      { "vehicle.make": new RegExp(escapeRegex(q), "i") },
+      { "vehicle.model": new RegExp(escapeRegex(q), "i") },
+    ];
+  }
+
+  const count = await UsedCarLead.countDocuments(filter);
+  const rows = await UsedCarLead.find(filter)
+    .select(BGC_LIST_PROJECTION)
+    .sort({ updatedAt: -1, _id: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
+
+  res.json({ success: true, count, data: rows });
+});
+
+export const saveBackgroundCheck = asyncHandler(async (req, res) => {
+  const doc = await resolveLead(req.params.id);
+  if (!doc) {
+    res.status(404);
+    throw new Error("Used car lead not found");
+  }
+
+  const payload = normalizeMapObject(req.body?.backgroundCheck || req.body || {});
+  const normalized = normalizeBackgroundCheck(payload);
+  const now = new Date();
+  const hasFormValues =
+    payload.formValues && typeof payload.formValues === "object";
+  const hasEvidenceVault = Array.isArray(payload.evidenceVault);
+  const hasSummary = payload.summary && typeof payload.summary === "object";
+  const safeStatus = [
+    "Pending",
+    "Vahan Done",
+    "BGC Complete",
+    "Approved",
+    "Rejected",
+    "Escalated",
+  ].includes(normalized.status)
+    ? normalized.status
+    : "Pending";
+
+  doc.backgroundCheck = {
+    ...doc.backgroundCheck?.toObject?.(),
+    ...normalized,
+    status: safeStatus,
+    formValues: hasFormValues
+      ? normalized.formValues
+      : doc.backgroundCheck?.formValues || {},
+    evidenceVault: hasEvidenceVault
+      ? normalized.evidenceVault
+      : doc.backgroundCheck?.evidenceVault || [],
+    summary: hasSummary
+      ? normalized.summary
+      : doc.backgroundCheck?.summary || {},
+    updatedAt: now,
+    completedAt:
+      safeStatus === "BGC Complete" || safeStatus === "Approved"
+        ? normalized.completedAt || now
+        : normalized.completedAt || null,
+  };
+
+  if (payload?.appendAudit && typeof payload.appendAudit === "object") {
+    doc.backgroundCheck.auditTrail = [
+      ...(doc.backgroundCheck.auditTrail || []),
+      normalizeBackgroundCheckAudit(payload.appendAudit),
+    ];
+  }
+
+  const skipWorkflowSync = payload?.syncWorkflow === false;
+  if (!skipWorkflowSync) {
+    if (safeStatus === "Rejected") {
+      doc.workflow = {
+        ...doc.workflow?.toObject?.(),
+        status: "Closed",
+        currentStage: "closed",
+        pipelineStage: "Background Check",
+        isClosed: true,
+        closureReason:
+          normalizeText(payload.closureReason) ||
+          doc.workflow?.closureReason ||
+          "Rejected in Background Check",
+        closedAt: doc.workflow?.closedAt || now,
+      };
+    } else if (safeStatus === "Approved" || safeStatus === "BGC Complete") {
+      doc.workflow = {
+        ...doc.workflow?.toObject?.(),
+        status: "Negotiation",
+        currentStage: "negotiation",
+        pipelineStage: "Negotiation",
+        isClosed: false,
+        closureReason: "",
+        closureNotes: "",
+        closedAt: null,
+      };
+    } else {
+      doc.workflow = {
+        ...doc.workflow?.toObject?.(),
+        status: "Background Check",
+        currentStage: "background-check",
+        pipelineStage: "Background Check",
+        isClosed: false,
+        closureReason: "",
+        closureNotes: "",
+        closedAt: null,
+      };
+    }
+  }
+
+  if (payload?.activity && typeof payload.activity === "object") {
+    doc.activities.unshift(buildActivity(payload.activity));
+  }
 
   await doc.save();
   res.json({ success: true, data: doc });
