@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const insuranceQuoteSchema = new mongoose.Schema(
   {
-    id: { type: Number, required: true },
+    id: { type: mongoose.Schema.Types.Mixed, required: true },
     insuranceCompany: { type: String, default: "" },
     coverageType: { type: String, default: "" },
     vehicleIdv: { type: Number, default: 0 },
@@ -21,7 +21,7 @@ const insuranceQuoteSchema = new mongoose.Schema(
     totalPremium: { type: Number, default: 0 },
     isAccepted: { type: Boolean, default: false },
   },
-  { _id: false },
+  { _id: false, strict: false },
 );
 
 const insuranceDocumentSchema = new mongoose.Schema(
@@ -31,8 +31,13 @@ const insuranceDocumentSchema = new mongoose.Schema(
     size: { type: Number, default: 0 },
     type: { type: String, default: "" },
     tag: { type: String, default: "" },
+    url: { type: String, default: "" },
+    previewUrl: { type: String, default: "" },
+    downloadUrl: { type: String, default: "" },
+    storageKey: { type: String, default: "" },
+    uploadedAt: { type: Date, default: null },
   },
-  { _id: false },
+  { _id: false, strict: false },
 );
 
 const paymentHistorySchema = new mongoose.Schema(
@@ -98,7 +103,7 @@ const customerSnapshotSchema = new mongoose.Schema(
 
 const insuranceCaseSchema = new mongoose.Schema(
   {
-    caseId: { type: String, required: true, unique: true, index: true },
+    caseId: { type: String, required: true, unique: true },
 
     // Optional linkage to Customers module
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
@@ -174,7 +179,7 @@ const insuranceCaseSchema = new mongoose.Schema(
 
     // Step 4: quotes
     quotes: { type: [insuranceQuoteSchema], default: [] },
-    acceptedQuoteId: { type: Number, default: null },
+    acceptedQuoteId: { type: mongoose.Schema.Types.Mixed, default: null },
 
     // Step 5: new policy details
     newInsuranceCompany: { type: String, default: "" },
@@ -253,8 +258,9 @@ const insuranceCaseSchema = new mongoose.Schema(
   },
 );
 
-insuranceCaseSchema.index({ caseId: 1 }, { unique: true });
 insuranceCaseSchema.index({ customerId: 1, createdAt: -1 });
+insuranceCaseSchema.index({ status: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ createdAt: -1 });
 
 const InsuranceCase = mongoose.model("InsuranceCase", insuranceCaseSchema);
 

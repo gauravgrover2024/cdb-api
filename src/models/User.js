@@ -7,6 +7,7 @@ const userSchema = mongoose.Schema(
     email: { type: String, required: true, unique: true },
     password: { type: String }, // Optional — not set for Google/Firebase-only users
     firebaseUid: { type: String, unique: true, sparse: true },
+    avatarUrl: { type: String, default: "" },
     role: {
       type: String,
       enum: ['superadmin', 'admin', 'staff', 'user', 'demo'],

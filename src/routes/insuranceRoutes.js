@@ -6,11 +6,17 @@ import {
   updateInsuranceCase,
   deleteInsuranceCase,
   syncInsuranceReceivable,
+  getInsurancePayoutRate,
+  upsertInsurancePayoutRate,
 } from "../controllers/insuranceController.js";
 
 const router = express.Router();
 
 router.route("/").get(getInsuranceCases).post(createInsuranceCase);
+router
+  .route("/payout-rates")
+  .get(getInsurancePayoutRate)
+  .post(upsertInsurancePayoutRate);
 
 router
   .route("/:id")

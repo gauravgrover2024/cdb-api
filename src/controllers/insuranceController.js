@@ -3,10 +3,12 @@ import mongoose from "mongoose";
 import Counter from "../models/Counter.js";
 import Customer from "../models/Customer.js";
 import InsuranceCase from "../models/InsuranceCase.js";
+import InsurancePayoutRate from "../models/InsurancePayoutRate.js";
 import Receivable from "../models/Receivable.js";
 
 const INSURANCE_COUNTER_PREFIX = "insurance_case_id_sequence_";
 const INSURANCE_ID_PREFIX = "INS";
+const DEFAULT_INSURANCE_PAYOUT_PERCENTAGE = 10;
 
 const safeString = (value) =>
   value === undefined || value === null ? "" : String(value);
@@ -274,4 +276,90 @@ export const syncInsuranceReceivable = asyncHandler(async (req, res) => {
     message: "Insurance receivable synced successfully",
     data: receivable,
   });
+});
+
+// @desc    Get payout rate by company and date (latest effective)
+// @route   GET /api/insurance/payout-rates
+// @access  Public
+export const getInsurancePayoutRate = asyncHandler(async (req, res) => {
+  const companyName = safeString(req.query.companyName).trim();
+  const onDateRaw = safeString(req.query.onDate).trim();
+  const onDate = onDateRaw ? new Date(onDateRaw) : new Date();
+
+  if (!companyName) {
+    res.status(400);
+    throw new Error("companyName query param is required");
+  }
+
+  const isValidDate = !Number.isNaN(onDate.getTime());
+  const effectiveDate = isValidDate ? onDate : new Date();
+
+  const row = await InsurancePayoutRate.findOne({
+    companyName,
+    active: true,
+    effectiveFrom: { $lte: effectiveDate },
+  })
+    .sort({ effectiveFrom: -1, createdAt: -1 })
+    .lean();
+
+  const payoutPercentage = Number(
+    row?.payoutPercentage ?? DEFAULT_INSURANCE_PAYOUT_PERCENTAGE,
+  );
+
+  res.json({
+    success: true,
+    data: {
+      companyName,
+      payoutPercentage,
+      source: row ? "db" : "default",
+      effectiveFrom: row?.effectiveFrom || null,
+      rateId: row?._id || null,
+    },
+  });
+});
+
+// @desc    Upsert payout rate (company/date specific)
+// @route   POST /api/insurance/payout-rates
+// @access  Public
+export const upsertInsurancePayoutRate = asyncHandler(async (req, res) => {
+  const companyName = safeString(req.body?.companyName).trim();
+  const notes = safeString(req.body?.notes).trim();
+  const active = req.body?.active !== false;
+  const payoutPercentage = Number(req.body?.payoutPercentage);
+  const effectiveFromRaw = safeString(req.body?.effectiveFrom).trim();
+  const effectiveFrom = effectiveFromRaw ? new Date(effectiveFromRaw) : new Date();
+
+  if (!companyName) {
+    res.status(400);
+    throw new Error("companyName is required");
+  }
+  if (!Number.isFinite(payoutPercentage) || payoutPercentage < 0 || payoutPercentage > 100) {
+    res.status(400);
+    throw new Error("payoutPercentage must be between 0 and 100");
+  }
+  if (Number.isNaN(effectiveFrom.getTime())) {
+    res.status(400);
+    throw new Error("effectiveFrom is invalid");
+  }
+
+  const row = await InsurancePayoutRate.findOneAndUpdate(
+    {
+      companyName,
+      effectiveFrom,
+    },
+    {
+      $set: {
+        payoutPercentage,
+        active,
+        notes,
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+    },
+  );
+
+  res.status(201).json({ success: true, data: row });
 });

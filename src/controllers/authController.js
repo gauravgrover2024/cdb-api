@@ -3,6 +3,9 @@ import User from '../models/User.js';
 import generateToken from '../utils/generateToken.js';
 import { verifyFirebaseToken } from '../config/firebase.js';
 
+const getAvatarUrlFromDecoded = (decoded = {}) =>
+  String(decoded?.picture || decoded?.photoURL || '').trim();
+
 // @desc    Get all users (superadmin only)
 // @route   GET /api/auth/users
 // @access  Private/Superadmin
@@ -84,6 +87,7 @@ const authUser = asyncHandler(async (req, res) => {
       email: user.email,
       role: user.role,
       status: user.status,
+      avatarUrl: user.avatarUrl || "",
       token: generateToken(user._id),
     },
   });
@@ -102,10 +106,12 @@ const registerUser = asyncHandler(async (req, res) => {
   }
 
   let firebaseUid;
+  let firebaseDecoded = null;
 
   if (firebaseIdToken) {
     // Verify Firebase token and extract UID
     const decoded = await verifyFirebaseToken(firebaseIdToken);
+    firebaseDecoded = decoded;
     firebaseUid = decoded.uid;
 
     if (decoded.email !== email) {
@@ -122,6 +128,7 @@ const registerUser = asyncHandler(async (req, res) => {
     email,
     password: password || undefined,
     firebaseUid,
+    avatarUrl: getAvatarUrlFromDecoded(firebaseDecoded),
     role: role || 'staff',
   });
 
@@ -139,6 +146,7 @@ const registerUser = asyncHandler(async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        avatarUrl: user.avatarUrl || "",
         token: generateToken(user._id),
       },
     });
@@ -164,6 +172,7 @@ const googleLogin = asyncHandler(async (req, res) => {
 
   const resolvedEmail = decoded.email || email;
   const resolvedName = decoded.name || name || resolvedEmail;
+  const resolvedAvatarUrl = getAvatarUrlFromDecoded(decoded);
 
   if (!resolvedEmail) {
     res.status(400);
@@ -179,12 +188,20 @@ const googleLogin = asyncHandler(async (req, res) => {
       name: resolvedName,
       email: resolvedEmail,
       firebaseUid: decoded.uid,
+      avatarUrl: resolvedAvatarUrl,
       role: 'staff',
     });
-  } else if (!user.firebaseUid) {
-    // Sync firebaseUid if missing
-    user.firebaseUid = decoded.uid;
-    await user.save();
+  } else {
+    let shouldSave = false;
+    if (!user.firebaseUid) {
+      user.firebaseUid = decoded.uid;
+      shouldSave = true;
+    }
+    if (resolvedAvatarUrl && user.avatarUrl !== resolvedAvatarUrl) {
+      user.avatarUrl = resolvedAvatarUrl;
+      shouldSave = true;
+    }
+    if (shouldSave) await user.save();
   }
 
   // Block deactivated/rejected/pending users
@@ -208,6 +225,7 @@ const googleLogin = asyncHandler(async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      avatarUrl: user.avatarUrl || "",
       token: generateToken(user._id),
     },
   });
@@ -340,6 +358,7 @@ const getMe = asyncHandler(async (req, res) => {
       email: user.email,
       role: user.role,
       status: user.status,
+      avatarUrl: user.avatarUrl || "",
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     },
