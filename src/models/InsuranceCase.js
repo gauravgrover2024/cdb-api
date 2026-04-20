@@ -38,16 +38,40 @@ const insuranceDocumentSchema = new mongoose.Schema(
 const paymentHistorySchema = new mongoose.Schema(
   {
     amount: { type: Number, required: true },
-    date: { type: Date, required: true },
-    paymentType: { 
-      type: String, 
-      enum: ["customer", "inhouse"], 
-      required: true 
+    date: { type: Date, default: null },
+    entryType: {
+      type: String,
+      enum: [
+        "INSURER_PAYMENT",
+        "CUSTOMER_RECEIPT",
+        "SUBVENTION",
+        "SUBVENTION_NON_RECOVERABLE",
+        "SUBVENTION_REFUND",
+      ],
+      default: undefined,
     },
-    paymentMode: { 
-      type: String, 
-      enum: ["Cash", "Cheque", "NEFT", "RTGS", "UPI", "Card", "Other"],
-      default: "Cash"
+    paidBy: { type: String, default: "" },
+    paymentType: {
+      type: String,
+      enum: ["customer", "inhouse", "adjustment", "subvention_nr"],
+      default: "inhouse",
+    },
+    paymentMode: {
+      type: String,
+      enum: [
+        "",
+        "Online Transfer/UPI",
+        "Cash",
+        "Cheque",
+        "DD",
+        "Credit Card",
+        "NEFT",
+        "RTGS",
+        "UPI",
+        "Card",
+        "Other",
+      ],
+      default: "",
     },
     bankName: { type: String, default: "" },
     transactionRef: { type: String, default: "" },
@@ -135,7 +159,6 @@ const insuranceCaseSchema = new mongoose.Schema(
     chargerNumber: { type: String, default: "" },
     hypothecation: { type: String, default: "" },
 
-
     // Step 3: previous policy (renewals)
     previousInsuranceCompany: { type: String, default: "" },
     previousPolicyNumber: { type: String, default: "" },
@@ -180,7 +203,6 @@ const insuranceCaseSchema = new mongoose.Schema(
     ewExpiryDate: { type: String, default: "" },
     kmsCoverage: { type: Number, default: 0 },
 
-
     // Step 6: documents
     documents: { type: [insuranceDocumentSchema], default: [] },
 
@@ -195,15 +217,27 @@ const insuranceCaseSchema = new mongoose.Schema(
     insurance_receivables: { type: [mongoose.Schema.Types.Mixed], default: [] },
     insurance_payables: { type: [mongoose.Schema.Types.Mixed], default: [] },
 
-
     // Renewal tracking
     isRenewal: { type: Boolean, default: false },
-    renewedFromCaseId: { type: mongoose.Schema.Types.ObjectId, ref: "InsuranceCase" },
-    renewedToCaseId: { type: mongoose.Schema.Types.ObjectId, ref: "InsuranceCase" },
-    renewalFollowUpStatus: { 
-      type: String, 
-      enum: ["pending", "contacted", "interested", "renewed", "lost", "not_applicable"],
-      default: "not_applicable"
+    renewedFromCaseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "InsuranceCase",
+    },
+    renewedToCaseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "InsuranceCase",
+    },
+    renewalFollowUpStatus: {
+      type: String,
+      enum: [
+        "pending",
+        "contacted",
+        "interested",
+        "renewed",
+        "lost",
+        "not_applicable",
+      ],
+      default: "not_applicable",
     },
     renewalFollowUpNotes: { type: String, default: "" },
     renewalLastContactedAt: { type: Date },
@@ -225,4 +259,3 @@ insuranceCaseSchema.index({ customerId: 1, createdAt: -1 });
 const InsuranceCase = mongoose.model("InsuranceCase", insuranceCaseSchema);
 
 export default InsuranceCase;
-
