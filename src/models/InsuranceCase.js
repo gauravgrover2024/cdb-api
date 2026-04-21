@@ -5,6 +5,7 @@ const insuranceQuoteSchema = new mongoose.Schema(
     id: { type: mongoose.Schema.Types.Mixed, required: true },
     insuranceCompany: { type: String, default: "" },
     coverageType: { type: String, default: "" },
+    hypothecation: { type: String, default: "Not Applicable" },
     vehicleIdv: { type: Number, default: 0 },
     cngIdv: { type: Number, default: 0 },
     accessoriesIdv: { type: Number, default: 0 },
@@ -225,7 +226,7 @@ const insuranceCaseSchema = new mongoose.Schema(
     // Extended Warranty
     ewCommencementDate: { type: String, default: "" },
     ewExpiryDate: { type: String, default: "" },
-    kmsCoverage: { type: Number, default: 0 },
+    kmsCoverage: { type: String, default: "" },
 
     // Step 6: documents
     documents: { type: [insuranceDocumentSchema], default: [] },
