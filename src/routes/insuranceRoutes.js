@@ -5,6 +5,10 @@ import {
   getInsuranceCases,
   updateInsuranceCase,
   deleteInsuranceCase,
+  getNextTempRegistration,
+  resolveVehicleCubicCapacity,
+  findPotentialVehicleMatch,
+  mergeVehicleMatch,
   syncInsuranceReceivable,
   getInsurancePayoutRate,
   upsertInsurancePayoutRate,
@@ -17,6 +21,12 @@ router
   .route("/payout-rates")
   .get(getInsurancePayoutRate)
   .post(upsertInsurancePayoutRate);
+router.route("/temp-registration/next").post(getNextTempRegistration);
+router
+  .route("/vehicle-cubic-capacity/resolve")
+  .post(resolveVehicleCubicCapacity);
+router.route("/vehicle-match/potential").post(findPotentialVehicleMatch);
+router.route("/vehicle-match/merge").post(mergeVehicleMatch);
 
 router
   .route("/:id")

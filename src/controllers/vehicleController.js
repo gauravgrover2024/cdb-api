@@ -789,7 +789,7 @@ const getVehicles = asyncHandler(async (req, res) => {
 const searchVehicleRecords = asyncHandler(async (req, res) => {
   const rawQ = String(req.query.q || req.query.search || '').trim();
   const q = normalizeRegNo(rawQ);
-  const isFourDigitSuffixSearch = /^\d{4}$/.test(q);
+  const isFourDigitSuffixSearch = /^\d{4}$/.test(rawQ) || /^\d{4}$/.test(q);
   const requestedLimit = Number(req.query.limit);
   const defaultLimit = isFourDigitSuffixSearch ? 5000 : 20;
   const limit = Math.min(
@@ -797,21 +797,37 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
     10000,
   );
 
-  if (q.length < 2) {
+  if (rawQ.length < 2 && q.length < 2) {
     return res.json({ success: true, count: 0, data: [] });
   }
 
-  const escaped = escapeRegex(q);
-  const suffix = q.slice(-4);
-  const clauses = isFourDigitSuffixSearch
-    ? [
-        { registrationNumberLast4: suffix },
-        { registrationNumberNormalized: new RegExp(`${escaped}$`, 'i') },
-      ]
-    : [
-        { registrationNumberNormalized: new RegExp(`^${escaped}`, 'i') },
-        { registrationNumberNormalized: new RegExp(escaped, 'i') },
-      ];
+  const rawEscaped = escapeRegex(rawQ);
+  const regEscaped = escapeRegex(q);
+  const suffix = (q || normalizeRegNo(rawQ)).slice(-4);
+
+  const clauses = [];
+  if (q.length >= 2) {
+    if (isFourDigitSuffixSearch) {
+      clauses.push({ registrationNumberLast4: suffix });
+      clauses.push({ registrationNumberNormalized: new RegExp(`${regEscaped}$`, 'i') });
+    } else {
+      clauses.push({ registrationNumberNormalized: new RegExp(`^${regEscaped}`, 'i') });
+      clauses.push({ registrationNumberNormalized: new RegExp(regEscaped, 'i') });
+      if (suffix.length === 4) {
+        clauses.push({ registrationNumberLast4: suffix });
+      }
+    }
+  }
+  if (rawQ.length >= 2) {
+    clauses.push({ customerName: new RegExp(rawEscaped, 'i') });
+    clauses.push({ primaryMobile: new RegExp(rawEscaped, 'i') });
+    clauses.push({ make: new RegExp(rawEscaped, 'i') });
+    clauses.push({ model: new RegExp(rawEscaped, 'i') });
+    clauses.push({ variant: new RegExp(rawEscaped, 'i') });
+  }
+  if (!clauses.length) {
+    return res.json({ success: true, count: 0, data: [] });
+  }
 
   const fetchLimit = isFourDigitSuffixSearch ? limit : Math.max(limit * 4, 40);
 
@@ -820,6 +836,8 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
       registrationNumber: 1,
       registrationNumberNormalized: 1,
       registrationNumberLast4: 1,
+      customerName: 1,
+      primaryMobile: 1,
       make: 1,
       model: 1,
       variant: 1,
@@ -846,13 +864,25 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
       if (!normalized) return null;
 
       let score = 0;
-      if (normalized === q) score += 150;
-      if (normalized.startsWith(q)) score += 110;
-      if (normalized.includes(q)) score += 50;
+      if (q) {
+        if (normalized === q) score += 150;
+        if (normalized.startsWith(q)) score += 110;
+        if (normalized.includes(q)) score += 50;
+      }
       if (isFourDigitSuffixSearch && row?.registrationNumberLast4 === suffix) score += 220;
       if (isFourDigitSuffixSearch && normalized.endsWith(suffix)) score += 170;
       if (!isFourDigitSuffixSearch && suffix.length === 4 && row?.registrationNumberLast4 === suffix) score += 80;
       if (!isFourDigitSuffixSearch && suffix.length === 4 && normalized.endsWith(suffix)) score += 40;
+      const customerName = String(row?.customerName || '');
+      const primaryMobile = String(row?.primaryMobile || '');
+      const make = String(row?.make || '');
+      const model = String(row?.model || '');
+      const variant = String(row?.variant || '');
+      if (rawQ && new RegExp(rawEscaped, 'i').test(customerName)) score += 90;
+      if (rawQ && new RegExp(rawEscaped, 'i').test(primaryMobile)) score += 70;
+      if (rawQ && new RegExp(rawEscaped, 'i').test(make)) score += 55;
+      if (rawQ && new RegExp(rawEscaped, 'i').test(model)) score += 45;
+      if (rawQ && new RegExp(rawEscaped, 'i').test(variant)) score += 35;
       if (!score) return null;
 
       return {
@@ -881,6 +911,8 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
       _id: row._id,
       registrationNumber: row.registrationNumber,
       registrationNumberNormalized: row.registrationNumberNormalized,
+      customerName: row.customerName || '',
+      primaryMobile: row.primaryMobile || '',
       make: row.make || '',
       model: row.model || '',
       variant: row.variant || '',

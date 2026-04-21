@@ -5,9 +5,12 @@ import Customer from "../models/Customer.js";
 import InsuranceCase from "../models/InsuranceCase.js";
 import InsurancePayoutRate from "../models/InsurancePayoutRate.js";
 import Receivable from "../models/Receivable.js";
+import VehicleFeature from "../models/VehicleFeature.js";
+import VehicleRecord from "../models/VehicleRecord.js";
 
 const INSURANCE_COUNTER_PREFIX = "insurance_case_id_sequence_";
 const INSURANCE_ID_PREFIX = "INS";
+const INSURANCE_TEMP_REG_COUNTER_KEY = "insurance_temp_registration_sequence";
 const DEFAULT_INSURANCE_PAYOUT_PERCENTAGE = 10;
 
 const safeString = (value) =>
@@ -34,6 +37,31 @@ const buildCustomerSnapshot = (customer) => {
   };
 };
 
+const normalizeStep1Payload = (payload = {}) => {
+  const sourceNormalized = safeString(
+    payload.source || payload.sourceOrigin || payload.recordSource || "Direct",
+  ).trim();
+  const payoutPercentRaw = Number(
+    payload.payoutPercent ?? payload.payoutPercentage ?? 0,
+  );
+  const payoutPercent = Number.isFinite(payoutPercentRaw)
+    ? payoutPercentRaw
+    : 0;
+
+  return {
+    ...payload,
+    policyCategory: safeString(
+      payload.policyCategory || payload.policyTypeSelector || "Insurance Policy",
+    ).trim(),
+    policyTypeSelector: safeString(
+      payload.policyTypeSelector || payload.policyCategory || "Insurance Policy",
+    ).trim(),
+    source: sourceNormalized || "Direct",
+    sourceOrigin: sourceNormalized || "Direct",
+    payoutPercent,
+  };
+};
+
 const getNextInsuranceCaseId = async () => {
   const year = new Date().getFullYear();
   const key = `${INSURANCE_COUNTER_PREFIX}${year}`;
@@ -45,6 +73,467 @@ const getNextInsuranceCaseId = async () => {
   const seq = Number(next?.value || 0);
   return `${INSURANCE_ID_PREFIX}-${year}-${String(seq).padStart(4, "0")}`;
 };
+
+const normalizeRegNumber = (value) =>
+  safeString(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+const normalizeIdentityValue = (value) =>
+  safeString(value)
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .trim();
+
+const isTempRegistration = (value) =>
+  /^TEMP_REDG_/i.test(safeString(value).trim());
+
+const escapeRegex = (value) =>
+  safeString(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const extractCubicCapacity = (value) => {
+  const raw = safeString(value).trim();
+  if (!raw) return null;
+  const match = raw.match(/(\d{2,5})/);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const resolveCubicCapacityFromVehicleFeatures = async ({
+  make = "",
+  model = "",
+  variant = "",
+} = {}) => {
+  const brand = safeString(make).trim();
+  const modelName = safeString(model).trim();
+  const variantName = safeString(variant).trim();
+  if (!brand || !modelName || !variantName) return null;
+
+  const quickMatch = await VehicleFeature.findOne({
+    brand: { $in: [brand] },
+    model: { $in: [modelName] },
+    variant: { $in: [variantName] },
+  })
+    .collation({ locale: "en", strength: 2 })
+    .lean();
+
+  const doc =
+    quickMatch ||
+    (await VehicleFeature.findOne({
+      brand: new RegExp(`^${brand.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}$`, "i"),
+      model: new RegExp(`^${modelName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}$`, "i"),
+      variant: new RegExp(`^${variantName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}$`, "i"),
+    }).lean());
+
+  if (!doc?.features || typeof doc.features !== "object") return null;
+
+  const exactKeyValue = doc.features["Engine & Transmission | Displacement"];
+  if (exactKeyValue !== undefined && exactKeyValue !== null) {
+    return extractCubicCapacity(exactKeyValue);
+  }
+
+  for (const [fullKey, value] of Object.entries(doc.features)) {
+    const key = safeString(fullKey).toLowerCase();
+    if (!key.includes("displacement")) continue;
+    const parsed = extractCubicCapacity(value);
+    if (parsed != null) return parsed;
+  }
+  return null;
+};
+
+// @desc    Generate next temporary registration number for new car insurance
+// @route   POST /api/insurance/temp-registration/next
+// @access  Public
+export const getNextTempRegistration = asyncHandler(async (_req, res) => {
+  const counter = await Counter.findOneAndUpdate(
+    { key: INSURANCE_TEMP_REG_COUNTER_KEY },
+    { $inc: { value: 1 } },
+    { upsert: true, new: true },
+  );
+  const seq = Number(counter?.value || 0);
+  const registrationNumber = `TEMP_REDG_${String(seq).padStart(4, "0")}`;
+  res.json({
+    success: true,
+    data: {
+      registrationNumber,
+      sequence: seq,
+    },
+  });
+});
+
+// @desc    Resolve cubic capacity from vehicle_features and store to vehicle_master_records
+// @route   POST /api/insurance/vehicle-cubic-capacity/resolve
+// @access  Public
+export const resolveVehicleCubicCapacity = asyncHandler(async (req, res) => {
+  const make = safeString(req.body?.make).trim();
+  const model = safeString(req.body?.model).trim();
+  const variant = safeString(req.body?.variant).trim();
+  const registrationNumber = safeString(req.body?.registrationNumber).trim();
+
+  if (!make || !model || !variant) {
+    res.status(400);
+    throw new Error("make, model and variant are required");
+  }
+
+  const cubicCapacity = await resolveCubicCapacityFromVehicleFeatures({
+    make,
+    model,
+    variant,
+  });
+
+  const registrationNumberNormalized = normalizeRegNumber(registrationNumber);
+  let vehicleRecord = null;
+
+  if (registrationNumberNormalized) {
+    const updateDoc = {
+      registrationNumber: registrationNumber || registrationNumberNormalized,
+      registrationNumberNormalized,
+      registrationNumberLast4: registrationNumberNormalized.slice(-4),
+      make,
+      model,
+      variant,
+      lastSyncedAt: new Date(),
+    };
+    if (Number.isFinite(cubicCapacity) && cubicCapacity > 0) {
+      updateDoc.cubicCapacityCc = cubicCapacity;
+    }
+    vehicleRecord = await VehicleRecord.findOneAndUpdate(
+      { registrationNumberNormalized },
+      { $set: updateDoc },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+  }
+
+  res.json({
+    success: true,
+    data: {
+      make,
+      model,
+      variant,
+      cubicCapacity: Number.isFinite(cubicCapacity) ? cubicCapacity : null,
+      registrationNumber: registrationNumber || null,
+      registrationNumberNormalized: registrationNumberNormalized || null,
+      vehicleRecordId: vehicleRecord?._id || null,
+    },
+  });
+});
+
+// @desc    Find potential historical vehicle match from vehicle_master_records
+// @route   POST /api/insurance/vehicle-match/potential
+// @access  Public
+export const findPotentialVehicleMatch = asyncHandler(async (req, res) => {
+  const make = safeString(req.body?.make).trim();
+  const model = safeString(req.body?.model).trim();
+  const variant = safeString(req.body?.variant).trim();
+  const manufactureMonth = safeString(req.body?.manufactureMonth).trim();
+  const manufactureYear = safeString(req.body?.manufactureYear).trim();
+  const engineNumber = normalizeIdentityValue(req.body?.engineNumber);
+  const chassisNumber = normalizeIdentityValue(req.body?.chassisNumber);
+  const currentRegistrationNumber = safeString(
+    req.body?.currentRegistrationNumber,
+  ).trim();
+  const currentRegNormalized = normalizeRegNumber(currentRegistrationNumber);
+
+  if (!make || !model || !variant || (!engineNumber && !chassisNumber)) {
+    return res.json({ success: true, data: [] });
+  }
+
+  const andClauses = [
+    { make: new RegExp(escapeRegex(make), "i") },
+    { model: new RegExp(escapeRegex(model), "i") },
+    { variant: new RegExp(escapeRegex(variant), "i") },
+  ];
+  if (manufactureMonth) {
+    andClauses.push({
+      manufactureMonth: new RegExp(`^${escapeRegex(manufactureMonth)}$`, "i"),
+    });
+  }
+  if (manufactureYear) {
+    andClauses.push({
+      yearOfManufacture: new RegExp(`^${escapeRegex(manufactureYear)}$`, "i"),
+    });
+  }
+
+  const identityOr = [];
+  if (engineNumber) {
+    identityOr.push({
+      engineNumber: new RegExp(`^${escapeRegex(engineNumber)}$`, "i"),
+    });
+  }
+  if (chassisNumber) {
+    identityOr.push({
+      chassisNumber: new RegExp(`^${escapeRegex(chassisNumber)}$`, "i"),
+    });
+  }
+
+  const rows = await VehicleRecord.find({
+    $and: [...andClauses, { $or: identityOr }],
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(12)
+    .lean();
+
+  const scored = rows
+    .map((row) => {
+      const reg = safeString(row?.registrationNumber).trim();
+      const regNorm = normalizeRegNumber(row?.registrationNumberNormalized || reg);
+      if (!regNorm) return null;
+      if (currentRegNormalized && regNorm === currentRegNormalized) return null;
+
+      const rowEngine = normalizeIdentityValue(row?.engineNumber);
+      const rowChassis = normalizeIdentityValue(row?.chassisNumber);
+      let score = 0;
+
+      const engineMatch = Boolean(engineNumber && rowEngine && rowEngine === engineNumber);
+      const chassisMatch = Boolean(
+        chassisNumber &&
+          rowChassis &&
+          rowChassis === chassisNumber,
+      );
+
+      if (engineMatch && chassisMatch) score += 320;
+      else if (engineMatch || chassisMatch) score += 220;
+
+      if (
+        safeString(row?.make).trim().toLowerCase() === make.toLowerCase() &&
+        safeString(row?.model).trim().toLowerCase() === model.toLowerCase() &&
+        safeString(row?.variant).trim().toLowerCase() === variant.toLowerCase()
+      ) {
+        score += 120;
+      }
+      if (
+        manufactureMonth &&
+        safeString(row?.manufactureMonth).trim().toLowerCase() ===
+          manufactureMonth.toLowerCase()
+      ) {
+        score += 40;
+      }
+      if (
+        manufactureYear &&
+        safeString(row?.yearOfManufacture).trim().toLowerCase() ===
+          manufactureYear.toLowerCase()
+      ) {
+        score += 40;
+      }
+      if (!isTempRegistration(reg)) score += 20;
+
+      return {
+        _id: row?._id,
+        registrationNumber: reg,
+        registrationNumberNormalized: regNorm,
+        make: safeString(row?.make).trim(),
+        model: safeString(row?.model).trim(),
+        variant: safeString(row?.variant).trim(),
+        manufactureMonth: safeString(row?.manufactureMonth).trim(),
+        manufactureYear: safeString(row?.yearOfManufacture).trim(),
+        engineNumber: safeString(row?.engineNumber).trim(),
+        chassisNumber: safeString(row?.chassisNumber).trim(),
+        customerName: safeString(row?.customerName).trim(),
+        primaryMobile: safeString(row?.primaryMobile).trim(),
+        cubicCapacityCc: row?.cubicCapacityCc ?? null,
+        score,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+
+  const best = scored[0] || null;
+  res.json({
+    success: true,
+    data: scored.slice(0, 5),
+    bestMatch: best,
+  });
+});
+
+// @desc    Merge temp registration history into final registration
+// @route   POST /api/insurance/vehicle-match/merge
+// @access  Public
+export const mergeVehicleMatch = asyncHandler(async (req, res) => {
+  const insuranceCaseId = safeString(req.body?.insuranceCaseId).trim();
+  const matchedVehicleRecordId = safeString(req.body?.matchedVehicleRecordId).trim();
+  const currentRegistrationNumber = safeString(
+    req.body?.currentRegistrationNumber,
+  ).trim();
+
+  if (!matchedVehicleRecordId || !mongoose.Types.ObjectId.isValid(matchedVehicleRecordId)) {
+    res.status(400);
+    throw new Error("matchedVehicleRecordId is required");
+  }
+
+  const matchedVehicle = await VehicleRecord.findById(matchedVehicleRecordId);
+  if (!matchedVehicle) {
+    res.status(404);
+    throw new Error("Matched vehicle record not found");
+  }
+
+  let insuranceCaseDoc = null;
+  if (insuranceCaseId) {
+    insuranceCaseDoc =
+      (mongoose.Types.ObjectId.isValid(insuranceCaseId)
+        ? await InsuranceCase.findById(insuranceCaseId)
+        : null) ||
+      (await InsuranceCase.findOne({ caseId: insuranceCaseId }));
+  }
+
+  const caseReg = safeString(insuranceCaseDoc?.registrationNumber).trim();
+  const matchedReg = safeString(matchedVehicle.registrationNumber).trim();
+  const candidateRegs = [currentRegistrationNumber, caseReg, matchedReg]
+    .map((v) => safeString(v).trim())
+    .filter(Boolean);
+
+  const canonicalRegistration =
+    candidateRegs.find((reg) => !isTempRegistration(reg)) || candidateRegs[0] || "";
+  const canonicalRegNormalized = normalizeRegNumber(canonicalRegistration);
+  if (!canonicalRegNormalized) {
+    res.status(400);
+    throw new Error("Unable to determine canonical registration number");
+  }
+
+  const tempRegs = [
+    ...new Set(
+      candidateRegs.filter((reg) => {
+        const normalized = normalizeRegNumber(reg);
+        return normalized && normalized !== canonicalRegNormalized && isTempRegistration(reg);
+      }),
+    ),
+  ];
+  const tempNorms = tempRegs.map(normalizeRegNumber).filter(Boolean);
+
+  const canonicalRecord =
+    (await VehicleRecord.findOne({
+      registrationNumberNormalized: canonicalRegNormalized,
+    })) || null;
+
+  const tempRecords = tempNorms.length
+    ? await VehicleRecord.find({
+        registrationNumberNormalized: { $in: tempNorms },
+      })
+    : [];
+
+  const baseData = {
+    make:
+      safeString(req.body?.make).trim() ||
+      safeString(matchedVehicle.make).trim() ||
+      safeString(canonicalRecord?.make).trim(),
+    model:
+      safeString(req.body?.model).trim() ||
+      safeString(matchedVehicle.model).trim() ||
+      safeString(canonicalRecord?.model).trim(),
+    variant:
+      safeString(req.body?.variant).trim() ||
+      safeString(matchedVehicle.variant).trim() ||
+      safeString(canonicalRecord?.variant).trim(),
+    engineNumber:
+      safeString(req.body?.engineNumber).trim() ||
+      safeString(matchedVehicle.engineNumber).trim() ||
+      safeString(canonicalRecord?.engineNumber).trim(),
+    chassisNumber:
+      safeString(req.body?.chassisNumber).trim() ||
+      safeString(matchedVehicle.chassisNumber).trim() ||
+      safeString(canonicalRecord?.chassisNumber).trim(),
+    manufactureMonth:
+      safeString(req.body?.manufactureMonth).trim() ||
+      safeString(matchedVehicle.manufactureMonth).trim() ||
+      safeString(canonicalRecord?.manufactureMonth).trim(),
+    yearOfManufacture:
+      safeString(req.body?.manufactureYear).trim() ||
+      safeString(matchedVehicle.yearOfManufacture).trim() ||
+      safeString(canonicalRecord?.yearOfManufacture).trim(),
+    hypothecation:
+      safeString(req.body?.hypothecation).trim() ||
+      safeString(matchedVehicle.hypothecation).trim() ||
+      safeString(canonicalRecord?.hypothecation).trim(),
+    customerName:
+      safeString(req.body?.customerName).trim() ||
+      safeString(insuranceCaseDoc?.customerName).trim() ||
+      safeString(matchedVehicle.customerName).trim() ||
+      safeString(canonicalRecord?.customerName).trim(),
+    primaryMobile:
+      safeString(req.body?.primaryMobile).trim() ||
+      safeString(insuranceCaseDoc?.mobile).trim() ||
+      safeString(matchedVehicle.primaryMobile).trim() ||
+      safeString(canonicalRecord?.primaryMobile).trim(),
+    cubicCapacityCc:
+      Number(req.body?.cubicCapacityCc) ||
+      Number(matchedVehicle.cubicCapacityCc) ||
+      Number(canonicalRecord?.cubicCapacityCc) ||
+      undefined,
+  };
+
+  const mergedVehicleRecord = await VehicleRecord.findOneAndUpdate(
+    { registrationNumberNormalized: canonicalRegNormalized },
+    {
+      $set: {
+        registrationNumber: canonicalRegistration,
+        registrationNumberNormalized: canonicalRegNormalized,
+        registrationNumberLast4: canonicalRegNormalized.slice(-4),
+        ...baseData,
+        lastSyncedAt: new Date(),
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+
+  const rowsToRemove = tempRecords
+    .map((row) => String(row?._id || ""))
+    .filter((id) => id && id !== String(mergedVehicleRecord?._id || ""));
+  if (rowsToRemove.length) {
+    await VehicleRecord.deleteMany({ _id: { $in: rowsToRemove } });
+  }
+
+  for (const tempReg of tempRegs) {
+    await InsuranceCase.updateMany(
+      { registrationNumber: new RegExp(`^${escapeRegex(tempReg)}$`, "i") },
+      {
+        $set: {
+          registrationNumber: canonicalRegistration,
+          registrationAllotted: "Yes",
+          vehicleMake: baseData.make,
+          vehicleModel: baseData.model,
+          vehicleVariant: baseData.variant,
+          engineNumber: baseData.engineNumber,
+          chassisNumber: baseData.chassisNumber,
+          manufactureMonth: baseData.manufactureMonth,
+          manufactureYear: baseData.yearOfManufacture,
+          hypothecation: baseData.hypothecation || "Not applicable",
+        },
+      },
+    );
+  }
+
+  let updatedCase = null;
+  if (insuranceCaseDoc) {
+    insuranceCaseDoc.registrationNumber = canonicalRegistration;
+    insuranceCaseDoc.registrationAllotted = "Yes";
+    if (!insuranceCaseDoc.vehicleMake && baseData.make) {
+      insuranceCaseDoc.vehicleMake = baseData.make;
+    }
+    if (!insuranceCaseDoc.vehicleModel && baseData.model) {
+      insuranceCaseDoc.vehicleModel = baseData.model;
+    }
+    if (!insuranceCaseDoc.vehicleVariant && baseData.variant) {
+      insuranceCaseDoc.vehicleVariant = baseData.variant;
+    }
+    if (!insuranceCaseDoc.engineNumber && baseData.engineNumber) {
+      insuranceCaseDoc.engineNumber = baseData.engineNumber;
+    }
+    if (!insuranceCaseDoc.chassisNumber && baseData.chassisNumber) {
+      insuranceCaseDoc.chassisNumber = baseData.chassisNumber;
+    }
+    updatedCase = await insuranceCaseDoc.save();
+  }
+
+  res.json({
+    success: true,
+    data: {
+      canonicalRegistration,
+      mergedVehicleRecord,
+      tempRegistrationsMerged: tempRegs,
+      insuranceCaseId: updatedCase?._id || insuranceCaseDoc?._id || null,
+    },
+  });
+});
 
 // @desc    Get insurance cases (basic list)
 // @route   GET /api/insurance
@@ -84,7 +573,7 @@ export const getInsuranceCaseById = asyncHandler(async (req, res) => {
 // @route   POST /api/insurance
 // @access  Public
 export const createInsuranceCase = asyncHandler(async (req, res) => {
-  const payload = req.body || {};
+  const payload = normalizeStep1Payload(req.body || {});
 
   const caseId = await getNextInsuranceCaseId();
   const customerId = toObjectIdOrNull(payload.customerId);
@@ -112,7 +601,7 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
 // @access  Public
 export const updateInsuranceCase = asyncHandler(async (req, res) => {
   const raw = safeString(req.params.id).trim();
-  const payload = req.body || {};
+  const payload = normalizeStep1Payload(req.body || {});
 
   const doc =
     (mongoose.Types.ObjectId.isValid(raw)

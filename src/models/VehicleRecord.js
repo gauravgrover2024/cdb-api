@@ -37,6 +37,16 @@ vehicleRecordSchema.index({ loanId: 1 }, { unique: true, sparse: true });
 vehicleRecordSchema.index({ registrationNumberNormalized: 1 });
 vehicleRecordSchema.index({ registrationNumberLast4: 1 });
 vehicleRecordSchema.index({ make: 1, model: 1, variant: 1 });
+vehicleRecordSchema.index({ customerName: 1, primaryMobile: 1 });
+vehicleRecordSchema.index({ engineNumber: 1 });
+vehicleRecordSchema.index({ chassisNumber: 1 });
+vehicleRecordSchema.index({
+  make: 1,
+  model: 1,
+  variant: 1,
+  manufactureMonth: 1,
+  yearOfManufacture: 1,
+});
 
 const VehicleRecord = mongoose.model("VehicleRecord", vehicleRecordSchema);
 

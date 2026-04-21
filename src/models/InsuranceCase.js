@@ -120,8 +120,17 @@ const insuranceCaseSchema = new mongoose.Schema(
     // Step 1: meta + customer info
     buyerType: { type: String, default: "Individual" },
     vehicleType: { type: String, default: "New Car" },
+    policyCategory: { type: String, default: "Insurance Policy" },
+    policyTypeSelector: { type: String, default: "Insurance Policy" },
     policyDoneBy: { type: String, default: "Autocredits India LLP" },
     brokerName: { type: String, default: "" },
+    showroomName: { type: String, default: "" },
+    source: { type: String, default: "Direct" },
+    sourceName: { type: String, default: "" },
+    dealerChannelName: { type: String, default: "" },
+    dealerChannelAddress: { type: String, default: "" },
+    payoutApplicable: { type: String, default: "No" },
+    payoutPercent: { type: Number, default: 0 },
     sourceOrigin: { type: String, default: "" },
     employeeName: { type: String, default: "" },
 
@@ -141,12 +150,14 @@ const insuranceCaseSchema = new mongoose.Schema(
 
     nomineeName: { type: String, default: "" },
     nomineeRelationship: { type: String, default: "" },
+    nomineeDob: { type: String, default: "" },
     nomineeAge: { type: String, default: "" },
     referenceName: { type: String, default: "" },
     referencePhone: { type: String, default: "" },
 
     // Step 2: vehicle details
     registrationNumber: { type: String, default: "" },
+    registrationAllotted: { type: String, default: "Yes" },
     vehicleMake: { type: String, default: "" },
     vehicleModel: { type: String, default: "" },
     vehicleVariant: { type: String, default: "" },
