@@ -19,8 +19,13 @@ const vehicleRecordSchema = mongoose.Schema(
     manufactureMonth: { type: String },
     yearOfManufacture: { type: String },
     registrationDate: { type: Date },
+    regAuthority: { type: String },
     hypothecation: { type: String },
     registrationCity: { type: String },
+    fuelType: { type: String },
+    typesOfVehicle: { type: String },
+    batteryNumber: { type: String },
+    chargerNumber: { type: String },
 
     sourceLoanType: { type: String },
     sourceCaseType: { type: String },

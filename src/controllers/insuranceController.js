@@ -91,6 +91,11 @@ const isTempRegistration = (value) =>
 const escapeRegex = (value) =>
   safeString(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const normalizeKeyToken = (value) =>
+  safeString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
 const extractCubicCapacity = (value) => {
   const raw = safeString(value).trim();
   if (!raw) return null;
@@ -125,21 +130,98 @@ const resolveCubicCapacityFromVehicleFeatures = async ({
       model: new RegExp(`^${modelName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}$`, "i"),
       variant: new RegExp(`^${variantName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}$`, "i"),
     }).lean());
+  let targetDoc = doc;
+  if (!targetDoc) {
+    const brandRegex = new RegExp(escapeRegex(brand), "i");
+    const modelRegex = new RegExp(escapeRegex(modelName), "i");
+    const variantRegex = new RegExp(escapeRegex(variantName), "i");
+    const pool = await VehicleFeature.find({
+      brand: brandRegex,
+      model: modelRegex,
+      variant: variantRegex,
+    })
+      .limit(30)
+      .lean();
+    const targetVariantToken = normalizeKeyToken(variantName);
+    targetDoc =
+      pool.find((row) => {
+        const docVariantToken = normalizeKeyToken(row?.variant);
+        return (
+          docVariantToken === targetVariantToken ||
+          docVariantToken.includes(targetVariantToken) ||
+          targetVariantToken.includes(docVariantToken)
+        );
+      }) ||
+      pool[0] ||
+      null;
+  }
 
-  if (!doc?.features || typeof doc.features !== "object") return null;
+  if (!targetDoc?.features || typeof targetDoc.features !== "object") return null;
 
-  const exactKeyValue = doc.features["Engine & Transmission | Displacement"];
+  const exactKeyValue = targetDoc.features["Engine & Transmission | Displacement"];
   if (exactKeyValue !== undefined && exactKeyValue !== null) {
     return extractCubicCapacity(exactKeyValue);
   }
 
-  for (const [fullKey, value] of Object.entries(doc.features)) {
+  for (const [fullKey, value] of Object.entries(targetDoc.features)) {
     const key = safeString(fullKey).toLowerCase();
     if (!key.includes("displacement")) continue;
     const parsed = extractCubicCapacity(value);
     if (parsed != null) return parsed;
   }
   return null;
+};
+
+const toDateOrNull = (value) => {
+  const raw = safeString(value).trim();
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const upsertVehicleRecordFromInsuranceCase = async (doc) => {
+  if (!doc) return null;
+  const registrationNumber = safeString(doc.registrationNumber).trim();
+  const registrationNumberNormalized = normalizeRegNumber(registrationNumber);
+  if (!registrationNumberNormalized) return null;
+
+  const cubicCapacityParsed = extractCubicCapacity(doc.cubicCapacity);
+  const updateDoc = {
+    registrationNumber: registrationNumber || registrationNumberNormalized,
+    registrationNumberNormalized,
+    registrationNumberLast4: registrationNumberNormalized.slice(-4),
+    make: safeString(doc.vehicleMake).trim(),
+    model: safeString(doc.vehicleModel).trim(),
+    variant: safeString(doc.vehicleVariant).trim(),
+    cubicCapacityCc: Number.isFinite(cubicCapacityParsed)
+      ? cubicCapacityParsed
+      : undefined,
+    engineNumber: safeString(doc.engineNumber).trim(),
+    chassisNumber: safeString(doc.chassisNumber).trim(),
+    manufactureMonth: safeString(doc.manufactureMonth).trim(),
+    yearOfManufacture: safeString(doc.manufactureYear).trim(),
+    registrationDate: toDateOrNull(doc.dateOfReg),
+    regAuthority: safeString(doc.regAuthority).trim(),
+    registrationCity: safeString(doc.city || doc.registrationCity).trim(),
+    hypothecation: safeString(doc.hypothecation).trim(),
+    fuelType: safeString(doc.fuelType).trim(),
+    typesOfVehicle: safeString(doc.typesOfVehicle).trim(),
+    batteryNumber: safeString(doc.batteryNumber).trim(),
+    chargerNumber: safeString(doc.chargerNumber).trim(),
+    customerName: safeString(doc.customerName || doc.companyName).trim(),
+    primaryMobile: safeString(doc.mobile).trim(),
+    lastSyncedAt: new Date(),
+  };
+
+  Object.keys(updateDoc).forEach((key) => {
+    if (updateDoc[key] === undefined) delete updateDoc[key];
+  });
+
+  return await VehicleRecord.findOneAndUpdate(
+    { registrationNumberNormalized },
+    { $set: updateDoc },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
 };
 
 // @desc    Generate next temporary registration number for new car insurance
@@ -444,6 +526,30 @@ export const mergeVehicleMatch = asyncHandler(async (req, res) => {
       safeString(req.body?.hypothecation).trim() ||
       safeString(matchedVehicle.hypothecation).trim() ||
       safeString(canonicalRecord?.hypothecation).trim(),
+    registrationDate:
+      toDateOrNull(req.body?.dateOfReg) ||
+      toDateOrNull(matchedVehicle.registrationDate) ||
+      toDateOrNull(canonicalRecord?.registrationDate),
+    regAuthority:
+      safeString(req.body?.regAuthority).trim() ||
+      safeString(matchedVehicle.regAuthority).trim() ||
+      safeString(canonicalRecord?.regAuthority).trim(),
+    fuelType:
+      safeString(req.body?.fuelType).trim() ||
+      safeString(matchedVehicle.fuelType).trim() ||
+      safeString(canonicalRecord?.fuelType).trim(),
+    typesOfVehicle:
+      safeString(req.body?.typesOfVehicle).trim() ||
+      safeString(matchedVehicle.typesOfVehicle).trim() ||
+      safeString(canonicalRecord?.typesOfVehicle).trim(),
+    batteryNumber:
+      safeString(req.body?.batteryNumber).trim() ||
+      safeString(matchedVehicle.batteryNumber).trim() ||
+      safeString(canonicalRecord?.batteryNumber).trim(),
+    chargerNumber:
+      safeString(req.body?.chargerNumber).trim() ||
+      safeString(matchedVehicle.chargerNumber).trim() ||
+      safeString(canonicalRecord?.chargerNumber).trim(),
     customerName:
       safeString(req.body?.customerName).trim() ||
       safeString(insuranceCaseDoc?.customerName).trim() ||
@@ -496,6 +602,12 @@ export const mergeVehicleMatch = asyncHandler(async (req, res) => {
           chassisNumber: baseData.chassisNumber,
           manufactureMonth: baseData.manufactureMonth,
           manufactureYear: baseData.yearOfManufacture,
+          dateOfReg: baseData.registrationDate,
+          regAuthority: baseData.regAuthority,
+          fuelType: baseData.fuelType,
+          typesOfVehicle: baseData.typesOfVehicle,
+          batteryNumber: baseData.batteryNumber,
+          chargerNumber: baseData.chargerNumber,
           hypothecation: baseData.hypothecation || "Not applicable",
         },
       },
@@ -520,6 +632,24 @@ export const mergeVehicleMatch = asyncHandler(async (req, res) => {
     }
     if (!insuranceCaseDoc.chassisNumber && baseData.chassisNumber) {
       insuranceCaseDoc.chassisNumber = baseData.chassisNumber;
+    }
+    if (!insuranceCaseDoc.dateOfReg && baseData.registrationDate) {
+      insuranceCaseDoc.dateOfReg = baseData.registrationDate.toISOString();
+    }
+    if (!insuranceCaseDoc.regAuthority && baseData.regAuthority) {
+      insuranceCaseDoc.regAuthority = baseData.regAuthority;
+    }
+    if (!insuranceCaseDoc.fuelType && baseData.fuelType) {
+      insuranceCaseDoc.fuelType = baseData.fuelType;
+    }
+    if (!insuranceCaseDoc.typesOfVehicle && baseData.typesOfVehicle) {
+      insuranceCaseDoc.typesOfVehicle = baseData.typesOfVehicle;
+    }
+    if (!insuranceCaseDoc.batteryNumber && baseData.batteryNumber) {
+      insuranceCaseDoc.batteryNumber = baseData.batteryNumber;
+    }
+    if (!insuranceCaseDoc.chargerNumber && baseData.chargerNumber) {
+      insuranceCaseDoc.chargerNumber = baseData.chargerNumber;
     }
     updatedCase = await insuranceCaseDoc.save();
   }
@@ -593,6 +723,8 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
     currentStep: Number(payload.currentStep || 1),
   });
 
+  await upsertVehicleRecordFromInsuranceCase(doc);
+
   res.status(201).json({ success: true, data: doc });
 });
 
@@ -633,6 +765,7 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
   });
 
   const saved = await doc.save();
+  await upsertVehicleRecordFromInsuranceCase(saved);
   res.json({ success: true, data: saved });
 });
 
