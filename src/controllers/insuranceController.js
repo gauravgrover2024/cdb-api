@@ -96,6 +96,14 @@ const normalizeKeyToken = (value) =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 
+const normalizeMakeToken = (value) => {
+  const token = normalizeKeyToken(value);
+  if (!token) return "";
+  if (token === "marutisuzuki" || token === "marutisuzukiindia") return "maruti";
+  if (token === "bmwindia" || token === "bayerischemotorenwerke") return "bmw";
+  return token;
+};
+
 const extractCubicCapacity = (value) => {
   const raw = safeString(value).trim();
   if (!raw) return null;
@@ -321,22 +329,6 @@ export const findPotentialVehicleMatch = asyncHandler(async (req, res) => {
     return res.json({ success: true, data: [] });
   }
 
-  const andClauses = [
-    { make: new RegExp(escapeRegex(make), "i") },
-    { model: new RegExp(escapeRegex(model), "i") },
-    { variant: new RegExp(escapeRegex(variant), "i") },
-  ];
-  if (manufactureMonth) {
-    andClauses.push({
-      manufactureMonth: new RegExp(`^${escapeRegex(manufactureMonth)}$`, "i"),
-    });
-  }
-  if (manufactureYear) {
-    andClauses.push({
-      yearOfManufacture: new RegExp(`^${escapeRegex(manufactureYear)}$`, "i"),
-    });
-  }
-
   const identityOr = [];
   if (engineNumber) {
     identityOr.push({
@@ -350,11 +342,15 @@ export const findPotentialVehicleMatch = asyncHandler(async (req, res) => {
   }
 
   const rows = await VehicleRecord.find({
-    $and: [...andClauses, { $or: identityOr }],
+    $or: identityOr,
   })
     .sort({ updatedAt: -1, createdAt: -1 })
-    .limit(12)
+    .limit(30)
     .lean();
+
+  const makeToken = normalizeMakeToken(make);
+  const modelToken = normalizeKeyToken(model);
+  const variantToken = normalizeKeyToken(variant);
 
   const scored = rows
     .map((row) => {
@@ -365,6 +361,9 @@ export const findPotentialVehicleMatch = asyncHandler(async (req, res) => {
 
       const rowEngine = normalizeIdentityValue(row?.engineNumber);
       const rowChassis = normalizeIdentityValue(row?.chassisNumber);
+      const rowMakeToken = normalizeMakeToken(row?.make);
+      const rowModelToken = normalizeKeyToken(row?.model);
+      const rowVariantToken = normalizeKeyToken(row?.variant);
       let score = 0;
 
       const engineMatch = Boolean(engineNumber && rowEngine && rowEngine === engineNumber);
@@ -377,12 +376,24 @@ export const findPotentialVehicleMatch = asyncHandler(async (req, res) => {
       if (engineMatch && chassisMatch) score += 320;
       else if (engineMatch || chassisMatch) score += 220;
 
-      if (
-        safeString(row?.make).trim().toLowerCase() === make.toLowerCase() &&
-        safeString(row?.model).trim().toLowerCase() === model.toLowerCase() &&
-        safeString(row?.variant).trim().toLowerCase() === variant.toLowerCase()
-      ) {
+      const strictTokenMatch =
+        rowMakeToken &&
+        rowModelToken &&
+        rowVariantToken &&
+        rowMakeToken === makeToken &&
+        rowModelToken === modelToken &&
+        rowVariantToken === variantToken;
+      const fuzzyTokenMatch =
+        rowMakeToken &&
+        rowModelToken &&
+        rowVariantToken &&
+        (rowMakeToken.includes(makeToken) || makeToken.includes(rowMakeToken)) &&
+        (rowModelToken.includes(modelToken) || modelToken.includes(rowModelToken)) &&
+        (rowVariantToken.includes(variantToken) || variantToken.includes(rowVariantToken));
+      if (strictTokenMatch) {
         score += 120;
+      } else if (fuzzyTokenMatch) {
+        score += 90;
       }
       if (
         manufactureMonth &&
@@ -434,6 +445,7 @@ export const findPotentialVehicleMatch = asyncHandler(async (req, res) => {
 export const mergeVehicleMatch = asyncHandler(async (req, res) => {
   const insuranceCaseId = safeString(req.body?.insuranceCaseId).trim();
   const matchedVehicleRecordId = safeString(req.body?.matchedVehicleRecordId).trim();
+  const overwriteHistoricalRecords = Boolean(req.body?.overwriteHistoricalRecords);
   const currentRegistrationNumber = safeString(
     req.body?.currentRegistrationNumber,
   ).trim();
@@ -588,68 +600,100 @@ export const mergeVehicleMatch = asyncHandler(async (req, res) => {
     await VehicleRecord.deleteMany({ _id: { $in: rowsToRemove } });
   }
 
+  const mergePatch = {
+    registrationNumber: canonicalRegistration,
+    registrationAllotted: "Yes",
+    vehicleMake: baseData.make,
+    vehicleModel: baseData.model,
+    vehicleVariant: baseData.variant,
+    engineNumber: baseData.engineNumber,
+    chassisNumber: baseData.chassisNumber,
+    manufactureMonth: baseData.manufactureMonth,
+    manufactureYear: baseData.yearOfManufacture,
+    regAuthority: baseData.regAuthority,
+    fuelType: baseData.fuelType,
+    typesOfVehicle: baseData.typesOfVehicle,
+    batteryNumber: baseData.batteryNumber,
+    chargerNumber: baseData.chargerNumber,
+    hypothecation: baseData.hypothecation || "Not applicable",
+    customerName: baseData.customerName,
+    mobile: baseData.primaryMobile,
+  };
+  if (baseData.registrationDate) {
+    mergePatch.dateOfReg = baseData.registrationDate.toISOString();
+  }
+  if (Number.isFinite(baseData.cubicCapacityCc) && baseData.cubicCapacityCc > 0) {
+    mergePatch.cubicCapacity = String(Math.round(baseData.cubicCapacityCc));
+  }
+  Object.keys(mergePatch).forEach((key) => {
+    const value = mergePatch[key];
+    if (value === undefined || value === null || safeString(value).trim() === "") {
+      delete mergePatch[key];
+    }
+  });
+
   for (const tempReg of tempRegs) {
     await InsuranceCase.updateMany(
       { registrationNumber: new RegExp(`^${escapeRegex(tempReg)}$`, "i") },
-      {
-        $set: {
-          registrationNumber: canonicalRegistration,
-          registrationAllotted: "Yes",
-          vehicleMake: baseData.make,
-          vehicleModel: baseData.model,
-          vehicleVariant: baseData.variant,
-          engineNumber: baseData.engineNumber,
-          chassisNumber: baseData.chassisNumber,
-          manufactureMonth: baseData.manufactureMonth,
-          manufactureYear: baseData.yearOfManufacture,
-          dateOfReg: baseData.registrationDate,
-          regAuthority: baseData.regAuthority,
-          fuelType: baseData.fuelType,
-          typesOfVehicle: baseData.typesOfVehicle,
-          batteryNumber: baseData.batteryNumber,
-          chargerNumber: baseData.chargerNumber,
-          hypothecation: baseData.hypothecation || "Not applicable",
-        },
-      },
+      { $set: mergePatch },
     );
+  }
+
+  if (overwriteHistoricalRecords) {
+    const historyOr = [];
+    const regCandidates = [...new Set([canonicalRegistration, ...tempRegs])];
+    regCandidates.forEach((reg) => {
+      if (!safeString(reg).trim()) return;
+      historyOr.push({
+        registrationNumber: new RegExp(`^${escapeRegex(reg)}$`, "i"),
+      });
+    });
+    if (baseData.engineNumber) {
+      historyOr.push({
+        engineNumber: new RegExp(`^${escapeRegex(baseData.engineNumber)}$`, "i"),
+      });
+    }
+    if (baseData.chassisNumber) {
+      historyOr.push({
+        chassisNumber: new RegExp(`^${escapeRegex(baseData.chassisNumber)}$`, "i"),
+      });
+    }
+    if (historyOr.length) {
+      await InsuranceCase.updateMany({ $or: historyOr }, { $set: mergePatch });
+    }
   }
 
   let updatedCase = null;
   if (insuranceCaseDoc) {
     insuranceCaseDoc.registrationNumber = canonicalRegistration;
     insuranceCaseDoc.registrationAllotted = "Yes";
-    if (!insuranceCaseDoc.vehicleMake && baseData.make) {
-      insuranceCaseDoc.vehicleMake = baseData.make;
-    }
-    if (!insuranceCaseDoc.vehicleModel && baseData.model) {
-      insuranceCaseDoc.vehicleModel = baseData.model;
-    }
-    if (!insuranceCaseDoc.vehicleVariant && baseData.variant) {
-      insuranceCaseDoc.vehicleVariant = baseData.variant;
-    }
-    if (!insuranceCaseDoc.engineNumber && baseData.engineNumber) {
-      insuranceCaseDoc.engineNumber = baseData.engineNumber;
-    }
-    if (!insuranceCaseDoc.chassisNumber && baseData.chassisNumber) {
-      insuranceCaseDoc.chassisNumber = baseData.chassisNumber;
-    }
-    if (!insuranceCaseDoc.dateOfReg && baseData.registrationDate) {
+    const applyMergeField = (docKey, incoming) => {
+      const value = safeString(incoming).trim();
+      if (!value) return;
+      if (overwriteHistoricalRecords || !safeString(insuranceCaseDoc?.[docKey]).trim()) {
+        insuranceCaseDoc[docKey] = incoming;
+      }
+    };
+    applyMergeField("vehicleMake", baseData.make);
+    applyMergeField("vehicleModel", baseData.model);
+    applyMergeField("vehicleVariant", baseData.variant);
+    applyMergeField("engineNumber", baseData.engineNumber);
+    applyMergeField("chassisNumber", baseData.chassisNumber);
+    applyMergeField("regAuthority", baseData.regAuthority);
+    applyMergeField("fuelType", baseData.fuelType);
+    applyMergeField("typesOfVehicle", baseData.typesOfVehicle);
+    applyMergeField("batteryNumber", baseData.batteryNumber);
+    applyMergeField("chargerNumber", baseData.chargerNumber);
+    applyMergeField("hypothecation", baseData.hypothecation || "Not applicable");
+    if (baseData.registrationDate && (overwriteHistoricalRecords || !insuranceCaseDoc.dateOfReg)) {
       insuranceCaseDoc.dateOfReg = baseData.registrationDate.toISOString();
     }
-    if (!insuranceCaseDoc.regAuthority && baseData.regAuthority) {
-      insuranceCaseDoc.regAuthority = baseData.regAuthority;
-    }
-    if (!insuranceCaseDoc.fuelType && baseData.fuelType) {
-      insuranceCaseDoc.fuelType = baseData.fuelType;
-    }
-    if (!insuranceCaseDoc.typesOfVehicle && baseData.typesOfVehicle) {
-      insuranceCaseDoc.typesOfVehicle = baseData.typesOfVehicle;
-    }
-    if (!insuranceCaseDoc.batteryNumber && baseData.batteryNumber) {
-      insuranceCaseDoc.batteryNumber = baseData.batteryNumber;
-    }
-    if (!insuranceCaseDoc.chargerNumber && baseData.chargerNumber) {
-      insuranceCaseDoc.chargerNumber = baseData.chargerNumber;
+    if (
+      Number.isFinite(baseData.cubicCapacityCc) &&
+      baseData.cubicCapacityCc > 0 &&
+      (overwriteHistoricalRecords || !safeString(insuranceCaseDoc.cubicCapacity).trim())
+    ) {
+      insuranceCaseDoc.cubicCapacity = String(Math.round(baseData.cubicCapacityCc));
     }
     updatedCase = await insuranceCaseDoc.save();
   }
