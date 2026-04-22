@@ -62,6 +62,14 @@ const normalizeStep1Payload = (payload = {}) => {
   };
 };
 
+const normalizeInsuranceCurrentStep = (value, fallback = 1) => {
+  const numeric = Number(value);
+  const base = Number.isFinite(numeric) ? numeric : Number(fallback || 1);
+  // Legacy step 5 (Premium Breakup) has been retired; route to step 6.
+  if (base === 5) return 6;
+  return Math.max(1, Math.round(base));
+};
+
 const getNextInsuranceCaseId = async () => {
   const year = new Date().getFullYear();
   const key = `${INSURANCE_COUNTER_PREFIX}${year}`;
@@ -764,7 +772,7 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
     customerId: customerId || undefined,
     customerSnapshot,
     status: payload.status || "draft",
-    currentStep: Number(payload.currentStep || 1),
+    currentStep: normalizeInsuranceCurrentStep(payload.currentStep, 1),
   });
 
   await upsertVehicleRecordFromInsuranceCase(doc);
@@ -804,7 +812,10 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
   Object.assign(doc, payload, {
     customerId: customerId || undefined,
     customerSnapshot,
-    currentStep: Number(payload.currentStep || doc.currentStep || 1),
+    currentStep: normalizeInsuranceCurrentStep(
+      payload.currentStep,
+      doc.currentStep || 1,
+    ),
     status: safeString(payload.status || doc.status || "draft"),
   });
 
