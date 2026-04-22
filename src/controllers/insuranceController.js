@@ -24,6 +24,63 @@ const toObjectIdOrNull = (value) => {
     : null;
 };
 
+const hasOwn = (obj, key) =>
+  Object.prototype.hasOwnProperty.call(obj || {}, key);
+
+const sanitizePaymentHistoryRow = (row = {}) => {
+  if (!row || typeof row !== "object") return null;
+  const normalized = { ...row };
+  const rawId = safeString(row._id).trim();
+  if (rawId && mongoose.Types.ObjectId.isValid(rawId)) {
+    normalized._id = new mongoose.Types.ObjectId(rawId);
+  } else {
+    delete normalized._id;
+  }
+
+  normalized.clientEntryId = safeString(
+    row.clientEntryId || row.client_entry_id || row.id || rawId,
+  ).trim();
+  normalized.idempotencyKey = safeString(
+    row.idempotencyKey || row.idempotency_key,
+  ).trim();
+
+  if (row.date === null || safeString(row.date).trim() === "") {
+    normalized.date = null;
+  } else {
+    normalized.date = toDateOrNull(row.date);
+  }
+
+  if (hasOwn(row, "entry_type") && !hasOwn(row, "entryType")) {
+    normalized.entryType = row.entry_type;
+  }
+  if (hasOwn(row, "payment_type") && !hasOwn(row, "paymentType")) {
+    normalized.paymentType = row.payment_type;
+  }
+  if (hasOwn(row, "payment_mode") && !hasOwn(row, "paymentMode")) {
+    normalized.paymentMode = row.payment_mode;
+  }
+  if (hasOwn(row, "transaction_ref") && !hasOwn(row, "transactionRef")) {
+    normalized.transactionRef = row.transaction_ref;
+  }
+
+  delete normalized.key;
+  delete normalized.id;
+  delete normalized.amountColor;
+  delete normalized.amountDirection;
+  delete normalized.amountPrefix;
+  delete normalized.typeLabel;
+  delete normalized.entry_type;
+  delete normalized.payment_type;
+  delete normalized.payment_mode;
+  delete normalized.transaction_ref;
+  return normalized;
+};
+
+const normalizePaymentHistoryPayload = (input) =>
+  (Array.isArray(input) ? input : [])
+    .map((row) => sanitizePaymentHistoryRow(row))
+    .filter(Boolean);
+
 const buildCustomerSnapshot = (customer) => {
   if (!customer) return {};
   return {
@@ -58,6 +115,10 @@ const normalizeStep1Payload = (payload = {}) => {
     ).trim(),
     source: sourceNormalized || "Direct",
     sourceOrigin: sourceNormalized || "Direct",
+    usedCarFlowType: safeString(payload.usedCarFlowType || "Renewal").trim() || "Renewal",
+    policyJourneyClassification: safeString(
+      payload.policyJourneyClassification || "",
+    ).trim(),
     payoutPercent,
   };
 };
@@ -756,6 +817,15 @@ export const getInsuranceCaseById = asyncHandler(async (req, res) => {
 // @access  Public
 export const createInsuranceCase = asyncHandler(async (req, res) => {
   const payload = normalizeStep1Payload(req.body || {});
+  if (hasOwn(payload, "paymentHistory") || hasOwn(payload, "payment_history")) {
+    const normalizedPaymentHistory = normalizePaymentHistoryPayload(
+      hasOwn(payload, "paymentHistory")
+        ? payload.paymentHistory
+        : payload.payment_history,
+    );
+    payload.paymentHistory = normalizedPaymentHistory;
+    payload.payment_history = normalizedPaymentHistory;
+  }
 
   const caseId = await getNextInsuranceCaseId();
   const customerId = toObjectIdOrNull(payload.customerId);
@@ -786,6 +856,15 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
 export const updateInsuranceCase = asyncHandler(async (req, res) => {
   const raw = safeString(req.params.id).trim();
   const payload = normalizeStep1Payload(req.body || {});
+  if (hasOwn(payload, "paymentHistory") || hasOwn(payload, "payment_history")) {
+    const normalizedPaymentHistory = normalizePaymentHistoryPayload(
+      hasOwn(payload, "paymentHistory")
+        ? payload.paymentHistory
+        : payload.payment_history,
+    );
+    payload.paymentHistory = normalizedPaymentHistory;
+    payload.payment_history = normalizedPaymentHistory;
+  }
 
   const doc =
     (mongoose.Types.ObjectId.isValid(raw)
@@ -850,6 +929,68 @@ export const deleteInsuranceCase = asyncHandler(async (req, res) => {
     success: true,
     message: "Insurance case deleted successfully",
     data: { id: doc._id, caseId: doc.caseId },
+  });
+});
+
+// @desc    Append a payment ledger entry (idempotent by idempotency key)
+// @route   POST /api/insurance/:id/payments
+// @access  Public
+export const appendInsurancePayment = asyncHandler(async (req, res) => {
+  const raw = safeString(req.params.id).trim();
+  const doc =
+    (mongoose.Types.ObjectId.isValid(raw)
+      ? await InsuranceCase.findById(raw)
+      : null) || (await InsuranceCase.findOne({ caseId: raw }));
+
+  if (!doc) {
+    res.status(404);
+    throw new Error("Insurance case not found");
+  }
+
+  const idempotencyKey = safeString(
+    req.headers["idempotency-key"] ||
+      req.body?.idempotencyKey ||
+      req.body?.idempotency_key,
+  ).trim();
+
+  const existingByKey = idempotencyKey
+    ? (Array.isArray(doc.paymentHistory) ? doc.paymentHistory : []).find(
+        (row) =>
+          safeString(row?.idempotencyKey).trim() &&
+          safeString(row?.idempotencyKey).trim() === idempotencyKey,
+      )
+    : null;
+
+  if (existingByKey) {
+    return res.status(200).json({
+      success: true,
+      duplicate: true,
+      payment: existingByKey,
+      paymentHistory: doc.paymentHistory || [],
+    });
+  }
+
+  const entry = sanitizePaymentHistoryRow({
+    ...(req.body || {}),
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+  });
+  const amount = Number(entry?.amount || 0);
+  if (!entry || !Number.isFinite(amount) || amount <= 0) {
+    res.status(400);
+    throw new Error("Valid payment amount is required");
+  }
+
+  doc.paymentHistory = Array.isArray(doc.paymentHistory) ? doc.paymentHistory : [];
+  doc.paymentHistory.push(entry);
+  const saved = await doc.save();
+  const latest = Array.isArray(saved.paymentHistory)
+    ? saved.paymentHistory[saved.paymentHistory.length - 1]
+    : null;
+
+  return res.status(201).json({
+    success: true,
+    payment: latest,
+    paymentHistory: saved.paymentHistory || [],
   });
 });
 

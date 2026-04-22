@@ -43,6 +43,8 @@ const insuranceDocumentSchema = new mongoose.Schema(
 
 const paymentHistorySchema = new mongoose.Schema(
   {
+    clientEntryId: { type: String, default: "" },
+    idempotencyKey: { type: String, default: "" },
     amount: { type: Number, required: true },
     date: { type: Date, default: null },
     entryType: {
@@ -128,6 +130,8 @@ const insuranceCaseSchema = new mongoose.Schema(
     showroomName: { type: String, default: "" },
     source: { type: String, default: "Direct" },
     sourceName: { type: String, default: "" },
+    usedCarFlowType: { type: String, default: "Renewal" },
+    policyJourneyClassification: { type: String, default: "" },
     dealerChannelName: { type: String, default: "" },
     dealerChannelAddress: { type: String, default: "" },
     payoutApplicable: { type: String, default: "No" },

@@ -5,6 +5,7 @@ import {
   getInsuranceCases,
   updateInsuranceCase,
   deleteInsuranceCase,
+  appendInsurancePayment,
   getNextTempRegistration,
   resolveVehicleCubicCapacity,
   findPotentialVehicleMatch,
@@ -33,6 +34,7 @@ router
   .get(getInsuranceCaseById)
   .put(updateInsuranceCase)
   .delete(deleteInsuranceCase);
+router.route("/:id/payments").post(appendInsurancePayment);
 
 router.route("/:id/sync-receivable").post(syncInsuranceReceivable);
 
