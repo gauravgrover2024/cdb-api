@@ -27,6 +27,16 @@ const toObjectIdOrNull = (value) => {
 const hasOwn = (obj, key) =>
   Object.prototype.hasOwnProperty.call(obj || {}, key);
 
+const stripImmutableInsuranceFields = (payload = {}) => {
+  const cleaned = { ...(payload || {}) };
+  delete cleaned._id;
+  delete cleaned.__v;
+  delete cleaned.id;
+  delete cleaned.createdAt;
+  delete cleaned.updatedAt;
+  return cleaned;
+};
+
 const sanitizePaymentHistoryRow = (row = {}) => {
   if (!row || typeof row !== "object") return null;
   const normalized = { ...row };
@@ -816,7 +826,9 @@ export const getInsuranceCaseById = asyncHandler(async (req, res) => {
 // @route   POST /api/insurance
 // @access  Public
 export const createInsuranceCase = asyncHandler(async (req, res) => {
-  const payload = normalizeStep1Payload(req.body || {});
+  const payload = stripImmutableInsuranceFields(
+    normalizeStep1Payload(req.body || {}),
+  );
   if (hasOwn(payload, "paymentHistory") || hasOwn(payload, "payment_history")) {
     const normalizedPaymentHistory = normalizePaymentHistoryPayload(
       hasOwn(payload, "paymentHistory")
@@ -855,7 +867,9 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
 // @access  Public
 export const updateInsuranceCase = asyncHandler(async (req, res) => {
   const raw = safeString(req.params.id).trim();
-  const payload = normalizeStep1Payload(req.body || {});
+  const payload = stripImmutableInsuranceFields(
+    normalizeStep1Payload(req.body || {}),
+  );
   if (hasOwn(payload, "paymentHistory") || hasOwn(payload, "payment_history")) {
     const normalizedPaymentHistory = normalizePaymentHistoryPayload(
       hasOwn(payload, "paymentHistory")
@@ -866,19 +880,20 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
     payload.payment_history = normalizedPaymentHistory;
   }
 
-  const doc =
+  const existingDoc =
     (mongoose.Types.ObjectId.isValid(raw)
       ? await InsuranceCase.findById(raw)
       : null) || (await InsuranceCase.findOne({ caseId: raw }));
 
-  if (!doc) {
+  if (!existingDoc) {
     res.status(404);
     throw new Error("Insurance case not found");
   }
 
   const customerId =
-    toObjectIdOrNull(payload.customerId) || doc.customerId || null;
-  let customerSnapshot = payload.customerSnapshot || doc.customerSnapshot || {};
+    toObjectIdOrNull(payload.customerId) || existingDoc.customerId || null;
+  let customerSnapshot =
+    payload.customerSnapshot || existingDoc.customerSnapshot || {};
   if (
     customerId &&
     (!payload.customerSnapshot ||
@@ -888,17 +903,32 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
     if (customer) customerSnapshot = buildCustomerSnapshot(customer);
   }
 
-  Object.assign(doc, payload, {
+  const updatePatch = {
+    ...payload,
     customerId: customerId || undefined,
     customerSnapshot,
     currentStep: normalizeInsuranceCurrentStep(
       payload.currentStep,
-      doc.currentStep || 1,
+      existingDoc.currentStep || 1,
     ),
-    status: safeString(payload.status || doc.status || "draft"),
-  });
+    status: safeString(payload.status || existingDoc.status || "draft"),
+  };
 
-  const saved = await doc.save();
+  const saved = await InsuranceCase.findByIdAndUpdate(
+    existingDoc._id,
+    { $set: updatePatch },
+    {
+      new: true,
+      runValidators: true,
+      context: "query",
+    },
+  );
+
+  if (!saved) {
+    res.status(404);
+    throw new Error("Insurance case not found");
+  }
+
   await upsertVehicleRecordFromInsuranceCase(saved);
   res.json({ success: true, data: saved });
 });
@@ -980,9 +1010,47 @@ export const appendInsurancePayment = asyncHandler(async (req, res) => {
     throw new Error("Valid payment amount is required");
   }
 
-  doc.paymentHistory = Array.isArray(doc.paymentHistory) ? doc.paymentHistory : [];
-  doc.paymentHistory.push(entry);
-  const saved = await doc.save();
+  const updateQuery = { _id: doc._id };
+  if (idempotencyKey) {
+    updateQuery["paymentHistory.idempotencyKey"] = { $ne: idempotencyKey };
+  }
+
+  let saved = await InsuranceCase.findOneAndUpdate(
+    updateQuery,
+    {
+      $push: { paymentHistory: entry },
+      $set: { updatedAt: new Date() },
+    },
+    { new: true },
+  );
+
+  if (!saved) {
+    const latestDoc = await InsuranceCase.findById(doc._id);
+    if (!latestDoc) {
+      res.status(404);
+      throw new Error("Insurance case not found");
+    }
+    if (idempotencyKey) {
+      const duplicateRow = (Array.isArray(latestDoc.paymentHistory)
+        ? latestDoc.paymentHistory
+        : []
+      ).find(
+        (row) =>
+          safeString(row?.idempotencyKey).trim() &&
+          safeString(row?.idempotencyKey).trim() === idempotencyKey,
+      );
+      if (duplicateRow) {
+        return res.status(200).json({
+          success: true,
+          duplicate: true,
+          payment: duplicateRow,
+          paymentHistory: latestDoc.paymentHistory || [],
+        });
+      }
+    }
+    res.status(409);
+    throw new Error("Payment could not be appended due to concurrent update");
+  }
   const latest = Array.isArray(saved.paymentHistory)
     ? saved.paymentHistory[saved.paymentHistory.length - 1]
     : null;
