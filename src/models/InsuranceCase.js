@@ -288,6 +288,12 @@ const insuranceCaseSchema = new mongoose.Schema(
 insuranceCaseSchema.index({ customerId: 1, createdAt: -1 });
 insuranceCaseSchema.index({ status: 1, updatedAt: -1 });
 insuranceCaseSchema.index({ createdAt: -1 });
+insuranceCaseSchema.index({ updatedAt: -1 });
+insuranceCaseSchema.index({ status: 1, currentStep: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ vehicleType: 1, typesOfVehicle: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ usedCarFlowType: 1, policyJourneyClassification: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ newOdExpiryDate: 1, newTpExpiryDate: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ renewedFromCaseId: 1, updatedAt: -1 });
 
 const InsuranceCase = mongoose.model("InsuranceCase", insuranceCaseSchema);
 
