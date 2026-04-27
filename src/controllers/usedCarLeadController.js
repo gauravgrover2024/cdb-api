@@ -448,6 +448,146 @@ const normalizeBackgroundCheck = (value = {}) => {
   };
 };
 
+const NEGOTIATION_STATUSES = [
+  "Pending Quotations",
+  "Under Negotiation",
+  "Awaiting Approval",
+  "Approved",
+  "Ready for Procurement",
+  "Lost / Declined",
+];
+
+const normalizeNegotiationPricePoint = (value = {}) => {
+  const point = normalizeMapObject(value);
+  const at = parseDate(firstPresent(point.at, point.timestamp)) || new Date();
+  return {
+    price: normalizeMoney(point.price),
+    at,
+    timestamp: at,
+    label: normalizeText(point.label),
+    actorName: normalizeText(point.actorName),
+  };
+};
+
+const normalizeNegotiationTimeline = (value = []) =>
+  (Array.isArray(value) ? value : [])
+    .map((entry) => normalizeNegotiationPricePoint(entry))
+    .filter((entry) => entry.price > 0);
+
+const normalizeNegotiationQuote = (value = {}, index = 0) => {
+  const quote = normalizeMapObject(value);
+  return {
+    quoteId: normalizeText(quote.quoteId) || `DQ-${Date.now()}-${index + 1}`,
+    dealerName: normalizeText(quote.dealerName),
+    contactNumber: normalizeText(quote.contactNumber),
+    location: normalizeText(quote.location),
+    sourcedBy: normalizeText(quote.sourcedBy),
+    quotedPrice:
+      quote.quotedPrice === "" || quote.quotedPrice === null || quote.quotedPrice === undefined
+        ? null
+        : normalizeMoney(quote.quotedPrice),
+    priceTimeline: normalizeNegotiationTimeline(quote.priceTimeline),
+    status: ["Draft", "Submitted", "Best Offer", "Withdrawn"].includes(
+      normalizeText(quote.status),
+    )
+      ? normalizeText(quote.status)
+      : "Submitted",
+    notes: normalizeText(quote.notes),
+  };
+};
+
+const normalizeNegotiationAudit = (value = {}) => ({
+  type: normalizeText(value.type) || "saved",
+  action: normalizeText(value.action) || "Negotiation Saved",
+  note: normalizeText(value.note),
+  actor: normalizeText(value.actor),
+  at: parseDate(value.at) || new Date(),
+});
+
+const buildNegotiationSummary = ({ customer = {}, dealerQuotes = [] } = {}) => {
+  const demand = Number(customer.demand || 0);
+  const validQuotes = dealerQuotes
+    .filter((quote) => Number(quote.quotedPrice || 0) > 0)
+    .sort((a, b) => Number(b.quotedPrice || 0) - Number(a.quotedPrice || 0));
+  const bestQuote = validQuotes[0] || null;
+  const highestQuote = Number(bestQuote?.quotedPrice || 0);
+  const margin = highestQuote > 0 && demand > 0 ? highestQuote - demand : 0;
+  const marginPercent = demand > 0 ? (margin / demand) * 100 : 0;
+  const lastQuotedAt = validQuotes
+    .flatMap((quote) => normalizeNegotiationTimeline(quote.priceTimeline))
+    .map((entry) => parseDate(firstPresent(entry.at, entry.timestamp)))
+    .filter(Boolean)
+    .sort((a, b) => b.getTime() - a.getTime())[0] || null;
+
+  return {
+    highestQuote,
+    bestDealerName: bestQuote?.dealerName || "",
+    margin,
+    marginPercent,
+    marginGap: margin < 0 ? Math.abs(margin) : 0,
+    quotationCount: validQuotes.length,
+    canProceed: highestQuote > 0 && demand > 0 && margin >= 0,
+    lastQuotedAt,
+  };
+};
+
+const normalizeNegotiation = (value = {}, lead = {}) => {
+  const payload = normalizeMapObject(value);
+  const customerPayload = normalizeMapObject(
+    firstPresent(payload.customer, payload.customerNegotiation) || {},
+  );
+  const customerDemand = firstPresent(
+    customerPayload.demand,
+    payload.customerDemand,
+    lead?.pricing?.updatedExpectedPrice,
+    lead?.pricing?.expectedPrice,
+  );
+  const targetPrice = firstPresent(customerPayload.targetPrice, payload.targetPrice);
+
+  const customer = {
+    demand:
+      customerDemand === "" || customerDemand === null || customerDemand === undefined
+        ? null
+        : normalizeMoney(customerDemand),
+    targetPrice:
+      targetPrice === "" || targetPrice === null || targetPrice === undefined
+        ? null
+        : normalizeMoney(targetPrice),
+    accepted: Boolean(customerPayload.accepted),
+    acceptedAt: parseDate(customerPayload.acceptedAt),
+    priceTimeline: normalizeNegotiationTimeline(customerPayload.priceTimeline),
+  };
+
+  const dealerQuotes = (
+    Array.isArray(payload.dealerQuotes)
+      ? payload.dealerQuotes
+      : Array.isArray(payload.quotations)
+        ? payload.quotations
+        : []
+  ).map((quote, index) => normalizeNegotiationQuote(quote, index));
+
+  const status = normalizeText(firstPresent(payload.status, payload.negotiationStatus));
+  const safeStatus = NEGOTIATION_STATUSES.includes(status)
+    ? status
+    : "Pending Quotations";
+  const summary = buildNegotiationSummary({ customer, dealerQuotes });
+
+  return {
+    status: safeStatus,
+    customer,
+    dealerQuotes,
+    summary,
+    comments: normalizeText(payload.comments),
+    approvedBy: normalizeText(payload.approvedBy),
+    approvedAt: parseDate(payload.approvedAt),
+    closedAt: parseDate(payload.closedAt),
+    updatedAt: parseDate(payload.updatedAt) || new Date(),
+    auditTrail: Array.isArray(payload.auditTrail)
+      ? payload.auditTrail.map((entry) => normalizeNegotiationAudit(entry))
+      : [],
+  };
+};
+
 const normalizeLeadPayload = (payload = {}) => {
   const mapped = Object.fromEntries(
     Object.entries(payload || {}).map(([key, value]) => [normalizeHeaderKey(key), value]),
@@ -600,6 +740,10 @@ const normalizeLeadPayload = (payload = {}) => {
     firstPresent(payload?.backgroundCheck, payload?.stageData?.backgroundCheck) ||
       {},
   );
+  const negotiation = normalizeNegotiation(
+    firstPresent(payload?.negotiation, payload?.stageData?.negotiation) || {},
+    { pricing },
+  );
 
   const activities = Array.isArray(payload.activities)
     ? payload.activities.map(buildActivity)
@@ -634,6 +778,7 @@ const normalizeLeadPayload = (payload = {}) => {
     activities,
     inspection,
     backgroundCheck,
+    negotiation,
     stageData: payload.stageData && typeof payload.stageData === "object" ? payload.stageData : {},
   };
 
@@ -846,6 +991,13 @@ const applyLeadUpdate = (doc, payload = {}) => {
     doc.backgroundCheck = {
       ...doc.backgroundCheck?.toObject?.(),
       ...normalized.backgroundCheck,
+    };
+  }
+
+  if (hasAnyPath(payload, ["negotiation", "stageData.negotiation"])) {
+    doc.negotiation = {
+      ...doc.negotiation?.toObject?.(),
+      ...normalized.negotiation,
     };
   }
 
@@ -1551,6 +1703,7 @@ const BGC_LIST_PROJECTION = [
   "latestCallSummary",
   "latestDisposition",
   "backgroundCheck",
+  "negotiation",
   "inspection.inspectionId",
   "inspection.verdict",
   "inspection.inspectedAt",
@@ -1924,6 +2077,143 @@ export const saveBackgroundCheck = asyncHandler(async (req, res) => {
   if (payload?.activity && typeof payload.activity === "object") {
     doc.activities.unshift(buildActivity(payload.activity));
   }
+
+  await doc.save();
+  res.json({ success: true, data: doc });
+});
+
+export const listNegotiationLeads = asyncHandler(async (req, res) => {
+  const limit = Math.min(5000, Math.max(1, Number(req.query.limit || 250)));
+  const skip = Math.max(0, Number(req.query.skip || 0));
+  const q = normalizeText(req.query.q);
+  const status = normalizeText(req.query.status);
+  const assignedTo = normalizeText(req.query.assignedTo);
+  const includeClosed =
+    normalizeText(req.query.includeClosed).toLowerCase() === "true";
+  const includeAllStages =
+    normalizeText(req.query.includeAllStages).toLowerCase() === "true";
+
+  const filter = {};
+  if (!includeClosed) filter["workflow.isClosed"] = { $ne: true };
+  if (!includeAllStages) filter["workflow.currentStage"] = "negotiation";
+  if (status) filter["negotiation.status"] = status;
+  if (assignedTo) filter["assignment.assignedTo"] = assignedTo;
+  if (q) {
+    const searchRegex = new RegExp(escapeRegex(q), "i");
+    filter.$and = [
+      ...(filter.$and || []),
+      {
+        $or: [
+          { internalLeadId: searchRegex },
+          { "externalRefs.c2bLeadId": searchRegex },
+          { "seller.name": searchRegex },
+          { "seller.mobile": searchRegex },
+          { "vehicle.regNo": searchRegex },
+          { "vehicle.make": searchRegex },
+          { "vehicle.model": searchRegex },
+          { "negotiation.dealerQuotes.dealerName": searchRegex },
+        ],
+      },
+    ];
+  }
+
+  const count = await UsedCarLead.countDocuments(filter);
+  const rows = await UsedCarLead.find(filter)
+    .select(BGC_LIST_PROJECTION)
+    .sort({ updatedAt: -1, _id: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
+
+  res.json({ success: true, count, data: rows });
+});
+
+export const saveNegotiation = asyncHandler(async (req, res) => {
+  const doc = await resolveLead(req.params.id);
+  if (!doc) {
+    res.status(404);
+    throw new Error("Used car lead not found");
+  }
+
+  const payload = normalizeMapObject(req.body?.negotiation || req.body || {});
+  const normalized = normalizeNegotiation(payload, doc);
+  const existing = doc.negotiation?.toObject?.() || {};
+  const now = new Date();
+
+  doc.negotiation = {
+    ...existing,
+    ...normalized,
+    auditTrail: existing.auditTrail || [],
+    updatedAt: now,
+    approvedAt:
+      normalized.status === "Approved"
+        ? normalized.approvedAt || existing.approvedAt || now
+        : normalized.approvedAt || null,
+    closedAt:
+      normalized.status === "Ready for Procurement"
+        ? normalized.closedAt || existing.closedAt || now
+        : normalized.closedAt || null,
+  };
+
+  if (payload?.appendAudit && typeof payload.appendAudit === "object") {
+    doc.negotiation.auditTrail = [
+      ...(doc.negotiation.auditTrail || []),
+      normalizeNegotiationAudit(payload.appendAudit),
+    ];
+  }
+
+  if (payload?.activity && typeof payload.activity === "object") {
+    doc.activities.unshift(buildActivity(payload.activity));
+  }
+
+  if (normalized.status === "Ready for Procurement") {
+    doc.workflow = {
+      ...doc.workflow?.toObject?.(),
+      status: "Procurement",
+      currentStage: "procurement",
+      pipelineStage: "Procurement",
+      isClosed: false,
+      closureReason: "",
+      closureNotes: "",
+      closedAt: null,
+    };
+  } else if (normalized.status === "Lost / Declined") {
+    doc.workflow = {
+      ...doc.workflow?.toObject?.(),
+      status: "Closed",
+      currentStage: "closed",
+      pipelineStage: "Negotiation",
+      isClosed: true,
+      closureReason:
+        normalizeText(payload.closureReason) ||
+        doc.workflow?.closureReason ||
+        "Lost / Declined in Negotiation",
+      closedAt: doc.workflow?.closedAt || now,
+    };
+  } else {
+    doc.workflow = {
+      ...doc.workflow?.toObject?.(),
+      status: "Negotiation",
+      currentStage: "negotiation",
+      pipelineStage: "Negotiation",
+      isClosed: false,
+      closureReason: "",
+      closureNotes: "",
+      closedAt: null,
+    };
+  }
+
+  doc.stageData = {
+    ...(doc.stageData || {}),
+    negotiation: {
+      customerDemand: doc.negotiation.customer?.demand || null,
+      targetPrice: doc.negotiation.customer?.targetPrice || null,
+      customerNegotiation: doc.negotiation.customer || {},
+      quotations: doc.negotiation.dealerQuotes || [],
+      negotiationStatus: doc.negotiation.status,
+      comments: doc.negotiation.comments,
+    },
+  };
 
   await doc.save();
   res.json({ success: true, data: doc });

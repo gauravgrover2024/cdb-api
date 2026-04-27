@@ -393,6 +393,100 @@ const backgroundCheckSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const negotiationPricePointSchema = new mongoose.Schema(
+  {
+    price: { type: Number, default: 0 },
+    at: { type: Date, default: Date.now },
+    timestamp: { type: Date, default: Date.now },
+    label: { type: String, trim: true, default: "" },
+    actorName: { type: String, trim: true, default: "" },
+  },
+  { _id: false },
+);
+
+const negotiationCustomerSchema = new mongoose.Schema(
+  {
+    demand: { type: Number, default: null },
+    targetPrice: { type: Number, default: null },
+    accepted: { type: Boolean, default: false },
+    acceptedAt: { type: Date, default: null },
+    priceTimeline: { type: [negotiationPricePointSchema], default: [] },
+  },
+  { _id: false },
+);
+
+const negotiationDealerQuoteSchema = new mongoose.Schema(
+  {
+    quoteId: { type: String, trim: true, default: "" },
+    dealerName: { type: String, trim: true, default: "" },
+    contactNumber: { type: String, trim: true, default: "" },
+    location: { type: String, trim: true, default: "" },
+    sourcedBy: { type: String, trim: true, default: "" },
+    quotedPrice: { type: Number, default: null },
+    priceTimeline: { type: [negotiationPricePointSchema], default: [] },
+    status: {
+      type: String,
+      enum: ["Draft", "Submitted", "Best Offer", "Withdrawn"],
+      default: "Submitted",
+    },
+    notes: { type: String, trim: true, default: "" },
+  },
+  { _id: false },
+);
+
+const negotiationAuditSchema = new mongoose.Schema(
+  {
+    type: { type: String, trim: true, default: "saved" },
+    action: { type: String, trim: true, default: "Negotiation Saved" },
+    note: { type: String, trim: true, default: "" },
+    actor: { type: String, trim: true, default: "" },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
+const negotiationSummarySchema = new mongoose.Schema(
+  {
+    highestQuote: { type: Number, default: 0 },
+    bestDealerName: { type: String, trim: true, default: "" },
+    margin: { type: Number, default: 0 },
+    marginPercent: { type: Number, default: 0 },
+    marginGap: { type: Number, default: 0 },
+    quotationCount: { type: Number, default: 0 },
+    canProceed: { type: Boolean, default: false },
+    lastQuotedAt: { type: Date, default: null },
+  },
+  { _id: false },
+);
+
+const negotiationSchema = new mongoose.Schema(
+  {
+    status: {
+      type: String,
+      enum: [
+        "Pending Quotations",
+        "Under Negotiation",
+        "Awaiting Approval",
+        "Approved",
+        "Ready for Procurement",
+        "Lost / Declined",
+      ],
+      default: "Pending Quotations",
+      index: true,
+    },
+    customer: { type: negotiationCustomerSchema, default: () => ({}) },
+    dealerQuotes: { type: [negotiationDealerQuoteSchema], default: [] },
+    summary: { type: negotiationSummarySchema, default: () => ({}) },
+    comments: { type: String, trim: true, default: "" },
+    approvedBy: { type: String, trim: true, default: "" },
+    approvedAt: { type: Date, default: null },
+    closedAt: { type: Date, default: null },
+    updatedAt: { type: Date, default: null },
+    auditTrail: { type: [negotiationAuditSchema], default: [] },
+  },
+  { _id: false },
+);
+
 const usedCarLeadSchema = new mongoose.Schema(
   {
     internalLeadId: { type: String, required: true, unique: true, index: true },
@@ -423,6 +517,7 @@ const usedCarLeadSchema = new mongoose.Schema(
 
     inspection: { type: inspectionSchema, default: () => ({}) },
     backgroundCheck: { type: backgroundCheckSchema, default: () => ({}) },
+    negotiation: { type: negotiationSchema, default: () => ({}) },
     stageData: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   {
@@ -443,10 +538,12 @@ usedCarLeadSchema.index({ "inspection.inspectionId": 1 }, { sparse: true });
 usedCarLeadSchema.index({ "inspection.verdict": 1, updatedAt: -1 });
 usedCarLeadSchema.index({ "inspection.inspectedAt": -1 });
 usedCarLeadSchema.index({ "backgroundCheck.status": 1, updatedAt: -1 });
+usedCarLeadSchema.index({ "negotiation.status": 1, updatedAt: -1 });
 usedCarLeadSchema.index({
   "workflow.currentStage": 1,
   "workflow.isClosed": 1,
   "backgroundCheck.status": 1,
+  "negotiation.status": 1,
   "assignment.assignedTo": 1,
   updatedAt: -1,
 });
