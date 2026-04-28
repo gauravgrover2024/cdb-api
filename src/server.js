@@ -18,6 +18,7 @@ import quotationsRouter from "./routes/quotations.js";
 import featuresRoutes from "./routes/featuresRoutes.js";
 import bookingsRouter from "./routes/bookings.js";
 import usedCarRoutes from "./routes/usedCarRoutes.js";
+import searchRoutes from "./routes/searchRoutes.js";
 
 dotenv.config();
 
@@ -90,6 +91,7 @@ app.use("/api/features", featuresRoutes);
 app.use("/api/bookings", bookingsRouter);
 app.use("/api/insurance", insuranceRoutes);
 app.use("/api/used-cars", usedCarRoutes);
+app.use("/api/search", searchRoutes);
 
 // Health check
 app.get("/", (req, res) => {

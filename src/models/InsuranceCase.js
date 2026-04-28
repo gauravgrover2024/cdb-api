@@ -294,6 +294,14 @@ insuranceCaseSchema.index({ vehicleType: 1, typesOfVehicle: 1, updatedAt: -1 });
 insuranceCaseSchema.index({ usedCarFlowType: 1, policyJourneyClassification: 1, updatedAt: -1 });
 insuranceCaseSchema.index({ newOdExpiryDate: 1, newTpExpiryDate: 1, updatedAt: -1 });
 insuranceCaseSchema.index({ renewedFromCaseId: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ customerName: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ companyName: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ mobile: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ registrationNumber: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ newPolicyNumber: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ previousPolicyNumber: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ sourceName: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ vehicleMake: 1, vehicleModel: 1, vehicleVariant: 1, updatedAt: -1 });
 
 const InsuranceCase = mongoose.model("InsuranceCase", insuranceCaseSchema);
 

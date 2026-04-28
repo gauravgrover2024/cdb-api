@@ -86,4 +86,13 @@ const QuotationSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+QuotationSchema.index({ createdAt: -1, _id: -1 });
+QuotationSchema.index({ updatedAt: -1, _id: -1 });
+QuotationSchema.index({ status: 1, updatedAt: -1 });
+QuotationSchema.index({ "customer.customerName": 1, updatedAt: -1 });
+QuotationSchema.index({ "customer.primaryMobile": 1, updatedAt: -1 });
+QuotationSchema.index({ "customer.email": 1, updatedAt: -1 });
+QuotationSchema.index({ "vehicle.make": 1, "vehicle.model": 1, "vehicle.variant": 1, updatedAt: -1 });
+QuotationSchema.index({ "pricing.color": 1, updatedAt: -1 });
+
 export default mongoose.model("Quotation", QuotationSchema);
