@@ -133,6 +133,13 @@ const normalizeStep1Payload = (payload = {}) => {
   };
 };
 
+const normalizeInsuranceStatus = (value, fallback = "draft") => {
+  const normalized = safeString(value || fallback).trim().toLowerCase();
+  return ["draft", "submitted", "issued", "cancelled"].includes(normalized)
+    ? normalized
+    : fallback;
+};
+
 const normalizeInsuranceCurrentStep = (value, fallback = 1) => {
   const numeric = Number(value);
   const base = Number.isFinite(numeric) ? numeric : Number(fallback || 1);
@@ -853,9 +860,15 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
     caseId,
     customerId: customerId || undefined,
     customerSnapshot,
-    status: payload.status || "draft",
+    status: normalizeInsuranceStatus(payload.status, "draft"),
     currentStep: normalizeInsuranceCurrentStep(payload.currentStep, 1),
   });
+
+  if (doc?.renewedFromCaseId) {
+    await InsuranceCase.findByIdAndUpdate(doc.renewedFromCaseId, {
+      $set: { renewedToCaseId: doc._id },
+    });
+  }
 
   await upsertVehicleRecordFromInsuranceCase(doc);
 
@@ -911,7 +924,10 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
       payload.currentStep,
       existingDoc.currentStep || 1,
     ),
-    status: safeString(payload.status || existingDoc.status || "draft"),
+    status: normalizeInsuranceStatus(
+      payload.status,
+      normalizeInsuranceStatus(existingDoc.status, "draft"),
+    ),
   };
 
   const saved = await InsuranceCase.findByIdAndUpdate(
@@ -930,6 +946,11 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
   }
 
   await upsertVehicleRecordFromInsuranceCase(saved);
+  if (saved?.renewedFromCaseId) {
+    await InsuranceCase.findByIdAndUpdate(saved.renewedFromCaseId, {
+      $set: { renewedToCaseId: saved._id },
+    });
+  }
   res.json({ success: true, data: saved });
 });
 

@@ -115,6 +115,16 @@ router.post("/", upload.array("files", 10), async (req, res) => {
     });
   } catch (error) {
     console.error("[Upload Error]", error);
+    if (error instanceof multer.MulterError) {
+      const code = String(error.code || "").toUpperCase();
+      const message =
+        code === "LIMIT_FILE_SIZE"
+          ? "Each file must be 20MB or smaller"
+          : code === "LIMIT_FILE_COUNT"
+            ? "Only 10 files can be uploaded at once"
+            : error.message || "Upload failed";
+      return res.status(400).json({ success: false, message });
+    }
     const message = error?.message || error?.name || "Upload failed";
     return res.status(500).json({ success: false, message });
   }
