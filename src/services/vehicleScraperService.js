@@ -15,7 +15,7 @@ const SCRIPT_CATALOG = {
   prices: {
     key: "prices",
     label: "Cardekho NCR Pricelist",
-    filename: "cardekho_ncr_scraper.py",
+    filename: "cardekho_ncr_scraper_updated.py",
     description: "Fetches make/model/variant city-wise prices and updates vehicles collection.",
     targetCollections: ["vehicles"],
   },

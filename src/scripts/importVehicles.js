@@ -20,6 +20,7 @@ function rowToVehicle(row) {
   const variant = (row.Variant ?? row.variant ?? row.Version ?? row.version ?? 'Standard').toString().trim();
   const fuel = (row.Fuel ?? row['Fuel Type'] ?? row.FuelType ?? 'N/A').toString().trim() || 'N/A';
   const city = (row.City ?? row.city ?? 'Delhi').toString().trim() || 'Delhi';
+  const onRoadPrice = num(row.OnRoadPrice ?? row['On-Road Price']);
 
   return {
     make,
@@ -31,7 +32,9 @@ function rowToVehicle(row) {
     rto: num(row.RTO ?? row.rto),
     insurance: num(row.Insurance ?? row.insurance),
     otherCharges: num(row.OtherCharges ?? row['Other Charges']),
-    onRoadPrice: num(row.OnRoadPrice ?? row['On-Road Price']),
+    onRoadPrice,
+    on_road_price_cardekho: onRoadPrice,
+    total_on_road_with_accessories: onRoadPrice,
     status: 'Active',
     isDiscontinued: false,
     createdFrom: 'EXCEL_IMPORT',

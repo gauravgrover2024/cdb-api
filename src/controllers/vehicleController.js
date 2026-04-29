@@ -69,13 +69,71 @@ const parseAmount = (value) => {
   return 0;
 };
 
+const firstPositiveAmount = (...values) => {
+  for (const value of values) {
+    const amount = parseAmount(value);
+    if (amount > 0) return amount;
+  }
+  return 0;
+};
+
+const numbersNearlyEqual = (a, b) => Math.abs(parseAmount(a) - parseAmount(b)) <= 1;
+
+const normalizeVehiclePricing = (raw = {}) => {
+  const tcs = firstPositiveAmount(raw.tcs, raw.other_tcsCharges);
+  const optionalTotal = firstPositiveAmount(
+    raw.optional_total,
+    raw.optional_totalAccessories,
+    raw.optional_accessoriesCharges,
+  );
+  const orpWithoutAccessories = firstPositiveAmount(raw.orp_without_accessories);
+  const totalOnRoad = firstPositiveAmount(
+    raw.total_on_road_with_accessories,
+    raw.on_road_price_cardekho,
+    raw.onRoadPrice,
+    orpWithoutAccessories && optionalTotal
+      ? orpWithoutAccessories + optionalTotal
+      : 0,
+  );
+
+  const explicitOtherCharges = firstPositiveAmount(
+    raw.handlingCharges,
+    raw.other_otherCharges,
+    raw.other_handlingCharges,
+  );
+  const rawOtherTotal = firstPositiveAmount(raw.other_totalOtherCharges, raw.otherCharges);
+  const nonTcsOtherCharges =
+    explicitOtherCharges ||
+    (rawOtherTotal && tcs
+      ? rawOtherTotal > tcs && !numbersNearlyEqual(rawOtherTotal, tcs)
+        ? Math.max(rawOtherTotal - tcs, 0)
+        : numbersNearlyEqual(rawOtherTotal, tcs)
+          ? 0
+          : rawOtherTotal
+      : rawOtherTotal || 0);
+
+  const onRoadWithoutAccessories =
+    orpWithoutAccessories ||
+    (totalOnRoad && optionalTotal && totalOnRoad >= optionalTotal
+      ? totalOnRoad - optionalTotal
+      : totalOnRoad);
+
+  return {
+    tcs,
+    optionalTotal,
+    otherCharges: nonTcsOtherCharges,
+    orp_without_accessories: onRoadWithoutAccessories,
+    onRoadPrice: totalOnRoad,
+    on_road_price_cardekho: totalOnRoad,
+    total_on_road_with_accessories: totalOnRoad,
+  };
+};
+
 const toVehicleListItem = (doc) => {
   const normalized = normalizeVehicleRecord(doc);
   const { rawVariant, rawModel, ...normalizedWithoutRaw } = normalized;
   const discontinued = isVehicleDiscontinued(normalized);
-  const tcs = parseAmount(
-    normalized.tcs ?? normalized.other_tcsCharges ?? normalized.otherCharges ?? 0,
-  );
+  const pricing = normalizeVehiclePricing(normalized);
   const rto = parseAmount(normalized.rto ?? normalized.roadTax ?? 0);
 
   return {
@@ -95,16 +153,16 @@ const toVehicleListItem = (doc) => {
     rto,
     roadTax: rto,
     insurance: normalized.insurance,
-    otherCharges: normalized.otherCharges,
-    tcs,
-    other_tcsCharges: tcs,
-    onRoadPrice: normalized.onRoadPrice,
-    on_road_price_cardekho: parseAmount(
-      normalized.on_road_price_cardekho ?? normalized.onRoadPrice ?? 0,
-    ),
-    total_on_road_with_accessories: parseAmount(
-      normalized.total_on_road_with_accessories ?? normalized.onRoadPrice ?? 0,
-    ),
+    otherCharges: pricing.otherCharges,
+    other_totalOtherCharges: pricing.otherCharges,
+    tcs: pricing.tcs,
+    other_tcsCharges: pricing.tcs,
+    optional_total: pricing.optionalTotal,
+    optional_totalAccessories: pricing.optionalTotal,
+    orp_without_accessories: pricing.orp_without_accessories,
+    onRoadPrice: pricing.onRoadPrice,
+    on_road_price_cardekho: pricing.on_road_price_cardekho,
+    total_on_road_with_accessories: pricing.total_on_road_with_accessories,
     status: normalized.status,
     is_discontinued: discontinued,
     isDiscontinued: discontinued,
@@ -249,6 +307,7 @@ const dedupeMediaRowsByHexLatest = (rows = []) => {
 
 const normalizeVehicleRecord = (doc) => {
   const raw = doc?.toObject ? doc.toObject() : { ...(doc || {}) };
+  const pricing = normalizeVehiclePricing(raw);
   const make = String(raw.make || raw.brand || '').trim();
   const rawModel = String(raw.model || '').trim();
   const rawVariant = String(raw.variant || '').trim();
@@ -271,21 +330,62 @@ const normalizeVehicleRecord = (doc) => {
     fuel: raw.fuel || raw.fuel_type || '',
     fuel_type: raw.fuel_type || raw.fuel || '',
     exShowroom: parseAmount(raw.exShowroom ?? raw.ex_showroom ?? 0),
-    onRoadPrice: parseAmount(
-      raw.onRoadPrice ??
-        raw.on_road_price_cardekho ??
-        raw.total_on_road_with_accessories ??
-        0,
-    ),
+    onRoadPrice: pricing.onRoadPrice,
+    on_road_price_cardekho: pricing.on_road_price_cardekho,
+    total_on_road_with_accessories: pricing.total_on_road_with_accessories,
+    orp_without_accessories: pricing.orp_without_accessories,
     insurance: parseAmount(raw.insurance ?? 0),
     rto: parseAmount(raw.rto ?? raw.rto_amount_cardekho ?? 0),
-    otherCharges: parseAmount(
-      raw.otherCharges ??
-        raw.other_totalOtherCharges ??
-        raw.other_tcsCharges ??
-        0,
-    ),
+    tcs: pricing.tcs,
+    other_tcsCharges: pricing.tcs,
+    otherCharges: pricing.otherCharges,
+    other_totalOtherCharges: pricing.otherCharges,
+    optional_total: pricing.optionalTotal,
+    optional_totalAccessories: pricing.optionalTotal,
   };
+};
+
+const withCanonicalVehiclePricing = (payload = {}) => {
+  const pricing = normalizeVehiclePricing(payload);
+  const next = { ...payload };
+
+  if (pricing.onRoadPrice > 0) {
+    next.onRoadPrice = pricing.onRoadPrice;
+    next.on_road_price_cardekho = pricing.on_road_price_cardekho;
+    next.total_on_road_with_accessories = pricing.total_on_road_with_accessories;
+    next.orp_without_accessories = pricing.orp_without_accessories;
+  }
+
+  if (
+    payload.tcs !== undefined ||
+    payload.other_tcsCharges !== undefined ||
+    pricing.tcs > 0
+  ) {
+    next.tcs = pricing.tcs;
+    next.other_tcsCharges = pricing.tcs;
+  }
+
+  if (
+    payload.optional_total !== undefined ||
+    payload.optional_totalAccessories !== undefined ||
+    payload.optional_accessoriesCharges !== undefined ||
+    pricing.optionalTotal > 0
+  ) {
+    next.optional_total = pricing.optionalTotal;
+    next.optional_totalAccessories = pricing.optionalTotal;
+  }
+
+  if (
+    payload.otherCharges !== undefined ||
+    payload.other_totalOtherCharges !== undefined ||
+    payload.other_tcsCharges !== undefined ||
+    payload.tcs !== undefined
+  ) {
+    next.otherCharges = pricing.otherCharges;
+    next.other_totalOtherCharges = pricing.otherCharges;
+  }
+
+  return next;
 };
 
 const matchesExact = (actual, expected) => {
@@ -968,7 +1068,13 @@ const createVehicle = asyncHandler(async (req, res) => {
     throw new Error('Please include Make, Model, and Variant');
   }
 
-  const payload = { ...req.body, make, brand: req.body.brand || make, model, variant };
+  const payload = withCanonicalVehiclePricing({
+    ...req.body,
+    make,
+    brand: req.body.brand || make,
+    model,
+    variant,
+  });
   const existingDocs = await Vehicle.find(buildVehicleQuery({ make, model, variant, city, fuel }))
     .select({ make: 1, brand: 1, model: 1, variant: 1, fuel: 1, fuel_type: 1, city: 1 })
     .lean();
@@ -994,6 +1100,7 @@ const updateVehicle = asyncHandler(async (req, res) => {
       make: nextMake,
       brand: req.body.brand || vehicle.brand || nextMake,
     });
+    Object.assign(vehicle, withCanonicalVehiclePricing(vehicle.toObject()));
     const updatedVehicle = await vehicle.save();
     res.json({ success: true, data: normalizeVehicleRecord(updatedVehicle) });
   } else {
@@ -1032,7 +1139,13 @@ const bulkUploadVehicles = asyncHandler(async (req, res) => {
       const city = item.city;
       if (!make || !model || !variant) continue;
 
-      const payload = { ...item, make, brand: item.brand || make, model, variant };
+      const payload = withCanonicalVehiclePricing({
+        ...item,
+        make,
+        brand: item.brand || make,
+        model,
+        variant,
+      });
       const existingDocs = await Vehicle.find(buildVehicleQuery({ make, model, variant, city, fuel }))
         .select({ make: 1, brand: 1, model: 1, variant: 1, fuel: 1, fuel_type: 1, city: 1 })
         .lean();

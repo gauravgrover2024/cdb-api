@@ -23,6 +23,7 @@ import {
   getPaymentRoute,
   LIMIT,
   makeAmbiguity,
+  objectIdOrNull,
   pushModuleTrace,
   rowBase,
   safeId,
@@ -46,6 +47,12 @@ export const findLoans = async (parsed, access, trace, limit = LIMIT) => {
   if (!access.canAccess("loans")) {
     noteRestriction(access, "Loans", "No loan access");
     return [];
+  }
+  const selectedId = parsed.selectedEntity?.entityType === "loan" ? objectIdOrNull(parsed.selectedEntity?.id) : null;
+  if (selectedId) {
+    const record = await Loan.findOne({ _id: selectedId }).maxTimeMS(2500).lean();
+    pushModuleTrace(trace, "Loans", record ? 1 : 0, { selectedEntity: true });
+    return record ? [record] : [];
   }
   const query = loanQuery(parsed.entities);
   if (!Object.keys(query).length) return [];
@@ -81,6 +88,21 @@ const chooseLoan = (records) =>
       (latestDate(b.updatedAt, b.createdAt)?.getTime() || 0) -
       (latestDate(a.updatedAt, a.createdAt)?.getTime() || 0),
   )[0];
+
+const chooseSelectedLoan = (records, parsed) => {
+  const selectedId = parsed.selectedEntity?.id;
+  if (selectedId) {
+    const exact = records.find((record) => safeId(record) === String(selectedId));
+    if (exact) return exact;
+  }
+  const selectedRegistration = parsed.selectedEntity?.registrationNumber || parsed.selectedEntity?.context?.registrationNumber;
+  if (selectedRegistration) {
+    const normalized = String(selectedRegistration).replace(/[^A-Z0-9]/gi, "").toUpperCase();
+    const exact = records.find((record) => String(getRegistration(record)).replace(/[^A-Z0-9]/gi, "").toUpperCase() === normalized);
+    if (exact) return exact;
+  }
+  return chooseLoan(records);
+};
 
 const closureBreakdown = (loan, access) => {
   const disbursedAmount = firstNumber(
@@ -173,7 +195,7 @@ export const loanStatusOrClosure = async (parsed, access, trace) => {
       followUpSuggestions: [],
     };
   }
-  const loan = chooseLoan(records);
+  const loan = chooseSelectedLoan(records, parsed);
   const payment = access.canViewFinance
     ? await Payment.findOne({ loanId: loan.loanId }).maxTimeMS(2500).lean()
     : null;

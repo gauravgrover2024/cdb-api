@@ -26,11 +26,23 @@ const exactValues = (value) => {
   return clean ? [...new Set([clean, clean.toLowerCase(), clean.toUpperCase(), titleCase(clean)])] : [];
 };
 
+const modelAliases = (model) => {
+  const clean = String(model || "").trim();
+  if (!clean) return [];
+  const aliases = [clean];
+  for (const make of MAKE_ALIASES) {
+    const pattern = new RegExp(`^${make}\\s+`, "i");
+    if (pattern.test(clean)) aliases.push(clean.replace(pattern, "").trim());
+  }
+  return [...new Set(aliases.filter(Boolean))];
+};
+
 const vehicleModelClause = (model, make) => {
   if (!model) return null;
-  const modelValues = exactValues(model);
+  const aliases = modelAliases(model);
+  const modelValues = aliases.flatMap(exactValues);
   const prefixMakes = make ? exactValues(make).filter((item) => item === titleCase(item)) : MAKE_ALIASES;
-  const prefixed = prefixMakes.flatMap((brand) => exactValues(`${brand} ${model}`));
+  const prefixed = prefixMakes.flatMap((brand) => aliases.flatMap((alias) => exactValues(`${brand} ${alias}`)));
   return { model: { $in: [...new Set([...modelValues, ...prefixed])] } };
 };
 
@@ -42,10 +54,10 @@ const makeOrBrandClause = (make) => {
 
 const cityClause = (city) => {
   const clean = String(city || "Delhi").trim();
-  return clean ? { city: { $in: exactValues(clean) } } : null;
+  return clean ? { city: { $regex: `^${clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } } : null;
 };
 
-const vehicleModelQuery = (parsed) => {
+const vehicleModelQuery = (parsed, { includeCity = true } = {}) => {
   const model = parsed.entities.model || parsed.entities.models?.[0];
   const make = parsed.entities.make;
   const city = parsed.entities.city || "Delhi";
@@ -53,7 +65,7 @@ const vehicleModelQuery = (parsed) => {
   if (model) and.push(vehicleModelClause(model, make));
   if (make) and.push(makeOrBrandClause(make));
   if (parsed.entities.variant) and.push({ variant: { $regex: parsed.entities.variant, $options: "i" } });
-  if (city) and.push(cityClause(city));
+  if (includeCity && city) and.push(cityClause(city));
   return and.length ? { $and: and } : {};
 };
 
@@ -106,6 +118,24 @@ const compactVariantRows = (rows) =>
     price: firstNumber(item.on_road_price_cardekho, item.total_on_road_with_accessories, item.onRoadPrice, item.ex_showroom, item.exShowroom),
   }));
 
+const comparisonRowFromVariant = (row) => ({
+  make: row.make,
+  model: row.model,
+  variant: row.variant,
+  fuelOptions: row.fuel ? [row.fuel] : [],
+  transmissionOptions: row.transmission ? [row.transmission] : [],
+  startingPrice: row.exShowroomPrice,
+  topPrice: row.onRoadPrice || row.exShowroomPrice,
+  variantCount: 1,
+  lastUpdated: row.lastUpdated,
+  actions: [
+    action("open_pricelist_prefilled", "Open Pricelist", {
+      route: "/vehicles/price-list",
+      query: { make: row.make, model: row.model },
+    }),
+  ],
+});
+
 const uniqueRows = (rows, keyFor) => {
   const seen = new Set();
   return rows.filter((row) => {
@@ -119,11 +149,17 @@ const uniqueRows = (rows, keyFor) => {
 const variantGroupsForModels = async (models, trace, city = "Delhi") => {
   const groups = await Promise.all(
     models.map(async (model) => {
-      const docs = await findLean(Vehicle, { $and: [vehicleModelClause(model), cityClause(city)].filter(Boolean) }, {
+      let docs = await findLean(Vehicle, { $and: [vehicleModelClause(model), cityClause(city)].filter(Boolean) }, {
         sort: { model: 1, variant: 1, city: 1 },
         limit: 80,
       });
-      pushModuleTrace(trace, `Variants ${model}`, docs.length);
+      if (!docs.length) {
+        docs = await findLean(Vehicle, vehicleModelClause(model), {
+          sort: { model: 1, variant: 1, city: 1 },
+          limit: 80,
+        });
+      }
+      pushModuleTrace(trace, `Variants ${model}`, docs.length, { city: docs[0]?.city || city });
       return {
         model,
         displayModel: docs[0]?.model || model,
@@ -135,33 +171,39 @@ const variantGroupsForModels = async (models, trace, city = "Delhi") => {
   return groups;
 };
 
-const exactVariantComparison = async (variantIds, trace) => {
+const exactVariantComparison = async (variantIds, trace, context = {}) => {
   const rows = await findLean(Vehicle, { _id: { $in: variantIds } }, { limit: 12 });
   pushModuleTrace(trace, "Selected vehicle variants", rows.length);
+  const compactRows = rows.length ? compactVariantRows(rows) : compactVariantRows(context.selectedVariantRows || []);
+  const selectedContext = {
+    selectedVariantIds: variantIds,
+    selectedVariantRows: compactRows,
+    selectedModels: context.selectedModels || [...new Set(compactRows.map((row) => row.model).filter(Boolean))],
+    compareMode: "variants",
+  };
   return {
     widgets: [
       widget("vehicle_comparison", "Selected variant comparison", {
-        rows: compactVariantRows(rows).map((row) => ({
-          make: row.make,
-          model: row.model,
-          variant: row.variant,
-          fuelOptions: row.fuel ? [row.fuel] : [],
-          transmissionOptions: row.transmission ? [row.transmission] : [],
-          startingPrice: row.exShowroomPrice,
-          topPrice: row.onRoadPrice || row.exShowroomPrice,
-          variantCount: 1,
-          lastUpdated: row.lastUpdated,
-          actions: [
-            action("open_pricelist_prefilled", "Open Pricelist", {
-              route: "/vehicles/price-list",
-              query: { make: row.make, model: row.model },
-            }),
-          ],
-        })),
-        data: { selectedVariantIds: variantIds },
+        rows: compactRows.map(comparisonRowFromVariant),
+        data: selectedContext,
+        notices: rows.length ? [] : ["Using selected variants from chat context because the catalog IDs were not found in the current database query."],
       }),
     ],
-    followUpSuggestions: ["Show features", "Show similar cars", "Open full pricelist"],
+    followUpSuggestions: [
+      {
+        label: "Show features",
+        message: "Show features for selected variants",
+        context: selectedContext,
+        replaceContext: true,
+      },
+      {
+        label: "Show similar cars",
+        message: `Show similar cars to ${selectedContext.selectedModels?.[0] || compactRows[0]?.model || "selected model"}`,
+        context: selectedContext,
+        replaceContext: true,
+      },
+      "Open full pricelist",
+    ],
   };
 };
 
@@ -171,6 +213,7 @@ export const vehiclePricelist = async (parsed, access, trace) => {
     return { widgets: [unavailableWidget("Vehicle data unavailable", "You do not have catalog access.", ["Vehicles"])] };
   }
   const query = vehicleModelQuery(parsed);
+  const fallbackQuery = vehicleModelQuery(parsed, { includeCity: false });
   if (!Object.keys(query).length) {
     return {
       widgets: [
@@ -182,11 +225,20 @@ export const vehiclePricelist = async (parsed, access, trace) => {
       ],
     };
   }
-  const rows = await findLean(Vehicle, query, {
+  let rows = await findLean(Vehicle, query, {
     sort: { make: 1, model: 1, variant: 1 },
     limit: 80,
   });
-  pushModuleTrace(trace, "Vehicles", rows.length);
+  const requestedCity = parsed.entities.city || "Delhi";
+  let usedCityFallback = false;
+  if (!rows.length && JSON.stringify(query) !== JSON.stringify(fallbackQuery)) {
+    rows = await findLean(Vehicle, fallbackQuery, {
+      sort: { make: 1, model: 1, variant: 1, city: 1 },
+      limit: 80,
+    });
+    usedCityFallback = true;
+  }
+  pushModuleTrace(trace, "Vehicles", rows.length, { city: usedCityFallback ? "available catalog rows" : requestedCity });
   if (!rows.length) {
     return { widgets: [unavailableWidget("No pricelist found", "No matching vehicle catalog records were found.", ["Vehicles"])] };
   }
@@ -201,7 +253,7 @@ export const vehiclePricelist = async (parsed, access, trace) => {
     const featureText = JSON.stringify(featureDocs).toLowerCase();
     notices.push(featureText.includes("sunroof") ? "Sunroof appears in feature data for matching variants." : "Sunroof was not found in the available feature data.");
   }
-  const city = parsed.entities.city || "Delhi";
+  const city = usedCityFallback ? firstMeaningful(rows[0]?.city, requestedCity) : requestedCity;
   const pricelistRows = uniqueRows(
     rows.map(vehicleRow),
     (row) => [row.city, row.make, row.model, row.variant, row.fuel, row.transmission, row.exShowroomPrice, row.onRoadPrice].join("|"),
@@ -218,7 +270,9 @@ export const vehiclePricelist = async (parsed, access, trace) => {
         variants: pricelistRows,
         notices: [
           ...notices,
-          "Showing Delhi by default when city is not specified.",
+          usedCityFallback
+            ? `${requestedCity} rows were not found. Showing available catalog rows for this model instead.`
+            : "Showing Delhi by default when city is not specified.",
           "Price breakup is shown only where stored in catalog fields.",
         ],
         actions: [
@@ -242,7 +296,10 @@ export const vehicleColors = async (parsed, access, trace) => {
   if (!model) {
     return { widgets: [unavailableWidget("Need a model", "Ask for colors with a model, for example: Show Verna colors.", ["Vehicles"])] };
   }
-  const rows = await findLean(Vehicle, { $and: [vehicleModelClause(model, parsed.entities.make), cityClause(parsed.entities.city || "Delhi")].filter(Boolean) }, { limit: 120 });
+  let rows = await findLean(Vehicle, { $and: [vehicleModelClause(model, parsed.entities.make), cityClause(parsed.entities.city || "Delhi")].filter(Boolean) }, { limit: 120 });
+  if (!rows.length) {
+    rows = await findLean(Vehicle, vehicleModelClause(model, parsed.entities.make), { limit: 120 });
+  }
   pushModuleTrace(trace, "Vehicles", rows.length);
   const colorFields = ["color", "colour", "vehicleColor", "availableColor", "exteriorColor", "do_colour", "do_vehicleColor"];
   const colors = [];
@@ -288,16 +345,31 @@ export const vehicleFeatures = async (parsed, access, trace) => {
     noteRestriction(access, "Vehicles", "No vehicle catalog access");
     return { widgets: [unavailableWidget("Vehicle data unavailable", "You do not have catalog access.", ["Vehicles"])] };
   }
-  const model = parsed.entities.model || parsed.entities.models?.[0];
+  const selectedRows = compactVariantRows(parsed.context?.selectedVariantRows || []);
+  const selectedVariantNames = selectedRows.map((row) => normalizeVariant(row.variant)).filter(Boolean);
+  const contextModel = parsed.context?.selectedModels?.[0] || selectedRows[0]?.model;
+  const model = parsed.entities.model || parsed.entities.models?.[0] || contextModel;
   if (!model) {
     return { widgets: [unavailableWidget("Need a model", "Ask for features with a model, for example: Show features of Hyundai Verna HX8 iVT.", ["Vehicle Features"])] };
   }
-  const query = vehicleModelClause(model, parsed.entities.make);
-  const docs = await findLean(VehicleFeature, query, { sort: { variant: 1 }, limit: 120 });
+  let docs = [];
+  if (selectedRows.length && !parsed.entities.model) {
+    const clauses = selectedRows
+      .map((row) => vehicleModelClause(row.model, row.make))
+      .filter(Boolean);
+    docs = clauses.length
+      ? await findLean(VehicleFeature, { $or: clauses }, { sort: { model: 1, variant: 1 }, limit: 240 })
+      : [];
+  } else {
+    const query = vehicleModelClause(model, parsed.entities.make);
+    docs = await findLean(VehicleFeature, query, { sort: { variant: 1 }, limit: 120 });
+  }
   pushModuleTrace(trace, "Vehicle Features", docs.length);
   const variantNeedle = normalizeVariant(parsed.entities.variant);
   const matchedDocs = variantNeedle
     ? docs.filter((doc) => normalizeVariant(doc.variant).includes(variantNeedle))
+    : selectedVariantNames.length
+      ? docs.filter((doc) => selectedVariantNames.some((variant) => normalizeVariant(doc.variant).includes(variant) || variant.includes(normalizeVariant(doc.variant))))
     : docs;
   const rows = matchedDocs.slice(0, LIMIT).map((doc) => ({
     id: safeId(doc),
@@ -412,13 +484,18 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
 };
 
 export const similarCars = async (parsed, access, trace) => {
-  const baseResult = await vehiclePricelist(parsed, access, trace);
+  const selectedRows = compactVariantRows(parsed.context?.selectedVariantRows || []);
+  const selectedModel = parsed.context?.selectedModels?.[0] || selectedRows[0]?.model;
+  const effectiveParsed = selectedModel && !parsed.entities.model
+    ? { ...parsed, entities: { ...parsed.entities, model: selectedModel, models: [selectedModel] } }
+    : parsed;
+  const baseResult = await vehiclePricelist(effectiveParsed, access, trace);
   const baseRows = baseResult.widgets?.[0]?.rows || [];
   if (!baseRows.length) return baseResult;
   const prices = baseRows.map((row) => Number(row.onRoadPrice || row.exShowroomPrice || 0)).filter(Boolean);
   const min = Math.min(...prices);
   const max = Math.max(...prices);
-  const anchorModel = parsed.entities.model;
+  const anchorModel = effectiveParsed.entities.model;
   const query = {
     model: { $not: new RegExp(anchorModel, "i") },
     $or: [
@@ -472,7 +549,7 @@ export const vehicleComparison = async (parsed, access, trace) => {
   const models = parsed.entities.models || [];
   const selectedVariantIds = parsed.context?.selectedVariantIds || parsed.filters?.selectedVariantIds;
   if (Array.isArray(selectedVariantIds) && selectedVariantIds.length >= 2) {
-    return exactVariantComparison(selectedVariantIds, trace);
+    return exactVariantComparison(selectedVariantIds, trace, parsed.context || {});
   }
   if (models.length < 2) {
     return { widgets: [unavailableWidget("Need models to compare", "Ask with two or more models, for example: compare Verna City Slavia.", ["Vehicles"])] };
@@ -503,6 +580,11 @@ export const vehicleComparison = async (parsed, access, trace) => {
       widget("variant_selector", "Choose variants to compare", {
         subtitle: "Pick one variant per model, then compare exact variants.",
         data: { models: groups, summary: rows },
+        context: {
+          comparisonModels: models,
+          selectedModels: models,
+          city: parsed.entities.city || groups[0]?.variants?.[0]?.city,
+        },
         rows,
         actions: [
           action("show_more_inline", "Show catalogues", {

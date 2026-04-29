@@ -22,7 +22,7 @@ const vehicleSchema = mongoose.Schema(
     on_road_price_cardekho: { type: Number },
     orp_without_accessories: { type: Number },
     total_on_road_with_accessories: { type: Number },
-    other_tcsCharges: { type: String },
+    other_tcsCharges: { type: Number },
     optional_totalAccessories: { type: Number },
     optional_totalAccessoriesInRs: { type: String },
     other_totalOtherCharges: { type: Number },

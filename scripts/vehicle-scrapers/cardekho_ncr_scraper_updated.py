@@ -112,6 +112,25 @@ def parse_full_price(v):
     or_without = to_number(v.get("ORPWithoutOptionAccessories"))
     optional_total = to_number(optional.get("totalAccessories"))
     on_road = to_number(v.get("onRoadPriceOfVariant"))
+    tcs = to_number(flat_others.get("other_tcsCharges")) or pick_raw_numeric("tcs")
+    raw_other_total = (
+        to_number(flat_others.get("other_totalOtherCharges"))
+        or to_number(others.get("totalOtherCharges"))
+    )
+    explicit_other = (
+        to_number(flat_others.get("other_otherCharges"))
+        or to_number(flat_others.get("other_handlingCharges"))
+    )
+    non_tcs_other = explicit_other
+    if not non_tcs_other and raw_other_total:
+        if tcs and raw_other_total > tcs and abs(raw_other_total - tcs) > 1:
+            non_tcs_other = max(raw_other_total - tcs, 0)
+        elif tcs and abs(raw_other_total - tcs) <= 1:
+            non_tcs_other = 0
+        elif tcs:
+            non_tcs_other = raw_other_total
+        elif not tcs:
+            non_tcs_other = raw_other_total
 
     # Prefer API on-road if present; else derive.
     total_or = on_road if on_road > 0 else (or_without + optional_total)
@@ -127,13 +146,19 @@ def parse_full_price(v):
         "rto_amount_cardekho": int(rto) if rto > 0 else None,
         "insurance_amount_cardekho": int(insurance) if insurance > 0 else None,
 
-        "orp_without_accessories": int(or_without) if or_without > 0 else 0,
-        "optional_total": int(optional_total) if optional_total > 0 else 0,
-        "total_on_road_with_accessories": int(total_or) if total_or > 0 else 0,
-        "on_road_price_cardekho": int(on_road) if on_road > 0 else int(total_or),
         "variant_short": v.get("variantShortName") or "",
         **flat_others,
         **flat_optional,
+        "tcs": int(tcs) if tcs > 0 else 0,
+        "other_tcsCharges": int(tcs) if tcs > 0 else 0,
+        "otherCharges": int(non_tcs_other) if non_tcs_other > 0 else 0,
+        "other_totalOtherCharges": int(non_tcs_other) if non_tcs_other > 0 else 0,
+        "orp_without_accessories": int(or_without) if or_without > 0 else 0,
+        "optional_total": int(optional_total) if optional_total > 0 else 0,
+        "optional_totalAccessories": int(optional_total) if optional_total > 0 else 0,
+        "total_on_road_with_accessories": int(total_or) if total_or > 0 else 0,
+        "on_road_price_cardekho": int(total_or) if total_or > 0 else 0,
+        "onRoadPrice": int(total_or) if total_or > 0 else 0,
         "raw_price_json": str(v),
     }
 
@@ -246,6 +271,7 @@ for brand, model, city_slug, path in tqdm(pages, desc="Scraping", unit="page"):
         row = {
             "city": city,
             "brand": brand_title,
+            "make": brand_title,
             "model": f"{brand_title} {model_title}",
             "variant": v.get("variantDisplayName"),
             "fuel_type": v.get("variantFuelType"),

@@ -46,6 +46,7 @@ const STOP_WORDS = new Set([
   "compare",
   "similar",
   "cars",
+  "selected",
   "new",
   "how",
   "many",

@@ -21,6 +21,7 @@
     "data:import": "node src/seeder.js",
     "vehicles:import": "node src/scripts/importVehicles.js",
     "vehicles:clear": "node src/scripts/clearVehicles.js",
+    "vehicles:normalize-pricing": "node src/scripts/normalizeVehiclePricing.js",
     "cleanup:legacy-do-payments": "node src/scripts/cleanupLegacyDoPayments.js",
     "do:rebuild": "node src/scripts/rebuildDeliveryOrdersFromLoans.js",
     "payments:rebuild": "node src/scripts/rebuildPaymentsFromDOs.js",
