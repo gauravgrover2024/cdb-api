@@ -9,7 +9,7 @@ import {
   widget,
 } from "./aiAgent.renderPayloads.js";
 import { buildMissingValueQuery, firstMeaningful, firstNumber } from "./aiAgent.normalizers.js";
-import { LIMIT, pushModuleTrace } from "./aiAgent.tools.js";
+import { findAndCount, findLean, LIMIT, pushModuleTrace } from "./aiAgent.tools.js";
 import { loanRows } from "./aiAgent.loanTools.js";
 import { insuranceRows } from "./aiAgent.insuranceTools.js";
 import { noteRestriction } from "./aiAgent.accessControl.js";
@@ -19,89 +19,109 @@ const missingRegistrationQueryForAll = (fields) => ({
 });
 
 export const missingRegistrationReport = async (parsed, access, trace) => {
-  const sections = [];
-  let total = 0;
+  const sectionTasks = [];
 
   if (access.canAccess("loans")) {
-    const loans = await Loan.find(missingRegistrationQueryForAll(["registrationNumber", "vehicleRegNo", "rc_redg_no"]))
-      .sort({ updatedAt: -1 })
-      .limit(LIMIT)
-      .lean();
-    const count = await Loan.countDocuments(missingRegistrationQueryForAll(["registrationNumber", "vehicleRegNo", "rc_redg_no"]));
-    pushModuleTrace(trace, "Loans", count, { returned: loans.length });
-    total += count;
-    sections.push({
-      module: "Loans",
-      total: count,
-      rows: loanRows(loans),
-      actions: [
-        action("open_dashboard_with_filter", "View in Loan Dashboard", {
-          route: "/loans",
-          query: { missingRegistration: "true" },
-        }),
-      ],
+    sectionTasks.push(async () => {
+      const { rows: loans, count, approximate, error } = await findAndCount(
+        Loan,
+        missingRegistrationQueryForAll(["registrationNumber", "vehicleRegNo", "rc_redg_no"]),
+        { sort: { updatedAt: -1 }, limit: LIMIT },
+      );
+      pushModuleTrace(trace, "Loans", count, { returned: loans.length, approximate });
+      return {
+        module: "Loans",
+        total: count,
+        rows: loanRows(loans),
+        actions: [
+          action("open_dashboard_with_filter", "View in Loan Dashboard", {
+            route: "/loans",
+            query: { missingRegistration: "true" },
+          }),
+        ],
+        approximate,
+        error,
+      };
     });
   } else noteRestriction(access, "Loans", "No loan access");
 
   if (access.canAccess("insurance")) {
-    const query = buildMissingValueQuery(["registrationNumber"]);
-    const insurance = await InsuranceCase.find(query).sort({ updatedAt: -1 }).limit(LIMIT).lean();
-    const count = await InsuranceCase.countDocuments(query);
-    pushModuleTrace(trace, "Insurance", count, { returned: insurance.length });
-    total += count;
-    sections.push({
-      module: "Insurance",
-      total: count,
-      rows: insuranceRows(insurance),
-      actions: [
-        action("open_dashboard_with_filter", "View in Insurance Dashboard", {
-          route: "/insurance",
-          query: { missingRegistration: "true" },
-        }),
-      ],
+    sectionTasks.push(async () => {
+      const query = buildMissingValueQuery(["registrationNumber"]);
+      const { rows: insurance, count, approximate, error } = await findAndCount(InsuranceCase, query, {
+        sort: { updatedAt: -1 },
+        limit: LIMIT,
+      });
+      pushModuleTrace(trace, "Insurance", count, { returned: insurance.length, approximate });
+      return {
+        module: "Insurance",
+        total: count,
+        rows: insuranceRows(insurance),
+        actions: [
+          action("open_dashboard_with_filter", "View in Insurance Dashboard", {
+            route: "/insurance",
+            query: { missingRegistration: "true" },
+          }),
+        ],
+        approximate,
+        error,
+      };
     });
   } else noteRestriction(access, "Insurance", "No insurance access");
 
   if (access.canAccess("vehicles")) {
-    const query = buildMissingValueQuery(["registrationNumber"]);
-    const vehicles = await VehicleRecord.find(query).sort({ updatedAt: -1 }).limit(LIMIT).lean();
-    const count = await VehicleRecord.countDocuments(query);
-    pushModuleTrace(trace, "Vehicle Records", count, { returned: vehicles.length });
-    total += count;
-    sections.push({
-      module: "Vehicle Records",
-      total: count,
-      rows: vehicles.map((item) => ({
-        id: String(item._id),
-        customer: item.customerName,
-        vehicle: [item.make, item.model, item.variant].filter(Boolean).join(" "),
-        registrationNumber: item.registrationNumber,
-        status: item.status,
-        updatedAt: item.updatedAt,
-      })),
+    sectionTasks.push(async () => {
+      const query = buildMissingValueQuery(["registrationNumber"]);
+      const { rows: vehicles, count, approximate, error } = await findAndCount(VehicleRecord, query, {
+        sort: { updatedAt: -1 },
+        limit: LIMIT,
+      });
+      pushModuleTrace(trace, "Vehicle Records", count, { returned: vehicles.length, approximate });
+      return {
+        module: "Vehicle Records",
+        total: count,
+        rows: vehicles.map((item) => ({
+          id: String(item._id),
+          customer: item.customerName,
+          vehicle: [item.make, item.model, item.variant].filter(Boolean).join(" "),
+          registrationNumber: item.registrationNumber,
+          status: item.status,
+          updatedAt: item.updatedAt,
+        })),
+        approximate,
+        error,
+      };
     });
   }
 
   if (access.canAccess("usedCars")) {
-    const query = buildMissingValueQuery(["vehicle.regNo"]);
-    const leads = await UsedCarLead.find(query).sort({ updatedAt: -1 }).limit(LIMIT).lean();
-    const count = await UsedCarLead.countDocuments(query);
-    pushModuleTrace(trace, "Used Cars", count, { returned: leads.length });
-    total += count;
-    sections.push({
-      module: "Used Cars",
-      total: count,
-      rows: leads.map((item) => ({
-        id: String(item._id),
-        customer: item?.seller?.name,
-        vehicle: [item?.vehicle?.make, item?.vehicle?.model, item?.vehicle?.variant].filter(Boolean).join(" "),
-        registrationNumber: item?.vehicle?.regNo,
-        status: firstMeaningful(item?.workflow?.status, item.status),
-        updatedAt: item.updatedAt,
-        route: `/used-cars/leads/${item._id}`,
-      })),
+    sectionTasks.push(async () => {
+      const query = buildMissingValueQuery(["vehicle.regNo"]);
+      const { rows: leads, count, approximate, error } = await findAndCount(UsedCarLead, query, {
+        sort: { updatedAt: -1 },
+        limit: LIMIT,
+      });
+      pushModuleTrace(trace, "Used Cars", count, { returned: leads.length, approximate });
+      return {
+        module: "Used Cars",
+        total: count,
+        rows: leads.map((item) => ({
+          id: String(item._id),
+          customer: item?.seller?.name,
+          vehicle: [item?.vehicle?.make, item?.vehicle?.model, item?.vehicle?.variant].filter(Boolean).join(" "),
+          registrationNumber: item?.vehicle?.regNo,
+          status: firstMeaningful(item?.workflow?.status, item.status),
+          updatedAt: item.updatedAt,
+          route: `/used-cars/leads/${item._id}`,
+        })),
+        approximate,
+        error,
+      };
     });
   }
+
+  const sections = (await Promise.all(sectionTasks.map((task) => task()))).filter(Boolean);
+  const total = sections.reduce((sum, section) => sum + (Number(section.total) || 0), 0);
 
   return {
     widgets: [
@@ -128,95 +148,111 @@ export const missingRegistrationReport = async (parsed, access, trace) => {
 };
 
 export const payoutMissingReport = async (parsed, access, trace) => {
-  const sections = [];
-  let total = 0;
+  const sectionTasks = [];
   if (access.canAccess("loans")) {
-    const query = {
-      $and: [
-        { $or: [{ payoutApplicable: true }, { payoutApplicable: "Yes" }, { payoutApplicable: "yes" }] },
-        {
-          $or: [
-            buildMissingValueQuery(["payout_percentage"]),
-            buildMissingValueQuery(["prefile_sourcePayoutPercentage"]),
-            { payout_amount: { $in: [null, "", 0] } },
-            { payoutAmount: { $in: [null, "", 0] } },
-          ],
-        },
-      ],
-    };
-    const loans = await Loan.find(query).sort({ updatedAt: -1 }).limit(LIMIT).lean();
-    const count = await Loan.countDocuments(query);
-    total += count;
-    pushModuleTrace(trace, "Loans", count, { returned: loans.length });
-    sections.push({
-      module: "Loans",
-      total: count,
-      rows: loanRows(loans),
-      actions: [
-        action("open_dashboard_with_filter", "View in Loan Dashboard", {
-          route: "/loans",
-          query: { payoutMissing: "true" },
-        }),
-      ],
+    sectionTasks.push(async () => {
+      const query = {
+        $and: [
+          { $or: [{ payoutApplicable: true }, { payoutApplicable: "Yes" }, { payoutApplicable: "yes" }] },
+          {
+            $or: [
+              buildMissingValueQuery(["payout_percentage"]),
+              buildMissingValueQuery(["prefile_sourcePayoutPercentage"]),
+              { payout_amount: { $in: [null, "", 0] } },
+              { payoutAmount: { $in: [null, "", 0] } },
+            ],
+          },
+        ],
+      };
+      const { rows: loans, count, approximate, error } = await findAndCount(Loan, query, {
+        sort: { updatedAt: -1 },
+        limit: LIMIT,
+      });
+      pushModuleTrace(trace, "Loans", count, { returned: loans.length, approximate });
+      return {
+        module: "Loans",
+        total: count,
+        rows: loanRows(loans),
+        actions: [
+          action("open_dashboard_with_filter", "View in Loan Dashboard", {
+            route: "/loans",
+            query: { payoutMissing: "true" },
+          }),
+        ],
+        approximate,
+        error,
+      };
     });
   } else noteRestriction(access, "Loans", "No loan access");
 
   if (access.canAccess("insurance")) {
-    const query = {
-      $and: [
-        { $or: [{ payoutApplicable: true }, { payoutApplicable: "Yes" }, { payoutApplicable: "yes" }] },
-        buildMissingValueQuery(["payoutPercent"]),
-      ],
-    };
-    const cases = await InsuranceCase.find(query).sort({ updatedAt: -1 }).limit(LIMIT).lean();
-    const count = await InsuranceCase.countDocuments(query);
-    total += count;
-    pushModuleTrace(trace, "Insurance", count, { returned: cases.length });
-    sections.push({
-      module: "Insurance",
-      total: count,
-      rows: insuranceRows(cases),
-      actions: [
-        action("open_dashboard_with_filter", "View in Insurance Dashboard", {
-          route: "/insurance",
-          query: { payoutMissing: "true" },
-        }),
-      ],
+    sectionTasks.push(async () => {
+      const query = {
+        $and: [
+          { $or: [{ payoutApplicable: true }, { payoutApplicable: "Yes" }, { payoutApplicable: "yes" }] },
+          buildMissingValueQuery(["payoutPercent"]),
+        ],
+      };
+      const { rows: cases, count, approximate, error } = await findAndCount(InsuranceCase, query, {
+        sort: { updatedAt: -1 },
+        limit: LIMIT,
+      });
+      pushModuleTrace(trace, "Insurance", count, { returned: cases.length, approximate });
+      return {
+        module: "Insurance",
+        total: count,
+        rows: insuranceRows(cases),
+        actions: [
+          action("open_dashboard_with_filter", "View in Insurance Dashboard", {
+            route: "/insurance",
+            query: { payoutMissing: "true" },
+          }),
+        ],
+        approximate,
+        error,
+      };
     });
   }
 
   if (access.canAccess("payouts")) {
-    const query = {
-      $or: [
-        buildMissingValueQuery(["payout_status"]),
-        { payout_status: /pending|missing|not received/i },
-        { payout_amount: { $in: [null, 0] } },
-      ],
-    };
-    const receivables = await Receivable.find(query).sort({ updatedAt: -1 }).limit(LIMIT).lean();
-    const count = await Receivable.countDocuments(query);
-    total += count;
-    pushModuleTrace(trace, "Receivables", count, { returned: receivables.length });
-    sections.push({
-      module: "Receivables",
-      total: count,
-      rows: receivables.map((item) => ({
-        id: String(item._id),
-        customer: item.customerName,
-        reference: firstMeaningful(item.loanId, item.insuranceCaseId, item.payoutId),
-        status: item.payout_status,
-        amount: access.canViewFinance ? firstNumber(item.net_payout_amount, item.payout_amount) : undefined,
-        updatedAt: item.updatedAt,
-      })),
-      actions: [
-        action("open_dashboard_with_filter", "View Payout Dashboard", {
-          route: "/payouts/receivables",
-          query: { payoutMissing: "true" },
-        }),
-      ],
+    sectionTasks.push(async () => {
+      const query = {
+        $or: [
+          buildMissingValueQuery(["payout_status"]),
+          { payout_status: /pending|missing|not received/i },
+          { payout_amount: { $in: [null, 0] } },
+        ],
+      };
+      const { rows: receivables, count, approximate, error } = await findAndCount(Receivable, query, {
+        sort: { updatedAt: -1 },
+        limit: LIMIT,
+      });
+      pushModuleTrace(trace, "Receivables", count, { returned: receivables.length, approximate });
+      return {
+        module: "Receivables",
+        total: count,
+        rows: receivables.map((item) => ({
+          id: String(item._id),
+          customer: item.customerName,
+          reference: firstMeaningful(item.loanId, item.insuranceCaseId, item.payoutId),
+          status: item.payout_status,
+          amount: access.canViewFinance ? firstNumber(item.net_payout_amount, item.payout_amount) : undefined,
+          updatedAt: item.updatedAt,
+        })),
+        actions: [
+          action("open_dashboard_with_filter", "View Payout Dashboard", {
+            route: "/payouts/receivables",
+            query: { payoutMissing: "true" },
+          }),
+        ],
+        approximate,
+        error,
+      };
     });
   } else noteRestriction(access, "Payouts", "No payout access");
 
+  const sections = (await Promise.all(sectionTasks.map((task) => task()))).filter(Boolean);
+  const total = sections.reduce((sum, section) => sum + (Number(section.total) || 0), 0);
   const statusBreakdown = sections.flatMap((section) =>
     section.rows.map((row) => ({ module: section.module, status: row.status || "Unknown" })),
   );
@@ -251,7 +287,7 @@ export const usedCarRcPendingReport = async (parsed, access, trace) => {
       { "backgroundCheck.formValues.challanPending": /pending|yes|true/i },
     ],
   };
-  const rows = await UsedCarLead.find(query).sort({ updatedAt: -1 }).limit(LIMIT).lean();
+  const rows = await findLean(UsedCarLead, query, { sort: { updatedAt: -1 }, limit: LIMIT });
   pushModuleTrace(trace, "Used Cars", rows.length);
   return {
     widgets: [
@@ -293,8 +329,6 @@ export const activeLoanExpiredInsuranceReport = async (parsed, access, trace) =>
       { currentStage: /active|disbursed|running|approved/i },
     ],
   };
-  const loans = await Loan.find(activeLoanQuery).sort({ updatedAt: -1 }).limit(300).lean();
-  pushModuleTrace(trace, "Loans", loans.length);
 
   const expiredQuery = {
     $or: [
@@ -303,7 +337,11 @@ export const activeLoanExpiredInsuranceReport = async (parsed, access, trace) =>
       { status: /expired/i },
     ],
   };
-  const insurance = await InsuranceCase.find(expiredQuery).sort({ updatedAt: -1 }).limit(500).lean();
+  const [loans, insurance] = await Promise.all([
+    findLean(Loan, activeLoanQuery, { sort: { updatedAt: -1 }, limit: 150 }),
+    findLean(InsuranceCase, expiredQuery, { sort: { updatedAt: -1 }, limit: 250 }),
+  ]);
+  pushModuleTrace(trace, "Loans", loans.length, { capped: loans.length >= 150 });
   pushModuleTrace(trace, "Insurance", insurance.length);
 
   const insuranceByReg = new Map();
@@ -353,5 +391,134 @@ export const activeLoanExpiredInsuranceReport = async (parsed, access, trace) =>
       }),
     ],
     followUpSuggestions: ["Show customer 360", "Show vehicle 360", "Show records older than 30 days"],
+  };
+};
+
+export const operationsDigest = async (parsed, access, trace) => {
+  const now = new Date();
+  const nextWeek = new Date(now);
+  nextWeek.setDate(nextWeek.getDate() + 7);
+
+  const tasks = [];
+  if (access.canAccess("insurance")) {
+    tasks.push(
+      findLean(
+        InsuranceCase,
+        {
+          $or: [
+            { newOdExpiryDate: { $gte: now.toISOString(), $lte: nextWeek.toISOString() } },
+            { newTpExpiryDate: { $gte: now.toISOString(), $lte: nextWeek.toISOString() } },
+          ],
+        },
+        { sort: { newOdExpiryDate: 1, updatedAt: -1 }, limit: 12 },
+      ).then((rows) => {
+        pushModuleTrace(trace, "Insurance expiring", rows.length);
+        return {
+          module: "Insurance",
+          issue: "Policies expiring in 7 days",
+          count: rows.length,
+          rows: insuranceRows(rows).map((row) => ({ ...row, issue: "Expiring soon" })),
+          action: action("open_dashboard_with_filter", "Open Insurance", {
+            route: "/insurance",
+            query: { expiringThisWeek: "true" },
+          }),
+        };
+      }),
+    );
+  }
+
+  if (access.canAccess("loans")) {
+    tasks.push(
+      findLean(
+        Loan,
+        {
+          $and: [
+            { $or: [{ loanStatus: /approved/i }, { status: /approved/i }, { currentStage: /approved/i }] },
+            {
+              $or: [
+                { disburse_amount: { $in: [null, "", 0] } },
+                { approval_loanAmountDisbursed: { $in: [null, "", 0] } },
+                { disbursement_date: { $in: [null, ""] } },
+              ],
+            },
+          ],
+        },
+        { sort: { updatedAt: -1 }, limit: 12 },
+      ).then((rows) => {
+        pushModuleTrace(trace, "Approved not disbursed", rows.length);
+        return {
+          module: "Loans",
+          issue: "Approved but not disbursed",
+          count: rows.length,
+          rows: loanRows(rows).map((row) => ({ ...row, issue: "Approved not disbursed" })),
+          action: action("open_dashboard_with_filter", "Open Loans", {
+            route: "/loans",
+            query: { approvedNotDisbursed: "true" },
+          }),
+        };
+      }),
+    );
+  }
+
+  if (access.canAccess("usedCars")) {
+    tasks.push(
+      findLean(
+        UsedCarLead,
+        {
+          $or: [
+            buildMissingValueQuery(["vehicle.regNo"]),
+            { "backgroundCheck.status": /pending|open/i },
+            { "backgroundCheck.formValues.rcStatus": /pending|missing|not done/i },
+          ],
+        },
+        { sort: { updatedAt: -1 }, limit: 12 },
+      ).then((rows) => {
+        pushModuleTrace(trace, "Used-car checks", rows.length);
+        return {
+          module: "Used Cars",
+          issue: "RC/background check pending",
+          count: rows.length,
+          rows: rows.map((item) => ({
+            id: String(item._id),
+            customer: item?.seller?.name,
+            vehicle: [item?.vehicle?.make, item?.vehicle?.model, item?.vehicle?.variant].filter(Boolean).join(" "),
+            registrationNumber: item?.vehicle?.regNo,
+            status: firstMeaningful(item?.backgroundCheck?.status, item?.workflow?.status, item.status),
+            updatedAt: item.updatedAt,
+            issue: "RC/background check pending",
+            route: `/used-cars/leads/${item._id}`,
+          })),
+          action: action("open_dashboard_with_filter", "Open Used Cars", {
+            route: "/used-cars/background-check",
+            query: { rcPending: "true" },
+          }),
+        };
+      }),
+    );
+  }
+
+  const sections = await Promise.all(tasks);
+  const rows = sections.flatMap((section) => section.rows.map((row) => ({ module: section.module, ...row })));
+  const total = sections.reduce((sum, section) => sum + section.count, 0);
+
+  return {
+    widgets: [
+      widget("count_summary", "Operations attention", {
+        summary: { total, modules: sections.map(({ module, issue, count }) => ({ module, issue, total: count })) },
+      }),
+      widget("module_breakdown", "Attention by module", {
+        modules: sections.map(({ module, issue, count }) => ({ module, label: issue, count })),
+      }),
+      widget("records_table", "Records needing attention", {
+        rows,
+        actions: sections.map((section) => section.action),
+      }),
+    ],
+    followUpSuggestions: [
+      "Show only insurance cases",
+      "Show approved but not disbursed cases",
+      "Cases with payout missing",
+      "How many cars are without registration number?",
+    ],
   };
 };

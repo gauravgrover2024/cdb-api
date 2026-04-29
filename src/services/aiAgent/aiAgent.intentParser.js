@@ -150,6 +150,16 @@ const parseDateRange = (lower) => {
 };
 
 const detectIntent = (lower) => {
+  const compact = lower.replace(/[^a-z0-9]/g, "");
+  if (/data quality|data issues|missing data|cleanup workbench|quality workbench/.test(lower)) {
+    return "data_quality_workbench";
+  }
+  if (/what needs attention|attention today|today.*pending|pending today|operations digest|ops digest|daily digest|workbench/.test(lower)) {
+    return "operations_digest";
+  }
+  if (/finance intelligence|finance digest|receivable summary|payment intelligence|payout intelligence/.test(lower)) {
+    return "finance_intelligence";
+  }
   if (/customer\s*360|all cases|full profile/.test(lower)) return "customer_360";
   if (/vehicle\s*360|full history/.test(lower)) return "vehicle_360";
   if (/latest insurance|policy of|insurance expiring|insurance of/.test(lower)) {
@@ -168,7 +178,14 @@ const detectIntent = (lower) => {
   if (/new variants|variants.*added|price history/.test(lower)) return "price_history_report";
   if (/compare\b/.test(lower)) return "vehicle_comparison";
   if (/similar cars|similar .* to/.test(lower)) return "similar_cars";
-  if (/pricelist|price list|variants|colors|colours|sunroof|new /.test(lower)) {
+  if (/(does|has|have|available|with).*(sunroof|airbag|cruise|adas|camera|ventilated|automatic|dct|cvt|abs|esp|tpms)|\b(sunroof|adas|cruise control|ventilated seats)\b/.test(lower)) {
+    return "vehicle_feature_availability";
+  }
+  if (
+    /\b(price|pricing|prices|pricelist|variants|colors|colours|sunroof)\b|price list|on[-\s]?road|ex[-\s]?showroom|new /.test(lower) ||
+    compact.includes("pricelist") ||
+    compact.includes("prices")
+  ) {
     return "vehicle_pricelist";
   }
   if (/active loan.*expired insurance|loan active.*insurance expired/.test(lower)) {
@@ -193,8 +210,10 @@ const extractLast4 = (message) => {
 };
 
 const extractModelTokens = (lower) => {
+  const compact = lower.replace(/[^a-z0-9]/g, "");
   const models = MODEL_HINTS.filter((model) =>
-    new RegExp(`\\b${model.replace(/\s+/g, "\\s+")}\\b`, "i").test(lower),
+    new RegExp(`\\b${model.replace(/\s+/g, "\\s+")}\\b`, "i").test(lower) ||
+    compact.includes(model.replace(/\s+/g, "")),
   );
   return [...new Set(models)];
 };
@@ -231,15 +250,24 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
   const intent = detectIntent(lower);
   const models = extractModelTokens(lower);
   const make = MAKE_HINTS.find((hint) => new RegExp(`\\b${hint}\\b`, "i").test(lower)) || "";
+  const explicitRegistrationNumber = extractFullRegistration(original);
+  const explicitLast4 = extractLast4(original);
   const registrationNumber =
+    explicitRegistrationNumber ||
     selectedEntity?.registrationNumber ||
     selectedEntity?.context?.registrationNumber ||
-    extractFullRegistration(original) ||
+    context?.registrationNumber ||
+    context?.entities?.registrationNumber ||
+    filters?.registrationNumber ||
     "";
   const last4 =
+    explicitLast4 ||
     selectedEntity?.last4 ||
     selectedEntity?.context?.last4 ||
-    extractLast4(original) ||
+    context?.last4 ||
+    context?.entities?.last4 ||
+    filters?.last4 ||
+    filters?.vehicleLast4 ||
     (registrationNumber ? digitsOnly(registrationNumber).slice(-4) : "");
   const nameIntent =
     intent === "latest_insurance" ||
@@ -247,16 +275,38 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
     intent === "loan_status" ||
     intent === "customer_360" ||
     intent === "general_search";
-  const customerName =
+  const explicitCustomerName = nameIntent ? extractName(original, lower, models) : "";
+  const hasFreshEntityInMessage = Boolean(explicitCustomerName || explicitRegistrationNumber || explicitLast4 || models.length || make);
+  const contextualCustomerName =
     selectedEntity?.customerName ||
     selectedEntity?.context?.customerName ||
     context?.customerName ||
+    context?.entities?.customerName ||
     filters?.customerName ||
-    (nameIntent ? extractName(original, lower, models) : "");
+    filters?.customer ||
+    "";
+  const customerName =
+    explicitCustomerName ||
+    (hasFreshEntityInMessage ? "" : contextualCustomerName);
 
   const statuses = ["pending", "missing", "expired", "active", "approved", "disbursed", "closed"].filter(
     (status) => lower.includes(status),
   );
+  const featureTerm =
+    [
+      "sunroof",
+      "adas",
+      "cruise control",
+      "ventilated seats",
+      "camera",
+      "airbag",
+      "abs",
+      "esp",
+      "tpms",
+      "automatic",
+      "dct",
+      "cvt",
+    ].find((term) => lower.includes(term)) || "";
 
   return {
     message: original,
@@ -265,16 +315,19 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
     confidence: intent === "general_search" ? 0.45 : 0.78,
     wantsDebug: /query plan|show plan|debug/.test(lower),
     selectedEntity,
+    context,
+    filters,
     dateRange: parseDateRange(lower),
     entities: compactObject({
       customerName,
       registrationNumber,
       last4,
       make,
-      model: models[0] || context?.model || filters?.model || "",
+      model: models[0] || (!hasFreshEntityInMessage ? context?.model || context?.entities?.model || filters?.model || "" : ""),
       models,
       variant:
         original.match(/\b(sx|vx|zx|zxi|vxi|alpha|delta|sigma|sportz|asta)\b/i)?.[0] || "",
+      feature: featureTerm,
     }),
     statusTerms: statuses,
     financeTerms: ["payout", "receivable", "payment", "closure", "outstanding", "disbursal"].filter((term) =>

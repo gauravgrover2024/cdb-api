@@ -6,12 +6,14 @@ import { loanStatusOrClosure } from "./aiAgent.loanTools.js";
 import {
   activeLoanExpiredInsuranceReport,
   missingRegistrationReport,
+  operationsDigest,
   payoutMissingReport,
   usedCarRcPendingReport,
 } from "./aiAgent.reportTools.js";
 import {
   priceHistoryReport,
   similarCars,
+  vehicleFeatureAvailability,
   vehicleComparison,
   vehiclePricelist,
 } from "./aiAgent.vehicleTools.js";
@@ -25,10 +27,14 @@ const handlerByIntent = {
   missing_registration_report: missingRegistrationReport,
   payout_missing_report: payoutMissingReport,
   vehicle_pricelist: vehiclePricelist,
+  vehicle_feature_availability: vehicleFeatureAvailability,
   similar_cars: similarCars,
   vehicle_comparison: vehicleComparison,
   price_history_report: priceHistoryReport,
   active_loan_expired_insurance_report: activeLoanExpiredInsuranceReport,
+  operations_digest: operationsDigest,
+  data_quality_workbench: missingRegistrationReport,
+  finance_intelligence: payoutMissingReport,
   customer_360: customer360,
   vehicle_360: vehicle360,
   used_car_rc_pending_report: usedCarRcPendingReport,

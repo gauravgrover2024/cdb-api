@@ -17,6 +17,7 @@ import {
   buildEntityQuery,
   canSearchByEntity,
   entityOption,
+  findLean,
   getInsuranceRoute,
   LIMIT,
   makeAmbiguity,
@@ -51,7 +52,7 @@ export const findInsuranceCases = async (parsed, access, trace, limit = LIMIT) =
   }
   const query = insuranceQuery(parsed.entities);
   if (!Object.keys(query).length) return [];
-  const records = await InsuranceCase.find(query).sort({ updatedAt: -1 }).limit(limit).lean();
+  const records = await findLean(InsuranceCase, query, { sort: { updatedAt: -1 }, limit });
   pushModuleTrace(trace, "Insurance", records.length);
   return records;
 };

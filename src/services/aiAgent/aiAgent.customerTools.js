@@ -22,6 +22,7 @@ import {
   buildEntityQuery,
   buildTextClauses,
   entityOption,
+  findLean,
   getCustomerRoute,
   getInsuranceRoute,
   getLoanRoute,
@@ -58,7 +59,10 @@ export const customer360 = async (parsed, access, trace) => {
   if (!name) {
     return { widgets: [unavailableWidget("Need a customer", "Share a customer name to build Customer 360.", ["Customers"])] };
   }
-  const customers = await Customer.find(customerQuery(name)).sort({ updatedAt: -1 }).limit(10).lean();
+  const customers = await findLean(Customer, customerQuery(name), {
+    sort: { updatedAt: -1 },
+    limit: 10,
+  });
   pushModuleTrace(trace, "Customers", customers.length);
   if (customers.length > 1 && !parsed.selectedEntity) {
     return {
@@ -81,21 +85,23 @@ export const customer360 = async (parsed, access, trace) => {
   const customer = customers[0] || { customerName: name };
   const customerName = firstMeaningful(customer.customerName, customer.name, name);
   const nameRegex = makeRegex(customerName);
-  const loans = access.canAccess("loans")
-    ? await Loan.find({ customerName: nameRegex }).sort({ updatedAt: -1 }).limit(LIMIT).lean()
-    : [];
-  const insurance = access.canAccess("insurance")
-    ? await InsuranceCase.find({ customerName: nameRegex }).sort({ updatedAt: -1 }).limit(LIMIT).lean()
-    : [];
-  const payments = access.canAccess("payments") && access.canViewFinance
-    ? await Payment.find({ customerName: nameRegex }).sort({ updatedAt: -1 }).limit(20).lean()
-    : [];
-  const vehicles = access.canAccess("vehicles")
-    ? await VehicleRecord.find({ customerName: nameRegex }).sort({ updatedAt: -1 }).limit(LIMIT).lean()
-    : [];
-  const usedCarLeads = access.canAccess("usedCars")
-    ? await UsedCarLead.find({ "seller.name": nameRegex }).sort({ updatedAt: -1 }).limit(20).lean()
-    : [];
+  const [loans, insurance, payments, vehicles, usedCarLeads] = await Promise.all([
+    access.canAccess("loans")
+      ? findLean(Loan, { customerName: nameRegex }, { sort: { updatedAt: -1 }, limit: LIMIT })
+      : [],
+    access.canAccess("insurance")
+      ? findLean(InsuranceCase, { customerName: nameRegex }, { sort: { updatedAt: -1 }, limit: LIMIT })
+      : [],
+    access.canAccess("payments") && access.canViewFinance
+      ? findLean(Payment, { customerName: nameRegex }, { sort: { updatedAt: -1 }, limit: 20 })
+      : [],
+    access.canAccess("vehicles")
+      ? findLean(VehicleRecord, { customerName: nameRegex }, { sort: { updatedAt: -1 }, limit: LIMIT })
+      : [],
+    access.canAccess("usedCars")
+      ? findLean(UsedCarLead, { "seller.name": nameRegex }, { sort: { updatedAt: -1 }, limit: 20 })
+      : [],
+  ]);
   pushModuleTrace(trace, "Loans", loans.length);
   pushModuleTrace(trace, "Insurance", insurance.length);
   pushModuleTrace(trace, "Payments", payments.length);
@@ -180,18 +186,20 @@ const vehicleQueries = (parsed) => {
 
 export const vehicle360 = async (parsed, access, trace) => {
   const queries = vehicleQueries(parsed);
-  const loans = access.canAccess("loans") && Object.keys(queries.loan).length
-    ? await Loan.find(queries.loan).sort({ updatedAt: -1 }).limit(LIMIT).lean()
-    : [];
-  const insurance = access.canAccess("insurance") && Object.keys(queries.insurance).length
-    ? await InsuranceCase.find(queries.insurance).sort({ updatedAt: -1 }).limit(LIMIT).lean()
-    : [];
-  const vehicles = access.canAccess("vehicles") && queries.vehicleRecord.$and.length
-    ? await VehicleRecord.find(queries.vehicleRecord).sort({ updatedAt: -1 }).limit(LIMIT).lean()
-    : [];
-  const usedCarLeads = access.canAccess("usedCars") && queries.usedCar.$or.length
-    ? await UsedCarLead.find(queries.usedCar).sort({ updatedAt: -1 }).limit(20).lean()
-    : [];
+  const [loans, insurance, vehicles, usedCarLeads] = await Promise.all([
+    access.canAccess("loans") && Object.keys(queries.loan).length
+      ? findLean(Loan, queries.loan, { sort: { updatedAt: -1 }, limit: LIMIT })
+      : [],
+    access.canAccess("insurance") && Object.keys(queries.insurance).length
+      ? findLean(InsuranceCase, queries.insurance, { sort: { updatedAt: -1 }, limit: LIMIT })
+      : [],
+    access.canAccess("vehicles") && queries.vehicleRecord.$and.length
+      ? findLean(VehicleRecord, queries.vehicleRecord, { sort: { updatedAt: -1 }, limit: LIMIT })
+      : [],
+    access.canAccess("usedCars") && queries.usedCar.$or.length
+      ? findLean(UsedCarLead, queries.usedCar, { sort: { updatedAt: -1 }, limit: 20 })
+      : [],
+  ]);
   pushModuleTrace(trace, "Loans", loans.length);
   pushModuleTrace(trace, "Insurance", insurance.length);
   pushModuleTrace(trace, "Vehicle Records", vehicles.length);
@@ -207,12 +215,15 @@ export const vehicle360 = async (parsed, access, trace) => {
   }
   const primary = all[0];
   const reg = getRegistration(primary);
-  const payments = access.canAccess("payments") && access.canViewFinance
-    ? await Payment.find({ loanId: { $in: loans.map((loan) => loan.loanId).filter(Boolean) } }).limit(20).lean()
-    : [];
-  const deliveryOrders = access.canAccess("deliveryOrders")
-    ? await DeliveryOrder.find({ loanId: { $in: loans.map((loan) => loan.loanId).filter(Boolean) } }).limit(20).lean()
-    : [];
+  const loanIds = loans.map((loan) => loan.loanId).filter(Boolean);
+  const [payments, deliveryOrders] = await Promise.all([
+    access.canAccess("payments") && access.canViewFinance && loanIds.length
+      ? findLean(Payment, { loanId: { $in: loanIds } }, { limit: 20 })
+      : [],
+    access.canAccess("deliveryOrders") && loanIds.length
+      ? findLean(DeliveryOrder, { loanId: { $in: loanIds } }, { limit: 20 })
+      : [],
+  ]);
   pushModuleTrace(trace, "Payments", payments.length);
   pushModuleTrace(trace, "Delivery Orders", deliveryOrders.length);
   return {

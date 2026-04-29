@@ -18,6 +18,7 @@ import {
   buildEntityQuery,
   canSearchByEntity,
   entityOption,
+  findLean,
   getLoanRoute,
   getPaymentRoute,
   LIMIT,
@@ -48,7 +49,7 @@ export const findLoans = async (parsed, access, trace, limit = LIMIT) => {
   }
   const query = loanQuery(parsed.entities);
   if (!Object.keys(query).length) return [];
-  const records = await Loan.find(query).sort({ updatedAt: -1 }).limit(limit).lean();
+  const records = await findLean(Loan, query, { sort: { updatedAt: -1 }, limit });
   pushModuleTrace(trace, "Loans", records.length);
   return records;
 };
@@ -173,7 +174,9 @@ export const loanStatusOrClosure = async (parsed, access, trace) => {
     };
   }
   const loan = chooseLoan(records);
-  const payment = await Payment.findOne({ loanId: loan.loanId }).lean();
+  const payment = access.canViewFinance
+    ? await Payment.findOne({ loanId: loan.loanId }).maxTimeMS(2500).lean()
+    : null;
   pushModuleTrace(trace, "Payments", payment ? 1 : 0);
   const data = loanCardData(loan, access);
   const actions = [

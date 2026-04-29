@@ -14,6 +14,7 @@ import {
 } from "./aiAgent.normalizers.js";
 
 export const LIMIT = 50;
+export const QUERY_TIMEOUT_MS = 3500;
 
 export const safeId = (doc) => String(doc?._id || doc?.id || "");
 
@@ -22,6 +23,47 @@ export const objectIdOrNull = (value) =>
 
 export const pushModuleTrace = (trace, module, matched = 0, extra = {}) => {
   trace.push({ module, matched, ...extra });
+};
+
+export const findLean = (Model, query, options = {}) => {
+  let builder = Model.find(query);
+  if (options.select) builder = builder.select(options.select);
+  if (options.sort) builder = builder.sort(options.sort);
+  if (options.limit) builder = builder.limit(options.limit);
+  return builder.maxTimeMS(options.maxTimeMS || QUERY_TIMEOUT_MS).lean();
+};
+
+export const countDocumentsSafe = async (Model, query, options = {}) => {
+  try {
+    return {
+      count: await Model.countDocuments(query).maxTimeMS(options.maxTimeMS || QUERY_TIMEOUT_MS),
+      approximate: false,
+    };
+  } catch (error) {
+    return {
+      count: options.fallbackCount || 0,
+      approximate: true,
+      error: error.message,
+    };
+  }
+};
+
+export const findAndCount = async (Model, query, options = {}) => {
+  const [rowsResult, countResult] = await Promise.allSettled([
+    findLean(Model, query, options),
+    countDocumentsSafe(Model, query, options),
+  ]);
+  const rows = rowsResult.status === "fulfilled" ? rowsResult.value : [];
+  const countPayload =
+    countResult.status === "fulfilled"
+      ? countResult.value
+      : { count: rows.length, approximate: true, error: countResult.reason?.message };
+  return {
+    rows,
+    count: countPayload.count || rows.length,
+    approximate: countPayload.approximate,
+    error: rowsResult.status === "rejected" ? rowsResult.reason?.message : countPayload.error,
+  };
 };
 
 export const buildTextClauses = (fields, value) => {

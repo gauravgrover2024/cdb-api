@@ -14,6 +14,7 @@
     "indexes:used-car-leads": "node src/scripts/ensureUsedCarLeadIndexes.js",
     "indexes:insurance": "node src/scripts/ensureInsuranceIndexes.js",
     "indexes:ops": "node src/scripts/ensureOperationsIndexes.js",
+    "indexes:ai-agent": "node src/scripts/ensureAiAgentIndexes.js",
     "backfill:latest-business": "node src/scripts/backfillLatestBusinessDate.js",
     "banks:import": "node src/scripts/importBankDirectoryFromFile.js",
     "showrooms:import": "node src/scripts/importCardekhoShowrooms.js",
