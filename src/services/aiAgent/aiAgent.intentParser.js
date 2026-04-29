@@ -114,6 +114,57 @@ const DATE_RANGE_KEYS = [
   ["today", "today"],
 ];
 
+const CITY_HINTS = [
+  "delhi",
+  "new delhi",
+  "gurgaon",
+  "gurugram",
+  "noida",
+  "mumbai",
+  "pune",
+  "bangalore",
+  "bengaluru",
+  "chandigarh",
+  "faridabad",
+  "ghaziabad",
+];
+
+const INTENT_PRIORITY = [
+  ["vehicle_city_change", /\b(change city|show .* price in|price in|on road in|on-road in)\b/],
+  ["vehicle_colors", /\b(colou?rs?|color options|available colou?rs?|show colou?rs?)\b/],
+  ["vehicle_comparison", /\b(compare|comparison| vs | versus |difference between)\b/],
+  ["similar_cars", /\b(similar cars|alternatives|competitors|same segment|cars like|similar to)\b/],
+  ["loan_disbursal_report", /\b(approved but not disbursed|approved not disbursed|pending disbursal|approval done disbursal pending|approved cases pending disbursal)\b/],
+  ["loan_pending_approval_report", /\b(pending approval|approval pending|not approved|approval stage)\b/],
+  ["loan_disbursed_report", /\b(disbursed cases|disbursed loans|loans disbursed)\b/],
+  ["missing_registration_report", /\b(without registration|missing registration|reg(?:istration)? number missing|registration not captured|vehicle number missing|cars without number|no registration)\b/],
+  ["payout_missing_report", /\b(payout missing|payout not entered|payout pending|payout blank|payout not received|receivable missing|net payout missing|cases with payout)\b/],
+  ["payout_entered_report", /\b(payout entered|payout has been entered|cases have payout entered|with payout entered|payout available)\b/],
+  ["payment_pending_report", /\b(payment pending|pending payment|balance pending|showroom payment|customer payment|amount pending|receivable pending)\b/],
+  ["active_loan_expired_insurance_report", /\b(active loan.*expired insurance|loan active.*insurance expired|insurance expired.*loan active)\b/],
+  ["latest_insurance", /\b(latest insurance|insurance of|policy of|active insurance|current policy|latest policy|insurance expiring|insurance expired)\b/],
+  ["insurance_expiry_report", /\b(policies expiring|insurance due|renewal due|expired policies|active policies)\b/],
+  ["loan_closure", /\b(loan closure|approx loan closure|closure amount|foreclosure|close loan|loan closing|settlement amount)\b/],
+  ["loan_status", /\b(loan status|loan case|bank status|approval status|disbursal status|active loan|loan of)\b/],
+  ["customer_360", /\b(customer\s*360|customer profile|full profile|show all cases of|all records of|full customer details)\b/],
+  ["vehicle_360", /\b(vehicle\s*360|vehicle profile|full vehicle history|full history of car|all records of vehicle)\b/],
+  ["delivery_order_report", /\b(delivery order|dealer letter|do created|do pending|delivery pending|approved loans without do|approved but no do)\b/],
+  ["inspection_report", /\b(inspection|pdi|inspection report|road test|engine noise|no-go|inspection pending|inspection done)\b/],
+  ["background_check_report", /\b(background check|bgc|noc|hypothecation|blacklist|ownership|transfer)\b/],
+  ["challan_report", /\b(challan|traffic fine|pending challan|e-challan)\b/],
+  ["rc_lookup", /\b(rc|registration certificate|vehicle registration|owner details|registration details)\b/],
+  ["document_report", /\b(document|pdf|policy copy|invoice|rc copy|upload|download|document missing|sanction letter)\b/],
+  ["followup_report", /\b(follow-up|follow up|callback|assign|task|due|pending follow-up)\b/],
+  ["price_history_report", /\b(new variants|variants.*added|price updated|price history|updated last|new prices|variant added)\b/],
+  ["vehicle_feature_answer", /\b(does|has|have|available|with)\b.*\b(sunroof|airbag|cruise|adas|camera|ventilated|automatic|dct|cvt|abs|esp|tpms|engine|mileage|boot space|ground clearance)\b/],
+  ["vehicle_features", /\b(features?|specs|specifications|catalogue|catalog|brochure|engine|mileage|boot space|ground clearance)\b/],
+  ["vehicle_pricelist", /\b(pricelist|price list|price|pricing|prices|rate list|on road|on-road|ex showroom|ex-showroom|variant price|new car price|new )\b/],
+  ["used_car_rc_pending_report", /\b(used car.*rc|rc check pending|challan check|used car lead|procurement lead|qualified lead|seller)\b/],
+  ["data_quality_workbench", /\b(data quality|data issues|missing data|cleanup workbench|quality workbench|duplicate|data issue|mismatch|blank|invalid|not captured|quality report)\b/],
+  ["operations_digest", /\b(what needs attention|attention today|today.*pending|pending today|operations digest|ops digest|daily digest|workbench)\b/],
+  ["finance_intelligence", /\b(finance intelligence|finance digest|receivable summary|payment intelligence|payout intelligence)\b/],
+];
+
 const parseDateRange = (lower) => {
   const now = new Date();
   const start = new Date(now);
@@ -151,50 +202,11 @@ const parseDateRange = (lower) => {
 
 const detectIntent = (lower) => {
   const compact = lower.replace(/[^a-z0-9]/g, "");
-  if (/data quality|data issues|missing data|cleanup workbench|quality workbench/.test(lower)) {
-    return "data_quality_workbench";
+  for (const [intent, pattern] of INTENT_PRIORITY) {
+    if (pattern.test(lower)) return intent;
   }
-  if (/what needs attention|attention today|today.*pending|pending today|operations digest|ops digest|daily digest|workbench/.test(lower)) {
-    return "operations_digest";
-  }
-  if (/finance intelligence|finance digest|receivable summary|payment intelligence|payout intelligence/.test(lower)) {
-    return "finance_intelligence";
-  }
-  if (/customer\s*360|all cases|full profile/.test(lower)) return "customer_360";
-  if (/vehicle\s*360|full history/.test(lower)) return "vehicle_360";
-  if (/latest insurance|policy of|insurance expiring|insurance of/.test(lower)) {
-    return "latest_insurance";
-  }
-  if (/loan closure|approx loan closure|closure amount|foreclosure/.test(lower)) {
-    return "loan_closure";
-  }
-  if (/loan status|loan of/.test(lower)) return "loan_status";
-  if (/without registration|registration number.*missing|vehicle number.*missing|rc.*missing/.test(lower)) {
-    return "missing_registration_report";
-  }
-  if (/payout.*missing|payout.*pending|payout not entered|cases with payout/.test(lower)) {
-    return "payout_missing_report";
-  }
-  if (/new variants|variants.*added|price history/.test(lower)) return "price_history_report";
-  if (/compare\b/.test(lower)) return "vehicle_comparison";
-  if (/similar cars|similar .* to/.test(lower)) return "similar_cars";
-  if (/(does|has|have|available|with).*(sunroof|airbag|cruise|adas|camera|ventilated|automatic|dct|cvt|abs|esp|tpms)|\b(sunroof|adas|cruise control|ventilated seats)\b/.test(lower)) {
-    return "vehicle_feature_availability";
-  }
-  if (
-    /\b(price|pricing|prices|pricelist|variants|colors|colours|sunroof)\b|price list|on[-\s]?road|ex[-\s]?showroom|new /.test(lower) ||
-    compact.includes("pricelist") ||
-    compact.includes("prices")
-  ) {
-    return "vehicle_pricelist";
-  }
-  if (/active loan.*expired insurance|loan active.*insurance expired/.test(lower)) {
-    return "active_loan_expired_insurance_report";
-  }
-  if (/used car.*rc|rc check pending|challan check/.test(lower)) {
-    return "used_car_rc_pending_report";
-  }
-  if (/^\d{4}$/.test(lower.trim())) return "vehicle_360";
+  if (compact.includes("pricelist") || compact.includes("prices")) return "vehicle_pricelist";
+  if (/^\d{4}$/.test(lower.trim())) return "vehicle_lookup";
   return "general_search";
 };
 
@@ -238,10 +250,55 @@ const extractName = (message, lower, models) => {
     );
   });
   if (!nameTokens.length) return "";
-  if (["vehicle_pricelist", "vehicle_comparison", "similar_cars", "price_history_report"].some((term) => lower.includes(term))) {
+  if (
+    [
+      "vehicle_pricelist",
+      "vehicle_comparison",
+      "similar_cars",
+      "price_history_report",
+      "vehicle_features",
+      "vehicle_feature_answer",
+      "vehicle_colors",
+      "loan_disbursal_report",
+      "loan_pending_approval_report",
+      "loan_disbursed_report",
+      "payout_missing_report",
+      "payment_pending_report",
+    ].some((term) => lower.includes(term))
+  ) {
     return "";
   }
   return nameTokens.slice(0, 4).join(" ");
+};
+
+const extractCity = (lower, context = {}, filters = {}) => {
+  const explicit = CITY_HINTS.find((city) => new RegExp(`\\b${city}\\b`, "i").test(lower));
+  return explicit || context?.city || context?.entities?.city || filters?.city || "";
+};
+
+const extractVariant = (original, lower, models, intent) => {
+  if (!/^vehicle_|^price_history_report$/.test(intent)) return "";
+  const known = original.match(/\b(sx|vx|zx|zxi|vxi|alpha|delta|sigma|sportz|asta|hx\d+|s\s?opt|sx\s?opt|top|base|ivt|dct|mt|at|cvt|turbo)\b(?:\s+\b(turbo|ivt|dct|mt|at|cvt|dt|opt)\b)*/i)?.[0];
+  if (known) return normalizeText(known);
+  if (!/feature|spec|catalog|brochure|price|variant|does|has|have/.test(lower)) return "";
+  const blocked = new Set([
+    ...STOP_WORDS,
+    ...MAKE_HINTS,
+    ...models,
+    "feature",
+    "features",
+    "spec",
+    "specs",
+    "catalogue",
+    "catalog",
+    "brochure",
+  ]);
+  const tokens = normalizeText(original)
+    .split(/\s+/)
+    .map((token) => token.replace(/[^a-zA-Z0-9]/g, ""))
+    .filter(Boolean)
+    .filter((token) => !blocked.has(token.toLowerCase()) && !MODEL_HINTS.includes(token.toLowerCase()));
+  return tokens.slice(0, 4).join(" ");
 };
 
 export const parseAgentMessage = (message, context = {}, selectedEntity = null, filters = {}) => {
@@ -273,8 +330,7 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
     intent === "latest_insurance" ||
     intent === "loan_closure" ||
     intent === "loan_status" ||
-    intent === "customer_360" ||
-    intent === "general_search";
+    intent === "customer_360";
   const explicitCustomerName = nameIntent ? extractName(original, lower, models) : "";
   const hasFreshEntityInMessage = Boolean(explicitCustomerName || explicitRegistrationNumber || explicitLast4 || models.length || make);
   const contextualCustomerName =
@@ -325,8 +381,8 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
       make,
       model: models[0] || (!hasFreshEntityInMessage ? context?.model || context?.entities?.model || filters?.model || "" : ""),
       models,
-      variant:
-        original.match(/\b(sx|vx|zx|zxi|vxi|alpha|delta|sigma|sportz|asta)\b/i)?.[0] || "",
+      variant: extractVariant(original, lower, models, intent) || (!hasFreshEntityInMessage ? context?.variant || context?.entities?.variant || filters?.variant || "" : ""),
+      city: extractCity(lower, context, filters),
       feature: featureTerm,
     }),
     statusTerms: statuses,

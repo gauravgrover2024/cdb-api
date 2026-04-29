@@ -40,13 +40,20 @@ const makeOrBrandClause = (make) => {
   return { $or: [{ make: { $in: values } }, { brand: { $in: values } }] };
 };
 
+const cityClause = (city) => {
+  const clean = String(city || "Delhi").trim();
+  return clean ? { city: { $in: exactValues(clean) } } : null;
+};
+
 const vehicleModelQuery = (parsed) => {
   const model = parsed.entities.model || parsed.entities.models?.[0];
   const make = parsed.entities.make;
+  const city = parsed.entities.city || "Delhi";
   const and = [];
   if (model) and.push(vehicleModelClause(model, make));
   if (make) and.push(makeOrBrandClause(make));
   if (parsed.entities.variant) and.push({ variant: { $regex: parsed.entities.variant, $options: "i" } });
+  if (city) and.push(cityClause(city));
   return and.length ? { $and: and } : {};
 };
 
@@ -57,7 +64,12 @@ const vehicleRow = (item) => ({
   variant: item.variant,
   fuel: firstMeaningful(item.fuel, item.fuel_type),
   transmission: firstMeaningful(item.transmission, item.transmission_type),
+  city: item.city,
   exShowroomPrice: item.exShowroom || item.ex_showroom,
+  rto: firstMeaningful(item.rto, item.roadTax, item.other_roadTax),
+  insurance: firstMeaningful(item.insurance, item.insuranceAmount, item.other_insurance),
+  tcs: firstMeaningful(item.tcs, item.other_tcsCharges),
+  handlingOtherCharges: firstMeaningful(item.handlingCharges, item.otherCharges, item.other_totalOtherCharges),
   onRoadPrice: firstMeaningful(item.onRoadPrice, item.on_road_price_cardekho, item.total_on_road_with_accessories),
   year: firstMeaningful(item.year, item.activeYear),
   status: firstMeaningful(item.status, item.is_discontinued ? "Discontinued" : "Active"),
@@ -94,10 +106,20 @@ const compactVariantRows = (rows) =>
     price: firstNumber(item.on_road_price_cardekho, item.total_on_road_with_accessories, item.onRoadPrice, item.ex_showroom, item.exShowroom),
   }));
 
-const variantGroupsForModels = async (models, trace) => {
+const uniqueRows = (rows, keyFor) => {
+  const seen = new Set();
+  return rows.filter((row) => {
+    const key = keyFor(row);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const variantGroupsForModels = async (models, trace, city = "Delhi") => {
   const groups = await Promise.all(
     models.map(async (model) => {
-      const docs = await findLean(Vehicle, vehicleModelClause(model), {
+      const docs = await findLean(Vehicle, { $and: [vehicleModelClause(model), cityClause(city)].filter(Boolean) }, {
         sort: { model: 1, variant: 1, city: 1 },
         limit: 80,
       });
@@ -179,26 +201,137 @@ export const vehiclePricelist = async (parsed, access, trace) => {
     const featureText = JSON.stringify(featureDocs).toLowerCase();
     notices.push(featureText.includes("sunroof") ? "Sunroof appears in feature data for matching variants." : "Sunroof was not found in the available feature data.");
   }
-  const pricelistRows = rows.map(vehicleRow);
+  const city = parsed.entities.city || "Delhi";
+  const pricelistRows = uniqueRows(
+    rows.map(vehicleRow),
+    (row) => [row.city, row.make, row.model, row.variant, row.fuel, row.transmission, row.exShowroomPrice, row.onRoadPrice].join("|"),
+  );
   const make = firstMeaningful(rows[0]?.make, rows[0]?.brand);
+  const cities = await Vehicle.distinct("city", vehicleModelClause(model, make)).maxTimeMS(2500);
   return {
     widgets: [
       widget("vehicle_pricelist", `${model} pricelist`, {
-        data: { make, model, total: rows.length, features: featureDocs, records: pricelistRows, variants: pricelistRows },
-        columns: ["Make", "Model", "Variant", "Fuel", "Transmission", "Ex-showroom", "On-road", "Year", "Status", "Last updated"],
+        data: { make, model, city, cities: cities.filter(Boolean).sort(), total: pricelistRows.length, features: featureDocs, records: pricelistRows, variants: pricelistRows },
+        columns: ["Make", "Model", "Variant", "Fuel", "Transmission", "City", "Ex-showroom", "RTO / road tax", "Insurance", "TCS", "Handling / other", "On-road", "Year", "Status", "Last updated"],
         rows: pricelistRows,
         records: pricelistRows,
         variants: pricelistRows,
-        notices,
+        notices: [
+          ...notices,
+          "Showing Delhi by default when city is not specified.",
+          "Price breakup is shown only where stored in catalog fields.",
+        ],
         actions: [
           action("open_pricelist_prefilled", "Open full pricelist", {
             route: "/vehicles/price-list",
-            query: { make, model },
+            query: { make, model, city },
           }),
         ],
       }),
     ],
     followUpSuggestions: ["Show similar cars", "Compare with City and Slavia", "Show colors", "Show top variants", "Open full pricelist"],
+  };
+};
+
+export const vehicleColors = async (parsed, access, trace) => {
+  if (!access.canAccess("vehicles")) {
+    noteRestriction(access, "Vehicles", "No vehicle catalog access");
+    return { widgets: [unavailableWidget("Vehicle data unavailable", "You do not have catalog access.", ["Vehicles"])] };
+  }
+  const model = parsed.entities.model || parsed.entities.models?.[0];
+  if (!model) {
+    return { widgets: [unavailableWidget("Need a model", "Ask for colors with a model, for example: Show Verna colors.", ["Vehicles"])] };
+  }
+  const rows = await findLean(Vehicle, { $and: [vehicleModelClause(model, parsed.entities.make), cityClause(parsed.entities.city || "Delhi")].filter(Boolean) }, { limit: 120 });
+  pushModuleTrace(trace, "Vehicles", rows.length);
+  const colorFields = ["color", "colour", "vehicleColor", "availableColor", "exteriorColor", "do_colour", "do_vehicleColor"];
+  const colors = [];
+  for (const item of rows) {
+    for (const field of colorFields) {
+      const value = item[field];
+      if (!value) continue;
+      String(value)
+        .split(/[,/|]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .forEach((name) => colors.push({ name, variant: item.variant, model: item.model, make: firstMeaningful(item.make, item.brand) }));
+    }
+  }
+  const uniqueColors = uniqueRows(colors, (row) => `${row.name}`.toLowerCase());
+  if (!uniqueColors.length) {
+    return {
+      widgets: [
+        unavailableWidget(
+          "Color data not found",
+          `I checked vehicle catalog records for ${model}, but no stored color fields were found.`,
+          ["Vehicles"],
+        ),
+      ],
+      followUpSuggestions: ["Show pricelist", "Show features", "Compare with City and Slavia"],
+    };
+  }
+  return {
+    widgets: [
+      widget("vehicle_colors", `${model} colors`, {
+        data: { model, total: uniqueColors.length },
+        rows: uniqueColors,
+        records: uniqueColors,
+        notices: ["Showing only colors stored in catalog fields. No colors are inferred."],
+      }),
+    ],
+    followUpSuggestions: ["Show pricelist", "Show features", "Compare with City and Slavia"],
+  };
+};
+
+export const vehicleFeatures = async (parsed, access, trace) => {
+  if (!access.canAccess("vehicles")) {
+    noteRestriction(access, "Vehicles", "No vehicle catalog access");
+    return { widgets: [unavailableWidget("Vehicle data unavailable", "You do not have catalog access.", ["Vehicles"])] };
+  }
+  const model = parsed.entities.model || parsed.entities.models?.[0];
+  if (!model) {
+    return { widgets: [unavailableWidget("Need a model", "Ask for features with a model, for example: Show features of Hyundai Verna HX8 iVT.", ["Vehicle Features"])] };
+  }
+  const query = vehicleModelClause(model, parsed.entities.make);
+  const docs = await findLean(VehicleFeature, query, { sort: { variant: 1 }, limit: 120 });
+  pushModuleTrace(trace, "Vehicle Features", docs.length);
+  const variantNeedle = normalizeVariant(parsed.entities.variant);
+  const matchedDocs = variantNeedle
+    ? docs.filter((doc) => normalizeVariant(doc.variant).includes(variantNeedle))
+    : docs;
+  const rows = matchedDocs.slice(0, LIMIT).map((doc) => ({
+    id: safeId(doc),
+    make: doc.brand,
+    model: doc.model,
+    variant: doc.variant,
+    bodyType: doc.body_type_bucket,
+    seatingCapacity: doc.seating_capacity,
+    featureGroups: Object.keys(doc.features || {}).length,
+    features: doc.features || {},
+    lastUpdated: formatDateValue(doc.updatedAt),
+  }));
+  if (!rows.length) {
+    return {
+      widgets: [
+        unavailableWidget(
+          "No feature catalogue found",
+          `No feature record matched ${[model, parsed.entities.variant].filter(Boolean).join(" ")}.`,
+          ["Vehicle Features"],
+        ),
+      ],
+      followUpSuggestions: ["Show pricelist", "Show variants", "Show similar cars"],
+    };
+  }
+  return {
+    widgets: [
+      widget("vehicle_features", `${model} feature catalogue`, {
+        data: { model, variant: parsed.entities.variant, total: matchedDocs.length },
+        rows,
+        records: rows,
+        notices: ["Feature values are shown only from stored feature catalogue fields."],
+      }),
+    ],
+    followUpSuggestions: ["Show pricelist", "Compare variants", "Show similar cars"],
   };
 };
 
@@ -253,7 +386,13 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
   return {
     widgets: [
       widget("variant_feature_availability", `${feature} availability in ${model}`, {
-        data: { model, feature, total: rows.length },
+        data: {
+          model,
+          feature,
+          total: rows.length,
+          answer: rows.length ? "Yes" : "Not found",
+          question: parsed.message,
+        },
         rows,
         records: rows,
         columns: ["make", "model", "variant", "fuel", "transmission", "feature", "value", "exShowroomPrice", "onRoadPrice", "lastUpdated"],
@@ -338,7 +477,7 @@ export const vehicleComparison = async (parsed, access, trace) => {
   if (models.length < 2) {
     return { widgets: [unavailableWidget("Need models to compare", "Ask with two or more models, for example: compare Verna City Slavia.", ["Vehicles"])] };
   }
-  const groups = await variantGroupsForModels(models, trace);
+  const groups = await variantGroupsForModels(models, trace, parsed.entities.city || "Delhi");
   const rows = groups.map((group) => {
     const docs = group.variants;
     const prices = docs.map((item) => firstNumber(item.onRoadPrice, item.exShowroomPrice)).filter(Boolean);

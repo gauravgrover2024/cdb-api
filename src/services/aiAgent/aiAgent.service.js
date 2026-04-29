@@ -1,33 +1,52 @@
 import { parseAgentMessage } from "./aiAgent.intentParser.js";
 import { buildAccessContext } from "./aiAgent.accessControl.js";
 import { assembleResponse, buildFilters } from "./aiAgent.tools.js";
-import { latestInsurance } from "./aiAgent.insuranceTools.js";
+import { insuranceExpiryReport, latestInsurance } from "./aiAgent.insuranceTools.js";
 import { loanStatusOrClosure } from "./aiAgent.loanTools.js";
 import {
   activeLoanExpiredInsuranceReport,
+  deliveryOrderReport,
+  loanDisbursalReport,
+  loanDisbursedReport,
+  loanPendingApprovalReport,
   missingRegistrationReport,
   operationsDigest,
+  paymentPendingReport,
+  payoutEnteredReport,
   payoutMissingReport,
   usedCarRcPendingReport,
 } from "./aiAgent.reportTools.js";
 import {
   priceHistoryReport,
   similarCars,
+  vehicleColors,
+  vehicleFeatures,
   vehicleFeatureAvailability,
   vehicleComparison,
   vehiclePricelist,
 } from "./aiAgent.vehicleTools.js";
 import { customer360, vehicle360 } from "./aiAgent.customerTools.js";
 import { unavailableWidget } from "./aiAgent.renderPayloads.js";
+import { runGlobalSearch } from "../globalSearch/globalSearchService.js";
 
 const handlerByIntent = {
   latest_insurance: latestInsurance,
+  insurance_expiry_report: insuranceExpiryReport,
   loan_status: loanStatusOrClosure,
   loan_closure: loanStatusOrClosure,
+  loan_disbursal_report: loanDisbursalReport,
+  loan_pending_approval_report: loanPendingApprovalReport,
+  loan_disbursed_report: loanDisbursedReport,
   missing_registration_report: missingRegistrationReport,
   payout_missing_report: payoutMissingReport,
+  payout_entered_report: payoutEnteredReport,
+  payment_pending_report: paymentPendingReport,
+  delivery_order_report: deliveryOrderReport,
   vehicle_pricelist: vehiclePricelist,
-  vehicle_feature_availability: vehicleFeatureAvailability,
+  vehicle_city_change: vehiclePricelist,
+  vehicle_colors: vehicleColors,
+  vehicle_features: vehicleFeatures,
+  vehicle_feature_answer: vehicleFeatureAvailability,
   similar_cars: similarCars,
   vehicle_comparison: vehicleComparison,
   price_history_report: priceHistoryReport,
@@ -37,19 +56,52 @@ const handlerByIntent = {
   finance_intelligence: payoutMissingReport,
   customer_360: customer360,
   vehicle_360: vehicle360,
+  vehicle_lookup: vehicle360,
   used_car_rc_pending_report: usedCarRcPendingReport,
+  inspection_report: usedCarRcPendingReport,
+  background_check_report: usedCarRcPendingReport,
+  rc_lookup: usedCarRcPendingReport,
+  challan_report: usedCarRcPendingReport,
 };
 
 const fallbackHandler = async (parsed, access, trace) => {
-  if (parsed.entities.customerName) return customer360({ ...parsed, intent: "customer_360" }, access, trace);
-  if (parsed.entities.registrationNumber || parsed.entities.last4 || parsed.entities.model) {
+  if (parsed.entities.registrationNumber || parsed.entities.last4) {
     return vehicle360({ ...parsed, intent: "vehicle_360" }, access, trace);
+  }
+  const search = await runGlobalSearch({ query: parsed.message, limit: 30, perEntityLimit: 8 });
+  pushFallbackTrace(trace, search.groups);
+  if (search.total) {
+    return {
+      widgets: [
+        {
+          type: "records_table",
+          title: "Possible matches",
+          summary: { total: search.total },
+          rows: search.results.map((item) => ({
+            module: item.entityLabel,
+            title: item.title,
+            subtitle: item.subtitle,
+            status: item.status,
+            matchedFields: item.matchedFields?.join(", "),
+            route: item.route,
+            updatedAt: item.updatedAt,
+          })),
+          notices: ["I could not identify one exact structured request, so I searched available records and grouped possible matches."],
+        },
+      ],
+      followUpSuggestions: [
+        "Ask customer 360 with the customer name",
+        "Search only by vehicle last 4",
+        "Ask latest insurance",
+        "Ask loan status",
+      ],
+    };
   }
   return {
     widgets: [
       unavailableWidget(
-        "I need a more specific question",
-        "Ask for a customer, vehicle, insurance, loan, pricelist, comparison, or report and I will query live records.",
+        "No matching records found",
+        "I could not identify the exact request or find matching records. Try a vehicle last 4, registration number, customer name, model, or a report phrase.",
         ["ACI Assist"],
       ),
     ],
@@ -60,6 +112,12 @@ const fallbackHandler = async (parsed, access, trace) => {
       "Customer 360 Rahul Diwan",
     ],
   };
+};
+
+const pushFallbackTrace = (trace, groups = []) => {
+  groups.forEach((group) => {
+    trace.push({ module: group.label, matched: group.count });
+  });
 };
 
 const intentLabel = (intent) =>

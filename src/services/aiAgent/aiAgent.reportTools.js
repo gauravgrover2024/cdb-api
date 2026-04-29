@@ -3,6 +3,8 @@ import InsuranceCase from "../../models/InsuranceCase.js";
 import VehicleRecord from "../../models/VehicleRecord.js";
 import UsedCarLead from "../../models/UsedCarLead.js";
 import Receivable from "../../models/Receivable.js";
+import Payment from "../../models/Payment.js";
+import DeliveryOrder from "../../models/DeliveryOrder.js";
 import {
   action,
   unavailableWidget,
@@ -272,6 +274,238 @@ export const payoutMissingReport = async (parsed, access, trace) => {
       }),
     ],
     followUpSuggestions: ["Show only loan cases", "Open Loan Dashboard with filter", "Show records older than 30 days"],
+  };
+};
+
+const approvedLoanQuery = {
+  $or: [
+    { loanStatus: /approved/i },
+    { status: /approved/i },
+    { currentStage: /approved/i },
+    { approvalStatus: /approved/i },
+  ],
+};
+
+const disbursedMissingQuery = {
+  $or: [
+    { disburse_amount: { $in: [null, "", 0] } },
+    { approval_loanAmountDisbursed: { $in: [null, "", 0] } },
+    { postfile_loanAmountDisbursed: { $in: [null, "", 0] } },
+    { disbursement_date: { $in: [null, ""] } },
+    { disbursementStatus: /pending|not disbursed|awaiting/i },
+  ],
+};
+
+export const loanDisbursalReport = async (parsed, access, trace) => {
+  if (!access.canAccess("loans")) {
+    noteRestriction(access, "Loans", "No loan access");
+    return { widgets: [unavailableWidget("Loan report unavailable", "You do not have access to loan records.", ["Loans"])] };
+  }
+  const query = { $and: [approvedLoanQuery, disbursedMissingQuery] };
+  const { rows: loans, count, approximate, error } = await findAndCount(Loan, query, {
+    sort: { updatedAt: -1 },
+    limit: LIMIT,
+  });
+  pushModuleTrace(trace, "Loans", count, { returned: loans.length, approximate });
+  const rows = loanRows(loans).map((row) => ({
+    ...row,
+    issue: "Approved but not disbursed",
+  }));
+  return {
+    widgets: [
+      widget("count_summary", "Approved but not disbursed", {
+        summary: { total: count, modules: [{ module: "Loans", total: count }] },
+      }),
+      widget("records_table", "Approved but not disbursed cases", {
+        summary: { total: count, approximate, error },
+        rows,
+        actions: [
+          action("open_dashboard_with_filter", "Open Loan Dashboard", {
+            route: "/loans",
+            query: { approvedNotDisbursed: "true" },
+          }),
+        ],
+      }),
+    ],
+    followUpSuggestions: ["Pending approval cases", "Disbursed cases this month", "Approved loans without DO"],
+  };
+};
+
+export const loanPendingApprovalReport = async (parsed, access, trace) => {
+  if (!access.canAccess("loans")) {
+    noteRestriction(access, "Loans", "No loan access");
+    return { widgets: [unavailableWidget("Loan report unavailable", "You do not have access to loan records.", ["Loans"])] };
+  }
+  const query = {
+    $or: [
+      { loanStatus: /pending approval|approval pending|not approved/i },
+      { status: /pending approval|approval pending|not approved/i },
+      { currentStage: /approval/i },
+      { approvalStatus: /pending|not approved/i },
+    ],
+  };
+  const { rows: loans, count, approximate, error } = await findAndCount(Loan, query, { sort: { updatedAt: -1 }, limit: LIMIT });
+  pushModuleTrace(trace, "Loans", count, { returned: loans.length, approximate });
+  return {
+    widgets: [
+      widget("count_summary", "Pending approval cases", { summary: { total: count, modules: [{ module: "Loans", total: count }] } }),
+      widget("records_table", "Pending approval loan cases", {
+        summary: { total: count, approximate, error },
+        rows: loanRows(loans),
+        actions: [action("open_dashboard_with_filter", "Open Loan Dashboard", { route: "/loans", query: { pendingApproval: "true" } })],
+      }),
+    ],
+    followUpSuggestions: ["Approved but not disbursed cases", "Disbursed cases this month"],
+  };
+};
+
+export const loanDisbursedReport = async (parsed, access, trace) => {
+  if (!access.canAccess("loans")) {
+    noteRestriction(access, "Loans", "No loan access");
+    return { widgets: [unavailableWidget("Loan report unavailable", "You do not have access to loan records.", ["Loans"])] };
+  }
+  const dateFilter = parsed.dateRange ? { updatedAt: { $gte: parsed.dateRange.start, $lte: parsed.dateRange.end } } : {};
+  const query = {
+    ...dateFilter,
+    $or: [
+      { loanStatus: /disbursed/i },
+      { status: /disbursed/i },
+      { currentStage: /disbursed/i },
+      { disbursementStatus: /disbursed/i },
+      { disburse_amount: { $gt: 0 } },
+    ],
+  };
+  const { rows: loans, count, approximate, error } = await findAndCount(Loan, query, { sort: { updatedAt: -1 }, limit: LIMIT });
+  pushModuleTrace(trace, "Loans", count, { returned: loans.length, approximate });
+  return {
+    widgets: [
+      widget("count_summary", "Disbursed loan cases", { summary: { total: count, modules: [{ module: "Loans", total: count }] } }),
+      widget("records_table", "Disbursed loans", {
+        summary: { total: count, approximate, error },
+        rows: loanRows(loans),
+        actions: [action("open_dashboard_with_filter", "Open Loan Dashboard", { route: "/loans", query: { disbursed: "true" } })],
+      }),
+    ],
+    followUpSuggestions: ["Approved but not disbursed cases", "Pending approval cases"],
+  };
+};
+
+export const payoutEnteredReport = async (parsed, access, trace) => {
+  if (!access.canAccess("payouts") && !access.canAccess("loans")) {
+    noteRestriction(access, "Payouts", "No payout access");
+    return { widgets: [unavailableWidget("Payout report unavailable", "You do not have access to payout records.", ["Payouts"])] };
+  }
+  const sections = [];
+  if (access.canAccess("loans")) {
+    const query = {
+      $or: [
+        { payout_amount: { $gt: 0 } },
+        { payoutAmount: { $gt: 0 } },
+        { prefile_sourcePayoutPercentage: { $nin: [null, "", 0] } },
+        { payout_percentage: { $nin: [null, "", 0] } },
+      ],
+    };
+    const { rows, count, approximate } = await findAndCount(Loan, query, { sort: { updatedAt: -1 }, limit: LIMIT });
+    pushModuleTrace(trace, "Loans", count, { returned: rows.length, approximate });
+    sections.push({ module: "Loans", total: count, rows: loanRows(rows) });
+  }
+  if (access.canAccess("payouts")) {
+    const query = { $or: [{ payout_amount: { $gt: 0 } }, { net_payout_amount: { $gt: 0 } }, { payout_status: /entered|received|paid|done/i }] };
+    const { rows, count, approximate } = await findAndCount(Receivable, query, { sort: { updatedAt: -1 }, limit: LIMIT });
+    pushModuleTrace(trace, "Receivables", count, { returned: rows.length, approximate });
+    sections.push({
+      module: "Receivables",
+      total: count,
+      rows: rows.map((item) => ({
+        id: String(item._id),
+        customer: item.customerName,
+        reference: firstMeaningful(item.loanId, item.insuranceCaseId, item.payoutId),
+        status: item.payout_status,
+        amount: access.canViewFinance ? firstNumber(item.net_payout_amount, item.payout_amount) : undefined,
+        updatedAt: item.updatedAt,
+      })),
+    });
+  }
+  const total = sections.reduce((sum, section) => sum + (Number(section.total) || 0), 0);
+  return {
+    widgets: [
+      widget("count_summary", "Payout entered count", { summary: { total, modules: sections.map(({ module, total }) => ({ module, total })) } }),
+      widget("records_table", "Cases with payout entered", {
+        summary: { total },
+        rows: sections.flatMap((section) => section.rows.map((row) => ({ module: section.module, ...row }))),
+        actions: [action("open_dashboard_with_filter", "Open Payout Dashboard", { route: "/payouts/receivables", query: { payoutEntered: "true" } })],
+      }),
+    ],
+    followUpSuggestions: ["Cases with payout missing", "Open Payout Dashboard", "Show finance intelligence"],
+  };
+};
+
+export const paymentPendingReport = async (parsed, access, trace) => {
+  if (!access.canAccess("payments")) {
+    noteRestriction(access, "Payments", "No payment access");
+    return { widgets: [unavailableWidget("Payment report unavailable", "You do not have access to payment records.", ["Payments"])] };
+  }
+  const query = {
+    $or: [
+      { status: /pending|partial|due|unpaid/i },
+      { paymentStatus: /pending|partial|due|unpaid/i },
+      { balance: { $gt: 0 } },
+      { balanceAmount: { $gt: 0 } },
+      { pendingAmount: { $gt: 0 } },
+    ],
+  };
+  const { rows, count, approximate, error } = await findAndCount(Payment, query, { sort: { updatedAt: -1 }, limit: LIMIT });
+  pushModuleTrace(trace, "Payments", count, { returned: rows.length, approximate });
+  return {
+    widgets: [
+      widget("count_summary", "Payment pending count", { summary: { total: count, modules: [{ module: "Payments", total: count }] } }),
+      widget("records_table", "Payment pending cases", {
+        summary: { total: count, approximate, error },
+        rows: rows.map((item) => ({
+          id: String(item._id),
+          customer: firstMeaningful(item.customerName, item.name),
+          vehicle: firstMeaningful(item.vehicle, item.vehicleName),
+          paymentType: firstMeaningful(item.paymentType, item.type),
+          expectedAmount: access.canViewFinance ? firstNumber(item.expectedAmount, item.totalAmount) : undefined,
+          receivedAmount: access.canViewFinance ? firstNumber(item.receivedAmount, item.paidAmount) : undefined,
+          balance: access.canViewFinance ? firstNumber(item.balance, item.balanceAmount, item.pendingAmount) : undefined,
+          status: firstMeaningful(item.status, item.paymentStatus),
+          updatedAt: item.updatedAt,
+        })),
+      }),
+    ],
+    followUpSuggestions: ["Cases with payout missing", "Show customer 360", "Open payment records"],
+  };
+};
+
+export const deliveryOrderReport = async (parsed, access, trace) => {
+  if (!access.canAccess("loans")) {
+    noteRestriction(access, "Delivery Orders", "No loan/DO access");
+    return { widgets: [unavailableWidget("Delivery order report unavailable", "You do not have access to delivery order records.", ["Delivery Orders"])] };
+  }
+  const query = /missing|pending|without|no do|approved/.test(parsed.lower)
+    ? { $or: [{ status: /pending|draft|missing/i }, { doNumber: { $in: [null, ""] } }, { do_refNo: { $in: [null, ""] } }] }
+    : {};
+  const { rows, count, approximate, error } = await findAndCount(DeliveryOrder, query, { sort: { updatedAt: -1 }, limit: LIMIT });
+  pushModuleTrace(trace, "Delivery Orders", count, { returned: rows.length, approximate });
+  return {
+    widgets: [
+      widget("records_table", "Delivery order records", {
+        summary: { total: count, approximate, error },
+        rows: rows.map((item) => ({
+          id: String(item._id),
+          customer: firstMeaningful(item.do_customerName, item.customerName),
+          vehicle: [firstMeaningful(item.do_vehicleMake, item.vehicleMake), firstMeaningful(item.do_vehicleModel, item.vehicleModel), firstMeaningful(item.do_vehicleVariant, item.vehicleVariant)].filter(Boolean).join(" "),
+          dealer: firstMeaningful(item.do_dealerName, item.dealerName),
+          doNumber: firstMeaningful(item.doNumber, item.do_refNo),
+          status: item.status,
+          doDate: firstMeaningful(item.doDate, item.do_date),
+          updatedAt: item.updatedAt,
+        })),
+        actions: [action("open_dashboard_with_filter", "Open Delivery Orders", { route: "/loans", query: { deliveryOrder: "true" } })],
+      }),
+    ],
+    followUpSuggestions: ["Approved loans without DO", "Open Loan Dashboard"],
   };
 };
 

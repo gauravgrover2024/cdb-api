@@ -138,11 +138,64 @@ export const latestInsurance = async (parsed, access, trace) => {
   };
 };
 
+export const insuranceExpiryReport = async (parsed, access, trace) => {
+  if (!access.canAccess("insurance")) {
+    noteRestriction(access, "Insurance", "No insurance access");
+    return {
+      widgets: [unavailableWidget("Insurance report unavailable", "You do not have access to insurance records.", ["Insurance"])],
+      followUpSuggestions: [],
+    };
+  }
+  const now = new Date();
+  const sevenDays = new Date(now);
+  sevenDays.setDate(sevenDays.getDate() + 7);
+  const lower = parsed.lower || "";
+  const query = /expired/.test(lower)
+    ? {
+        $or: [
+          { newOdExpiryDate: { $lt: now } },
+          { newTpExpiryDate: { $lt: now } },
+          { status: /expired/i },
+        ],
+      }
+    : {
+        $or: [
+          { newOdExpiryDate: { $gte: now, $lte: sevenDays } },
+          { newTpExpiryDate: { $gte: now, $lte: sevenDays } },
+        ],
+      };
+  const records = await findLean(InsuranceCase, query, { sort: { newOdExpiryDate: 1, newTpExpiryDate: 1, updatedAt: -1 }, limit: LIMIT });
+  pushModuleTrace(trace, "Insurance", records.length);
+  const rows = insuranceRows(records).map((row) => ({
+    ...row,
+    expiry: firstMeaningful(row.expiryDate, row.newOdExpiryDate, row.newTpExpiryDate),
+  }));
+  return {
+    widgets: [
+      widget("count_summary", /expired/.test(lower) ? "Expired policies" : "Policies expiring soon", {
+        summary: { total: rows.length, modules: [{ module: "Insurance", total: rows.length }] },
+      }),
+      widget("records_table", /expired/.test(lower) ? "Expired insurance cases" : "Insurance expiring in 7 days", {
+        summary: { total: rows.length },
+        rows,
+        actions: [
+          action("open_dashboard_with_filter", "Open Insurance Dashboard", {
+            route: "/insurance",
+            query: /expired/.test(lower) ? { expired: "true" } : { expiringThisWeek: "true" },
+          }),
+        ],
+      }),
+    ],
+    followUpSuggestions: ["Show latest insurance", "Show customer 360", "Check loan status"],
+  };
+};
+
 export const insuranceRows = (records) =>
   records.map((item) => ({
     ...rowBase(item),
     caseId: item.caseId,
     policyNumber: item.newPolicyNumber,
     insurer: item.newInsuranceCompany,
+    expiryDate: formatDateValue(firstMeaningful(item.newOdExpiryDate, item.newTpExpiryDate)),
     route: getInsuranceRoute(item),
   }));
