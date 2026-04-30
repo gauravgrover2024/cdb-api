@@ -302,6 +302,27 @@ const extractVariant = (original, lower, models, intent) => {
   return tokens.slice(0, 4).join(" ");
 };
 
+const VEHICLE_CONTEXT_INTENTS = new Set([
+  "vehicle_colors",
+  "vehicle_features",
+  "vehicle_feature_answer",
+  "vehicle_price_breakup",
+  "vehicle_pricelist",
+  "vehicle_comparison",
+  "similar_cars",
+]);
+
+const CUSTOMER_CONTEXT_INTENTS = new Set([
+  "latest_insurance",
+  "loan_closure",
+  "loan_closure_pos",
+  "loan_status",
+  "customer_lookup",
+  "customer_360",
+  "vehicle_360",
+  "vehicle_registration_search",
+]);
+
 export const parseAgentMessage = (message, context = {}, selectedEntity = null, filters = {}) => {
   const original = normalizeText(message);
   const lower = original.toLowerCase();
@@ -327,13 +348,11 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
     filters?.last4 ||
     filters?.vehicleLast4 ||
     (registrationNumber ? digitsOnly(registrationNumber).slice(-4) : "");
-  const nameIntent =
-    intent === "latest_insurance" ||
-    intent === "loan_closure" ||
-    intent === "loan_status" ||
-    intent === "customer_360";
+  const nameIntent = CUSTOMER_CONTEXT_INTENTS.has(intent);
   const explicitCustomerName = nameIntent ? extractName(original, lower, models) : "";
   const hasFreshEntityInMessage = Boolean(explicitCustomerName || explicitRegistrationNumber || explicitLast4 || models.length || make);
+  const canUseVehicleContext = VEHICLE_CONTEXT_INTENTS.has(intent);
+  const canUseCustomerContext = CUSTOMER_CONTEXT_INTENTS.has(intent);
   const contextualCustomerName =
     selectedEntity?.customerName ||
     selectedEntity?.context?.customerName ||
@@ -344,7 +363,7 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
     "";
   const customerName =
     explicitCustomerName ||
-    (hasFreshEntityInMessage ? "" : contextualCustomerName);
+    (!hasFreshEntityInMessage && canUseCustomerContext ? contextualCustomerName : "");
 
   const statuses = ["pending", "missing", "expired", "active", "approved", "disbursed", "closed"].filter(
     (status) => lower.includes(status),
@@ -380,9 +399,9 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
       registrationNumber,
       last4,
       make,
-      model: models[0] || (!hasFreshEntityInMessage ? context?.model || context?.entities?.model || filters?.model || "" : ""),
+      model: models[0] || (!hasFreshEntityInMessage && canUseVehicleContext ? context?.model || context?.entities?.model || filters?.model || "" : ""),
       models,
-      variant: extractVariant(original, lower, models, intent) || (!hasFreshEntityInMessage ? context?.variant || context?.entities?.variant || filters?.variant || "" : ""),
+      variant: extractVariant(original, lower, models, intent) || (!hasFreshEntityInMessage && canUseVehicleContext ? context?.variant || context?.entities?.variant || filters?.variant || "" : ""),
       city: extractCity(lower, context, filters),
       feature: featureTerm,
     }),

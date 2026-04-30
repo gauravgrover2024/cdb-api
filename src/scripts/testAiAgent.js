@@ -13,9 +13,50 @@ const adminUser = { _id: "000000000000000000000000", role: "admin", name: "AI Ag
 
 const baseTests = [
   { query: "Verna pricelist", expectedIntent: "vehicle_pricelist", expectedWidgets: ["vehicle_pricelist"], forbiddenIntent: "customer_360", expectedPhysicalCollections: ["vehicles"] },
-  { query: "Show colors of Verna", expectedIntent: "vehicle_colors", expectedWidgets: ["vehicle_colors"], forbiddenIntent: "vehicle_pricelist", expectedPhysicalCollections: ["vehicle_colors"] },
-  { query: "Does Verna SX have sunroof?", expectedIntent: "vehicle_feature_answer", expectedWidgets: ["vehicle_feature_answer"], forbiddenIntent: "customer_360", expectedPhysicalCollections: ["vehicle_features"] },
-  { query: "Approved but not disbursed cases", expectedIntent: "loan_disbursal_report", requiredWidget: "loan_disbursal_report", forbiddenIntent: "customer_360", requireRecords: true, expectedPhysicalCollections: ["loans"] },
+  {
+    query: "Show colors of Verna",
+    expectedIntent: "vehicle_colors",
+    expectedWidgets: ["vehicle_colors"],
+    forbiddenIntent: "vehicle_pricelist",
+    expectedPhysicalCollections: ["vehicle_colors"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_colors");
+      const colors = widget?.colors || widget?.data?.colors || widget?.rows || [];
+      return colors.length > 0 && colors.some((color) => color.imageUrl || color.image_url);
+    },
+  },
+  {
+    query: "Does Verna SX have sunroof?",
+    expectedIntent: "vehicle_feature_answer",
+    expectedWidgets: ["vehicle_feature_answer"],
+    forbiddenIntent: "customer_360",
+    expectedPhysicalCollections: ["vehicle_features"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_feature_answer");
+      const action = widget?.actions?.[0];
+      return ["Yes", "No", "Mixed", "Not found"].includes(widget?.answer || widget?.data?.answer) &&
+        (widget?.evidenceRows || widget?.data?.evidenceRows || []).length > 0 &&
+        response.widgets?.[0]?.type === "vehicle_feature_answer" &&
+        !["module_breakdown", "chart_summary", "records_table"].includes(response.widgets?.[0]?.type) &&
+        action?.type === "open_features";
+    },
+  },
+  {
+    query: "Approved but not disbursed cases",
+    expectedIntent: "loan_disbursal_report",
+    requiredWidget: "loan_disbursal_report",
+    forbiddenIntent: "customer_360",
+    requireRecords: true,
+    expectedPhysicalCollections: ["loans"],
+    assert: ({ response }) => {
+      const countWidget = widgetOf(response, "count_summary");
+      const reportWidget = widgetOf(response, "loan_disbursal_report");
+      const total = reportWidget?.total ?? reportWidget?.summary?.total ?? 0;
+      return total > 0 &&
+        (countWidget?.total ?? countWidget?.summary?.total) === total &&
+        (reportWidget?.records || reportWidget?.rows || []).length > 0;
+    },
+  },
   { query: "Latest insurance of Rahul 4577", expectedIntent: "latest_insurance", forbiddenIntent: "customer_360", expectedPhysicalCollections: ["insurancecases"] },
   { query: "Customer 360 Rahul", expectedIntent: "customer_360", allowedWidgets: ["customer_360", "ambiguity", "unavailable_notice"] },
   { query: "Random unclear query", expectedIntent: "generic_search", expectedWidgets: ["unavailable_notice"], forbiddenIntent: "customer_360" },
@@ -24,14 +65,56 @@ const baseTests = [
   { query: "Customers with KYC pending", expectedIntent: "customer_data_quality_report", expectedWidgets: ["customer_data_quality_report"], expectedPhysicalCollections: ["customers"] },
   { query: "Loan status of LN-2026-0001", expectedIntent: "loan_status", allowedWidgets: ["loan_case_card", "unavailable_notice"], expectedPhysicalCollections: ["loans"] },
   { query: "Pending approval cases", expectedIntent: "loan_pending_approval_report", expectedWidgets: ["count_summary"], expectedPhysicalCollections: ["loans"] },
-  { query: "Total business this month", expectedIntent: "loan_business_report", expectedWidgets: ["loan_business_report"], expectedPhysicalCollections: ["loans"], assert: ({ response }) => response.widgets?.[0]?.summary?.cashCarLogic?.length },
-  { query: "Cash car business this month", expectedIntent: "loan_business_report", expectedWidgets: ["loan_business_report"], expectedPhysicalCollections: ["loans"], assert: ({ response }) => response.widgets?.[0]?.summary?.cashCarLogic?.length },
+  {
+    query: "Total business this month",
+    expectedIntent: "loan_business_report",
+    expectedWidgets: ["loan_business_report"],
+    expectedPhysicalCollections: ["loans", "insurancecases"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "loan_business_report");
+      const summary = widget?.summary || {};
+      const modules = response.sourceTransparency?.modulesChecked?.map((item) => item.module) || [];
+      return ["loanDisbursedAmount", "cashCarBookValue", "insurancePremiumAmount", "loanDisbursedCount", "cashCarCount"].every((key) => key in summary) &&
+        ("insuranceIssuedCount" in summary || "insuranceRenewedCount" in summary) &&
+        modules.includes("Loans") &&
+        modules.includes("Insurance") &&
+        !("model" in response.entities) &&
+        !("variant" in response.entities);
+    },
+  },
+  {
+    query: "Cash car business this month",
+    expectedIntent: "loan_business_report",
+    expectedWidgets: ["loan_business_report"],
+    expectedPhysicalCollections: ["loans"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "loan_business_report");
+      const records = widget?.records || widget?.rows || [];
+      return widget?.businessSubtype === "cash_cars" &&
+        (widget?.summary?.cashCarDateLogic || []).some((item) => /delivery/i.test(item)) &&
+        records.every((record) => record.isCashCase !== false);
+    },
+  },
   { query: "Loan closure 7077", expectedIntent: "loan_closure_pos", allowedWidgets: ["loan_closure_card", "ambiguity", "unavailable_notice"], expectedPhysicalCollections: ["loans"] },
   { query: "Vehicle 360 6300", expectedIntent: "vehicle_360", allowedWidgets: ["vehicle_360", "ambiguity", "unavailable_notice"], expectedPhysicalCollections: ["vehicle_master_records"] },
   { query: "DL4CAZ6300", expectedIntent: "vehicle_registration_search", allowedWidgets: ["vehicle_360", "ambiguity", "unavailable_notice"], expectedPhysicalCollections: ["vehicle_master_records"] },
   { query: "Seltos HTE price breakup", expectedIntent: "vehicle_price_breakup", allowedWidgets: ["vehicle_price_breakup", "vehicle_pricelist", "unavailable_notice"], expectedPhysicalCollections: ["vehicles"] },
   { query: "Show features of Hyundai Verna HX8 iVT", expectedIntent: "vehicle_features", allowedWidgets: ["vehicle_features", "unavailable_notice"], forbiddenIntent: "customer_360", expectedPhysicalCollections: ["vehicle_features"] },
   { query: "Show colors", context: { model: "verna" }, expectedIntent: "vehicle_colors", expectedWidgets: ["vehicle_colors"], expectedPhysicalCollections: ["vehicle_colors"] },
+  {
+    query: "Approved but not disbursed cases",
+    context: { model: "verna", variant: "SX" },
+    expectedIntent: "loan_disbursal_report",
+    requiredWidget: "loan_disbursal_report",
+    assert: ({ response }) => !("model" in response.entities) && !("variant" in response.entities),
+  },
+  {
+    query: "Total business this month",
+    context: { model: "verna", variant: "SX" },
+    expectedIntent: "loan_business_report",
+    expectedWidgets: ["loan_business_report"],
+    assert: ({ response }) => !("model" in response.entities) && !("variant" in response.entities),
+  },
 ];
 
 const physicalCollectionsFor = (tool) =>
@@ -41,6 +124,8 @@ const widgetTypesFor = (response) => {
   if (response.ambiguity) return ["ambiguity", ...(response.widgets || []).map((widget) => widget.type).filter(Boolean)];
   return (response.widgets || []).map((widget) => widget.type).filter(Boolean);
 };
+
+const widgetOf = (response, type) => (response.widgets || []).find((widget) => widget.type === type);
 
 const matchedCountFor = (response) =>
   (response.widgets || []).reduce((sum, widget) => {

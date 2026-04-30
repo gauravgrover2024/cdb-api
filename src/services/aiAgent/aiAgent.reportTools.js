@@ -290,10 +290,14 @@ const approvedLoanQuery = {
 
 const disbursedMissingQuery = {
   $or: [
-    { disbursedDate: { $in: [null, ""] } },
-    { disbursementDate: { $in: [null, ""] } },
-    { disbursement_date: { $in: [null, ""] } },
-    { approval_disbursedDate: { $in: [null, ""] } },
+    {
+      $and: [
+        buildMissingValueQuery(["disbursedDate"]),
+        buildMissingValueQuery(["disbursementDate"]),
+        buildMissingValueQuery(["disbursement_date"]),
+        buildMissingValueQuery(["approval_disbursedDate"]),
+      ],
+    },
     { disbursementStatus: /pending|not disbursed|awaiting/i },
     { disburse_status: /pending|not disbursed|awaiting/i },
   ],
@@ -318,10 +322,13 @@ const loanDisbursalBucket = (loan = {}) => {
   const hasAmount = hasAnyAmount(loan.approval_loanAmountDisbursed, loan.postfile_loanAmountDisbursed, loan.disburse_amount, loan.disburseAmount);
   const approvedRows = approvedBankRows(loan);
   if (approvedRows.some((bank) => bankRowHasDisbursedAmount(bank) && !bankRowHasDisbursedDate(bank))) {
-    return "approved bank row has disbursed amount but no disbursed date";
+    return "approved_bank_row_disbursed_amount_but_date_missing";
   }
-  if (hasAmount && !hasDate) return "amount entered but disbursal date missing";
-  return "approved but no disbursal amount/date";
+  if (hasAmount && !hasDate) return "approved_amount_entered_but_date_missing";
+  if (/approval/i.test(String(firstMeaningful(loan.currentStage, loan.status, loan.approval_status)))) {
+    return "approval_stage_records_if_status_indicates_approved_or_approval_stage";
+  }
+  return "approved_no_disbursal_amount_no_date";
 };
 
 const loanReportRow = (loan, access) => ({
@@ -340,13 +347,25 @@ export const loanDisbursalReport = async (parsed, access, trace) => {
     noteRestriction(access, "Loans", "No loan access");
     return { widgets: [unavailableWidget("Loan report unavailable", "You do not have access to loan records.", ["Loans"])] };
   }
-  const query = { $and: [approvedLoanQuery, disbursedMissingQuery] };
-  const { rows: loans, count, approximate, error } = await findAndCount(Loan, query, {
+  const approvedLoans = await findLean(Loan, approvedLoanQuery, {
     sort: { updatedAt: -1 },
-    limit: LIMIT,
+    limit: LIMIT * 40,
   });
-  pushModuleTrace(trace, "Loans", count, { returned: loans.length, approximate });
-  const rows = loans.map((loan) => ({
+  const incompleteLoans = approvedLoans.filter((loan) => {
+    const topLevelDatesMissing = [
+      loan.disbursedDate,
+      loan.disbursementDate,
+      loan.disbursement_date,
+      loan.approval_disbursedDate,
+      loan.disburse_date,
+    ].every(isMissingValue);
+    const pendingStatus = /pending|not disbursed|awaiting/i.test(String(firstMeaningful(loan.disbursementStatus, loan.disburse_status)));
+    return topLevelDatesMissing || pendingStatus;
+  });
+  const count = incompleteLoans.length;
+  const shownLoans = incompleteLoans.slice(0, LIMIT);
+  pushModuleTrace(trace, "Loans", count, { returned: shownLoans.length, scannedApproved: approvedLoans.length });
+  const rows = shownLoans.map((loan) => ({
     ...loanReportRow(loan, access),
     issue: loanDisbursalBucket(loan),
   }));
@@ -357,10 +376,20 @@ export const loanDisbursalReport = async (parsed, access, trace) => {
   return {
     widgets: [
       widget("count_summary", "Approved but not disbursed", {
-        summary: { total: count, modules: [{ module: "Loans", total: count }] },
+        total: count,
+        count,
+        shown: rows.length,
+        hasMore: count > rows.length,
+        data: { total: count, shown: rows.length, hasMore: count > rows.length },
+        summary: { total: count, shown: rows.length, hasMore: count > rows.length, modules: [{ module: "Loans", total: count }] },
       }),
       widget("loan_disbursal_report", "Approved but not disbursed cases", {
-        summary: { total: count, approximate, error },
+        total: count,
+        count,
+        shown: rows.length,
+        hasMore: count > rows.length,
+        data: { total: count, shown: rows.length, hasMore: count > rows.length },
+        summary: { total: count, shown: rows.length, hasMore: count > rows.length, approximate: false },
         buckets: Object.entries(bucketCounts).map(([label, total]) => ({ label, total })),
         rows,
         records: rows,
@@ -409,6 +438,29 @@ const dateFilterFromParsed = (parsed) => {
   return range?.start && range?.end ? { latestBusinessDate: { $gte: new Date(range.start), $lte: new Date(range.end) } } : {};
 };
 
+const businessDateRange = (parsed) => {
+  const range = parsed.dateRange || parsed.entities?.dateRange;
+  if (range?.start && range?.end) return { key: range.key || "custom", start: new Date(range.start), end: new Date(range.end) };
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  return { key: "this_month", start, end: now };
+};
+
+const rangeQueryForFields = (fields, range) => ({
+  $or: fields.map((field) => ({ [field]: { $gte: range.start, $lte: range.end } })),
+});
+
+const parseBusinessDate = (value) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const isWithinRange = (value, range) => {
+  const date = parseBusinessDate(value);
+  return Boolean(date && date >= range.start && date <= range.end);
+};
+
 const isCashLoan = (loan = {}) => {
   if (loan.isCashCase === true) return true;
   const financed = String(firstMeaningful(loan.isFinanced, loan.isFinanceRequired)).trim().toLowerCase();
@@ -416,41 +468,212 @@ const isCashLoan = (loan = {}) => {
   return /cash/i.test(String(firstMeaningful(loan.loanType, loan.typeOfLoan, loan.caseType, loan.loan_type)));
 };
 
+const cashLoanQuery = {
+  $or: [
+    { isCashCase: true },
+    { isFinanced: /^no$/i },
+    { isFinanceRequired: /^no$/i },
+    { loanType: /cash/i },
+    { typeOfLoan: /cash/i },
+    { caseType: /cash/i },
+    { loan_type: /cash/i },
+  ],
+};
+
+const disbursedLoanDate = (loan = {}) =>
+  firstMeaningful(loan.disbursedDate, loan.disbursementDate, loan.disbursement_date, loan.approval_disbursedDate, loan.disburse_date);
+
+const loanDisbursedAmount = (loan = {}) => {
+  const bankRows = Array.isArray(loan.approval_banksData) ? loan.approval_banksData : [];
+  const bankDisbursed = firstNumber(...bankRows.map((bank) => bank.disbursedAmount || bank.loanAmountDisbursed || bank.amountDisbursed));
+  return firstNumber(loan.postfile_loanAmountDisbursed, loan.approval_loanAmountDisbursed, bankDisbursed, loan.approval_loanAmountApproved);
+};
+
+const cashDeliveryDate = (loan = {}, deliveryOrder = {}) =>
+  firstMeaningful(
+    loan.delivery_date,
+    loan.deliveryDate,
+    loan.delivery_done_at,
+    loan.vehicleDeliveryDate,
+    deliveryOrder.do_date,
+    deliveryOrder.doDate,
+    deliveryOrder.do_bookingDate,
+  );
+
+const cashBookValue = (loan = {}, deliveryOrder = {}) =>
+  firstNumber(
+    loan.exShowroomPrice,
+    loan.exShowroom,
+    deliveryOrder.do_customer_exShowroomPrice,
+    deliveryOrder.do_exShowroomPrice,
+    deliveryOrder.exShowroomPrice,
+  );
+
+const acceptedQuotePremium = (insurance = {}) => {
+  const quotes = Array.isArray(insurance.quotes) ? insurance.quotes : [];
+  const accepted = quotes.find((quote) => quote.isAccepted || String(quote.id) === String(insurance.acceptedQuoteId));
+  return firstNumber(accepted?.totalPremium, ...quotes.map((quote) => quote.totalPremium));
+};
+
+const insuranceBusinessDate = (item = {}) =>
+  firstMeaningful(item.newIssueDate, item.newPolicyStartDate, item.policyPurchaseDate, item.updatedAt);
+
+const isRenewalInsurance = (item = {}) =>
+  item.isRenewal === true ||
+  /renewed|renewal/i.test(String(firstMeaningful(item.renewalFollowUpStatus, item.source, item.sourceOrigin, item.usedCarFlowType, item.newRemarks, item.renewalFollowUpNotes)));
+
+const isIssuedInsurance = (item = {}) =>
+  Boolean(firstMeaningful(item.newPolicyNumber)) ||
+  /issued|completed|submitted/i.test(String(item.status)) ||
+  Boolean(item.acceptedQuoteId && firstMeaningful(item.newIssueDate, item.newPolicyStartDate));
+
+const insurancePremiumAmount = (item = {}) =>
+  firstNumber(item.newTotalPremium, acceptedQuotePremium(item), item.customerPaymentExpected);
+
+const businessLoanRow = (loan, access, type, date, amount) => ({
+  ...loanReportRow(loan, access),
+  businessType: type,
+  businessDate: formatDateValue(date),
+  amount: access.canViewFinance ? amount : undefined,
+  isCashCase: isCashLoan(loan),
+});
+
+const insuranceBusinessRow = (item, access) => ({
+  id: String(item._id || item.id || ""),
+  caseId: item.caseId,
+  customer: firstMeaningful(item.customerName, item.companyName, item.contactPersonName),
+  vehicle: [item.vehicleMake, item.vehicleModel, item.vehicleVariant].filter(Boolean).join(" "),
+  registrationNumber: item.registrationNumber,
+  policyNumber: item.newPolicyNumber,
+  status: item.status,
+  businessType: isRenewalInsurance(item) ? "Insurance renewal" : "New insurance",
+  businessDate: formatDateValue(insuranceBusinessDate(item)),
+  amount: access.canViewFinance ? insurancePremiumAmount(item) : undefined,
+  route: `/insurance/edit/${item.caseId || item._id}`,
+});
+
 export const loanBusinessReport = async (parsed, access, trace) => {
   if (!access.canAccess("loans")) {
     noteRestriction(access, "Loans", "No loan access");
     return { widgets: [unavailableWidget("Loan report unavailable", "You do not have access to loan records.", ["Loans"])] };
   }
-  const query = dateFilterFromParsed(parsed);
-  const { rows: loans, count, approximate, error } = await findAndCount(Loan, query, { sort: { latestBusinessDate: -1, updatedAt: -1 }, limit: LIMIT });
-  pushModuleTrace(trace, "Loans", count, { returned: loans.length, approximate, includesCashCars: true });
-  const cashRows = loans.filter(isCashLoan);
-  const financedRows = loans.filter((loan) => !isCashLoan(loan));
-  const newCarRows = loans.filter((loan) => /new/i.test(String(firstMeaningful(loan.loanType, loan.typeOfLoan, loan.caseType))));
-  const usedCarRows = loans.filter((loan) => /used/i.test(String(firstMeaningful(loan.loanType, loan.typeOfLoan, loan.caseType))));
-  const rows = loans.map((loan) => ({
-    ...loanReportRow(loan, access),
-    businessDate: formatDateValue(firstMeaningful(loan.latestBusinessDate, loan.disbursement_date, loan.disbursedDate, loan.delivery_date)),
-    isCashCase: isCashLoan(loan),
-    businessType: isCashLoan(loan) ? "Cash car" : "Financed",
-  }));
+  const range = businessDateRange(parsed);
+  const wantsCashOnly = /cash car/.test(parsed.lower);
+  const disbursedQuery = {
+    $and: [
+      { $nor: [cashLoanQuery] },
+      rangeQueryForFields(["disbursedDate", "disbursementDate", "disbursement_date", "approval_disbursedDate", "disburse_date"], range),
+    ],
+  };
+  const { rows: disbursedLoans, count: disbursedCount, approximate: disbursedApprox, error: disbursedError } = wantsCashOnly
+    ? { rows: [], count: 0, approximate: false, error: undefined }
+    : await findAndCount(Loan, disbursedQuery, { sort: { disbursement_date: -1, disbursedDate: -1, updatedAt: -1 }, limit: LIMIT });
+
+  const directCashRows = await findLean(
+    Loan,
+    { $and: [cashLoanQuery, rangeQueryForFields(["delivery_date", "deliveryDate", "delivery_done_at", "vehicleDeliveryDate"], range)] },
+    { sort: { delivery_date: -1, updatedAt: -1 }, limit: LIMIT * 4 },
+  );
+  const deliveryOrders = await findLean(
+    DeliveryOrder,
+    rangeQueryForFields(["do_date", "doDate", "do_bookingDate"], range),
+    { sort: { do_date: -1, doDate: -1 }, limit: LIMIT * 4 },
+  );
+  const deliveryByLoanId = new Map(deliveryOrders.map((item) => [String(firstMeaningful(item.loanId, item.do_loanId)), item]));
+  const fallbackLoanIds = [...deliveryByLoanId.keys()].filter(Boolean);
+  const fallbackCashRows = fallbackLoanIds.length
+    ? await findLean(Loan, { $and: [cashLoanQuery, { loanId: { $in: fallbackLoanIds } }] }, { sort: { updatedAt: -1 }, limit: LIMIT * 4 })
+    : [];
+  const cashRows = [...directCashRows, ...fallbackCashRows].filter((loan, index, arr) => {
+    const key = String(loan._id || loan.loanId || index);
+    return arr.findIndex((item) => String(item._id || item.loanId) === key) === index;
+  });
+  const cashRowsInRange = cashRows.filter((loan) => isWithinRange(cashDeliveryDate(loan, deliveryByLoanId.get(String(loan.loanId))), range));
+
+  let insuranceRowsForBusiness = [];
+  if (!wantsCashOnly && access.canAccess("insurance")) {
+    const candidates = await findLean(
+      InsuranceCase,
+      {
+        $or: [
+          { newPolicyNumber: { $nin: [null, ""] } },
+          { status: /issued|submitted|completed/i },
+          { renewalFollowUpStatus: /renewed/i },
+          { isRenewal: true },
+        ],
+      },
+      { sort: { updatedAt: -1 }, limit: LIMIT * 8 },
+    );
+    insuranceRowsForBusiness = candidates.filter((item) => isIssuedInsurance(item) && isWithinRange(insuranceBusinessDate(item), range));
+    pushModuleTrace(trace, "Insurance", insuranceRowsForBusiness.length, { returned: Math.min(insuranceRowsForBusiness.length, LIMIT), dateRange: range.key });
+  } else if (!wantsCashOnly) noteRestriction(access, "Insurance", "No insurance access");
+
+  pushModuleTrace(trace, "Loans", disbursedCount + cashRowsInRange.length, {
+    disbursedCount,
+    cashCarCount: cashRowsInRange.length,
+    returnedDisbursed: disbursedLoans.length,
+    returnedCash: Math.min(cashRowsInRange.length, LIMIT),
+    includesCashCars: true,
+  });
+
+  const loanDisbursedRecords = disbursedLoans.slice(0, LIMIT).map((loan) =>
+    businessLoanRow(loan, access, "Loan disbursed", disbursedLoanDate(loan), loanDisbursedAmount(loan)),
+  );
+  const cashCarRecords = cashRowsInRange.slice(0, LIMIT).map((loan) =>
+    businessLoanRow(loan, access, "Cash car delivered", cashDeliveryDate(loan, deliveryByLoanId.get(String(loan.loanId))), cashBookValue(loan, deliveryByLoanId.get(String(loan.loanId)))),
+  );
+  const insuranceRecords = insuranceRowsForBusiness.slice(0, LIMIT).map((item) => insuranceBusinessRow(item, access));
+  const insuranceRenewedCount = insuranceRowsForBusiness.filter(isRenewalInsurance).length;
+  const insuranceIssuedCount = insuranceRowsForBusiness.length - insuranceRenewedCount;
+  const loanDisbursedAmountTotal = disbursedLoans.reduce((sum, loan) => sum + loanDisbursedAmount(loan), 0);
+  const cashCarBookValue = cashRowsInRange.reduce((sum, loan) => sum + cashBookValue(loan, deliveryByLoanId.get(String(loan.loanId))), 0);
+  const insurancePremiumAmountTotal = insuranceRowsForBusiness.reduce((sum, item) => sum + insurancePremiumAmount(item), 0);
+  const totalBusinessAmount = loanDisbursedAmountTotal + cashCarBookValue + insurancePremiumAmountTotal;
+  const sections = wantsCashOnly
+    ? [{ key: "cash_cars_delivered_this_month", label: "Cash cars delivered this month", total: cashRowsInRange.length, amount: cashCarBookValue }]
+    : [
+        { key: "loan_disbursed_this_month", label: "Loan disbursed business", total: disbursedCount, amount: loanDisbursedAmountTotal },
+        { key: "cash_cars_delivered_this_month", label: "Cash car business", total: cashRowsInRange.length, amount: cashCarBookValue },
+        { key: "insurance_issued_or_renewed_this_month", label: "Insurance business", total: insuranceRowsForBusiness.length, amount: insurancePremiumAmountTotal },
+      ];
+  const recordsBySection = {
+    loan_disbursed_this_month: wantsCashOnly ? [] : loanDisbursedRecords,
+    cash_cars_delivered_this_month: cashCarRecords,
+    insurance_issued_or_renewed_this_month: wantsCashOnly ? [] : insuranceRecords,
+  };
+  const records = wantsCashOnly ? cashCarRecords : [...loanDisbursedRecords, ...cashCarRecords, ...insuranceRecords];
   return {
     widgets: [
       widget("loan_business_report", "Loan business report", {
+        total: wantsCashOnly ? cashRowsInRange.length : disbursedCount + cashRowsInRange.length + insuranceRowsForBusiness.length,
+        amount: access.canViewFinance ? totalBusinessAmount : undefined,
+        businessSubtype: wantsCashOnly ? "cash_cars" : "all_business",
+        dateRange: { key: range.key, start: range.start.toISOString(), end: range.end.toISOString() },
         summary: {
-          totalCases: count,
-          financedCases: financedRows.length,
-          cashCarCases: cashRows.length,
-          newCarCases: newCarRows.length,
-          usedCarCases: usedCarRows.length,
-          totalApprovedAmount: access.canViewFinance ? loans.reduce((sum, loan) => sum + firstNumber(loan.approval_loanAmountApproved, loan.postfile_loanAmountApproved), 0) : undefined,
-          totalDisbursedAmount: access.canViewFinance ? loans.reduce((sum, loan) => sum + firstNumber(loan.approval_loanAmountDisbursed, loan.postfile_loanAmountDisbursed, loan.disburse_amount), 0) : undefined,
-          approximate,
-          error,
+          totalBusinessAmount: access.canViewFinance ? totalBusinessAmount : undefined,
+          loanDisbursedAmount: access.canViewFinance ? loanDisbursedAmountTotal : undefined,
+          cashCarBookValue: access.canViewFinance ? cashCarBookValue : undefined,
+          insurancePremiumAmount: access.canViewFinance ? insurancePremiumAmountTotal : undefined,
+          loanDisbursedCount: wantsCashOnly ? 0 : disbursedCount,
+          cashCarCount: cashRowsInRange.length,
+          insuranceIssuedCount: wantsCashOnly ? 0 : insuranceIssuedCount,
+          insuranceRenewedCount: wantsCashOnly ? 0 : insuranceRenewedCount,
+          totalCases: wantsCashOnly ? cashRowsInRange.length : disbursedCount + cashRowsInRange.length + insuranceRowsForBusiness.length,
+          approximate: disbursedApprox,
+          error: disbursedError,
           cashCarLogic: ["isCashCase === true", "isFinanced === No", "loanType/typeOfLoan/caseType contains Cash"],
+          cashCarDateLogic: ["delivery_date", "deliveryDate", "delivery_done_at", "vehicleDeliveryDate", "deliveryOrders.do_date fallback"],
         },
-        rows,
-        records: rows,
+        sections,
+        recordsBySection,
+        moduleTables: sections.map((section) => ({
+          title: section.label,
+          total: section.total,
+          amount: section.amount,
+          rows: recordsBySection[section.key] || [],
+        })),
+        rows: records,
+        records,
       }),
     ],
     followUpSuggestions: ["Cash car business this month", "Pending approval cases", "Approved but not disbursed cases"],

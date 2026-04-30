@@ -117,6 +117,15 @@ const featureValueFor = (features = {}, featureTerm = "") => {
   return null;
 };
 
+const featureAnswerForValue = (match) => {
+  if (!match) return "Not found";
+  if (isFeatureYes(match.value)) return "Yes";
+  const text = String(match.value ?? "").trim().toLowerCase();
+  if (/^(no|n|false|not available|not applicable|na|n\/a|0|-)$/i.test(text)) return "No";
+  if (/no|not available|not applicable|absent|unavailable/.test(text)) return "No";
+  return text ? "Yes" : "Not found";
+};
+
 const compactVariantRows = (rows) =>
   rows.map((item) => ({
     ...vehicleRow(item),
@@ -359,17 +368,18 @@ export const vehicleColors = async (parsed, access, trace) => {
     rows
       .map((item) => ({
         id: safeId(item),
-        name: item.color_name,
         colorName: item.color_name,
         hex: item.hex,
         imageUrl: item.image_url,
+        image_url: item.image_url,
         model: item.model,
+        brand: item.brand,
         make: item.brand,
         lastUpdated: formatDateValue(firstMeaningful(item.last_updated, item.scrape_timestamp)),
         sourcePage: item.source_page,
       }))
-      .filter((item) => item.name),
-    (row) => `${row.make}|${row.model}|${row.name}`.toLowerCase(),
+      .filter((item) => item.colorName),
+    (row) => `${row.brand}|${row.model}|${row.colorName}|${row.imageUrl || row.hex}`.toLowerCase(),
   );
   if (!uniqueColors.length) {
     return {
@@ -386,7 +396,10 @@ export const vehicleColors = async (parsed, access, trace) => {
   return {
     widgets: [
       widget("vehicle_colors", `${model} colors`, {
-        data: { model, total: uniqueColors.length },
+        model,
+        brand: uniqueColors[0]?.brand,
+        colors: uniqueColors,
+        data: { model, brand: uniqueColors[0]?.brand, total: uniqueColors.length, colors: uniqueColors },
         rows: uniqueColors,
         records: uniqueColors,
         notices: ["Showing only colors stored in catalog fields. No colors are inferred."],
@@ -481,56 +494,81 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
       ],
     };
   }
-  const [featureDocs, priceRows] = await Promise.all([
-    findLean(VehicleFeature, vehicleModelClause(model), { limit: 120 }),
-    findLean(Vehicle, vehicleModelClause(model), { limit: 120 }),
-  ]);
+  const featureDocs = await findLean(VehicleFeature, vehicleModelClause(model), { limit: 120 });
   pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
-  pushModuleTrace(trace, "Vehicles", priceRows.length);
-  const priceByVariant = new Map(priceRows.map((item) => [normalizeVariant(item.variant), vehicleRow(item)]));
-  const rows = featureDocs
-    .map((item) => {
-      const match = featureValueFor(item.features, feature);
-      if (!match?.available) return null;
-      const price = priceByVariant.get(normalizeVariant(item.variant)) || {};
-      return {
-        id: safeId(item),
-        make: firstMeaningful(item.brand, price.make),
-        model: firstMeaningful(item.model, price.model),
-        variant: item.variant,
-        fuel: price.fuel,
-        transmission: price.transmission,
-        exShowroomPrice: price.exShowroomPrice,
-        onRoadPrice: price.onRoadPrice,
-        feature: match.key,
-        value: match.value,
-        bodyType: item.body_type_bucket,
-        seatingCapacity: item.seating_capacity,
-        lastUpdated: formatDateValue(item.updatedAt),
-      };
-    })
-    .filter(Boolean);
+  const variantNeedle = normalizeVariant(parsed.entities.variant);
+  const scopedDocs = variantNeedle
+    ? featureDocs.filter((item) => normalizeVariant(item.variant).includes(variantNeedle))
+    : featureDocs;
+  const evidenceRows = scopedDocs.map((item) => {
+    const match = featureValueFor(item.features, feature);
+    const answer = featureAnswerForValue(match);
+    return {
+      id: safeId(item),
+      brand: item.brand,
+      make: item.brand,
+      model: item.model,
+      variant: item.variant,
+      featureKey: match?.key || "",
+      featureValue: match?.value ?? "",
+      feature: match?.key || feature,
+      value: match?.value ?? "",
+      answer,
+      bodyType: item.body_type_bucket,
+      seatingCapacity: item.seating_capacity,
+      lastUpdated: formatDateValue(item.updatedAt),
+    };
+  });
+  const yesCount = evidenceRows.filter((row) => row.answer === "Yes").length;
+  const noCount = evidenceRows.filter((row) => row.answer === "No").length;
+  const notFoundCount = evidenceRows.filter((row) => row.answer === "Not found").length;
+  const answer =
+    yesCount > 0 && noCount === 0 && notFoundCount === 0
+      ? "Yes"
+      : yesCount === 0 && noCount > 0 && notFoundCount === 0
+        ? "No"
+        : yesCount > 0 && (noCount > 0 || notFoundCount > 0)
+          ? "Mixed"
+          : "Not found";
 
   return {
     widgets: [
       widget("vehicle_feature_answer", `${feature} availability in ${model}`, {
+        question: parsed.message,
+        model,
+        variantQuery: parsed.entities.variant,
+        feature,
+        answer,
+        summary: {
+          totalVariantsChecked: evidenceRows.length,
+          yesCount,
+          noCount,
+          notFoundCount,
+        },
+        evidenceRows,
         data: {
           model,
+          variantQuery: parsed.entities.variant,
           feature,
-          total: rows.length,
-          answer: rows.length ? "Yes" : "Not found",
+          total: evidenceRows.length,
+          totalVariantsChecked: evidenceRows.length,
+          yesCount,
+          noCount,
+          notFoundCount,
+          answer,
           question: parsed.message,
+          evidenceRows,
         },
-        rows,
-        records: rows,
-        columns: ["make", "model", "variant", "fuel", "transmission", "feature", "value", "exShowroomPrice", "onRoadPrice", "lastUpdated"],
-        notices: rows.length
+        rows: evidenceRows,
+        records: evidenceRows,
+        columns: ["brand", "model", "variant", "featureKey", "featureValue", "answer"],
+        notices: evidenceRows.length
           ? []
-          : [`${feature} was not marked as available in the feature records scanned for ${model}.`],
+          : [`No ${feature} feature records were found for ${[model, parsed.entities.variant].filter(Boolean).join(" ")}.`],
         actions: [
-          action("open_pricelist_prefilled", "Open pricelist", {
-            route: "/vehicles/price-list",
-            query: { model },
+          action("open_features", "Open features page", {
+            route: "/loans/features",
+            query: { brand: evidenceRows[0]?.brand || parsed.entities.make, model, variant: parsed.entities.variant },
           }),
         ],
       }),

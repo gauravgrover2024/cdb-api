@@ -229,7 +229,7 @@ export const INTENT_DEFINITIONS = [
     intent: "loan_business_report",
     priority: 73,
     patterns: [/\b(total business|business this month|total cases this month|total car business|total new car business|total used car business|total cash cars|cash car business|book value)\b/i],
-    collections: ["loans"],
+    collections: ["loans", "deliveryOrders", "insurance"],
     requiredEntities: [],
     optionalEntities: ["dateRange"],
     widgetType: "loan_business_report",
@@ -389,6 +389,26 @@ export const INTENT_DEFINITIONS = [
 
 const sortedDefinitions = [...INTENT_DEFINITIONS].sort((a, b) => a.priority - b.priority);
 
+const VEHICLE_CONTEXT_INTENTS = new Set([
+  "vehicle_colors",
+  "vehicle_features",
+  "vehicle_feature_answer",
+  "vehicle_price_breakup",
+  "vehicle_pricelist",
+  "vehicle_comparison",
+  "similar_cars",
+]);
+
+const CUSTOMER_CONTEXT_INTENTS = new Set([
+  "customer_lookup",
+  "customer_360",
+  "latest_insurance",
+  "loan_status",
+  "loan_closure_pos",
+  "vehicle_360",
+  "vehicle_registration_search",
+]);
+
 export const extractModels = (lower) => {
   const compact = lower.replace(/[^a-z0-9]/g, "");
   return [
@@ -468,9 +488,11 @@ export const routeAiAgentIntent = ({ message = "", context = {}, selectedEntity 
     filters?.last4 ||
     filters?.vehicleLast4 ||
     extractVehicleLast4(registrationNumber);
-  const hasFreshVehicleContext = Boolean(models.length || extractMake(lower) || registrationNumber || last4);
-  const model = models[0] || (!hasFreshVehicleContext ? context?.model || context?.entities?.model || filters?.model || "" : "");
-  const variant = extractVariant(text, lower) || (!hasFreshVehicleContext ? context?.variant || context?.entities?.variant || filters?.variant || "" : "");
+  const hasFreshVehicleContext = Boolean(models.length || extractMake(lower) || registrationNumber || explicitLast4 || normalizedRegistration);
+  const canUseVehicleContext = VEHICLE_CONTEXT_INTENTS.has(intent);
+  const canUseCustomerContext = CUSTOMER_CONTEXT_INTENTS.has(intent);
+  const model = models[0] || (!hasFreshVehicleContext && canUseVehicleContext ? context?.model || context?.entities?.model || filters?.model || "" : "");
+  const variant = extractVariant(text, lower) || (!hasFreshVehicleContext && canUseVehicleContext ? context?.variant || context?.entities?.variant || filters?.variant || "" : "");
 
   return {
     intent,
@@ -479,7 +501,7 @@ export const routeAiAgentIntent = ({ message = "", context = {}, selectedEntity 
     entities: compactObject({
       selectedEntityId: selectedEntity?.id || selectedEntity?._id,
       selectedEntityType: selectedEntity?.entityType,
-      customerName: extractCustomerName(text, intent, models) || (!hasFreshVehicleContext ? context?.customerName || context?.entities?.customerName || filters?.customerName || filters?.customer || "" : ""),
+      customerName: extractCustomerName(text, intent, models) || (!hasFreshVehicleContext && canUseCustomerContext ? context?.customerName || context?.entities?.customerName || filters?.customerName || filters?.customer || "" : ""),
       customerId,
       mobile,
       loanId,
