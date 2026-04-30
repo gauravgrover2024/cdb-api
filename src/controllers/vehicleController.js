@@ -3,6 +3,10 @@ import mongoose from 'mongoose';
 import Vehicle from '../models/Vehicle.js';
 import VehicleRecord from '../models/VehicleRecord.js';
 import VehicleFeature from '../models/VehicleFeature.js';
+import {
+  normalizeVehicleDatasetRow,
+  vehicleNormalizationFields,
+} from '../utils/vehicleDatasetNormalizer.js';
 
 const VEHICLE_LIST_PROJECTION = {
   make: 1,
@@ -54,6 +58,11 @@ const VEHICLE_LIST_PROJECTION = {
   color_name: 1,
   color_hex: 1,
   hex: 1,
+  brand_normalized: 1,
+  model_normalized: 1,
+  variant_normalized: 1,
+  search_text: 1,
+  colors_normalized: 1,
   createdAt: 1,
   updatedAt: 1,
 };
@@ -342,6 +351,13 @@ const normalizeVehicleRecord = (doc) => {
     other_totalOtherCharges: pricing.otherCharges,
     optional_total: pricing.optionalTotal,
     optional_totalAccessories: pricing.optionalTotal,
+    ...vehicleNormalizationFields({
+      ...raw,
+      brand: raw.brand || make,
+      make,
+      model: rawModel,
+      variant: rawVariant,
+    }),
   };
 };
 
@@ -385,7 +401,10 @@ const withCanonicalVehiclePricing = (payload = {}) => {
     next.other_totalOtherCharges = pricing.otherCharges;
   }
 
-  return next;
+  return {
+    ...next,
+    ...vehicleNormalizationFields(next),
+  };
 };
 
 const matchesExact = (actual, expected) => {
@@ -415,7 +434,13 @@ const buildMakeMatch = (make) => {
       [value, normalized, normalized.replace(/ /g, '-'), normalized.replace(/ /g, '')].filter(Boolean),
     ),
   ];
-  return { $or: [{ make: { $in: candidates } }, { brand: { $in: candidates } }] };
+  return {
+    $or: [
+      { make: { $in: candidates } },
+      { brand: { $in: candidates } },
+      { brand_normalized: new RegExp(`^${escapeRegex(value || normalized)}$`, 'i') },
+    ],
+  };
 };
 
 const buildModelCandidates = (make, model) => {
@@ -455,13 +480,30 @@ const buildVehicleQuery = ({ q, make, model, variant, city, fuel }) => {
         { brand: new RegExp(q, 'i') },
         { model: new RegExp(q, 'i') },
         { variant: new RegExp(q, 'i') },
+        { search_text: new RegExp(q, 'i') },
       ],
     });
   }
 
   if (make) mergeAndCondition(query, buildMakeMatch(make));
-  if (model) query.model = { $in: buildModelCandidates(make, model) };
-  if (variant) query.variant = { $in: buildVariantCandidates(make, model, variant) };
+  if (model) {
+    const normalizedModel = normalizeVehicleDatasetRow({ brand: make, make, model }).model_normalized;
+    mergeAndCondition(query, {
+      $or: [
+        { model: { $in: buildModelCandidates(make, model) } },
+        { model_normalized: new RegExp(`^${escapeRegex(normalizedModel || model)}$`, 'i') },
+      ],
+    });
+  }
+  if (variant) {
+    const normalizedVariant = normalizeVehicleDatasetRow({ brand: make, make, model, variant }).variant_normalized;
+    mergeAndCondition(query, {
+      $or: [
+        { variant: { $in: buildVariantCandidates(make, model, variant) } },
+        { variant_normalized: new RegExp(`^${escapeRegex(normalizedVariant || variant)}$`, 'i') },
+      ],
+    });
+  }
 
   if (city) {
     const cityCandidates = buildCityCandidates(city);

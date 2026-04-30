@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import connectDB from '../config/db.js';
 import Vehicle from '../models/Vehicle.js';
+import { vehicleNormalizationFields } from '../utils/vehicleDatasetNormalizer.js';
 
 dotenv.config();
 
@@ -22,7 +23,7 @@ function rowToVehicle(row) {
   const city = (row.City ?? row.city ?? 'Delhi').toString().trim() || 'Delhi';
   const onRoadPrice = num(row.OnRoadPrice ?? row['On-Road Price']);
 
-  return {
+  const payload = {
     make,
     model,
     variant,
@@ -53,6 +54,11 @@ function rowToVehicle(row) {
     height: row.Height ?? row.height ?? null,
     wheelbase: row.Wheelbase ?? row.wheelbase ?? null,
     launchYear: row['Launch Year'] ?? row.LaunchYear ?? row.Year ?? null,
+  };
+
+  return {
+    ...payload,
+    ...vehicleNormalizationFields(payload),
   };
 }
 

@@ -102,6 +102,56 @@ const baseTests = [
   { query: "Show features of Hyundai Verna HX8 iVT", expectedIntent: "vehicle_features", allowedWidgets: ["vehicle_features", "unavailable_notice"], forbiddenIntent: "customer_360", expectedPhysicalCollections: ["vehicle_features"] },
   { query: "Show colors", context: { model: "verna" }, expectedIntent: "vehicle_colors", expectedWidgets: ["vehicle_colors"], expectedPhysicalCollections: ["vehicle_colors"] },
   {
+    query: "ignis price",
+    expectedIntent: "vehicle_pricelist",
+    expectedWidgets: ["vehicle_pricelist"],
+    expectedPhysicalCollections: ["vehicles"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_pricelist");
+      const rows = widget?.rows || [];
+      return rows.length > 0 && rows.every((row) => /ignis/i.test(`${row.model_normalized || row.model || ""} ${row.search_text || ""}`));
+    },
+  },
+  {
+    query: "kia seltos hte",
+    expectedIntent: "vehicle_pricelist",
+    expectedWidgets: ["vehicle_pricelist"],
+    expectedPhysicalCollections: ["vehicles"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_pricelist");
+      const rows = widget?.rows || [];
+      return rows.length > 0 && rows.every((row) => /seltos/i.test(`${row.model_normalized || row.model || ""}`)) &&
+        rows.some((row) => /\bhte\b/i.test(`${row.variant_normalized || row.variant || ""} ${row.search_text || ""}`));
+    },
+  },
+  {
+    query: "seltos htk plus",
+    expectedIntent: "vehicle_pricelist",
+    allowedWidgets: ["vehicle_pricelist", "unavailable_notice"],
+    expectedPhysicalCollections: ["vehicles"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_pricelist");
+      if (widget) {
+        const rows = widget.rows || [];
+        return rows.length > 0 && rows.every((row) => /seltos/i.test(`${row.model_normalized || row.model || ""}`));
+      }
+      const unavailable = widgetOf(response, "unavailable_notice");
+      const suggestions = unavailable?.suggestions || unavailable?.data?.suggestions || unavailable?.closestVariants || unavailable?.data?.closestVariants || [];
+      return suggestions.length > 0;
+    },
+  },
+  {
+    query: "safari colors",
+    expectedIntent: "vehicle_colors",
+    expectedWidgets: ["vehicle_colors"],
+    expectedPhysicalCollections: ["vehicle_colors"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_colors");
+      const colors = widget?.colors_normalized || widget?.data?.colors_normalized || widget?.colors || widget?.rows || [];
+      return colors.length > 0 && /safari/i.test(`${widget?.model || widget?.data?.model || ""}`);
+    },
+  },
+  {
     query: "Approved but not disbursed cases",
     context: { model: "verna", variant: "SX" },
     expectedIntent: "loan_disbursal_report",

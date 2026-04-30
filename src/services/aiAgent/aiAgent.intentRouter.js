@@ -23,9 +23,11 @@ const MODEL_HINTS = [
   "fronx",
   "nexon",
   "harrier",
+  "safari",
   "seltos",
   "sonet",
   "alcazar",
+  "ignis",
   "innova",
   "fortuner",
   "thar",
@@ -35,6 +37,11 @@ const MODEL_HINTS = [
   "elevate",
   "ciaz",
   "hector",
+  "taigun",
+  "a4",
+  "a6",
+  "dbx",
+  "db12",
 ];
 
 const MAKE_HINTS = [
@@ -112,6 +119,38 @@ const STOP_NAME_WORDS = new Set([
   "pricelist",
   "colors",
   "features",
+]);
+
+const VEHICLE_QUERY_STOPWORDS = new Set([
+  "show",
+  "find",
+  "search",
+  "of",
+  "for",
+  "the",
+  "a",
+  "an",
+  "car",
+  "cars",
+  "new",
+  "price",
+  "prices",
+  "pricing",
+  "pricelist",
+  "list",
+  "rate",
+  "rates",
+  "on",
+  "road",
+  "ex",
+  "showroom",
+  "breakup",
+  "color",
+  "colors",
+  "colour",
+  "colours",
+  "available",
+  "options",
 ]);
 
 export const INTENT_DEFINITIONS = [
@@ -435,8 +474,23 @@ const extractCity = (lower, context = {}, filters = {}) => {
 
 const extractVariant = (message, lower) =>
   normalizeText(
-    message.match(/\b(sx|vx|zx|zxi|vxi|alpha|delta|sigma|sportz|asta|hx\d+|s\s?opt|sx\s?opt|top|base|ivt|dct|mt|at|cvt|turbo)\b(?:\s+\b(turbo|ivt|dct|mt|at|cvt|dt|opt)\b)*/i)?.[0] || "",
+    message.match(/\b(hte|htk|htx|gtx|sx|vx|zx|lxi|zxi|vxi|xza|xz|alpha|delta|sigma|sportz|asta|premium|comfortline|highline|hx\d+|s\s?opt|sx\s?opt|top|base|ivt|dct|mt|at|amt|cvt|turbo)\b(?:\s+\b(plus|turbo|ivt|dct|mt|at|amt|cvt|dt|opt|automatic|manual)\b)*/i)?.[0] || "",
   );
+
+const likelyVehicleCatalogueQuery = ({ lower, models, make, variant, matchedDefinition }) => {
+  if (matchedDefinition) return false;
+  if (models.length) return true;
+  const tokens = lower
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => !VEHICLE_QUERY_STOPWORDS.has(token));
+  return Boolean(
+    (make && tokens.length >= 2) ||
+    (variant && tokens.length >= 1) ||
+    tokens.some((token) => MODEL_HINTS.includes(token)),
+  );
+};
 
 const extractCustomerName = (message, intent, models) => {
   if (!["latest_insurance", "loan_status", "loan_closure_pos", "customer_lookup", "customer_360", "vehicle_360"].includes(intent)) return "";
@@ -461,13 +515,18 @@ export const routeAiAgentIntent = ({ message = "", context = {}, selectedEntity 
   let matchedDefinition = sortedDefinitions.find((definition) =>
     definition.patterns.some((pattern) => pattern.test(text)),
   );
+  const models = extractModels(lower);
+  const make = extractMake(lower);
+  const explicitVariant = extractVariant(text, lower);
   const normalizedRegistration = normalizeVehicleNumber(text).match(/[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}/)?.[0] || "";
   const explicitLast4 = extractVehicleLast4(text);
   if (!matchedDefinition && (normalizedRegistration || /^\s*\d{4}\s*$/.test(text))) {
     matchedDefinition = sortedDefinitions.find((definition) => definition.intent === "vehicle_registration_search");
   }
+  if (likelyVehicleCatalogueQuery({ lower, models, make, variant: explicitVariant, matchedDefinition })) {
+    matchedDefinition = sortedDefinitions.find((definition) => definition.intent === "vehicle_pricelist");
+  }
   const intent = matchedDefinition?.intent || "generic_search";
-  const models = extractModels(lower);
   const loanId = text.match(/\bLN-\d{4}-\d+\b/i)?.[0]?.toUpperCase() || "";
   const mobile = text.match(/\b[6-9]\d{9}\b/)?.[0] || "";
   const customerId = text.match(/\bACILLP-\d{4}-\d+\b/i)?.[0]?.toUpperCase() || "";
@@ -488,11 +547,11 @@ export const routeAiAgentIntent = ({ message = "", context = {}, selectedEntity 
     filters?.last4 ||
     filters?.vehicleLast4 ||
     extractVehicleLast4(registrationNumber);
-  const hasFreshVehicleContext = Boolean(models.length || extractMake(lower) || registrationNumber || explicitLast4 || normalizedRegistration);
+  const hasFreshVehicleContext = Boolean(models.length || make || registrationNumber || explicitLast4 || normalizedRegistration);
   const canUseVehicleContext = VEHICLE_CONTEXT_INTENTS.has(intent);
   const canUseCustomerContext = CUSTOMER_CONTEXT_INTENTS.has(intent);
   const model = models[0] || (!hasFreshVehicleContext && canUseVehicleContext ? context?.model || context?.entities?.model || filters?.model || "" : "");
-  const variant = extractVariant(text, lower) || (!hasFreshVehicleContext && canUseVehicleContext ? context?.variant || context?.entities?.variant || filters?.variant || "" : "");
+  const variant = explicitVariant || (!hasFreshVehicleContext && canUseVehicleContext ? context?.variant || context?.entities?.variant || filters?.variant || "" : "");
 
   return {
     intent,
@@ -507,7 +566,7 @@ export const routeAiAgentIntent = ({ message = "", context = {}, selectedEntity 
       loanId,
       registrationNumber,
       last4,
-      make: extractMake(lower),
+      make,
       model,
       models,
       variant,

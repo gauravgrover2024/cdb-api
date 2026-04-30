@@ -91,6 +91,11 @@ export const AI_AGENT_FIELD_MAPS = {
       "make",
       "model",
       "variant",
+      "brand_normalized",
+      "model_normalized",
+      "variant_normalized",
+      "search_text",
+      "colors_normalized",
       "city",
       "fuel",
       "fuel_type",
@@ -147,7 +152,7 @@ export const AI_AGENT_FIELD_MAPS = {
   vehicle_colors: {
     module: "Vehicle Colors",
     collectionName: "vehicle_colors",
-    searchFields: ["brand", "model", "color_name", "hex", "image_url", "source_page"],
+    searchFields: ["brand", "model", "variant", "color_name", "hex", "image_url", "source_page", "colors_normalized"],
     allowedIntents: ["vehicle_colors"],
   },
   price_history: {

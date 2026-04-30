@@ -43,6 +43,13 @@ const vehicleSchema = mongoose.Schema(
     // Other
     status: { type: String, default: "Active" },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+
+    // Normalized catalogue identity fields. Raw make/model/variant are preserved.
+    brand_normalized: { type: String },
+    model_normalized: { type: String },
+    variant_normalized: { type: String },
+    search_text: { type: String },
+    colors_normalized: { type: [String], default: undefined },
   },
   {
     timestamps: true,
@@ -78,6 +85,9 @@ vehicleSchema.index({ city: 1, is_discontinued: 1, make: 1, model: 1, on_road_pr
 vehicleSchema.index({ city: 1, is_discontinued: 1, make: 1, model: 1, onRoadPrice: 1 });
 vehicleSchema.index({ city: 1, is_discontinued: 1, make: 1, model: 1, total_on_road_with_accessories: 1 });
 vehicleSchema.index({ city: 1, is_discontinued: 1, make: 1, model: 1, ex_showroom: 1 });
+vehicleSchema.index({ brand_normalized: 1, model_normalized: 1, variant_normalized: 1 });
+vehicleSchema.index({ brand_normalized: 1, model_normalized: 1, city: 1, fuel_type: 1 });
+vehicleSchema.index({ search_text: 1 });
 
 const Vehicle = mongoose.model("Vehicle", vehicleSchema);
 export default Vehicle;
