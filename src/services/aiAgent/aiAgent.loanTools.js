@@ -35,13 +35,16 @@ import {
   getStoredPrincipalOutstanding,
 } from "./aiAgent.loanCalc.js";
 
-const loanQuery = (entities) =>
-  buildEntityQuery({
+const loanQuery = (entities) => {
+  if (entities.loanId) return { loanId: entities.loanId };
+  if (entities.mobile) return { $or: [{ primaryMobile: entities.mobile }, { customerMobile: entities.mobile }, { mobileNo: entities.mobile }] };
+  return buildEntityQuery({
     entities,
     customerFields: ["customerName", "primaryMobile", "customerMobile"],
     registrationFields: ["registrationNumber", "vehicleRegNo", "rc_redg_no"],
     vehicleFields: ["vehicleMake", "vehicleModel", "vehicleVariant"],
   });
+};
 
 export const findLoans = async (parsed, access, trace, limit = LIMIT) => {
   if (!access.canAccess("loans")) {
@@ -106,18 +109,18 @@ const chooseSelectedLoan = (records, parsed) => {
 
 const closureBreakdown = (loan, access) => {
   const disbursedAmount = firstNumber(
-    loan.postfile_disbursedLoan,
     loan.postfile_loanAmountDisbursed,
+    loan.postfile_loanAmountApproved,
     loan.approval_loanAmountDisbursed,
-    loan.disburse_amount,
+    loan.approval_loanAmountApproved,
   );
   const interestRate = firstNumber(loan.postfile_roi, loan.approval_roi, loan.roi);
   const tenureMonths = firstNumber(loan.postfile_tenureMonths, loan.approval_tenureMonths, loan.tenureMonths);
   const firstEmiDate = firstMeaningful(
     loan.postfile_firstEmiDate,
-    loan.firstEmiDate,
+    loan.disbursement_date,
     loan.disbursementDate,
-    loan.approval_disbursedDate,
+    loan.disbursedDate,
   );
   const stored = getStoredPrincipalOutstanding(loan);
   const derived =
@@ -143,11 +146,21 @@ const closureBreakdown = (loan, access) => {
   if (!interestRate) missingFields.push("interest rate");
 
   return {
+    principal: disbursedAmount,
+    roi: interestRate,
+    tenureMonths,
+    firstEmiDate: formatDateValue(firstEmiDate),
+    emi: derived?.emi || (schedule[0]?.emi ?? 0),
+    monthsElapsed: derived?.monthsElapsed || 0,
+    monthsRemaining: derived?.monthsRemaining || tenureMonths,
     approxClosure: access.canViewFinance && outstandingPrincipal ? outstandingPrincipal : undefined,
     calculationBreakdown: access.canViewFinance
       ? {
           source: stored ? "Stored Live POS/current outstanding field" : "Live POS schedule fallback",
           outstandingPrincipal,
+          emi: derived?.emi || (schedule[0]?.emi ?? 0),
+          monthsElapsed: derived?.monthsElapsed || 0,
+          monthsRemaining: derived?.monthsRemaining || tenureMonths,
           perDayInterest,
           daysAfterLastPaidEmi,
           daysInterest: perDayInterest * daysAfterLastPaidEmi,
@@ -208,7 +221,7 @@ export const loanStatusOrClosure = async (parsed, access, trace) => {
       : disabledAction("edit_record", "Edit", "You do not have edit access"),
     action("open_dashboard_with_filter", "Open Payment Records", { route: getPaymentRoute(loan) }),
   ];
-  if (parsed.intent === "loan_closure") {
+  if (parsed.intent === "loan_closure" || parsed.intent === "loan_closure_pos") {
     const closure = closureBreakdown(loan, access);
     return {
       widgets: [
@@ -216,12 +229,13 @@ export const loanStatusOrClosure = async (parsed, access, trace) => {
           data: {
             ...data,
             ...closure,
+            calculationDate: new Date().toISOString(),
             relatedPayments: access.canViewFinance ? payment : undefined,
           },
           restrictedFields: data.restrictedFields,
           notices: closure.missingFields.length
             ? [`Exact closure could not be fully calculated because ${closure.missingFields.join(", ")} is missing.`]
-            : ["Final settlement remains subject to lender confirmation."],
+            : ["Outstanding is calculated assuming all EMIs were paid on time. Actual bank foreclosure may vary."],
           actions: [
             ...actions,
             action("open_live_pos", "Open Live POS", { route: getLoanRoute(loan) }),

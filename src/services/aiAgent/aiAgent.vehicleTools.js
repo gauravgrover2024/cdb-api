@@ -11,6 +11,7 @@ import {
   firstNumber,
   firstMeaningful,
   formatDateValue,
+  normalizeCitySlug,
   pickVehiclePrice,
 } from "./aiAgent.normalizers.js";
 import { findLean, LIMIT, pushModuleTrace, safeId } from "./aiAgent.tools.js";
@@ -55,14 +56,14 @@ const makeOrBrandClause = (make) => {
 };
 
 const cityClause = (city) => {
-  const clean = String(city || "Delhi").trim();
+  const clean = normalizeCitySlug(city || "new-delhi") || "new-delhi";
   return clean ? { city: { $regex: `^${clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } } : null;
 };
 
 const vehicleModelQuery = (parsed, { includeCity = true } = {}) => {
   const model = parsed.entities.model || parsed.entities.models?.[0];
   const make = parsed.entities.make;
-  const city = parsed.entities.city || "Delhi";
+  const city = normalizeCitySlug(parsed.entities.city || "new-delhi") || "new-delhi";
   const and = [];
   if (model) and.push(vehicleModelClause(model, make));
   if (make) and.push(makeOrBrandClause(make));
@@ -84,6 +85,8 @@ const vehicleRow = (item) => ({
   insurance: firstMeaningful(item.insurance, item.insuranceAmount, item.other_insurance),
   tcs: firstMeaningful(item.tcs, item.other_tcsCharges),
   handlingOtherCharges: firstMeaningful(item.handlingCharges, item.otherCharges, item.other_totalOtherCharges),
+  optionalTotal: firstMeaningful(item.optional_total, item.optional_totalAccessories, item.optional_totalAccessoriesInRs),
+  orpWithoutAccessories: firstMeaningful(item.orp_without_accessories),
   onRoadPrice: firstMeaningful(item.onRoadPrice, item.on_road_price_cardekho, item.total_on_road_with_accessories),
   year: firstMeaningful(item.year, item.activeYear),
   status: firstMeaningful(item.status, item.is_discontinued ? "Discontinued" : "Active"),
@@ -148,7 +151,7 @@ const uniqueRows = (rows, keyFor) => {
   });
 };
 
-const variantGroupsForModels = async (models, trace, city = "Delhi") => {
+const variantGroupsForModels = async (models, trace, city = "new-delhi") => {
   const groups = await Promise.all(
     models.map(async (model) => {
       let docs = await findLean(Vehicle, { $and: [vehicleModelClause(model), cityClause(city)].filter(Boolean) }, {
@@ -231,7 +234,7 @@ export const vehiclePricelist = async (parsed, access, trace) => {
     sort: { make: 1, model: 1, variant: 1 },
     limit: 80,
   });
-  const requestedCity = parsed.entities.city || "Delhi";
+  const requestedCity = normalizeCitySlug(parsed.entities.city || "new-delhi") || "new-delhi";
   let usedCityFallback = false;
   if (!rows.length && JSON.stringify(query) !== JSON.stringify(fallbackQuery)) {
     rows = await findLean(Vehicle, fallbackQuery, {
@@ -274,7 +277,7 @@ export const vehiclePricelist = async (parsed, access, trace) => {
           ...notices,
           usedCityFallback
             ? `${requestedCity} rows were not found. Showing available catalog rows for this model instead.`
-            : "Showing Delhi by default when city is not specified.",
+            : "Showing new-delhi by default when city is not specified.",
           "Price breakup is shown only where stored in catalog fields.",
         ],
         actions: [
@@ -286,6 +289,45 @@ export const vehiclePricelist = async (parsed, access, trace) => {
       }),
     ],
     followUpSuggestions: ["Show similar cars", "Compare with City and Slavia", "Show colors", "Show top variants", "Open full pricelist"],
+  };
+};
+
+export const vehiclePriceBreakup = async (parsed, access, trace) => {
+  const result = await vehiclePricelist(parsed, access, trace);
+  const rows = result.widgets?.[0]?.rows || [];
+  if (!rows.length) return result;
+  const targetRows = rows.slice(0, LIMIT).map((row) => ({
+    id: row.id,
+    make: row.make,
+    model: row.model,
+    variant: row.variant,
+    city: row.city,
+    fuel: row.fuel,
+    exShowroomPrice: row.exShowroomPrice,
+    rto: row.rto,
+    insurance: row.insurance,
+    tcs: row.tcs,
+    handlingOtherCharges: row.handlingOtherCharges,
+    optionalTotal: row.optionalTotal,
+    orpWithoutAccessories: row.orpWithoutAccessories,
+    onRoadPrice: row.onRoadPrice,
+    status: row.status,
+    lastUpdated: row.lastUpdated,
+  }));
+  return {
+    widgets: [
+      widget("vehicle_price_breakup", "Vehicle price breakup", {
+        data: {
+          model: result.widgets?.[0]?.data?.model,
+          city: result.widgets?.[0]?.data?.city,
+          total: targetRows.length,
+          availableCities: result.widgets?.[0]?.data?.cities,
+        },
+        rows: targetRows,
+        notices: ["Only stored price fields are shown. Missing breakup values are not invented."],
+      }),
+    ],
+    followUpSuggestions: result.followUpSuggestions,
   };
 };
 
@@ -471,7 +513,7 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
 
   return {
     widgets: [
-      widget("variant_feature_availability", `${feature} availability in ${model}`, {
+      widget("vehicle_feature_answer", `${feature} availability in ${model}`, {
         data: {
           model,
           feature,

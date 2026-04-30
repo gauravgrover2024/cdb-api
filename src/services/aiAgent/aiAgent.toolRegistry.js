@@ -1,4 +1,4 @@
-import { customer360, vehicle360 } from "./aiAgent.customerTools.js";
+import { customer360, customerDataQualityReport, customerLookup, vehicle360 } from "./aiAgent.customerTools.js";
 import { latestInsurance, insuranceExpiryReport } from "./aiAgent.insuranceTools.js";
 import { loanStatusOrClosure } from "./aiAgent.loanTools.js";
 import {
@@ -6,6 +6,10 @@ import {
   deliveryOrderReport,
   loanDisbursalReport,
   loanDisbursedReport,
+  loanBusinessReport,
+  loanInsuranceMissingReport,
+  loanInvoiceMissingReport,
+  loanMissingRegistrationReport,
   loanPendingApprovalReport,
   missingRegistrationReport,
   operationsDigest,
@@ -22,6 +26,7 @@ import {
   vehicleComparison,
   vehicleFeatureAvailability,
   vehicleFeatures,
+  vehiclePriceBreakup,
   vehiclePricelist,
 } from "./aiAgent.vehicleTools.js";
 import { getFieldMapForIntent } from "./aiAgent.fieldMaps.js";
@@ -42,9 +47,14 @@ const handlerByIntent = {
   insurance_expiry_report: insuranceExpiryReport,
   loan_status: loanStatusOrClosure,
   loan_closure: loanStatusOrClosure,
+  loan_closure_pos: loanStatusOrClosure,
   loan_disbursal_report: loanDisbursalReport,
   loan_pending_approval_report: loanPendingApprovalReport,
   loan_disbursed_report: loanDisbursedReport,
+  loan_business_report: loanBusinessReport,
+  loan_missing_registration_report: loanMissingRegistrationReport,
+  loan_invoice_missing_report: loanInvoiceMissingReport,
+  loan_insurance_missing_report_basic: loanInsuranceMissingReport,
   missing_registration_report: missingRegistrationReport,
   payout_missing_report: payoutMissingReport,
   payout_entered_report: payoutEnteredReport,
@@ -52,6 +62,7 @@ const handlerByIntent = {
   delivery_order_report: deliveryOrderReport,
   vehicle_pricelist: vehiclePricelist,
   vehicle_city_change: vehiclePricelist,
+  vehicle_price_breakup: vehiclePriceBreakup,
   vehicle_colors: vehicleColors,
   vehicle_features: vehicleFeatures,
   vehicle_feature_answer: vehicleFeatureAvailability,
@@ -62,8 +73,11 @@ const handlerByIntent = {
   operations_digest: operationsDigest,
   data_quality_workbench: missingRegistrationReport,
   finance_intelligence: payoutMissingReport,
+  customer_lookup: customerLookup,
+  customer_data_quality_report: customerDataQualityReport,
   customer_360: customer360,
   vehicle_360: vehicle360,
+  vehicle_registration_search: vehicle360,
   used_car_rc_pending_report: usedCarRcPendingReport,
   inspection_report: usedCarRcPendingReport,
   background_check_report: usedCarRcPendingReport,

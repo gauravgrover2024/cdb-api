@@ -40,6 +40,12 @@ const customerQuery = (name) => {
   return clauses.length ? { $or: clauses } : {};
 };
 
+const maskValue = (value, visible = 4) => {
+  const text = normalizeText(value);
+  if (!text) return "";
+  return `${"*".repeat(Math.max(0, text.length - visible))}${text.slice(-visible)}`;
+};
+
 const customerDetails = (customer) => ({
   id: safeId(customer),
   customerId: customer.customerId,
@@ -48,7 +54,137 @@ const customerDetails = (customer) => ({
   email: customer.email,
   city: customer.city,
   status: customer.status,
+  applicantType: customer.applicantType,
+  customerType: customer.customerType,
+  kycStatus: customer.kycStatus,
+  panNumber: maskValue(customer.panNumber),
+  aadhaarNumber: maskValue(firstMeaningful(customer.aadhaarNumber, customer.aadharNumber)),
+  financeExpectation: customer.financeExpectation,
+  typeOfLoan: customer.typeOfLoan,
 });
+
+const customerLookupQuery = (entities = {}) => {
+  if (entities.customerId) return { customerId: entities.customerId };
+  if (entities.mobile) return { $or: [{ primaryMobile: entities.mobile }, { extraMobiles: entities.mobile }, { mobile: entities.mobile }] };
+  return customerQuery(entities.customerName);
+};
+
+const customerCardRow = (customer) => ({
+  id: safeId(customer),
+  customerId: customer.customerId,
+  customerName: firstMeaningful(customer.customerName, customer.name),
+  primaryMobile: firstMeaningful(customer.primaryMobile, customer.mobile),
+  email: firstMeaningful(customer.email, customer.emailAddress),
+  city: customer.city,
+  applicantType: customer.applicantType,
+  customerType: customer.customerType,
+  kycStatus: customer.kycStatus,
+  financeExpectation: customer.financeExpectation,
+  typeOfLoan: customer.typeOfLoan,
+  route: getCustomerRoute(customer),
+});
+
+export const customerLookup = async (parsed, access, trace) => {
+  if (!access.canAccess("customers")) {
+    noteRestriction(access, "Customers", "No customer access");
+    return { widgets: [unavailableWidget("Customer data unavailable", "You do not have customer access.", ["Customers"])] };
+  }
+  if (!parsed.entities.customerName && !parsed.entities.customerId && !parsed.entities.mobile) {
+    return { widgets: [unavailableWidget("Need customer detail", "Ask with a customer name, mobile number, or customer ID.", ["Customers"])] };
+  }
+  const customers = await findLean(Customer, customerLookupQuery(parsed.entities), { sort: { updatedAt: -1 }, limit: LIMIT });
+  pushModuleTrace(trace, "Customers", customers.length);
+  if (!customers.length) {
+    return { widgets: [unavailableWidget("No customer found", "No matching customer record was found.", ["Customers"])] };
+  }
+  if (customers.length === 1) {
+    return {
+      widgets: [
+        widget("customer_card", `Customer: ${firstMeaningful(customers[0].customerName, customers[0].name)}`, {
+          data: customerDetails(customers[0]),
+          rows: [customerCardRow(customers[0])],
+          actions: [action("open_record", "Open customer", { route: getCustomerRoute(customers[0]) })],
+        }),
+      ],
+      followUpSuggestions: ["Customer 360", "Loan status", "Latest insurance"],
+    };
+  }
+  return {
+    widgets: [
+      widget("records_table", "Matching customers", {
+        summary: { total: customers.length },
+        rows: customers.map(customerCardRow),
+      }),
+    ],
+    followUpSuggestions: ["Customer 360 with exact name", "Search by mobile number"],
+  };
+};
+
+const customerIssuePredicate = (lower) => {
+  if (/kyc pending/.test(lower)) return { label: "KYC pending", query: { kycStatus: /pending|incomplete|not/i } };
+  if (/missing pan/.test(lower)) return { label: "Missing PAN", query: buildMissingValueQueryForCustomers(["panNumber"]) };
+  if (/missing aadhaar|missing aadhar/.test(lower)) return { label: "Missing Aadhaar", query: buildMissingValueQueryForCustomers(["aadhaarNumber", "aadharNumber"]) };
+  if (/missing email/.test(lower)) return { label: "Missing email", query: buildMissingValueQueryForCustomers(["email", "emailAddress"]) };
+  if (/missing mobile/.test(lower)) return { label: "Missing mobile", query: buildMissingValueQueryForCustomers(["primaryMobile"]) };
+  if (/missing address/.test(lower)) return { label: "Missing address", query: buildMissingValueQueryForCustomers(["residenceAddress", "customerAddress"]) };
+  return { label: "Customer data quality", query: { $or: [buildMissingValueQueryForCustomers(["panNumber"]), buildMissingValueQueryForCustomers(["primaryMobile"]), buildMissingValueQueryForCustomers(["email", "emailAddress"])] } };
+};
+
+const buildMissingValueQueryForCustomers = (fields) => ({
+  $or: fields.flatMap((field) => [
+    { [field]: { $exists: false } },
+    { [field]: null },
+    { [field]: "" },
+    { [field]: { $regex: /^(na|n\/a|not available|not captured|pending|unknown|-|--)$/i } },
+  ]),
+});
+
+export const customerDataQualityReport = async (parsed, access, trace) => {
+  if (!access.canAccess("customers")) {
+    noteRestriction(access, "Customers", "No customer access");
+    return { widgets: [unavailableWidget("Customer data unavailable", "You do not have customer access.", ["Customers"])] };
+  }
+  if (/duplicate mobile|duplicate pan|duplicate customers?/.test(parsed.lower)) {
+    const field = /pan/.test(parsed.lower) ? "panNumber" : "primaryMobile";
+    const grouped = await Customer.aggregate([
+      { $match: { [field]: { $nin: [null, ""] } } },
+      { $group: { _id: `$${field}`, count: { $sum: 1 }, customers: { $push: { id: "$_id", customerId: "$customerId", customerName: "$customerName", primaryMobile: "$primaryMobile", city: "$city" } } } },
+      { $match: { count: { $gt: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 50 },
+    ]).option({ maxTimeMS: 3500 });
+    const rows = grouped.flatMap((group) =>
+      group.customers.map((customer) => ({
+        issue: `Duplicate ${field}`,
+        duplicateKey: field === "panNumber" ? maskValue(group._id) : group._id,
+        ...customer,
+        id: String(customer.id),
+      })),
+    );
+    pushModuleTrace(trace, "Customers", rows.length, { issue: `duplicate ${field}` });
+    return {
+      widgets: [
+        widget("customer_data_quality_report", "Customer duplicate report", {
+          summary: { total: rows.length, groups: grouped.length, issueType: `Duplicate ${field}` },
+          rows,
+        }),
+      ],
+      followUpSuggestions: ["Customers missing PAN", "Customers with KYC pending"],
+    };
+  }
+  const issue = customerIssuePredicate(parsed.lower);
+  const rows = await findLean(Customer, issue.query, { sort: { updatedAt: -1 }, limit: LIMIT });
+  pushModuleTrace(trace, "Customers", rows.length, { issue: issue.label });
+  return {
+    widgets: [
+      widget("customer_data_quality_report", issue.label, {
+        summary: { total: rows.length, issueType: issue.label },
+        rows: rows.map((customer) => ({ issue: issue.label, ...customerCardRow(customer) })),
+      }),
+    ],
+    followUpSuggestions: ["Duplicate mobile report", "Customers missing PAN", "Customers missing email"],
+  };
+};
 
 export const customer360 = async (parsed, access, trace) => {
   if (!access.canAccess("customers")) {
@@ -64,6 +200,12 @@ export const customer360 = async (parsed, access, trace) => {
     limit: 10,
   });
   pushModuleTrace(trace, "Customers", customers.length);
+  if (!customers.length) {
+    return {
+      widgets: [unavailableWidget("No customer found", `No customer matched ${name}.`, ["Customers"])],
+      followUpSuggestions: ["Find customer by mobile", "Search customer by exact name"],
+    };
+  }
   if (customers.length > 1 && !parsed.selectedEntity) {
     return {
       ambiguity: makeAmbiguity(
@@ -82,7 +224,8 @@ export const customer360 = async (parsed, access, trace) => {
       followUpSuggestions: [],
     };
   }
-  const customer = customers[0] || { customerName: name };
+  const selectedId = parsed.selectedEntity?.entityType === "customer" ? String(parsed.selectedEntity?.id || "") : "";
+  const customer = selectedId ? customers.find((item) => safeId(item) === selectedId) || customers[0] : customers[0];
   const customerName = firstMeaningful(customer.customerName, customer.name, name);
   const nameRegex = makeRegex(customerName);
   const [loans, insurance, payments, vehicles, usedCarLeads] = await Promise.all([

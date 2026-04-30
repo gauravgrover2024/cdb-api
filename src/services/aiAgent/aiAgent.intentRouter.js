@@ -88,6 +88,8 @@ const CITY_HINTS = [
 ];
 
 const STOP_NAME_WORDS = new Set([
+  "find",
+  "search",
   "latest",
   "insurance",
   "policy",
@@ -114,6 +116,16 @@ const STOP_NAME_WORDS = new Set([
 
 export const INTENT_DEFINITIONS = [
   {
+    intent: "customer_data_quality_report",
+    priority: 5,
+    patterns: [/\b(kyc pending|customers? missing|missing pan|missing aadhaar|missing aadhar|missing email|missing mobile|missing address|duplicate customers?|duplicate mobile|duplicate pan)\b/i],
+    collections: ["customers"],
+    requiredEntities: [],
+    optionalEntities: ["issueType"],
+    widgetType: "customer_data_quality_report",
+    failureMessage: "No customer data quality issues matched this request.",
+  },
+  {
     intent: "vehicle_colors",
     priority: 10,
     patterns: [/\b(colou?rs?|color options|available colou?rs?|show colou?rs?)\b/i],
@@ -130,7 +142,7 @@ export const INTENT_DEFINITIONS = [
     collections: ["vehicle_features"],
     requiredEntities: ["model", "feature"],
     optionalEntities: ["make", "variant"],
-    widgetType: "variant_feature_availability",
+    widgetType: "vehicle_feature_answer",
     failureMessage: "No stored feature value matched this question.",
   },
   {
@@ -164,6 +176,16 @@ export const INTENT_DEFINITIONS = [
     failureMessage: "Ask for similar cars with a model.",
   },
   {
+    intent: "vehicle_price_breakup",
+    priority: 55,
+    patterns: [/\b(price breakup|rto|insurance amount|tcs|accessories|on road without accessories|on-road without accessories|on road with accessories|on-road with accessories)\b/i],
+    collections: ["vehicles"],
+    requiredEntities: ["model"],
+    optionalEntities: ["make", "variant", "city"],
+    widgetType: "vehicle_price_breakup",
+    failureMessage: "Ask for price breakup with a model and optional variant.",
+  },
+  {
     intent: "vehicle_pricelist",
     priority: 60,
     patterns: [/\b(pricelist|price list|price|pricing|prices|rate list|on road|on-road|ex showroom|ex-showroom|variant price|new car price|new)\b/i],
@@ -174,6 +196,16 @@ export const INTENT_DEFINITIONS = [
     failureMessage: "Ask for a model such as Verna, City, or Slavia.",
   },
   {
+    intent: "loan_closure_pos",
+    priority: 65,
+    patterns: [/\b(pos|principal outstanding|loan closure|closure amount|approx closure|foreclosure|settlement amount|current outstanding)\b/i],
+    collections: ["loans"],
+    requiredEntities: [],
+    optionalEntities: ["customerName", "last4", "registrationNumber", "loanId"],
+    widgetType: "loan_closure_card",
+    failureMessage: "No matching loan was found for POS or closure.",
+  },
+  {
     intent: "loan_disbursal_report",
     priority: 70,
     patterns: [/\b(approved but not disbursed|approved not disbursed|pending disbursal|approval done disbursal pending|approved cases pending disbursal)\b/i],
@@ -182,6 +214,66 @@ export const INTENT_DEFINITIONS = [
     optionalEntities: ["dateRange"],
     widgetType: "records_table",
     failureMessage: "No approved but not disbursed loan cases were found.",
+  },
+  {
+    intent: "loan_pending_approval_report",
+    priority: 72,
+    patterns: [/\b(pending approval|approval pending|not approved|approval stage)\b/i],
+    collections: ["loans"],
+    requiredEntities: [],
+    optionalEntities: ["dateRange"],
+    widgetType: "records_table",
+    failureMessage: "No pending approval loan cases were found.",
+  },
+  {
+    intent: "loan_business_report",
+    priority: 73,
+    patterns: [/\b(total business|business this month|total cases this month|total car business|total new car business|total used car business|total cash cars|cash car business|book value)\b/i],
+    collections: ["loans"],
+    requiredEntities: [],
+    optionalEntities: ["dateRange"],
+    widgetType: "loan_business_report",
+    failureMessage: "No loan business records matched this request.",
+  },
+  {
+    intent: "loan_missing_registration_report",
+    priority: 74,
+    patterns: [/\b(loans? without registration|loan registration missing|rc number missing in loans?|rc missing in loans?)\b/i],
+    collections: ["loans"],
+    requiredEntities: [],
+    optionalEntities: ["dateRange"],
+    widgetType: "records_table",
+    failureMessage: "No loan records with missing registration were found.",
+  },
+  {
+    intent: "loan_invoice_missing_report",
+    priority: 75,
+    patterns: [/\b(invoice missing|invoice pending|invoice not received|invoice number missing)\b/i],
+    collections: ["loans"],
+    requiredEntities: [],
+    optionalEntities: ["dateRange"],
+    widgetType: "records_table",
+    failureMessage: "No loan records with missing invoice were found.",
+  },
+  {
+    intent: "loan_insurance_missing_report_basic",
+    priority: 76,
+    patterns: [/\b(insurance missing in loan|policy number missing in loan|insurance company missing in loan)\b/i],
+    collections: ["loans"],
+    requiredEntities: [],
+    optionalEntities: ["dateRange"],
+    widgetType: "records_table",
+    failureMessage: "No loan records with missing insurance fields were found.",
+  },
+  {
+    intent: "loan_status",
+    priority: 77,
+    patterns: [/\b(loan status|loan case|bank status|approval status|loan of|case of)\b/i],
+    collections: ["loans"],
+    requiredEntities: [],
+    optionalEntities: ["customerName", "last4", "registrationNumber", "loanId"],
+    widgetType: "loan_case_card",
+    failureMessage: "No matching loan case was found.",
   },
   {
     intent: "latest_insurance",
@@ -204,6 +296,16 @@ export const INTENT_DEFINITIONS = [
     failureMessage: "Ask Customer 360 with a customer name.",
   },
   {
+    intent: "vehicle_registration_search",
+    priority: 95,
+    patterns: [/\b(vehicle number|registration number|reg number|car ending|vehicle ending)\b/i],
+    collections: ["vehicle_master_records", "loans"],
+    requiredEntities: [],
+    optionalEntities: ["registrationNumber", "last4", "model"],
+    widgetType: "records_table",
+    failureMessage: "No matching vehicle registration records were found.",
+  },
+  {
     intent: "vehicle_360",
     priority: 100,
     patterns: [/\b(vehicle\s*360|vehicle profile|full vehicle history|full history of car|all records of vehicle)\b/i],
@@ -212,6 +314,16 @@ export const INTENT_DEFINITIONS = [
     optionalEntities: ["registrationNumber", "last4", "model"],
     widgetType: "vehicle_360",
     failureMessage: "Ask Vehicle 360 with a registration number or last 4 digits.",
+  },
+  {
+    intent: "vehicle_data_quality_report",
+    priority: 101,
+    patterns: [/\b(vehicles? without registration|missing engine number|missing chassis number|fuel type blank|hypothecation missing)\b/i],
+    collections: ["vehicle_master_records"],
+    requiredEntities: [],
+    optionalEntities: ["issueType"],
+    widgetType: "records_table",
+    failureMessage: "No customer-linked vehicle data quality records matched.",
   },
   {
     intent: "delivery_order_report",
@@ -252,6 +364,16 @@ export const INTENT_DEFINITIONS = [
     optionalEntities: ["customerName", "last4", "model"],
     widgetType: "records_table",
     failureMessage: "No used-car lead records matched this request.",
+  },
+  {
+    intent: "customer_lookup",
+    priority: 900,
+    patterns: [/\b(find customer|search customer|customer details|mobile number|customerid|customer id)\b/i, /^\s*(find|search)\s+[a-z]/i],
+    collections: ["customers"],
+    requiredEntities: [],
+    optionalEntities: ["customerName", "mobile", "customerId"],
+    widgetType: "customer_card",
+    failureMessage: "No matching customer was found.",
   },
   {
     intent: "price_history_report",
@@ -297,7 +419,7 @@ const extractVariant = (message, lower) =>
   );
 
 const extractCustomerName = (message, intent, models) => {
-  if (!["latest_insurance", "loan_status", "loan_closure", "customer_360", "vehicle_360"].includes(intent)) return "";
+  if (!["latest_insurance", "loan_status", "loan_closure_pos", "customer_lookup", "customer_360", "vehicle_360"].includes(intent)) return "";
   const text = normalizeText(message)
     .replace(/[A-Z]{2}[\s-]?\d{1,2}[\s-]?[A-Z]{1,3}[\s-]?\d{4}/gi, " ")
     .replace(/\b\d{4}\b/g, " ");
@@ -316,13 +438,21 @@ const extractCustomerName = (message, intent, models) => {
 export const routeAiAgentIntent = ({ message = "", context = {}, selectedEntity = null, filters = {} } = {}) => {
   const text = normalizeText(message);
   const lower = text.toLowerCase();
-  const matchedDefinition = sortedDefinitions.find((definition) =>
+  let matchedDefinition = sortedDefinitions.find((definition) =>
     definition.patterns.some((pattern) => pattern.test(text)),
   );
+  const normalizedRegistration = normalizeVehicleNumber(text).match(/[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}/)?.[0] || "";
+  const explicitLast4 = extractVehicleLast4(text);
+  if (!matchedDefinition && (normalizedRegistration || /^\s*\d{4}\s*$/.test(text))) {
+    matchedDefinition = sortedDefinitions.find((definition) => definition.intent === "vehicle_registration_search");
+  }
   const intent = matchedDefinition?.intent || "generic_search";
   const models = extractModels(lower);
+  const loanId = text.match(/\bLN-\d{4}-\d+\b/i)?.[0]?.toUpperCase() || "";
+  const mobile = text.match(/\b[6-9]\d{9}\b/)?.[0] || "";
+  const customerId = text.match(/\bACILLP-\d{4}-\d+\b/i)?.[0]?.toUpperCase() || "";
   const registrationNumber =
-    normalizeVehicleNumber(text).match(/[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}/)?.[0] ||
+    normalizedRegistration ||
     selectedEntity?.registrationNumber ||
     selectedEntity?.context?.registrationNumber ||
     context?.registrationNumber ||
@@ -330,7 +460,7 @@ export const routeAiAgentIntent = ({ message = "", context = {}, selectedEntity 
     filters?.registrationNumber ||
     "";
   const last4 =
-    extractVehicleLast4(text) ||
+    explicitLast4 ||
     selectedEntity?.last4 ||
     selectedEntity?.context?.last4 ||
     context?.last4 ||
@@ -350,6 +480,9 @@ export const routeAiAgentIntent = ({ message = "", context = {}, selectedEntity 
       selectedEntityId: selectedEntity?.id || selectedEntity?._id,
       selectedEntityType: selectedEntity?.entityType,
       customerName: extractCustomerName(text, intent, models) || (!hasFreshVehicleContext ? context?.customerName || context?.entities?.customerName || filters?.customerName || filters?.customer || "" : ""),
+      customerId,
+      mobile,
+      loanId,
       registrationNumber,
       last4,
       make: extractMake(lower),
