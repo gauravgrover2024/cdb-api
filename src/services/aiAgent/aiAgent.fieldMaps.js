@@ -1,0 +1,295 @@
+import mongoose from "mongoose";
+import BankDirectory from "../../models/BankDirectory.js";
+import Customer from "../../models/Customer.js";
+import DeliveryOrder from "../../models/DeliveryOrder.js";
+import InsuranceCase from "../../models/InsuranceCase.js";
+import Loan from "../../models/Loan.js";
+import Payment from "../../models/Payment.js";
+import Receivable from "../../models/Receivable.js";
+import Showroom from "../../models/Showroom.js";
+import UsedCarLead from "../../models/UsedCarLead.js";
+import Vehicle from "../../models/Vehicle.js";
+import VehicleFeature from "../../models/VehicleFeature.js";
+import VehicleRecord from "../../models/VehicleRecord.js";
+
+export const AI_AGENT_FIELD_MAPS = {
+  customers: {
+    module: "Customers",
+    collectionName: "customers",
+    model: Customer,
+    searchFields: [
+      "customerId",
+      "customerName",
+      "primaryMobile",
+      "extraMobiles",
+      "email",
+      "emailAddress",
+      "city",
+      "kycStatus",
+      "panNumber",
+      "aadhaarNumber",
+      "aadharNumber",
+    ],
+    allowedIntents: ["customer_lookup", "customer_360", "customer_data_quality"],
+  },
+  loans: {
+    module: "Loans",
+    collectionName: "loans",
+    model: Loan,
+    searchFields: [
+      "loanId",
+      "customerId",
+      "customerName",
+      "primaryMobile",
+      "loanType",
+      "typeOfLoan",
+      "isCashCase",
+      "isFinanced",
+      "vehicleMake",
+      "vehicleModel",
+      "vehicleVariant",
+      "status",
+      "currentStage",
+      "approval_status",
+      "approval_bankName",
+      "approval_loanAmountApproved",
+      "approval_loanAmountDisbursed",
+      "disbursedDate",
+      "disbursementDate",
+      "disbursement_date",
+      "approval_disbursedDate",
+      "rc_redg_no",
+      "invoice_number",
+      "insurance_policy_number",
+    ],
+    allowedIntents: ["loan_status", "loan_closure", "loan_disbursal_report", "loan_pending_approval_report", "loan_disbursed_report"],
+  },
+  vehicles: {
+    module: "Vehicle Price Catalogue",
+    collectionName: "vehicles",
+    model: Vehicle,
+    note: "Current physical DB stores scraped new-car price catalogue in vehicles.",
+    searchFields: [
+      "brand",
+      "make",
+      "model",
+      "variant",
+      "city",
+      "fuel",
+      "fuel_type",
+      "variant_short",
+      "ex_showroom",
+      "ex_showroom_price_cardekho",
+      "rto",
+      "rto_amount_cardekho",
+      "insurance",
+      "insurance_amount_cardekho",
+      "other_tcsCharges",
+      "other_totalOtherCharges",
+      "optional_total",
+      "optional_list",
+      "other_list",
+      "orp_without_accessories",
+      "total_on_road_with_accessories",
+      "on_road_price_cardekho",
+      "is_discontinued",
+      "LastSeenDate",
+    ],
+    allowedIntents: ["vehicle_pricelist", "vehicle_city_change", "vehicle_comparison", "similar_cars", "price_history_report"],
+  },
+  vehicle_master_records: {
+    module: "Customer Vehicle Records",
+    collectionName: "vehicle_master_records",
+    model: VehicleRecord,
+    note: "Current physical DB stores customer-linked/loan-synced vehicles here.",
+    searchFields: [
+      "registrationNumber",
+      "registrationNumberNormalized",
+      "registrationNumberLast4",
+      "loanId",
+      "customerId",
+      "customerName",
+      "primaryMobile",
+      "make",
+      "model",
+      "variant",
+      "engineNumber",
+      "chassisNumber",
+      "hypothecation",
+    ],
+    allowedIntents: ["vehicle_lookup", "vehicle_360", "vehicle_data_quality"],
+  },
+  vehicle_features: {
+    module: "Vehicle Features",
+    collectionName: "vehicle_features",
+    model: VehicleFeature,
+    searchFields: ["brand", "model", "variant", "features", "body_type_bucket", "brand_slug", "model_slug", "variant_slug"],
+    allowedIntents: ["vehicle_features", "vehicle_feature_answer"],
+  },
+  vehicle_colors: {
+    module: "Vehicle Colors",
+    collectionName: "vehicle_colors",
+    searchFields: ["brand", "model", "color_name", "hex", "image_url"],
+    allowedIntents: ["vehicle_colors"],
+  },
+  price_history: {
+    module: "Price History",
+    collectionName: "price_history",
+    searchFields: ["brand", "model", "variant", "city", "price", "date"],
+    allowedIntents: ["price_history_report"],
+  },
+  insurance: {
+    module: "Insurance",
+    collectionName: "insurancecases",
+    model: InsuranceCase,
+    note: "Existing Mongoose model InsuranceCase uses physical collection insurancecases.",
+    searchFields: [
+      "caseId",
+      "customerName",
+      "mobile",
+      "registrationNumber",
+      "vehicleMake",
+      "vehicleModel",
+      "vehicleVariant",
+      "status",
+      "newPolicyNumber",
+      "newInsuranceCompany",
+      "newOdExpiryDate",
+      "newTpExpiryDate",
+      "quotes",
+      "acceptedQuoteId",
+      "customerPaymentExpected",
+      "customerPaymentReceived",
+      "documents",
+    ],
+    allowedIntents: ["latest_insurance", "insurance_expiry_report"],
+  },
+  deliveryOrders: {
+    module: "Delivery Orders",
+    collectionName: "deliveryorders",
+    model: DeliveryOrder,
+    searchFields: [
+      "loanId",
+      "do_loanId",
+      "doNumber",
+      "do_refNo",
+      "customerName",
+      "primaryMobile",
+      "dealerName",
+      "vehicleMake",
+      "vehicleModel",
+      "vehicleVariant",
+      "status",
+      "do_netDOAmount",
+      "do_grossDO",
+      "do_marginMoneyPaid",
+    ],
+    allowedIntents: ["delivery_order_report"],
+  },
+  payments: {
+    module: "Payments",
+    collectionName: "payments",
+    model: Payment,
+    searchFields: [
+      "loanId",
+      "doNumber",
+      "do_refNo",
+      "customerName",
+      "vehicleMake",
+      "vehicleModel",
+      "showroomName",
+      "channelName",
+      "isVerified",
+      "isAutocreditsVerified",
+      "totalPaymentToShowroom",
+      "expectedPaymentToShowroom",
+      "outstandingCommissionFromShowroom",
+      "outstandingChannelCommission",
+    ],
+    allowedIntents: ["payment_pending_report"],
+  },
+  receivables: {
+    module: "Receivables",
+    collectionName: "receivables",
+    model: Receivable,
+    searchFields: [
+      "loanId",
+      "payoutId",
+      "customerName",
+      "payout_party_name",
+      "payout_status",
+      "payout_received_date",
+      "payment_history",
+      "payout_amount",
+      "tds_amount",
+      "net_payout_amount",
+      "payload.bill_number",
+      "payload.bill_status",
+    ],
+    allowedIntents: ["payout_missing_report", "payout_entered_report", "finance_intelligence"],
+  },
+  usedCarLeads: {
+    module: "Used Car Leads",
+    collectionName: "usedcarleads",
+    model: UsedCarLead,
+    searchFields: [
+      "internalLeadId",
+      "seller.name",
+      "seller.mobile",
+      "vehicle.make",
+      "vehicle.model",
+      "vehicle.variant",
+      "vehicle.regNo",
+      "pricing.expectedPrice",
+      "pricing.procurementScore",
+      "workflow.status",
+      "workflow.pipelineStage",
+      "scheduling.inspectionScheduledAt",
+      "inspection",
+      "backgroundCheck",
+      "negotiation",
+    ],
+    allowedIntents: ["used_car_rc_pending_report", "inspection_report", "background_check_report", "challan_report", "rc_lookup"],
+  },
+  showrooms: {
+    module: "Showrooms",
+    collectionName: "showrooms",
+    model: Showroom,
+    searchFields: ["showroomId", "name", "businessName", "mobile", "city", "brands", "brandKeys", "status", "commissionRate", "outstandingCommission"],
+    allowedIntents: ["showroom_lookup"],
+  },
+  bankdirectories: {
+    module: "Bank Directory",
+    collectionName: "bankdirectories",
+    model: BankDirectory,
+    searchFields: ["ifsc", "bankName", "branch", "city", "state", "micr", "active", "lastVerifiedAt"],
+    allowedIntents: ["bank_directory_lookup"],
+  },
+};
+
+export const getFieldMap = (key) => AI_AGENT_FIELD_MAPS[key];
+
+export const getCollectionForFieldMap = (key) => {
+  const map = getFieldMap(key);
+  if (!map) return null;
+  if (map.model) return map.model.collection;
+  return mongoose.connection.db.collection(map.collectionName);
+};
+
+export const getFieldMapForIntent = (intent) =>
+  Object.entries(AI_AGENT_FIELD_MAPS)
+    .filter(([, map]) => map.allowedIntents?.includes(intent))
+    .map(([key, map]) => ({ key, ...map }));
+
+export const FIELD_MAP_AUDIT_SUMMARY = Object.fromEntries(
+  Object.entries(AI_AGENT_FIELD_MAPS).map(([key, map]) => [
+    key,
+    {
+      module: map.module,
+      collectionName: map.collectionName,
+      fields: map.searchFields,
+      allowedIntents: map.allowedIntents,
+      note: map.note,
+    },
+  ]),
+);

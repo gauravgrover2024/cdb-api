@@ -1,5 +1,7 @@
+import mongoose from "mongoose";
 import Vehicle from "../../models/Vehicle.js";
 import VehicleFeature from "../../models/VehicleFeature.js";
+import { getFieldMap } from "./aiAgent.fieldMaps.js";
 import {
   action,
   unavailableWidget,
@@ -296,32 +298,44 @@ export const vehicleColors = async (parsed, access, trace) => {
   if (!model) {
     return { widgets: [unavailableWidget("Need a model", "Ask for colors with a model, for example: Show Verna colors.", ["Vehicles"])] };
   }
-  let rows = await findLean(Vehicle, { $and: [vehicleModelClause(model, parsed.entities.make), cityClause(parsed.entities.city || "Delhi")].filter(Boolean) }, { limit: 120 });
-  if (!rows.length) {
-    rows = await findLean(Vehicle, vehicleModelClause(model, parsed.entities.make), { limit: 120 });
-  }
-  pushModuleTrace(trace, "Vehicles", rows.length);
-  const colorFields = ["color", "colour", "vehicleColor", "availableColor", "exteriorColor", "do_colour", "do_vehicleColor"];
-  const colors = [];
-  for (const item of rows) {
-    for (const field of colorFields) {
-      const value = item[field];
-      if (!value) continue;
-      String(value)
-        .split(/[,/|]/)
-        .map((entry) => entry.trim())
-        .filter(Boolean)
-        .forEach((name) => colors.push({ name, variant: item.variant, model: item.model, make: firstMeaningful(item.make, item.brand) }));
-    }
-  }
-  const uniqueColors = uniqueRows(colors, (row) => `${row.name}`.toLowerCase());
+  const colorsMap = getFieldMap("vehicle_colors");
+  const colorCollection = mongoose.connection.db.collection(colorsMap.collectionName);
+  const modelRegex = new RegExp(model, "i");
+  const brandRegex = parsed.entities.make ? new RegExp(parsed.entities.make, "i") : null;
+  const query = {
+    model: modelRegex,
+    ...(brandRegex ? { brand: brandRegex } : {}),
+  };
+  const rows = await colorCollection
+    .find(query)
+    .project({ brand: 1, model: 1, color_name: 1, hex: 1, image_url: 1, last_updated: 1, scrape_timestamp: 1, source_page: 1 })
+    .limit(120)
+    .maxTimeMS(3500)
+    .toArray();
+  pushModuleTrace(trace, colorsMap.module, rows.length);
+  const uniqueColors = uniqueRows(
+    rows
+      .map((item) => ({
+        id: safeId(item),
+        name: item.color_name,
+        colorName: item.color_name,
+        hex: item.hex,
+        imageUrl: item.image_url,
+        model: item.model,
+        make: item.brand,
+        lastUpdated: formatDateValue(firstMeaningful(item.last_updated, item.scrape_timestamp)),
+        sourcePage: item.source_page,
+      }))
+      .filter((item) => item.name),
+    (row) => `${row.make}|${row.model}|${row.name}`.toLowerCase(),
+  );
   if (!uniqueColors.length) {
     return {
       widgets: [
         unavailableWidget(
           "Color data not found",
-          `I checked vehicle catalog records for ${model}, but no stored color fields were found.`,
-          ["Vehicles"],
+          `I checked ${colorsMap.collectionName} for ${model}, but no stored color rows matched.`,
+          [colorsMap.module],
         ),
       ],
       followUpSuggestions: ["Show pricelist", "Show features", "Compare with City and Slavia"],

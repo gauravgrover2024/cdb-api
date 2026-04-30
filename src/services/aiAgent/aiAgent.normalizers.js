@@ -30,11 +30,30 @@ export const normalizeRegistration = (value) =>
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
 
+export const normalizeVehicleNumber = normalizeRegistration;
+
 export const digitsOnly = (value) => String(value ?? "").replace(/\D/g, "");
 
 export const registrationSuffix = (value) => {
   const digits = digitsOnly(value);
   return digits.length >= 4 ? digits.slice(-4) : "";
+};
+
+export const extractVehicleLast4 = registrationSuffix;
+
+export const normalizeName = (value) =>
+  normalizeText(value)
+    .replace(/[^a-zA-Z0-9\s.'-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+export const normalizeCitySlug = (value) => {
+  const clean = normalizeText(value).toLowerCase().replace(/_/g, "-");
+  if (!clean) return "";
+  if (["new delhi", "new-delhi", "delhi"].includes(clean)) return "new-delhi";
+  if (["gurgaon", "gurugram"].includes(clean)) return "gurgaon";
+  if (clean === "bangalore") return "bengaluru";
+  return clean.replace(/\s+/g, "-");
 };
 
 export const isMissingValue = (value) => {
@@ -86,6 +105,52 @@ export const latestDate = (...values) => {
 
 export const toNumber = (value) =>
   Number(String(value ?? "").replace(/[^0-9.-]/g, "")) || 0;
+
+export const parseMoneyNumber = toNumber;
+
+export const parseDateRange = (lowerValue) => {
+  const lower = normalizeText(lowerValue).toLowerCase();
+  const now = new Date();
+  const start = new Date(now);
+  const end = new Date(now);
+
+  if (lower.includes("today")) {
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    return { key: "today", start: start.toISOString(), end: end.toISOString() };
+  }
+  if (lower.includes("yesterday")) {
+    start.setDate(start.getDate() - 1);
+    end.setDate(end.getDate() - 1);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    return { key: "yesterday", start: start.toISOString(), end: end.toISOString() };
+  }
+  if (lower.includes("this week")) {
+    const day = start.getDay() || 7;
+    start.setDate(start.getDate() - day + 1);
+    start.setHours(0, 0, 0, 0);
+    return { key: "this_week", start: start.toISOString(), end: end.toISOString() };
+  }
+  if (lower.includes("this month")) {
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+    return { key: "this_month", start: start.toISOString(), end: end.toISOString() };
+  }
+  if (lower.includes("last month")) {
+    start.setMonth(start.getMonth() - 1, 1);
+    start.setHours(0, 0, 0, 0);
+    end.setDate(0);
+    end.setHours(23, 59, 59, 999);
+    return { key: "last_month", start: start.toISOString(), end: end.toISOString() };
+  }
+  if (lower.includes("last 30 days")) {
+    start.setDate(start.getDate() - 30);
+    start.setHours(0, 0, 0, 0);
+    return { key: "last_30_days", start: start.toISOString(), end: end.toISOString() };
+  }
+  return null;
+};
 
 export const getVehicleName = (doc = {}) =>
   normalizeText(

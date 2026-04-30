@@ -1,107 +1,15 @@
-import { parseAgentMessage } from "./aiAgent.intentParser.js";
 import { buildAccessContext } from "./aiAgent.accessControl.js";
-import { assembleResponse, buildFilters } from "./aiAgent.tools.js";
-import { insuranceExpiryReport, latestInsurance } from "./aiAgent.insuranceTools.js";
-import { loanStatusOrClosure } from "./aiAgent.loanTools.js";
-import {
-  activeLoanExpiredInsuranceReport,
-  deliveryOrderReport,
-  loanDisbursalReport,
-  loanDisbursedReport,
-  loanPendingApprovalReport,
-  missingRegistrationReport,
-  operationsDigest,
-  paymentPendingReport,
-  payoutEnteredReport,
-  payoutMissingReport,
-  usedCarRcPendingReport,
-} from "./aiAgent.reportTools.js";
-import {
-  priceHistoryReport,
-  similarCars,
-  vehicleColors,
-  vehicleFeatures,
-  vehicleFeatureAvailability,
-  vehicleComparison,
-  vehiclePricelist,
-} from "./aiAgent.vehicleTools.js";
-import { customer360, vehicle360 } from "./aiAgent.customerTools.js";
-import { unavailableWidget } from "./aiAgent.renderPayloads.js";
-import { runGlobalSearch } from "../globalSearch/globalSearchService.js";
+import { routeAiAgentIntent } from "./aiAgent.intentRouter.js";
+import { parseAgentMessage } from "./aiAgent.intentParser.js";
+import { getToolForIntent } from "./aiAgent.toolRegistry.js";
+import { assembleResponse, buildFilters, unavailableWidget } from "./aiAgent.responseBuilders.js";
 
-const handlerByIntent = {
-  latest_insurance: latestInsurance,
-  insurance_expiry_report: insuranceExpiryReport,
-  loan_status: loanStatusOrClosure,
-  loan_closure: loanStatusOrClosure,
-  loan_disbursal_report: loanDisbursalReport,
-  loan_pending_approval_report: loanPendingApprovalReport,
-  loan_disbursed_report: loanDisbursedReport,
-  missing_registration_report: missingRegistrationReport,
-  payout_missing_report: payoutMissingReport,
-  payout_entered_report: payoutEnteredReport,
-  payment_pending_report: paymentPendingReport,
-  delivery_order_report: deliveryOrderReport,
-  vehicle_pricelist: vehiclePricelist,
-  vehicle_city_change: vehiclePricelist,
-  vehicle_colors: vehicleColors,
-  vehicle_features: vehicleFeatures,
-  vehicle_feature_answer: vehicleFeatureAvailability,
-  similar_cars: similarCars,
-  vehicle_comparison: vehicleComparison,
-  price_history_report: priceHistoryReport,
-  active_loan_expired_insurance_report: activeLoanExpiredInsuranceReport,
-  operations_digest: operationsDigest,
-  data_quality_workbench: missingRegistrationReport,
-  finance_intelligence: payoutMissingReport,
-  customer_360: customer360,
-  vehicle_360: vehicle360,
-  vehicle_lookup: vehicle360,
-  used_car_rc_pending_report: usedCarRcPendingReport,
-  inspection_report: usedCarRcPendingReport,
-  background_check_report: usedCarRcPendingReport,
-  rc_lookup: usedCarRcPendingReport,
-  challan_report: usedCarRcPendingReport,
-};
-
-const fallbackHandler = async (parsed, access, trace) => {
-  if (parsed.entities.registrationNumber || parsed.entities.last4) {
-    return vehicle360({ ...parsed, intent: "vehicle_360" }, access, trace);
-  }
-  const search = await runGlobalSearch({ query: parsed.message, limit: 30, perEntityLimit: 8 });
-  pushFallbackTrace(trace, search.groups);
-  if (search.total) {
-    return {
-      widgets: [
-        {
-          type: "records_table",
-          title: "Possible matches",
-          summary: { total: search.total },
-          rows: search.results.map((item) => ({
-            module: item.entityLabel,
-            title: item.title,
-            subtitle: item.subtitle,
-            status: item.status,
-            matchedFields: item.matchedFields?.join(", "),
-            route: item.route,
-            updatedAt: item.updatedAt,
-          })),
-          notices: ["I could not identify one exact structured request, so I searched available records and grouped possible matches."],
-        },
-      ],
-      followUpSuggestions: [
-        "Ask customer 360 with the customer name",
-        "Search only by vehicle last 4",
-        "Ask latest insurance",
-        "Ask loan status",
-      ],
-    };
-  }
+const fallbackHandler = async () => {
   return {
     widgets: [
       unavailableWidget(
-        "No matching records found",
-        "I could not identify the exact request or find matching records. Try a vehicle last 4, registration number, customer name, model, or a report phrase.",
+        "I need a more specific request",
+        "I could not identify an exact ACI Assist intent. Ask for a pricelist, colors, features, loan report, latest insurance, Customer 360, Vehicle 360, payout report, or delivery order.",
         ["ACI Assist"],
       ),
     ],
@@ -112,12 +20,6 @@ const fallbackHandler = async (parsed, access, trace) => {
       "Customer 360 Rahul Diwan",
     ],
   };
-};
-
-const pushFallbackTrace = (trace, groups = []) => {
-  groups.forEach((group) => {
-    trace.push({ module: group.label, matched: group.count });
-  });
 };
 
 const intentLabel = (intent) =>
@@ -132,8 +34,21 @@ const buildAssistantMessage = (parsed, result) => {
   if (primary.type === "unavailable_notice") return primary.data?.message || "That data is unavailable.";
   if (primary.summary?.total !== undefined) return `I found ${primary.summary.total} matching records.`;
   if (primary.data?.total !== undefined) return `I found ${primary.data.total} matching records.`;
+  if (Array.isArray(primary.rows)) return `I found ${primary.rows.length} matching records.`;
   return `Here is the ${intentLabel(parsed.intent)} result from live CDrive records.`;
 };
+
+const mergeParsedWithRoute = (parsed, routed, debug = false) => ({
+  ...parsed,
+  intent: routed.intent,
+  confidence: routed.confidence,
+  route: routed,
+  wantsDebug: Boolean(parsed.wantsDebug || debug),
+  entities: {
+    ...parsed.entities,
+    ...routed.entities,
+  },
+});
 
 export const chatWithAgent = async ({
   message,
@@ -141,23 +56,29 @@ export const chatWithAgent = async ({
   context = {},
   selectedEntity = null,
   filters = {},
+  debug = false,
   user,
 } = {}) => {
-  const parsed = parseAgentMessage(message, context, selectedEntity, filters);
+  const routed = routeAiAgentIntent({ message, context, selectedEntity, filters });
+  const parsedBase = parseAgentMessage(message, context, selectedEntity, filters);
+  const parsed = mergeParsedWithRoute(parsedBase, routed, debug);
   const access = buildAccessContext(user);
   const trace = [];
-  const handler = handlerByIntent[parsed.intent] || fallbackHandler;
-  const result = await handler(parsed, access, trace);
+  const tool = routed.structured ? getToolForIntent(routed.intent) : null;
+  const result = tool ? await tool.run(parsed, access, trace) : await fallbackHandler(parsed, access, trace);
+  const recordsFound = trace.reduce((sum, item) => sum + (Number(item.matched) || 0), 0);
   const queryPlan =
-    (parsed.wantsDebug || context?.debug || filters?.debug) && access.canDebug
+    (parsed.wantsDebug || context?.debug || filters?.debug || debug) && access.canDebug
       ? {
           sessionId,
           detectedIntent: parsed.intent,
           extractedEntities: parsed.entities,
+          selectedTool: tool?.intent || "generic_search",
+          collectionsUsed: tool?.collectionsUsed || routed.collections || [],
           filters,
           modulesScanned: trace.map((item) => item.module),
-          toolsUsed: [handler.name || "fallbackHandler"],
-          recordsFound: trace.reduce((sum, item) => sum + (Number(item.matched) || 0), 0),
+          toolsUsed: [tool?.intent || "generic_search"],
+          recordsFound,
           confidence: parsed.confidence,
           accessRestrictionsApplied: access.restrictions,
         }
@@ -174,6 +95,6 @@ export const chatWithAgent = async ({
     ambiguity: result.ambiguity,
     access,
     queryPlan,
-    filters: buildFilters(parsed, result.moduleName),
+    filters: buildFilters(parsed, tool?.collectionsUsed?.[0] || result.moduleName),
   });
 };
