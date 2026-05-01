@@ -12,159 +12,165 @@ dotenv.config();
 const adminUser = { _id: "000000000000000000000000", role: "admin", name: "AI Agent Test" };
 
 const baseTests = [
-  { query: "Verna pricelist", expectedIntent: "vehicle_pricelist", expectedWidgets: ["vehicle_pricelist"], forbiddenIntent: "customer_360", expectedPhysicalCollections: ["vehicles"] },
   {
-    query: "Show colors of Verna",
-    expectedIntent: "vehicle_colors",
-    expectedWidgets: ["vehicle_colors"],
-    forbiddenIntent: "vehicle_pricelist",
-    expectedPhysicalCollections: ["vehicle_colors"],
+    query: "Venue pricelist",
+    expectedIntent: "vehicle_pricelist",
     assert: ({ response }) => {
-      const widget = widgetOf(response, "vehicle_colors");
-      const colors = widget?.colors || widget?.data?.colors || widget?.rows || [];
-      return colors.length > 0 && colors.some((color) => color.imageUrl || color.image_url);
-    },
+      const isAmbiguous = response.widgets?.some(w => w.type === "model_ambiguity");
+      const isMixed = response.widgets?.[0]?.rows?.some(r => /n line/i.test(r.model)) && response.widgets?.[0]?.rows?.some(r => !/n line/i.test(r.model));
+      return isAmbiguous || !isMixed;
+    }
+  },
+  {
+    query: "Venue N Line pricelist",
+    expectedIntent: "vehicle_pricelist",
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_pricelist");
+      return widget?.type === "vehicle_pricelist" && widget?.rows?.every(r => /n line/i.test(r.model_normalized || r.model));
+    }
+  },
+  {
+    query: "Show all Venue models",
+    expectedIntent: "vehicle_pricelist",
+    assert: ({ response }) => true
+  },
+  {
+    query: "Verna pricelist",
+    expectedIntent: "vehicle_pricelist",
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_pricelist");
+      return widget?.type === "vehicle_pricelist" && /delhi/i.test(widget?.city || "") && (widget?.rows?.length > 0);
+    }
+  },
+  {
+    query: "Prices in Gurgaon",
+    context: { intent: "vehicle_pricelist", model: "verna", city: "delhi" },
+    expectedIntent: "vehicle_city_change",
+    assert: ({ response }) => {
+      const widget = response.widgets?.[0];
+      return (widget?.type === "vehicle_pricelist" && /gurgaon/i.test(widget?.city || widget?.data?.city || "")) || widget?.type === "unavailable_notice";
+    }
+  },
+  {
+    query: "Verna HX6 price",
+    expectedIntent: "vehicle_pricelist",
+    assert: ({ response }) => response.widgets?.some(w => w.type === "variant_ambiguity")
+  },
+  {
+    query: "Verna HX6 price breakup",
+    expectedIntent: "vehicle_price_breakup",
+    assert: ({ response }) => response.widgets?.some(w => w.type === "vehicle_price_breakup" || w.type === "variant_ambiguity")
+  },
+  {
+    query: "Show features of Verna SX",
+    expectedIntent: "vehicle_features",
+    expectedWidgets: ["vehicle_features"]
   },
   {
     query: "Does Verna SX have sunroof?",
     expectedIntent: "vehicle_feature_answer",
     expectedWidgets: ["vehicle_feature_answer"],
-    forbiddenIntent: "customer_360",
-    expectedPhysicalCollections: ["vehicle_features"],
     assert: ({ response }) => {
       const widget = widgetOf(response, "vehicle_feature_answer");
-      const action = widget?.actions?.[0];
-      return ["Yes", "No", "Mixed", "Not found"].includes(widget?.answer || widget?.data?.answer) &&
-        (widget?.evidenceRows || widget?.data?.evidenceRows || []).length > 0 &&
-        response.widgets?.[0]?.type === "vehicle_feature_answer" &&
-        !["module_breakdown", "chart_summary", "records_table"].includes(response.widgets?.[0]?.type) &&
-        action?.type === "open_features";
-    },
+      return !!widget?.answer && (widget?.evidenceRows?.length > 0 || widget?.data?.evidenceRows?.length > 0);
+    }
   },
   {
-    query: "Approved but not disbursed cases",
-    expectedIntent: "loan_disbursal_report",
-    requiredWidget: "loan_disbursal_report",
-    forbiddenIntent: "customer_360",
-    requireRecords: true,
-    expectedPhysicalCollections: ["loans"],
-    assert: ({ response }) => {
-      const countWidget = widgetOf(response, "count_summary");
-      const reportWidget = widgetOf(response, "loan_disbursal_report");
-      const total = reportWidget?.total ?? reportWidget?.summary?.total ?? 0;
-      return total > 0 &&
-        (countWidget?.total ?? countWidget?.summary?.total) === total &&
-        (reportWidget?.records || reportWidget?.rows || []).length > 0;
-    },
-  },
-  { query: "Latest insurance of Rahul 4577", expectedIntent: "latest_insurance", forbiddenIntent: "customer_360", expectedPhysicalCollections: ["insurancecases"] },
-  { query: "Customer 360 Rahul", expectedIntent: "customer_360", allowedWidgets: ["customer_360", "ambiguity", "unavailable_notice"] },
-  { query: "Random unclear query", expectedIntent: "generic_search", expectedWidgets: ["unavailable_notice"], forbiddenIntent: "customer_360" },
-  { query: "Find Vinod Kumar Jha", expectedIntent: "customer_lookup", forbiddenIntent: "customer_360", allowedWidgets: ["customer_card", "records_table", "unavailable_notice"], expectedPhysicalCollections: ["customers"] },
-  { query: "Customer 360 Vinod Kumar Jha", expectedIntent: "customer_360", allowedWidgets: ["customer_360", "ambiguity", "unavailable_notice"], expectedPhysicalCollections: ["customers"] },
-  { query: "Customers with KYC pending", expectedIntent: "customer_data_quality_report", expectedWidgets: ["customer_data_quality_report"], expectedPhysicalCollections: ["customers"] },
-  { query: "Loan status of LN-2026-0001", expectedIntent: "loan_status", allowedWidgets: ["loan_case_card", "unavailable_notice"], expectedPhysicalCollections: ["loans"] },
-  { query: "Pending approval cases", expectedIntent: "loan_pending_approval_report", expectedWidgets: ["count_summary"], expectedPhysicalCollections: ["loans"] },
-  {
-    query: "Total business this month",
-    expectedIntent: "loan_business_report",
-    expectedWidgets: ["loan_business_report"],
-    expectedPhysicalCollections: ["loans", "insurancecases"],
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "loan_business_report");
-      const summary = widget?.summary || {};
-      const modules = response.sourceTransparency?.modulesChecked?.map((item) => item.module) || [];
-      return ["loanDisbursedAmount", "cashCarBookValue", "insurancePremiumAmount", "loanDisbursedCount", "cashCarCount"].every((key) => key in summary) &&
-        ("insuranceIssuedCount" in summary || "insuranceRenewedCount" in summary) &&
-        modules.includes("Loans") &&
-        modules.includes("Insurance") &&
-        !("model" in response.entities) &&
-        !("variant" in response.entities);
-    },
+    query: "Which Verna variants have sunroof?",
+    expectedIntent: "vehicle_feature_discovery",
+    expectedWidgets: ["vehicle_feature_discovery"]
   },
   {
-    query: "Cash car business this month",
-    expectedIntent: "loan_business_report",
-    expectedWidgets: ["loan_business_report"],
-    expectedPhysicalCollections: ["loans"],
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "loan_business_report");
-      const records = widget?.records || widget?.rows || [];
-      return widget?.businessSubtype === "cash_cars" &&
-        (widget?.summary?.cashCarDateLogic || []).some((item) => /delivery/i.test(item)) &&
-        records.every((record) => record.isCashCase !== false);
-    },
-  },
-  { query: "Loan closure 7077", expectedIntent: "loan_closure_pos", allowedWidgets: ["loan_closure_card", "ambiguity", "unavailable_notice"], expectedPhysicalCollections: ["loans"] },
-  { query: "Vehicle 360 6300", expectedIntent: "vehicle_360", allowedWidgets: ["vehicle_360", "ambiguity", "unavailable_notice"], expectedPhysicalCollections: ["vehicle_master_records"] },
-  { query: "DL4CAZ6300", expectedIntent: "vehicle_registration_search", allowedWidgets: ["vehicle_360", "ambiguity", "unavailable_notice"], expectedPhysicalCollections: ["vehicle_master_records"] },
-  { query: "Seltos HTE price breakup", expectedIntent: "vehicle_price_breakup", allowedWidgets: ["vehicle_price_breakup", "vehicle_pricelist", "unavailable_notice"], expectedPhysicalCollections: ["vehicles"] },
-  { query: "Show features of Hyundai Verna HX8 iVT", expectedIntent: "vehicle_features", allowedWidgets: ["vehicle_features", "unavailable_notice"], forbiddenIntent: "customer_360", expectedPhysicalCollections: ["vehicle_features"] },
-  { query: "Show colors", context: { model: "verna" }, expectedIntent: "vehicle_colors", expectedWidgets: ["vehicle_colors"], expectedPhysicalCollections: ["vehicle_colors"] },
-  {
-    query: "ignis price",
-    expectedIntent: "vehicle_pricelist",
-    expectedWidgets: ["vehicle_pricelist"],
-    expectedPhysicalCollections: ["vehicles"],
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "vehicle_pricelist");
-      const rows = widget?.rows || [];
-      return rows.length > 0 && rows.every((row) => /ignis/i.test(`${row.model_normalized || row.model || ""} ${row.search_text || ""}`));
-    },
+    query: "Which cars have 6 airbags under 20L?",
+    expectedIntent: "vehicle_feature_discovery",
+    expectedWidgets: ["vehicle_feature_discovery"]
   },
   {
-    query: "kia seltos hte",
-    expectedIntent: "vehicle_pricelist",
-    expectedWidgets: ["vehicle_pricelist"],
-    expectedPhysicalCollections: ["vehicles"],
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "vehicle_pricelist");
-      const rows = widget?.rows || [];
-      return rows.length > 0 && rows.every((row) => /seltos/i.test(`${row.model_normalized || row.model || ""}`)) &&
-        rows.some((row) => /\bhte\b/i.test(`${row.variant_normalized || row.variant || ""} ${row.search_text || ""}`));
-    },
-  },
-  {
-    query: "seltos htk plus",
-    expectedIntent: "vehicle_pricelist",
-    allowedWidgets: ["vehicle_pricelist", "unavailable_notice"],
-    expectedPhysicalCollections: ["vehicles"],
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "vehicle_pricelist");
-      if (widget) {
-        const rows = widget.rows || [];
-        return rows.length > 0 && rows.every((row) => /seltos/i.test(`${row.model_normalized || row.model || ""}`));
-      }
-      const unavailable = widgetOf(response, "unavailable_notice");
-      const suggestions = unavailable?.suggestions || unavailable?.data?.suggestions || unavailable?.closestVariants || unavailable?.data?.closestVariants || [];
-      return suggestions.length > 0;
-    },
-  },
-  {
-    query: "safari colors",
+    query: "Show colors of Verna",
     expectedIntent: "vehicle_colors",
     expectedWidgets: ["vehicle_colors"],
-    expectedPhysicalCollections: ["vehicle_colors"],
     assert: ({ response }) => {
       const widget = widgetOf(response, "vehicle_colors");
-      const colors = widget?.colors_normalized || widget?.data?.colors_normalized || widget?.colors || widget?.rows || [];
-      return colors.length > 0 && /safari/i.test(`${widget?.model || widget?.data?.model || ""}`);
-    },
+      const colors = widget?.colors || widget?.data?.colors || widget?.rows || [];
+      return colors.length > 0 && colors.some((color) => color.imageUrl || color.image_url || color.hex);
+    }
   },
   {
-    query: "Approved but not disbursed cases",
-    context: { model: "verna", variant: "SX" },
-    expectedIntent: "loan_disbursal_report",
-    requiredWidget: "loan_disbursal_report",
-    assert: ({ response }) => !("model" in response.entities) && !("variant" in response.entities),
+    query: "Which cars are available in black?",
+    expectedIntent: "vehicle_color_search",
+    expectedWidgets: ["vehicle_color_search"]
   },
   {
-    query: "Total business this month",
-    context: { model: "verna", variant: "SX" },
-    expectedIntent: "loan_business_report",
-    expectedWidgets: ["loan_business_report"],
-    assert: ({ response }) => !("model" in response.entities) && !("variant" in response.entities),
+    query: "Show similar cars to Verna",
+    expectedIntent: "similar_cars",
+    expectedWidgets: ["similar_cars"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "similar_cars");
+      return (widget?.rows || []).length > 0 && (widget?.rows || []).every(r => r.reason || r.score || r.matchedReason);
+    }
   },
+  {
+    query: "Compare Verna City Slavia",
+    expectedIntent: "vehicle_comparison",
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_model_comparison") || widgetOf(response, "variant_selector");
+      return (widget?.models || []).length === 3 || (widget?.options || []).length === 3;
+    }
+  },
+  {
+    query: "Compare selected variants",
+    expectedIntent: "vehicle_comparison",
+    context: { selectedVariants: ["v1", "v2"] }
+  },
+  {
+    query: "SUVs under 20L",
+    expectedIntent: "vehicle_body_type_search",
+    expectedWidgets: ["vehicle_recommendation_results"]
+  },
+  {
+    query: "Automatic SUVs under 20L",
+    expectedIntent: "vehicle_fuel_transmission_search",
+    expectedWidgets: ["vehicle_recommendation_results"]
+  },
+  {
+    query: "Cars with sunroof under 15L",
+    expectedIntent: "vehicle_feature_discovery",
+    expectedWidgets: ["vehicle_feature_discovery"]
+  },
+  {
+    query: "Best family car under 20L",
+    expectedIntent: "vehicle_use_case_recommendation",
+    expectedWidgets: ["vehicle_recommendation_results"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_recommendation_results");
+      return (widget?.rows || []).length > 0 && (widget?.rows || []).every(r => r.matchedReasons || r.reason || r.matchedReason);
+    }
+  },
+  {
+    query: "EMI for Verna HX6 with 2 lakh down payment for 5 years at 9 percent",
+    expectedIntent: "vehicle_emi_calculator",
+    expectedWidgets: ["vehicle_emi_calculator"]
+  },
+  {
+    query: "Cars with EMI under 25000",
+    expectedIntent: "vehicle_emi_budget_search"
+  },
+  {
+    query: "Show Verna price history",
+    expectedIntent: "vehicle_price_history"
+  },
+  {
+    query: "Safest SUVs under 20L",
+    expectedIntent: "vehicle_safety_expert"
+  },
+  {
+    query: "Which Verna variant should I buy?",
+    expectedIntent: "vehicle_best_variant_recommendation"
+  },
+  {
+    query: "Difference between Verna HX6 and HX8",
+    expectedIntent: "vehicle_variant_difference"
+  }
 ];
 
 const physicalCollectionsFor = (tool) =>

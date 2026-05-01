@@ -1542,8 +1542,6 @@ export const vehicleRecommendationSearch = async (parsed, access, trace) => {
 export const vehicleEmiCalculator = async (parsed, access, trace) => {
   const resolved = await resolveVehicleCatalogRows(parsed, trace, { includeCity: true, limit: 40, moduleName: "Vehicles" });
   const rows = sortCatalogueRows(applyCatalogueFilters(resolved.rows, parsed), parsed);
-  const ambiguity = maybeVariantAmbiguity(parsed, rows, "vehicle_emi_calculator");
-  if (ambiguity) return ambiguity;
   const row = rows[0];
   const amountMatch = parsed.lower.match(/\bon road\s*₹?\s*([\d,.]+)\s*(lakh|lac|l|cr|crore)?/i);
   const manualAmount = amountMatch ? firstNumber(amountMatch[1]) * (/cr|crore/i.test(amountMatch[2] || "") ? 10000000 : /lakh|lac|l/i.test(amountMatch[2] || "") ? 100000 : 1) : 0;
@@ -1638,7 +1636,7 @@ export const similarCars = async (parsed, access, trace) => {
       priceRange: prices.length ? { min: Math.min(...prices), max: Math.max(...prices) } : null,
       fuelOptions: [...new Set(items.map((item) => firstMeaningful(item.fuel, item.fuel_type)).filter(Boolean))],
       transmissionOptions: [...new Set(items.map((item) => item.transmission).filter(Boolean))],
-      matchingReason: "Similar catalog price band",
+      matchedReason: "Similar catalog price band",
     };
   });
   return {

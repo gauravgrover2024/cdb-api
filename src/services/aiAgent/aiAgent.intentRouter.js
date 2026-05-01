@@ -184,7 +184,7 @@ const BODY_TYPE_HINTS = [
 ];
 
 const FUEL_HINTS = ["petrol", "diesel", "cng", "electric", "ev", "hybrid"];
-const TRANSMISSION_HINTS = ["automatic", "manual", "amt", "cvt", "dct", "ivt", "at", "mt"];
+const TRANSMISSION_HINTS = ["automatic", "manual", "amt", "cvt", "dct", "ivt", "mt"];
 const COLOR_HINTS = ["black", "white", "red", "blue", "grey", "gray", "silver", "green", "orange", "brown", "gold", "matte", "dual tone", "dual-tone"];
 
 export const INTENT_DEFINITIONS = [
@@ -309,6 +309,16 @@ export const INTENT_DEFINITIONS = [
     failureMessage: "Ask with at least two models to compare.",
   },
   {
+    intent: "vehicle_fuel_transmission_search",
+    priority: 41,
+    patterns: [/\b(petrol|diesel|cng|electric|ev|hybrid|automatic|manual|amt|cvt|dct|ivt)\b.*\b(cars?|suvs?|sedans?|hatchbacks?|variants?)\b/i, /\b(cars?|suvs?|sedans?|hatchbacks?)\b.*\b(petrol|diesel|cng|electric|ev|hybrid|automatic|manual|amt|cvt|dct|ivt)\b/i],
+    collections: ["vehicles", "vehicle_features"],
+    requiredEntities: [],
+    optionalEntities: ["budgetMax", "bodyType", "fuelType", "transmission"],
+    widgetType: "vehicle_recommendation_results",
+    failureMessage: "No stored cars matched this fuel or transmission.",
+  },
+  {
     intent: "vehicle_safety_expert",
     priority: 42,
     patterns: [/\b(safest|safety|6 airbags|adas|esc|tpms|isofix|hill assist|blind spot|lane keep|adaptive cruise|collision warning)\b/i],
@@ -327,16 +337,6 @@ export const INTENT_DEFINITIONS = [
     optionalEntities: ["budgetMax", "fuelType", "transmission"],
     widgetType: "vehicle_recommendation_results",
     failureMessage: "No stored cars matched this body type.",
-  },
-  {
-    intent: "vehicle_fuel_transmission_search",
-    priority: 44,
-    patterns: [/\b(petrol|diesel|cng|electric|ev|hybrid|automatic|manual|amt|cvt|dct|ivt)\b.*\b(cars?|suvs?|sedans?|hatchbacks?|variants?)\b/i, /\b(cars?|suvs?|sedans?|hatchbacks?)\b.*\b(petrol|diesel|cng|electric|ev|hybrid|automatic|manual|amt|cvt|dct|ivt)\b/i],
-    collections: ["vehicles", "vehicle_features"],
-    requiredEntities: [],
-    optionalEntities: ["budgetMax", "bodyType", "fuelType", "transmission"],
-    widgetType: "vehicle_recommendation_results",
-    failureMessage: "No stored cars matched this fuel or transmission.",
   },
   {
     intent: "similar_cars",
@@ -369,24 +369,24 @@ export const INTENT_DEFINITIONS = [
     failureMessage: "No stored performance or mileage records matched this request.",
   },
   {
-    intent: "vehicle_budget_search",
-    priority: 53,
-    patterns: [/\b(under|below|less than|upto|up to|between)\b.*\d+\s*(lakh|lac|l|cr|crore|₹|rs|inr)\b/i, /\b(best cars?|top cars?|best value|feature loaded|family cars?|city automatic|highway car|first car|upgrade from hatchback)\b/i],
-    collections: ["vehicles", "vehicle_features"],
-    requiredEntities: [],
-    optionalEntities: ["budgetMin", "budgetMax", "bodyType", "fuelType", "transmission", "feature"],
-    widgetType: "vehicle_recommendation_results",
-    failureMessage: "No vehicles matched these filters.",
-  },
-  {
     intent: "vehicle_use_case_recommendation",
-    priority: 54,
+    priority: 53,
     patterns: [/\b(best|recommend|which car)\b.*\b(family|parents|city driving|highway|daily running|low emi|safe|value|feature-loaded|feature loaded|long drives|chauffeur|rear seat|office use|first car|upgrade|premium sedan)\b/i],
     collections: ["vehicles", "vehicle_features"],
     requiredEntities: [],
     optionalEntities: ["budgetMax", "bodyType", "transmission", "useCase"],
     widgetType: "vehicle_recommendation_results",
     failureMessage: "No stored vehicles matched this use-case request.",
+  },
+  {
+    intent: "vehicle_budget_search",
+    priority: 54,
+    patterns: [/\b(under|below|less than|upto|up to|between)\b.*\d+\s*(lakh|lac|l|cr|crore|₹|rs|inr)\b/i, /\b(best cars?|top cars?|best value|feature loaded|family cars?|city automatic|highway car|first car|upgrade from hatchback)\b/i],
+    collections: ["vehicles", "vehicle_features"],
+    requiredEntities: [],
+    optionalEntities: ["budgetMin", "budgetMax", "bodyType", "fuelType", "transmission", "feature"],
+    widgetType: "vehicle_recommendation_results",
+    failureMessage: "No vehicles matched these filters.",
   },
   {
     intent: "vehicle_price_breakup",
@@ -397,6 +397,16 @@ export const INTENT_DEFINITIONS = [
     optionalEntities: ["make", "variant", "city"],
     widgetType: "vehicle_price_breakup",
     failureMessage: "Ask for price breakup with a model and optional variant.",
+  },
+  {
+    intent: "vehicle_city_change",
+    priority: 58,
+    patterns: [/\b(change city to|in city|what about in|prices? in)\b/i, /^\s*(mumbai|delhi|bangalore|pune|gurgaon|noida|new delhi)\s*$/i],
+    collections: ["vehicles"],
+    requiredEntities: ["city"],
+    optionalEntities: ["model", "make", "variant"],
+    widgetType: "vehicle_pricelist",
+    failureMessage: "No vehicles found in the requested city.",
   },
   {
     intent: "vehicle_pricelist",
@@ -635,6 +645,7 @@ const VEHICLE_CONTEXT_INTENTS = new Set([
   "vehicle_safety_expert",
   "vehicle_best_variant_recommendation",
   "vehicle_variant_difference",
+  "vehicle_city_change",
 ]);
 
 const CUSTOMER_CONTEXT_INTENTS = new Set([
