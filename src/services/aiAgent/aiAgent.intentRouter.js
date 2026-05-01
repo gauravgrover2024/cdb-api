@@ -11,9 +11,13 @@ import {
 const MODEL_HINTS = [
   "verna",
   "city",
+  "city hybrid",
   "slavia",
+  "creta n line",
   "creta",
+  "venue n line",
   "venue",
+  "i20 n line",
   "i20",
   "i10",
   "grand i10",
@@ -24,6 +28,7 @@ const MODEL_HINTS = [
   "nexon",
   "harrier",
   "safari",
+  "seltos x line",
   "seltos",
   "sonet",
   "alcazar",
@@ -60,11 +65,21 @@ const MAKE_HINTS = [
 
 const FEATURE_HINTS = [
   "sunroof",
+  "6 airbags",
   "airbag",
   "airbags",
   "adas",
+  "wireless charging",
+  "ventilated seats",
   "cruise control",
   "ventilated seats",
+  "rear camera",
+  "360 camera",
+  "alloy wheels",
+  "climate control",
+  "hill assist",
+  "isofix",
+  "lane keep assist",
   "camera",
   "engine",
   "mileage",
@@ -153,7 +168,46 @@ const VEHICLE_QUERY_STOPWORDS = new Set([
   "options",
 ]);
 
+const BODY_TYPE_HINTS = [
+  "suv",
+  "suvs",
+  "compact suv",
+  "sedan",
+  "sedans",
+  "hatchback",
+  "hatchbacks",
+  "mpv",
+  "mpvs",
+  "7 seater",
+  "7-seater",
+  "premium suv",
+];
+
+const FUEL_HINTS = ["petrol", "diesel", "cng", "electric", "ev", "hybrid"];
+const TRANSMISSION_HINTS = ["automatic", "manual", "amt", "cvt", "dct", "ivt", "at", "mt"];
+const COLOR_HINTS = ["black", "white", "red", "blue", "grey", "gray", "silver", "green", "orange", "brown", "gold", "matte", "dual tone", "dual-tone"];
+
 export const INTENT_DEFINITIONS = [
+  {
+    intent: "vehicle_price_history",
+    priority: 6,
+    patterns: [/\b(price history|price trend|price changed|price change|price updated|price updates|price hike|got cheaper|variants? added|new variants|updated today|updated this week|added this month|added in)\b/i],
+    collections: ["price_history"],
+    requiredEntities: [],
+    optionalEntities: ["make", "model", "variant", "city", "dateRange"],
+    widgetType: "vehicle_price_history",
+    failureMessage: "No stored price history records matched this request.",
+  },
+  {
+    intent: "vehicle_color_search",
+    priority: 8,
+    patterns: [/\b(which|show|find)\b.*\b(black|white|red|blue|grey|gray|silver|green|orange|brown|gold|matte|dual[- ]tone)\b.*\b(cars?|models?|suvs?|sedans?|hatchbacks?)\b/i, /\b(which|show|find)\b.*\b(cars?|models?|suvs?|sedans?|hatchbacks?)\b.*\b(black|white|red|blue|grey|gray|silver|green|orange|brown|gold|matte|dual[- ]tone)\b/i],
+    collections: ["vehicle_colors", "vehicles", "vehicle_features"],
+    requiredEntities: ["color"],
+    optionalEntities: ["make", "model", "budgetMax", "bodyType"],
+    widgetType: "vehicle_color_search",
+    failureMessage: "No stored color records matched this request.",
+  },
   {
     intent: "customer_data_quality_report",
     priority: 5,
@@ -177,12 +231,22 @@ export const INTENT_DEFINITIONS = [
   {
     intent: "vehicle_feature_answer",
     priority: 20,
-    patterns: [/\b(does|has|have|available|with)\b.*\b(sunroof|airbags?|adas|mileage|boot space|ground clearance|camera|cruise|ventilated|automatic|dct|cvt|abs|esp|tpms)\b/i],
+    patterns: [/\b(does|has|have|available|with|how many|what is|what transmission)\b.*\b(sunroof|airbags?|6 airbags|adas|wireless charging|ventilated seats|mileage|boot space|ground clearance|engine displacement|transmission|camera|cruise|alloy wheels|climate control|hill assist|isofix|lane keep assist|automatic|dct|cvt|abs|esp|tpms)\b/i],
     collections: ["vehicle_features"],
     requiredEntities: ["model", "feature"],
     optionalEntities: ["make", "variant"],
     widgetType: "vehicle_feature_answer",
     failureMessage: "No stored feature value matched this question.",
+  },
+  {
+    intent: "vehicle_feature_discovery",
+    priority: 18,
+    patterns: [/\b(which|cheapest|show|find)\b.*\b(variants?|cars?|suvs?|sedans?|hatchbacks?)\b.*\b(have|with|sunroof|airbags?|6 airbags|adas|wireless charging|ventilated seats|360 camera|tpms|hill assist|isofix|lane keep assist|cruise control|automatic climate control)\b/i, /\b(cheapest|cars?|suvs?|sedans?)\b.*\b(with|have)\b.*\b(sunroof|adas|6 airbags|wireless charging|ventilated seats)\b/i],
+    collections: ["vehicle_features", "vehicles"],
+    requiredEntities: ["feature"],
+    optionalEntities: ["model", "budgetMax", "bodyType", "city"],
+    widgetType: "vehicle_feature_discovery",
+    failureMessage: "No variants matched the requested feature in stored catalogue data.",
   },
   {
     intent: "vehicle_features",
@@ -195,6 +259,46 @@ export const INTENT_DEFINITIONS = [
     failureMessage: "No stored feature catalogue matched the requested model.",
   },
   {
+    intent: "vehicle_emi_budget_search",
+    priority: 32,
+    patterns: [/\b(emi)\b.*\b(under|below|less than|upto|up to)\b/i, /\b(lowest emi|low emi)\b/i],
+    collections: ["vehicles"],
+    requiredEntities: ["emiMax"],
+    optionalEntities: ["budgetMax", "bodyType", "fuelType", "transmission"],
+    widgetType: "vehicle_emi_recommendations",
+    failureMessage: "No vehicles matched the requested EMI budget.",
+  },
+  {
+    intent: "vehicle_emi_calculator",
+    priority: 34,
+    patterns: [/\b(emi|down payment|roi|interest|tenure|finance amount|calculate emi)\b/i],
+    collections: ["vehicles"],
+    requiredEntities: [],
+    optionalEntities: ["model", "variant", "city"],
+    widgetType: "vehicle_emi_calculator",
+    failureMessage: "Ask EMI with a vehicle, price, or amount.",
+  },
+  {
+    intent: "vehicle_variant_difference",
+    priority: 36,
+    patterns: [/\b(difference between|what extra|extra do i get|missing in|vs)\b.*\b(variant|sx|vx|zx|hte|htk|htx|hx\d+|base|top|opt|plus)\b/i],
+    collections: ["vehicles", "vehicle_features"],
+    requiredEntities: ["model"],
+    optionalEntities: ["variant"],
+    widgetType: "vehicle_variant_difference",
+    failureMessage: "Ask with two variants to compare their differences.",
+  },
+  {
+    intent: "vehicle_best_variant_recommendation",
+    priority: 38,
+    patterns: [/\b(which .*variant should i buy|best .*variant|best value .*variant|value for money|worth it|worth extra|cheapest .*with|cheapest .*automatic|best automatic variant|best family variant)\b/i],
+    collections: ["vehicles", "vehicle_features"],
+    requiredEntities: ["model"],
+    optionalEntities: ["feature", "transmission", "budgetMax"],
+    widgetType: "vehicle_variant_recommendation",
+    failureMessage: "Ask with a model to recommend a variant.",
+  },
+  {
     intent: "vehicle_comparison",
     priority: 40,
     patterns: [/\b(compare|comparison| vs | versus |difference between)\b/i],
@@ -205,6 +309,36 @@ export const INTENT_DEFINITIONS = [
     failureMessage: "Ask with at least two models to compare.",
   },
   {
+    intent: "vehicle_safety_expert",
+    priority: 42,
+    patterns: [/\b(safest|safety|6 airbags|adas|esc|tpms|isofix|hill assist|blind spot|lane keep|adaptive cruise|collision warning)\b/i],
+    collections: ["vehicle_features", "vehicles"],
+    requiredEntities: [],
+    optionalEntities: ["budgetMax", "bodyType", "model"],
+    widgetType: "vehicle_safety_results",
+    failureMessage: "No stored safety feature records matched this request.",
+  },
+  {
+    intent: "vehicle_body_type_search",
+    priority: 43,
+    patterns: [/\b(show|find)?\s*(sedans?|suvs?|hatchbacks?|mpvs?|7[- ]seater cars?|compact suvs?|premium suvs?)\b/i],
+    collections: ["vehicle_features", "vehicles"],
+    requiredEntities: ["bodyType"],
+    optionalEntities: ["budgetMax", "fuelType", "transmission"],
+    widgetType: "vehicle_recommendation_results",
+    failureMessage: "No stored cars matched this body type.",
+  },
+  {
+    intent: "vehicle_fuel_transmission_search",
+    priority: 44,
+    patterns: [/\b(petrol|diesel|cng|electric|ev|hybrid|automatic|manual|amt|cvt|dct|ivt)\b.*\b(cars?|suvs?|sedans?|hatchbacks?|variants?)\b/i, /\b(cars?|suvs?|sedans?|hatchbacks?)\b.*\b(petrol|diesel|cng|electric|ev|hybrid|automatic|manual|amt|cvt|dct|ivt)\b/i],
+    collections: ["vehicles", "vehicle_features"],
+    requiredEntities: [],
+    optionalEntities: ["budgetMax", "bodyType", "fuelType", "transmission"],
+    widgetType: "vehicle_recommendation_results",
+    failureMessage: "No stored cars matched this fuel or transmission.",
+  },
+  {
     intent: "similar_cars",
     priority: 50,
     patterns: [/\b(similar cars|alternatives|competitors|same segment|cars like|similar to)\b/i],
@@ -213,6 +347,46 @@ export const INTENT_DEFINITIONS = [
     optionalEntities: ["city"],
     widgetType: "similar_cars",
     failureMessage: "Ask for similar cars with a model.",
+  },
+  {
+    intent: "vehicle_dimension_space_search",
+    priority: 51,
+    patterns: [/\b(biggest boot|boot space|ground clearance|fuel tank|wheelbase|spacious|7 seater|7-seater|large fuel tank|longest wheelbase)\b/i],
+    collections: ["vehicle_features", "vehicles"],
+    requiredEntities: [],
+    optionalEntities: ["budgetMax", "bodyType"],
+    widgetType: "vehicle_spec_ranking",
+    failureMessage: "No stored dimension or space records matched this request.",
+  },
+  {
+    intent: "vehicle_performance_mileage_search",
+    priority: 52,
+    patterns: [/\b(highest mileage|best mileage|mileage above|good mileage|most powerful|turbo petrol|power above|bhp|ps|torque|engine)\b/i],
+    collections: ["vehicle_features", "vehicles"],
+    requiredEntities: [],
+    optionalEntities: ["budgetMax", "bodyType", "fuelType", "transmission"],
+    widgetType: "vehicle_spec_ranking",
+    failureMessage: "No stored performance or mileage records matched this request.",
+  },
+  {
+    intent: "vehicle_budget_search",
+    priority: 53,
+    patterns: [/\b(under|below|less than|upto|up to|between)\b.*\d+\s*(lakh|lac|l|cr|crore|₹|rs|inr)\b/i, /\b(best cars?|top cars?|best value|feature loaded|family cars?|city automatic|highway car|first car|upgrade from hatchback)\b/i],
+    collections: ["vehicles", "vehicle_features"],
+    requiredEntities: [],
+    optionalEntities: ["budgetMin", "budgetMax", "bodyType", "fuelType", "transmission", "feature"],
+    widgetType: "vehicle_recommendation_results",
+    failureMessage: "No vehicles matched these filters.",
+  },
+  {
+    intent: "vehicle_use_case_recommendation",
+    priority: 54,
+    patterns: [/\b(best|recommend|which car)\b.*\b(family|parents|city driving|highway|daily running|low emi|safe|value|feature-loaded|feature loaded|long drives|chauffeur|rear seat|office use|first car|upgrade|premium sedan)\b/i],
+    collections: ["vehicles", "vehicle_features"],
+    requiredEntities: [],
+    optionalEntities: ["budgetMax", "bodyType", "transmission", "useCase"],
+    widgetType: "vehicle_recommendation_results",
+    failureMessage: "No stored vehicles matched this use-case request.",
   },
   {
     intent: "vehicle_price_breakup",
@@ -227,12 +401,22 @@ export const INTENT_DEFINITIONS = [
   {
     intent: "vehicle_pricelist",
     priority: 60,
-    patterns: [/\b(pricelist|price list|price|pricing|prices|rate list|on road|on-road|ex showroom|ex-showroom|variant price|new car price|new)\b/i],
+    patterns: [/\b(pricelist|price list|price|pricing|prices|rate list|on road|on-road|ex showroom|ex-showroom|variant price|new car price|new|variants?|cheapest|top model|automatic .*variants?|manual .*variants?|petrol .*variants?|diesel .*variants?|cng .*variants?|active .*variants?|discontinued .*variants?|sorted by price|lowest on-road|lowest on road)\b/i],
     collections: ["vehicles"],
     requiredEntities: ["model"],
     optionalEntities: ["make", "variant", "city"],
     widgetType: "vehicle_pricelist",
     failureMessage: "Ask for a model such as Verna, City, or Slavia.",
+  },
+  {
+    intent: "vehicle_launch_status",
+    priority: 62,
+    patterns: [/\b(new .*cars added|latest new car additions|recently updated models|recently added variants|active new launches|new launches)\b/i],
+    collections: ["vehicles", "price_history"],
+    requiredEntities: [],
+    optionalEntities: ["make", "dateRange"],
+    widgetType: "latest_catalogue_updates",
+    failureMessage: "Launch status is not captured in current database.",
   },
   {
     intent: "loan_closure_pos",
@@ -436,6 +620,21 @@ const VEHICLE_CONTEXT_INTENTS = new Set([
   "vehicle_pricelist",
   "vehicle_comparison",
   "similar_cars",
+  "vehicle_color_search",
+  "vehicle_feature_discovery",
+  "vehicle_budget_search",
+  "vehicle_use_case_recommendation",
+  "vehicle_emi_calculator",
+  "vehicle_emi_budget_search",
+  "vehicle_price_history",
+  "vehicle_launch_status",
+  "vehicle_body_type_search",
+  "vehicle_fuel_transmission_search",
+  "vehicle_dimension_space_search",
+  "vehicle_performance_mileage_search",
+  "vehicle_safety_expert",
+  "vehicle_best_variant_recommendation",
+  "vehicle_variant_difference",
 ]);
 
 const CUSTOMER_CONTEXT_INTENTS = new Set([
@@ -452,7 +651,7 @@ export const extractModels = (lower) => {
   const compact = lower.replace(/[^a-z0-9]/g, "");
   return [
     ...new Set(
-      MODEL_HINTS.filter(
+      [...MODEL_HINTS].sort((a, b) => b.length - a.length).filter(
         (model) =>
           new RegExp(`\\b${model.replace(/\s+/g, "\\s+")}\\b`, "i").test(lower) ||
           compact.includes(model.replace(/\s+/g, "")),
@@ -466,6 +665,61 @@ const extractMake = (lower) =>
 
 const extractFeature = (lower) =>
   FEATURE_HINTS.find((feature) => new RegExp(`\\b${feature.replace(/\s+/g, "\\s+")}\\b`, "i").test(lower)) || "";
+
+const extractBodyType = (lower) =>
+  BODY_TYPE_HINTS.find((bodyType) => new RegExp(`\\b${bodyType.replace("-", "[- ]").replace(/\s+/g, "\\s+")}\\b`, "i").test(lower)) || "";
+
+const extractFuelType = (lower) =>
+  FUEL_HINTS.find((fuel) => new RegExp(`\\b${fuel}\\b`, "i").test(lower)) || "";
+
+const extractTransmission = (lower) =>
+  TRANSMISSION_HINTS.find((transmission) => new RegExp(`\\b${transmission}\\b`, "i").test(lower)) || "";
+
+const extractColor = (lower) =>
+  COLOR_HINTS.find((color) => new RegExp(`\\b${color.replace("-", "[- ]").replace(/\s+/g, "\\s+")}\\b`, "i").test(lower)) || "";
+
+const moneyToRupees = (raw = "", suffix = "") => {
+  const value = Number(String(raw).replace(/,/g, ""));
+  if (!Number.isFinite(value)) return null;
+  const unit = String(suffix || "").toLowerCase();
+  if (/cr|crore/.test(unit)) return value * 10000000;
+  if (/lakh|lac|\bl\b/.test(unit)) return value * 100000;
+  return value;
+};
+
+const extractBudget = (lower) => {
+  const between = lower.match(/\bbetween\s+([\d,.]+)\s*(lakh|lac|l|cr|crore)?\s+(?:and|to|-)\s+([\d,.]+)\s*(lakh|lac|l|cr|crore)\b/i);
+  if (between) {
+    const min = moneyToRupees(between[1], between[2] || between[4]);
+    const max = moneyToRupees(between[3], between[4]);
+    return compactObject({ budgetMin: min, budgetMax: max });
+  }
+  const under = lower.match(/\b(?:under|below|less than|upto|up to)\s*₹?\s*([\d,.]+)\s*(lakh|lac|l|cr|crore|rs|inr)?\b/i);
+  if (under) {
+    if (!under[2] && /\bemi\b/i.test(lower)) return {};
+    return compactObject({ budgetMax: moneyToRupees(under[1], under[2] || "lakh") });
+  }
+  return {};
+};
+
+const extractEmiMax = (lower) => {
+  const match = lower.match(/\bemi\s*(?:under|below|less than|upto|up to)?\s*₹?\s*([\d,.]+)\b/i) || lower.match(/\b(?:under|below|less than|upto|up to)\s*₹?\s*([\d,.]+)\s*(?:emi)\b/i);
+  return match ? Number(String(match[1]).replace(/[^\d.]/g, "")) || null : null;
+};
+
+const extractEmiInputs = (lower) => {
+  const downPaymentAmount = lower.match(/\b([\d,.]+)\s*(lakh|lac|l|cr|crore|rs|inr)?\s+down payment\b/i);
+  const downPaymentPercent = lower.match(/\b(\d+(?:\.\d+)?)\s*%\s+down\b/i);
+  const years = lower.match(/\b(\d+)\s*(?:years?|yrs?)\b/i);
+  const months = lower.match(/\b(\d+)\s*months?\b/i);
+  const roi = lower.match(/\b(?:at\s*)?(\d+(?:\.\d+)?)\s*(?:percent|%)\b/i);
+  return compactObject({
+    downPayment: downPaymentAmount ? moneyToRupees(downPaymentAmount[1], downPaymentAmount[2] || "lakh") : null,
+    downPaymentPercent: downPaymentPercent ? Number(downPaymentPercent[1]) : null,
+    tenureMonths: years ? Number(years[1]) * 12 : months ? Number(months[1]) : null,
+    annualRate: roi ? Number(roi[1]) : null,
+  });
+};
 
 const extractCity = (lower, context = {}, filters = {}) => {
   const explicit = CITY_HINTS.find((city) => new RegExp(`\\b${city.replace("-", "\\s*-?\\s*")}\\b`, "i").test(lower));
@@ -552,6 +806,9 @@ export const routeAiAgentIntent = ({ message = "", context = {}, selectedEntity 
   const canUseCustomerContext = CUSTOMER_CONTEXT_INTENTS.has(intent);
   const model = models[0] || (!hasFreshVehicleContext && canUseVehicleContext ? context?.model || context?.entities?.model || filters?.model || "" : "");
   const variant = explicitVariant || (!hasFreshVehicleContext && canUseVehicleContext ? context?.variant || context?.entities?.variant || filters?.variant || "" : "");
+  const budget = extractBudget(lower);
+  const emiMax = extractEmiMax(lower);
+  const emiInputs = extractEmiInputs(lower);
 
   return {
     intent,
@@ -572,6 +829,13 @@ export const routeAiAgentIntent = ({ message = "", context = {}, selectedEntity 
       variant,
       city: extractCity(lower, context, filters),
       feature: extractFeature(lower),
+      bodyType: extractBodyType(lower),
+      fuelType: extractFuelType(lower),
+      transmission: extractTransmission(lower),
+      color: extractColor(lower),
+      emiMax,
+      ...budget,
+      ...emiInputs,
       dateRange: parseDateRange(lower),
     }),
     collections: matchedDefinition?.collections || [],

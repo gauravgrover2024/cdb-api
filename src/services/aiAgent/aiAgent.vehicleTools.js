@@ -63,6 +63,19 @@ const vehicleModelClause = (model, make) => {
   };
 };
 
+const featureModelQuery = (model, make) => {
+  if (!model) return {};
+  const aliases = modelAliases(model);
+  const prefixMakes = make ? exactValues(make).filter((item) => item === titleCase(item)) : MAKE_ALIASES;
+  const modelValues = [
+    ...aliases.flatMap(exactValues),
+    ...prefixMakes.flatMap((brand) => aliases.flatMap((alias) => exactValues(`${brand} ${alias}`))),
+  ];
+  const and = [{ model: { $in: [...new Set(modelValues)] } }];
+  if (make) and.push({ brand: { $in: exactValues(make) } });
+  return { $and: and };
+};
+
 const makeOrBrandClause = (make) => {
   if (!make) return null;
   const values = exactValues(make);
@@ -527,6 +540,251 @@ const uniqueRows = (rows, keyFor) => {
   });
 };
 
+const FEATURE_GROUP_ORDER = [
+  "Comfort & Convenience",
+  "Interior",
+  "Exterior",
+  "Safety",
+  "Entertainment & Communication",
+  "ADAS Feature",
+  "Engine & Transmission",
+  "Fuel & Performance",
+  "Dimensions & Capacity",
+];
+
+const FEATURE_SYNONYMS = {
+  sunroof: ["sunroof", "voice assisted sunroof", "panoramic sunroof"],
+  "6 airbags": ["6 airbags", "airbags", "no. of airbags", "number of airbags"],
+  airbags: ["airbags", "no. of airbags", "number of airbags"],
+  adas: ["adas", "advanced driver assistance", "lane keep", "adaptive cruise", "blind spot"],
+  "wireless charging": ["wireless charging", "wireless charger"],
+  "ventilated seats": ["ventilated seats", "ventilated front seats"],
+  "360 camera": ["360 camera", "360 degree camera", "around view monitor"],
+  tpms: ["tpms", "tyre pressure"],
+  isofix: ["isofix"],
+  mileage: ["mileage", "arai mileage"],
+  "boot space": ["boot space", "boot"],
+  "ground clearance": ["ground clearance"],
+  transmission: ["transmission", "gearbox"],
+  engine: ["engine", "displacement"],
+};
+
+const toWords = (value = "") =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const hasPhrase = (value, phrase) => toWords(value).includes(toWords(phrase));
+
+const normalizedModelLabel = (row = {}) => firstMeaningful(row.model_normalized, row.model);
+
+const displayVariant = (row = {}) => firstMeaningful(row.variant_normalized, row.variant_short, row.variant);
+
+const cityFromParsed = (parsed) => normalizeCitySlug(parsed.entities.city || "new-delhi") || "new-delhi";
+
+const priceBasis = (row = {}) => firstNumber(row.onRoadPrice, row.exShowroomPrice, row.price);
+
+const transmissionMatches = (row = {}, transmission = "") => {
+  const needle = toWords(transmission);
+  if (!needle) return true;
+  const haystack = toWords([row.transmission, row.variant, row.variant_normalized, row.search_text].filter(Boolean).join(" "));
+  if (needle === "automatic") return /(automatic|amt|at|cvt|dct|ivt)/i.test(haystack);
+  if (needle === "manual") return /\b(manual|mt)\b/i.test(haystack);
+  return haystack.includes(needle);
+};
+
+const bodyTypeMatches = (bodyType = "", needle = "") => {
+  const target = toWords(needle).replace(/\bsuvs\b/g, "suv").replace(/\bsedans\b/g, "sedan");
+  if (!target) return true;
+  return toWords(bodyType).includes(target.replace("7 seater", "7"));
+};
+
+const catalogueFilterReason = (row, parsed, featureDoc = null) => {
+  const reasons = [];
+  const price = priceBasis(row);
+  if (parsed.entities.budgetMax && price && price <= parsed.entities.budgetMax) reasons.push("under budget");
+  if (parsed.entities.budgetMin && price && price >= parsed.entities.budgetMin) reasons.push("above minimum budget");
+  if (parsed.entities.bodyType && bodyTypeMatches(featureDoc?.body_type_bucket || row.bodyType, parsed.entities.bodyType)) reasons.push(`${parsed.entities.bodyType} body type`);
+  if (parsed.entities.fuelType && hasPhrase(row.fuel, parsed.entities.fuelType)) reasons.push(`${parsed.entities.fuelType} fuel`);
+  if (parsed.entities.transmission && transmissionMatches(row, parsed.entities.transmission)) reasons.push(`${parsed.entities.transmission} transmission`);
+  return reasons;
+};
+
+const applyCatalogueFilters = (rows = [], parsed = {}) => {
+  const lower = parsed.lower || "";
+  const wantActive = /\bactive\b/i.test(lower) && !/\bdiscontinued\b/i.test(lower);
+  const wantDiscontinued = /\bdiscontinued\b/i.test(lower);
+  return rows.filter((row) => {
+    const compact = vehicleRow(row);
+    const price = priceBasis(compact);
+    if (parsed.entities.budgetMax && price && price > parsed.entities.budgetMax) return false;
+    if (parsed.entities.budgetMin && price && price < parsed.entities.budgetMin) return false;
+    if (parsed.entities.fuelType && !hasPhrase(compact.fuel, parsed.entities.fuelType)) return false;
+    if (parsed.entities.transmission && !transmissionMatches(compact, parsed.entities.transmission)) return false;
+    if (wantActive && compact.is_discontinued) return false;
+    if (wantDiscontinued && !compact.is_discontinued) return false;
+    return true;
+  });
+};
+
+const sortCatalogueRows = (rows = [], parsed = {}) => {
+  const lower = parsed.lower || "";
+  const mapped = rows.map(vehicleRow);
+  const sortAsc = /cheapest|lowest|ascending|under|between|sorted by price/.test(lower);
+  const sortDesc = /top model|top variant|highest|premium/.test(lower);
+  return mapped.sort((a, b) => {
+    const diff = priceBasis(a) - priceBasis(b);
+    return sortDesc ? -diff : sortAsc ? diff : diff;
+  });
+};
+
+const summarizeCatalogueRows = (rows = []) => {
+  const prices = rows.map(priceBasis).filter(Boolean);
+  const exPrices = rows.map((row) => firstNumber(row.exShowroomPrice)).filter(Boolean);
+  return {
+    startingPrice: prices.length ? Math.min(...prices) : exPrices.length ? Math.min(...exPrices) : null,
+    topPrice: prices.length ? Math.max(...prices) : exPrices.length ? Math.max(...exPrices) : null,
+    variantCount: rows.length,
+    fuelOptions: [...new Set(rows.map((row) => firstMeaningful(row.fuelType, row.fuel)).filter(Boolean))],
+    transmissionOptions: [...new Set(rows.map((row) => row.transmission).filter(Boolean))],
+    activeCount: rows.filter((row) => !row.is_discontinued && !/discontinued/i.test(row.status || "")).length,
+    discontinuedCount: rows.filter((row) => row.is_discontinued || /discontinued/i.test(row.status || "")).length,
+    lastUpdated: firstMeaningful(...rows.map((row) => row.lastUpdated).filter(Boolean)),
+  };
+};
+
+const modelOptionFromRows = (rows = []) => {
+  const compact = rows.map(vehicleRow);
+  const summary = summarizeCatalogueRows(compact);
+  const first = compact[0] || {};
+  return {
+    id: [first.brand || first.make, first.model_normalized || first.model].filter(Boolean).join(":"),
+    entityType: "catalogue_model",
+    brand: first.brand || first.make,
+    model: first.model_normalized || first.model,
+    displayName: [first.brand || first.make, first.model_normalized || first.model].filter(Boolean).join(" "),
+    variantCount: summary.variantCount,
+    startingPrice: summary.startingPrice,
+    topPrice: summary.topPrice,
+    followUpQuery: `${[first.brand || first.make, first.model_normalized || first.model].filter(Boolean).join(" ")} pricelist`,
+  };
+};
+
+const findModelAmbiguity = async (parsed, trace) => {
+  const model = parsed.entities.model || parsed.entities.models?.[0];
+  if (!model || /n line|x line|hybrid|show all|include|compare/i.test(parsed.lower || "")) return null;
+  const regex = new RegExp(escapeRegex(model), "i");
+  const rows = await findLean(Vehicle, {
+    $and: [
+      { $or: [{ model_normalized: regex }, { model: regex }] },
+      cityClause(parsed.entities.city || "new-delhi"),
+    ],
+  }, { sort: { model_normalized: 1, ex_showroom: 1 }, limit: 180 });
+  const grouped = new Map();
+  for (const row of rows) {
+    const key = `${row.brand_normalized || row.brand || row.make}|${row.model_normalized || row.model}`.toLowerCase();
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(row);
+  }
+  const options = [...grouped.values()].map(modelOptionFromRows).filter((option) => option.model);
+  pushModuleTrace(trace, "Vehicles model ambiguity", options.length);
+  if (options.length <= 1) return null;
+  return {
+    widgets: [
+      widget("model_ambiguity", `Which ${titleCase(model)} do you mean?`, {
+        originalIntent: parsed.intent,
+        originalQuery: parsed.message,
+        options,
+        allowShowAll: true,
+        allowCompareAll: true,
+      }),
+    ],
+  };
+};
+
+const variantOptionFromRow = (row, originalIntent, originalQuery) => ({
+  id: row.id,
+  entityType: "catalogue_variant",
+  brand: row.brand || row.make,
+  make: row.make || row.brand,
+  model: row.model_normalized || row.model,
+  variant: displayVariant(row),
+  fuelType: row.fuel,
+  transmission: row.transmission,
+  exShowroom: row.exShowroomPrice,
+  onRoad: row.onRoadPrice,
+  city: row.city,
+  displayName: [row.model_normalized || row.model, displayVariant(row)].filter(Boolean).join(" "),
+  followUpQuery: `${[row.model_normalized || row.model, displayVariant(row)].filter(Boolean).join(" ")} ${originalIntent?.includes("breakup") ? "price breakup" : "price"}`,
+  context: { originalIntent, originalQuery, selectedVariantId: row.id },
+});
+
+const maybeVariantAmbiguity = (parsed, rows = [], originalIntent = parsed.intent) => {
+  if (!parsed.entities.variant) return null;
+  if (!/\b(price|emi|breakup|rto|insurance amount|tcs|ex showroom|on road)\b/i.test(parsed.lower || "")) return null;
+  const grouped = uniqueRows(rows, (row) => [row.model, row.variant, row.fuel, row.transmission, row.city].join("|").toLowerCase());
+  const normalizedVariants = new Set(grouped.map((row) => toWords(displayVariant(row))));
+  const exact = grouped.filter((row) => toWords(displayVariant(row)) === toWords(parsed.entities.variant));
+  if (normalizedVariants.size <= 1 || exact.length === grouped.length) return null;
+  return {
+    widgets: [
+      widget("variant_ambiguity", `Which ${parsed.entities.variant} variant do you mean?`, {
+        originalIntent,
+        originalQuery: parsed.message,
+        model: parsed.entities.model || grouped[0]?.model,
+        city: parsed.entities.city || grouped[0]?.city,
+        options: grouped.slice(0, 24).map((row) => variantOptionFromRow(row, originalIntent, parsed.message)),
+        compareAllOption: true,
+      }),
+    ],
+  };
+};
+
+const flattenFeatures = (features = {}) =>
+  Object.entries(features || {}).map(([key, value]) => ({
+    key,
+    group: key.includes("|") ? key.split("|")[0].trim() : "Features",
+    name: key.includes("|") ? key.split("|").slice(1).join("|").trim() : key,
+    value,
+  }));
+
+const featureTerms = (feature = "") => {
+  const key = toWords(feature);
+  return [...new Set([feature, key, ...(FEATURE_SYNONYMS[key] || [])].filter(Boolean))];
+};
+
+const featureValueForAny = (features = {}, feature = "") => {
+  const terms = featureTerms(feature);
+  for (const term of terms) {
+    const found = featureValueFor(features, term);
+    if (found) return found;
+  }
+  return null;
+};
+
+const numericFromFeature = (value) => firstNumber(value);
+
+const emiFor = (principal, annualRate = 9, tenureMonths = 60) => {
+  const monthly = annualRate / 12 / 100;
+  if (!principal || !tenureMonths) return 0;
+  if (!monthly) return principal / tenureMonths;
+  return principal * monthly * ((1 + monthly) ** tenureMonths) / (((1 + monthly) ** tenureMonths) - 1);
+};
+
+const featureDocKey = (doc = {}) => [doc.brand, doc.model, doc.variant].filter(Boolean).join("|").toLowerCase();
+
+const catalogFeatureKey = (row = {}) => [row.brand || row.make, row.model, row.variant].filter(Boolean).join("|").toLowerCase();
+
+const joinFeatureDocs = (docs = []) => {
+  const map = new Map();
+  for (const doc of docs) {
+    map.set(featureDocKey(doc), doc);
+    map.set([doc.brand, doc.model, normalizeVariant(doc.variant)].join("|").toLowerCase(), doc);
+  }
+  return map;
+};
+
 const variantGroupsForModels = async (models, trace, city = "new-delhi") => {
   const groups = await Promise.all(
     models.map(async (model) => {
@@ -593,12 +851,14 @@ export const vehiclePricelist = async (parsed, access, trace) => {
     noteRestriction(access, "Vehicles", "No vehicle catalog access");
     return { widgets: [unavailableWidget("Vehicle data unavailable", "You do not have catalog access.", ["Vehicles"])] };
   }
+  const modelAmbiguity = await findModelAmbiguity(parsed, trace);
+  if (modelAmbiguity) return modelAmbiguity;
   const resolved = await resolveVehicleCatalogRows(parsed, trace, {
     includeCity: true,
-    limit: 80,
+    limit: 160,
     moduleName: "Vehicles",
   });
-  const rows = resolved.rows;
+  const rows = applyCatalogueFilters(resolved.rows, parsed);
   if (!rows.length && !resolved.tokens.length && !parsed.entities.model && !parsed.entities.variant) {
     return {
       widgets: [
@@ -632,7 +892,7 @@ export const vehiclePricelist = async (parsed, access, trace) => {
   const firstRow = vehicleRow(rows[0]);
   const model = firstMeaningful(parsed.entities.model, firstRow.model_normalized, firstRow.model);
   const make = firstMeaningful(firstRow.make, firstRow.brand, firstRow.brand_normalized);
-  const featureDocs = await findLean(VehicleFeature, vehicleModelClause(model, rows[0]?.make || rows[0]?.brand), { limit: 12 });
+  const featureDocs = await findLean(VehicleFeature, featureModelQuery(model, rows[0]?.make || rows[0]?.brand), { limit: 12 });
   pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
   const wantsColors = /colors|colours/.test(parsed.lower);
   const wantsSunroof = /sunroof/.test(parsed.lower);
@@ -644,19 +904,32 @@ export const vehiclePricelist = async (parsed, access, trace) => {
   }
   const city = resolved.usedCityFallback ? firstMeaningful(rows[0]?.city, resolved.requestedCity) : resolved.requestedCity;
   const pricelistRows = uniqueRows(
-    rows.map(vehicleRow),
+    sortCatalogueRows(rows, parsed),
     (row) => [row.city, row.make, row.model, row.variant, row.fuel, row.transmission, row.exShowroomPrice, row.onRoadPrice].join("|"),
   );
+  const variantAmbiguity = maybeVariantAmbiguity(parsed, pricelistRows, "vehicle_pricelist");
+  if (variantAmbiguity) return variantAmbiguity;
+  const summary = summarizeCatalogueRows(pricelistRows);
   const cities = await Vehicle.distinct("city", vehicleModelClause(model, make)).maxTimeMS(2500);
   return {
     widgets: [
       widget("vehicle_pricelist", `${model} pricelist`, {
+        brand: make,
+        model,
+        city,
+        availableCities: cities.filter(Boolean).sort(),
+        totalVariants: pricelistRows.length,
+        summary,
         data: {
           make,
+          brand: make,
           model,
           city,
           cities: cities.filter(Boolean).sort(),
+          availableCities: cities.filter(Boolean).sort(),
           total: pricelistRows.length,
+          totalVariants: pricelistRows.length,
+          summary,
           features: featureDocs,
           records: pricelistRows,
           variants: pricelistRows,
@@ -690,32 +963,62 @@ export const vehiclePriceBreakup = async (parsed, access, trace) => {
   const result = await vehiclePricelist(parsed, access, trace);
   const rows = result.widgets?.[0]?.rows || [];
   if (!rows.length) return result;
-  const targetRows = rows.slice(0, LIMIT).map((row) => ({
+  const targetRows = rows.slice(0, LIMIT).map((row) => {
+    const components = [
+      { label: "Ex-showroom", value: row.exShowroomPrice },
+      { label: "RTO / Road Tax", value: row.rto },
+      { label: "Insurance", value: row.insurance },
+      { label: "TCS", value: firstNumber(row.tcs, row.other_tcsCharges) },
+      { label: "Handling / Other", value: row.otherItems?.reduce((sum, item) => sum + firstNumber(item.amount), 0) },
+      { label: "Optional Accessories", value: row.optionalItems?.reduce((sum, item) => sum + firstNumber(item.amount), 0) },
+    ].map((component) => ({ ...component, captured: firstNumber(component.value) > 0 }));
+    return {
     id: row.id,
     make: row.make,
+    brand: row.brand || row.make,
     model: row.model,
     variant: row.variant,
     city: row.city,
     fuel: row.fuel,
+    fuelType: row.fuel,
+    transmission: row.transmission,
     exShowroomPrice: row.exShowroomPrice,
+    exShowroom: row.exShowroomPrice,
     rto: row.rto,
     insurance: row.insurance,
     tcs: row.tcs,
     handlingOtherCharges: row.handlingOtherCharges,
-    optionalTotal: row.optionalTotal,
+    optionalTotal: row.optionalItems?.reduce((sum, item) => sum + firstNumber(item.amount), 0),
+    optionalItems: row.optionalItems,
+    otherItems: row.otherItems,
+    components,
+    totals: {
+      onRoadWithoutAccessories: row.orpWithoutAccessories,
+      onRoadWithAccessories: row.onRoadPrice,
+    },
     orpWithoutAccessories: row.orpWithoutAccessories,
     onRoadPrice: row.onRoadPrice,
     status: row.status,
     lastUpdated: row.lastUpdated,
-  }));
+  };
+  });
+  const first = targetRows[0] || {};
   return {
     widgets: [
       widget("vehicle_price_breakup", "Vehicle price breakup", {
+        brand: first.brand,
+        model: first.model,
+        variant: first.variant,
+        city: first.city,
+        components: first.components,
+        totals: first.totals,
         data: {
           model: result.widgets?.[0]?.data?.model,
           city: result.widgets?.[0]?.data?.city,
           total: targetRows.length,
           availableCities: result.widgets?.[0]?.data?.cities,
+          components: first.components,
+          totals: first.totals,
         },
         rows: targetRows,
         notices: ["Only stored price fields are shown. Missing breakup values are not invented."],
@@ -730,6 +1033,8 @@ export const vehicleColors = async (parsed, access, trace) => {
     noteRestriction(access, "Vehicles", "No vehicle catalog access");
     return { widgets: [unavailableWidget("Vehicle data unavailable", "You do not have catalog access.", ["Vehicles"])] };
   }
+  const modelAmbiguity = await findModelAmbiguity(parsed, trace);
+  if (modelAmbiguity) return modelAmbiguity;
   const resolved = await resolveVehicleCatalogRows(parsed, trace, {
     includeCity: false,
     limit: 120,
@@ -869,7 +1174,7 @@ export const vehicleFeatures = async (parsed, access, trace) => {
       ? await findLean(VehicleFeature, { $or: clauses }, { sort: { model: 1, variant: 1 }, limit: 240 })
       : [];
   } else {
-    const query = vehicleModelClause(model, parsed.entities.make);
+    const query = featureModelQuery(model, parsed.entities.make);
     docs = await findLean(VehicleFeature, query, { sort: { variant: 1 }, limit: 120 });
   }
   pushModuleTrace(trace, "Vehicle Features", docs.length);
@@ -933,7 +1238,7 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
       ],
     };
   }
-  const featureDocs = await findLean(VehicleFeature, vehicleModelClause(model), { limit: 120 });
+  const featureDocs = await findLean(VehicleFeature, featureModelQuery(model, parsed.entities.make), { limit: 120 });
   pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
   const variantNeedle = normalizeVariant(parsed.entities.variant);
   const scopedDocs = variantNeedle
@@ -1013,6 +1318,285 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
       }),
     ],
     followUpSuggestions: ["Show pricelist", "Compare variants", "Show similar cars"],
+  };
+};
+
+export const vehicleFeatureDiscovery = async (parsed, access, trace) => {
+  if (!access.canAccess("vehicles")) {
+    noteRestriction(access, "Vehicles", "No vehicle catalog access");
+    return { widgets: [unavailableWidget("Vehicle data unavailable", "You do not have catalog access.", ["Vehicles"])] };
+  }
+  const feature = parsed.entities.feature || (/6\s*airbags/i.test(parsed.lower) ? "6 airbags" : "feature");
+  const featureQuery = parsed.entities.model ? featureModelQuery(parsed.entities.model, parsed.entities.make) : {};
+  const docs = await findLean(VehicleFeature, featureQuery, { sort: { model: 1, variant: 1 }, limit: 500 });
+  pushModuleTrace(trace, "Vehicle Features", docs.length, { feature });
+  const catalogRows = await findLean(Vehicle, { $and: [cityClause(parsed.entities.city || "new-delhi")].filter(Boolean) }, { sort: { ex_showroom: 1 }, limit: 900 });
+  pushModuleTrace(trace, "Vehicles", catalogRows.length, { city: cityFromParsed(parsed) });
+  const catalogByVariant = new Map(catalogRows.map((row) => [catalogFeatureKey(vehicleRow(row)), vehicleRow(row)]));
+  const rows = [];
+  for (const doc of docs) {
+    const match = featureValueForAny(doc.features, feature);
+    const answer = featureAnswerForValue(match);
+    const compact = catalogByVariant.get(featureDocKey(doc)) || catalogByVariant.get([doc.brand, doc.model, normalizeVariant(doc.variant)].join("|").toLowerCase()) || {};
+    const price = priceBasis(compact);
+    if (parsed.entities.budgetMax && price && price > parsed.entities.budgetMax) continue;
+    if (parsed.entities.bodyType && !bodyTypeMatches(doc.body_type_bucket, parsed.entities.bodyType)) continue;
+    if (feature === "6 airbags" && numericFromFeature(match?.value) < 6) continue;
+    rows.push({
+      id: safeId(doc),
+      brand: doc.brand,
+      model: doc.model,
+      variant: doc.variant,
+      city: compact.city || cityFromParsed(parsed),
+      bodyType: doc.body_type_bucket,
+      onRoad: compact.onRoadPrice,
+      exShowroom: compact.exShowroomPrice,
+      featureKey: match?.key || "",
+      featureValue: match?.value ?? "",
+      answer,
+      matchedReason: match ? `${match.key}: ${match.value}` : "feature not found in stored catalogue",
+    });
+  }
+  const grouped = {
+    yes: rows.filter((row) => row.answer === "Yes"),
+    no: rows.filter((row) => row.answer === "No"),
+    notFound: rows.filter((row) => row.answer === "Not found"),
+  };
+  return {
+    widgets: [
+      widget("vehicle_feature_discovery", `${feature} availability`, {
+        title: `${feature} availability`,
+        filters: {
+          model: parsed.entities.model,
+          feature,
+          budgetMax: parsed.entities.budgetMax,
+          bodyType: parsed.entities.bodyType,
+          city: cityFromParsed(parsed),
+        },
+        grouped,
+        rows: rows.slice(0, LIMIT),
+        records: rows.slice(0, LIMIT),
+      }),
+    ],
+    followUpSuggestions: ["Show pricelist", "Compare matching variants", "Show similar cars"],
+  };
+};
+
+export const vehicleColorSearch = async (parsed, access, trace) => {
+  const color = parsed.entities.color;
+  if (parsed.entities.model) return vehicleColors(parsed, access, trace);
+  const colorsMap = getFieldMap("vehicle_colors");
+  const colorCollection = mongoose.connection.db.collection(colorsMap.collectionName);
+  const colorRegex = color ? new RegExp(escapeRegex(color), "i") : /./;
+  const rows = await colorCollection
+    .find({ color_name: colorRegex })
+    .project({ brand: 1, model: 1, color_name: 1, hex: 1, image_url: 1, source_page: 1, last_updated: 1, scrape_timestamp: 1 })
+    .limit(160)
+    .maxTimeMS(3500)
+    .toArray();
+  pushModuleTrace(trace, colorsMap.module, rows.length, { color });
+  const compactRows = uniqueRows(rows.map((item) => ({
+    id: safeId(item),
+    brand: item.brand,
+    make: item.brand,
+    model: item.model,
+    colorName: item.color_name,
+    hex: item.hex,
+    imageUrl: item.image_url,
+    image_url: item.image_url,
+    sourcePage: item.source_page,
+    lastUpdated: formatDateValue(firstMeaningful(item.last_updated, item.scrape_timestamp)),
+  })), (row) => [row.brand, row.model, row.colorName, row.imageUrl].join("|").toLowerCase());
+  return {
+    widgets: [
+      widget("vehicle_color_search", `${titleCase(color)} cars`, {
+        color,
+        rows: compactRows,
+        colors: compactRows,
+        data: { color, total: compactRows.length, colors: compactRows },
+        notices: ["Color results come only from stored vehicle_colors records."],
+      }),
+    ],
+    followUpSuggestions: ["Show pricelist", "Compare models", "Show similar cars"],
+  };
+};
+
+const recommendationRows = async (parsed, trace, { safetyOnly = false, specMode = "", useCase = "" } = {}) => {
+  const query = { $and: [cityClause(parsed.entities.city || "new-delhi")].filter(Boolean) };
+  if (parsed.entities.make) query.$and.push(makeOrBrandClause(parsed.entities.make));
+  const raw = await findLean(Vehicle, query, { sort: { ex_showroom: 1 }, limit: 900 });
+  const catalogRows = uniqueRows(
+    applyCatalogueFilters(raw, parsed).map(vehicleRow),
+    (row) => [row.brand, row.model, row.variant, row.city, row.fuel, row.transmission].join("|").toLowerCase(),
+  );
+  pushModuleTrace(trace, "Vehicles", catalogRows.length, { city: cityFromParsed(parsed) });
+  const featureDocs = await findLean(VehicleFeature, {}, { limit: 1400 });
+  pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
+  const featureMap = joinFeatureDocs(featureDocs);
+  const featureNeedles = [
+    /^(automatic|manual|amt|at|mt|cvt|dct|ivt|transmission)$/i.test(parsed.entities.feature || "") ? "" : parsed.entities.feature,
+    /sunroof/i.test(parsed.lower) ? "sunroof" : "",
+    /adas/i.test(parsed.lower) ? "adas" : "",
+    /6\s*airbags|safest|safety/i.test(parsed.lower) ? "6 airbags" : "",
+    /wireless charging/i.test(parsed.lower) ? "wireless charging" : "",
+    /ventilated/i.test(parsed.lower) ? "ventilated seats" : "",
+  ].filter(Boolean);
+
+  return catalogRows
+    .map((row) => {
+      const featureDoc = featureMap.get(catalogFeatureKey(row)) || featureMap.get([row.brand, row.model, normalizeVariant(row.variant)].join("|").toLowerCase());
+      if (parsed.entities.bodyType && !bodyTypeMatches(featureDoc?.body_type_bucket || row.bodyType, parsed.entities.bodyType)) return null;
+      const matchedReasons = catalogueFilterReason(row, parsed, featureDoc);
+      let score = matchedReasons.length * 20;
+      const keyFeatures = [];
+      for (const feature of featureNeedles) {
+        const match = featureValueForAny(featureDoc?.features, feature);
+        const answer = featureAnswerForValue(match);
+        if (answer === "Yes" || (feature === "6 airbags" && numericFromFeature(match?.value) >= 6)) {
+          matchedReasons.push(feature === "6 airbags" ? "has 6 airbags" : `has ${feature}`);
+          score += 35;
+          keyFeatures.push(`${match.key}: ${match.value}`);
+        } else if (featureNeedles.length) {
+          return null;
+        }
+      }
+      if (safetyOnly) {
+        const safetyHits = flattenFeatures(featureDoc?.features)
+          .filter((item) => /safety|airbag|adas|esc|tpms|isofix|hill|lane|blind|collision|brake/i.test(`${item.key} ${item.value}`));
+        score += safetyHits.length * 4;
+        keyFeatures.push(...safetyHits.slice(0, 5).map((item) => `${item.name}: ${item.value}`));
+        if (!safetyHits.length) return null;
+      }
+      if (specMode) {
+        const specHits = flattenFeatures(featureDoc?.features)
+          .filter((item) => new RegExp(specMode, "i").test(`${item.key} ${item.value}`));
+        score += specHits.length * 8;
+        keyFeatures.push(...specHits.slice(0, 5).map((item) => `${item.name}: ${item.value}`));
+      }
+      if (useCase) {
+        matchedReasons.push(`matched ${useCase} use case using captured fields`);
+        score += 15;
+      }
+      if (!matchedReasons.length) matchedReasons.push("price band match");
+      return {
+        id: row.id,
+        brand: row.brand || row.make,
+        model: normalizedModelLabel(row),
+        variant: displayVariant(row),
+        city: row.city,
+        bodyType: featureDoc?.body_type_bucket,
+        fuelType: row.fuel,
+        transmission: row.transmission,
+        exShowroom: row.exShowroomPrice,
+        onRoad: row.onRoadPrice,
+        keyFeatures,
+        matchedReasons,
+        score,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score || firstNumber(a.onRoad, a.exShowroom) - firstNumber(b.onRoad, b.exShowroom));
+};
+
+export const vehicleRecommendationSearch = async (parsed, access, trace) => {
+  if (!access.canAccess("vehicles")) {
+    noteRestriction(access, "Vehicles", "No vehicle catalog access");
+    return { widgets: [unavailableWidget("Vehicle data unavailable", "You do not have catalog access.", ["Vehicles"])] };
+  }
+  const useCase = /family|parents|city driving|highway|daily running|low emi|safe|feature-loaded|feature loaded|long drives|chauffeur|rear seat|office|first car|upgrade|premium sedan/i.exec(parsed.lower)?.[0] || parsed.intent;
+  const rows = await recommendationRows(parsed, trace, {
+    safetyOnly: parsed.intent === "vehicle_safety_expert",
+    specMode: parsed.intent === "vehicle_dimension_space_search" ? "boot|ground|wheelbase|fuel tank|seating|capacity|space|dimension" : parsed.intent === "vehicle_performance_mileage_search" ? "mileage|power|torque|engine|displacement|turbo|bhp|ps|nm" : "",
+    useCase: parsed.intent === "vehicle_use_case_recommendation" ? useCase : "",
+  });
+  const groupedByModel = Object.values(rows.reduce((acc, row) => {
+    const key = `${row.brand}|${row.model}`.toLowerCase();
+    if (!acc[key]) acc[key] = { brand: row.brand, model: row.model, rows: [], bestVariant: row };
+    acc[key].rows.push(row);
+    if (row.score > acc[key].bestVariant.score) acc[key].bestVariant = row;
+    return acc;
+  }, {}));
+  return {
+    widgets: [
+      widget(parsed.intent === "vehicle_safety_expert" ? "vehicle_safety_results" : parsed.intent?.includes("dimension") || parsed.intent?.includes("performance") ? "vehicle_spec_ranking" : "vehicle_recommendation_results", "New car recommendations", {
+        title: parsed.message,
+        city: cityFromParsed(parsed),
+        filters: {
+          budgetMin: parsed.entities.budgetMin,
+          budgetMax: parsed.entities.budgetMax,
+          bodyType: parsed.entities.bodyType,
+          fuelType: parsed.entities.fuelType,
+          transmission: parsed.entities.transmission,
+          requiredFeatures: [parsed.entities.feature].filter(Boolean),
+          useCase,
+        },
+        rows: rows.slice(0, LIMIT),
+        records: rows.slice(0, LIMIT),
+        groupedByModel: groupedByModel.slice(0, 30),
+      }),
+    ],
+    followUpSuggestions: ["Compare top results", "Show features", "Calculate EMI"],
+  };
+};
+
+export const vehicleEmiCalculator = async (parsed, access, trace) => {
+  const resolved = await resolveVehicleCatalogRows(parsed, trace, { includeCity: true, limit: 40, moduleName: "Vehicles" });
+  const rows = sortCatalogueRows(applyCatalogueFilters(resolved.rows, parsed), parsed);
+  const ambiguity = maybeVariantAmbiguity(parsed, rows, "vehicle_emi_calculator");
+  if (ambiguity) return ambiguity;
+  const row = rows[0];
+  const amountMatch = parsed.lower.match(/\bon road\s*₹?\s*([\d,.]+)\s*(lakh|lac|l|cr|crore)?/i);
+  const manualAmount = amountMatch ? firstNumber(amountMatch[1]) * (/cr|crore/i.test(amountMatch[2] || "") ? 10000000 : /lakh|lac|l/i.test(amountMatch[2] || "") ? 100000 : 1) : 0;
+  const compact = row ? vehicleRow(row) : {};
+  const onRoad = manualAmount || compact.onRoadPrice || compact.exShowroomPrice;
+  if (!onRoad) return { widgets: [unavailableWidget("Need vehicle or amount", "Ask EMI with a vehicle variant or on-road amount.", ["Vehicles"])] };
+  const annualRate = parsed.entities.annualRate || 9;
+  const tenureMonths = parsed.entities.tenureMonths || 60;
+  const downPayment = parsed.entities.downPayment || Math.round(onRoad * ((parsed.entities.downPaymentPercent || 20) / 100));
+  const financeAmount = Math.max(onRoad - downPayment, 0);
+  const emi = Math.round(emiFor(financeAmount, annualRate, tenureMonths));
+  const scenarios = [36, 48, 60, 84].map((months) => ({
+    label: `${months / 12} years`,
+    tenureMonths: months,
+    emi: Math.round(emiFor(financeAmount, annualRate, months)),
+  }));
+  return {
+    widgets: [
+      widget("vehicle_emi_calculator", "Vehicle EMI calculator", {
+        vehicle: compact.id ? compact : null,
+        price: { onRoad, exShowroom: compact.exShowroomPrice },
+        inputs: { downPayment, downPaymentPercent: Math.round((downPayment / onRoad) * 100), tenureMonths, annualRate },
+        result: {
+          financeAmount,
+          emi,
+          totalPayable: emi * tenureMonths + downPayment,
+          totalInterest: emi * tenureMonths - financeAmount,
+        },
+        scenarios,
+      }),
+    ],
+    followUpSuggestions: ["Show pricelist", "Compare EMI", "Cars with EMI under 25000"],
+  };
+};
+
+export const vehicleEmiBudgetSearch = async (parsed, access, trace) => {
+  const emiMax = parsed.entities.emiMax || 25000;
+  const rows = (await recommendationRows(parsed, trace)).map((row) => {
+    const onRoad = firstNumber(row.onRoad, row.exShowroom);
+    const downPayment = Math.round(onRoad * 0.2);
+    const financeAmount = onRoad - downPayment;
+    const emi = Math.round(emiFor(financeAmount, 9, 60));
+    return { ...row, emi, financeAmount, assumptions: { downPaymentPercent: 20, annualRate: 9, tenureMonths: 60 } };
+  }).filter((row) => row.emi <= emiMax);
+  return {
+    widgets: [
+      widget("vehicle_emi_recommendations", `Cars with EMI under ${emiMax}`, {
+        emiMax,
+        assumptions: { downPaymentPercent: 20, annualRate: 9, tenureMonths: 60 },
+        rows: rows.slice(0, LIMIT),
+        records: rows.slice(0, LIMIT),
+      }),
+    ],
   };
 };
 
@@ -1110,8 +1694,10 @@ export const vehicleComparison = async (parsed, access, trace) => {
   });
   return {
     widgets: [
-      widget("variant_selector", "Choose variants to compare", {
+      widget("vehicle_model_comparison", "Choose variants to compare", {
         subtitle: "Pick one variant per model, then compare exact variants.",
+        models: rows,
+        variantOptionsByModel: groups,
         data: { models: groups, summary: rows },
         context: {
           comparisonModels: models,
@@ -1127,6 +1713,147 @@ export const vehicleComparison = async (parsed, access, trace) => {
       }),
     ],
     followUpSuggestions: ["Compare top variants", "Show catalogues", "Show similar cars"],
+  };
+};
+
+export const vehicleVariantRecommendation = async (parsed, access, trace) => {
+  const effective = {
+    ...parsed,
+    entities: {
+      ...parsed.entities,
+      transmission: parsed.entities.transmission || (/automatic/i.test(parsed.lower) ? "automatic" : ""),
+      feature: parsed.entities.feature || (/sunroof/i.test(parsed.lower) ? "sunroof" : /adas/i.test(parsed.lower) ? "adas" : /6\s*airbags/i.test(parsed.lower) ? "6 airbags" : ""),
+    },
+  };
+  const rows = await recommendationRows(effective, trace);
+  const sameModelRows = rows.filter((row) => !parsed.entities.model || hasPhrase(row.model, parsed.entities.model));
+  return {
+    widgets: [
+      widget("vehicle_variant_recommendation", `Best ${parsed.entities.model || "vehicle"} variant`, {
+        model: parsed.entities.model,
+        topRecommendation: sameModelRows[0],
+        rows: sameModelRows.slice(0, 12),
+        alternatives: sameModelRows.slice(1, 6),
+        notes: ["Recommendation is based only on stored price and feature catalogue fields."],
+      }),
+    ],
+    followUpSuggestions: ["Compare top two variants", "Show price breakup", "Calculate EMI"],
+  };
+};
+
+export const vehicleVariantDifference = async (parsed, access, trace) => {
+  const resolved = await resolveVehicleCatalogRows(parsed, trace, { includeCity: true, limit: 80, moduleName: "Vehicles" });
+  const rows = sortCatalogueRows(applyCatalogueFilters(resolved.rows, parsed), parsed);
+  const variantsFromMessage = [...new Set((parsed.message.match(/\b(?:sx\s?opt|s\s?opt|hte|htk|htx|gtx|sx|vx|zx|hx\d+|xza|xz|alpha|delta|sigma|base|top)(?:\s+(?:plus|opt|turbo|ivt|dct|mt|at|amt|cvt|dt))*\b/gi) || []).map((item) => normalizeVariant(item)))];
+  const selected = variantsFromMessage.length >= 2
+    ? rows.filter((row) => variantsFromMessage.some((variant) => normalizeVariant(row.variant).includes(variant)))
+    : rows.slice(0, 2);
+  const compact = uniqueRows(selected.map((row) => vehicleRow(row)), (row) => [row.variant, row.fuel, row.transmission, row.city].join("|").toLowerCase()).slice(0, 2);
+  if (compact.length < 2) {
+    const ambiguity = maybeVariantAmbiguity(parsed, rows.map(vehicleRow), "vehicle_variant_difference");
+    if (ambiguity) return ambiguity;
+    return { widgets: [unavailableWidget("Need two variants", "Ask with two variants, for example: Difference between Verna SX and SX Opt.", ["Vehicles", "Vehicle Features"])] };
+  }
+  const featureDocs = await findLean(VehicleFeature, featureModelQuery(parsed.entities.model || compact[0]?.model, compact[0]?.brand), { limit: 160 });
+  pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
+  const map = joinFeatureDocs(featureDocs);
+  const featureSets = compact.map((row) => {
+    const doc = map.get(catalogFeatureKey(row)) || map.get([row.brand, row.model, normalizeVariant(row.variant)].join("|").toLowerCase());
+    return new Map(flattenFeatures(doc?.features).map((item) => [item.key, item.value]));
+  });
+  const allKeys = [...new Set([...featureSets[0].keys(), ...featureSets[1].keys()])];
+  const featureDifferences = allKeys
+    .map((key) => ({ feature: key, values: featureSets.map((set) => set.get(key) ?? "Not captured") }))
+    .filter((row) => String(row.values[0]) !== String(row.values[1]))
+    .slice(0, 80);
+  return {
+    widgets: [
+      widget("vehicle_variant_difference", "Variant difference", {
+        variants: compact,
+        priceDifference: firstNumber(compact[1].onRoadPrice, compact[1].exShowroomPrice) - firstNumber(compact[0].onRoadPrice, compact[0].exShowroomPrice),
+        featureDifferences,
+        comparisonRows: [
+          { label: "On-road price", values: compact.map((row) => row.onRoadPrice) },
+          { label: "Ex-showroom", values: compact.map((row) => row.exShowroomPrice) },
+          { label: "Fuel", values: compact.map((row) => row.fuel) },
+          { label: "Transmission", values: compact.map((row) => row.transmission) },
+        ],
+        notes: ["Differences are based only on stored catalogue and feature fields."],
+      }),
+    ],
+  };
+};
+
+export const vehiclePriceHistory = async (parsed, access, trace) => {
+  const map = getFieldMap("price_history");
+  const collection = mongoose.connection.db.collection(map.collectionName);
+  const clauses = [];
+  if (parsed.entities.make) clauses.push({ brand: new RegExp(escapeRegex(parsed.entities.make), "i") });
+  if (parsed.entities.model) clauses.push({ model: new RegExp(escapeRegex(parsed.entities.model), "i") });
+  if (parsed.entities.variant) clauses.push({ variant: new RegExp(escapeRegex(parsed.entities.variant), "i") });
+  if (parsed.entities.city) clauses.push({ city: new RegExp(escapeRegex(cityFromParsed(parsed)), "i") });
+  const query = clauses.length ? { $and: clauses } : {};
+  const rows = await collection.find(query).sort({ date: -1, createdAt: -1 }).limit(120).maxTimeMS(3500).toArray();
+  pushModuleTrace(trace, map.module, rows.length);
+  if (!rows.length) {
+    return { widgets: [unavailableWidget("No price history found", "No stored price_history rows matched this request.", [map.module])] };
+  }
+  const normalized = rows.map((row, index) => {
+    const price = firstNumber(row.price, row.onRoadPrice, row.exShowroom, row.ex_showroom);
+    const previous = firstNumber(rows[index + 1]?.price, rows[index + 1]?.onRoadPrice, rows[index + 1]?.exShowroom, rows[index + 1]?.ex_showroom);
+    const changeAmount = previous ? price - previous : null;
+    return {
+      date: formatDateValue(firstMeaningful(row.date, row.createdAt, row.updatedAt)),
+      brand: row.brand,
+      model: row.model,
+      variant: row.variant,
+      city: row.city,
+      price,
+      changeAmount,
+      changePercent: previous && changeAmount !== null ? (changeAmount / previous) * 100 : null,
+    };
+  });
+  return {
+    widgets: [
+      widget("vehicle_price_history", "Vehicle price history", {
+        brand: parsed.entities.make,
+        model: parsed.entities.model,
+        variant: parsed.entities.variant,
+        city: parsed.entities.city,
+        rows: normalized,
+        summary: {
+          latestDate: normalized[0]?.date,
+          latestPrice: normalized[0]?.price,
+          previousPrice: normalized[1]?.price,
+          changeAmount: normalized[0]?.changeAmount,
+          changePercent: normalized[0]?.changePercent,
+          totalEntries: normalized.length,
+        },
+      }),
+    ],
+  };
+};
+
+export const latestCatalogueUpdates = async (parsed, access, trace) => {
+  const rows = await findLean(Vehicle, {}, { sort: { LastSeenDate: -1, createdAt: -1 }, limit: 120 });
+  pushModuleTrace(trace, "Vehicles", rows.length);
+  const compact = rows.map(vehicleRow).filter((row) => row.LastSeenDate || row.lastUpdated);
+  if (!compact.length) {
+    return { widgets: [unavailableWidget("Launch status not captured", "Launch status is not captured in current database. Showing latest catalogue updates requires LastSeenDate/createdAt data.", ["Vehicles"])] };
+  }
+  return {
+    widgets: [
+      widget("latest_catalogue_updates", "Latest catalogue updates", {
+        rows: compact.slice(0, LIMIT),
+        records: compact.slice(0, LIMIT),
+        groupedByModel: Object.values(compact.reduce((acc, row) => {
+          const key = `${row.brand}|${row.model}`.toLowerCase();
+          if (!acc[key]) acc[key] = { brand: row.brand, model: row.model, variants: 0, lastUpdated: row.lastUpdated };
+          acc[key].variants += 1;
+          return acc;
+        }, {})),
+      }),
+    ],
   };
 };
 
