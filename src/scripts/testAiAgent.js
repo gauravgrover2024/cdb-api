@@ -311,6 +311,19 @@ const baseTests = [
   {
     query: "Difference between Verna HX6 and HX8",
     expectedIntent: "vehicle_variant_difference",
+    expectedWidgets: ["vehicle_variant_difference"],
+    assert: ({ response }) => {
+      const widget = widgetOf(response, "vehicle_variant_difference");
+      return Boolean(
+        widget &&
+        widget.baseVariant &&
+        widget.compareVariant &&
+        widget.price &&
+        (Array.isArray(widget.addedFeatures) ||
+          Array.isArray(widget.changedFeatures) ||
+          Array.isArray(widget.removedFeatures)),
+      );
+    },
   },
 ];
 

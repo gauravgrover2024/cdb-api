@@ -354,15 +354,51 @@ const resolveVehicleCatalogRows = async (
     : [];
   let usedCityFallback = false;
 
+  let showingCity =
+    normalizeCitySlug(parsed.entities.city || "new-delhi") || "new-delhi";
+
   if (!rows.length && includeCity && allowCityFallback) {
-    const fallback = buildCatalogueQuery(parsed, { includeCity: false });
-    rows = Object.keys(fallback.query).length
-      ? await findLean(Vehicle, fallback.query, {
-          sort: { ...sort, city: 1 },
+    // If requested city is not available, first fallback specifically to Delhi/New Delhi,
+    // not to all cities. This avoids empty responses for unsupported cities like Mumbai.
+    const fallbackParsed = {
+      ...parsed,
+      entities: {
+        ...parsed.entities,
+        city: "new-delhi",
+      },
+    };
+
+    const fallbackDelhi = buildCatalogueQuery(fallbackParsed, {
+      includeCity: true,
+    });
+
+    rows = Object.keys(fallbackDelhi.query).length
+      ? await findLean(Vehicle, fallbackDelhi.query, {
+          sort,
           limit: Math.max(limit * 2, limit),
         })
       : [];
-    usedCityFallback = rows.length > 0;
+
+    if (rows.length) {
+      usedCityFallback = true;
+      showingCity = "new-delhi";
+    }
+
+    // Last fallback: if even Delhi does not exist, then show available catalogue rows.
+    if (!rows.length) {
+      const fallbackAny = buildCatalogueQuery(parsed, { includeCity: false });
+      rows = Object.keys(fallbackAny.query).length
+        ? await findLean(Vehicle, fallbackAny.query, {
+            sort: { ...sort, city: 1 },
+            limit: Math.max(limit * 2, limit),
+          })
+        : [];
+
+      if (rows.length) {
+        usedCityFallback = true;
+        showingCity = firstMeaningful(rows[0]?.city, "new-delhi");
+      }
+    }
   }
 
   const scored = rows
@@ -414,6 +450,7 @@ const resolveVehicleCatalogRows = async (
     usedCityFallback,
     requestedCity:
       normalizeCitySlug(parsed.entities.city || "new-delhi") || "new-delhi",
+    showingCity,
     phrase: built.phrase,
     tokens: built.tokens,
   };
@@ -830,14 +867,47 @@ const catalogueFilterReason = (row, parsed, featureDoc = null) => {
   return reasons;
 };
 
+const isDiscontinuedVehicleRow = (row = {}) => {
+  const status = String(
+    firstMeaningful(row.status, row.vehicleStatus, row.model_status) || "",
+  ).toLowerCase();
+
+  return Boolean(
+    row.is_discontinued ||
+    row.discontinued ||
+    row.isDiscontinued ||
+    status.includes("discontinued") ||
+    status.includes("inactive"),
+  );
+};
+
+const includeDiscontinuedRequested = (parsed = {}) =>
+  Boolean(
+    parsed.entities?.includeDiscontinued ||
+    /\b(discontinued|old variants?|include discontinued|show discontinued|inactive)\b/i.test(
+      parsed.lower || "",
+    ),
+  );
+
 const applyCatalogueFilters = (rows = [], parsed = {}) => {
   const lower = parsed.lower || "";
-  const wantActive =
-    /\bactive\b/i.test(lower) && !/\bdiscontinued\b/i.test(lower);
-  const wantDiscontinued = /\bdiscontinued\b/i.test(lower);
+  const wantDiscontinued =
+    /\b(discontinued|old variants?|show discontinued|include discontinued)\b/i.test(
+      lower,
+    );
+  const includeDiscontinued = includeDiscontinuedRequested(parsed);
+
   return rows.filter((row) => {
     const compact = vehicleRow(row);
     const price = priceBasis(compact);
+    const discontinued = isDiscontinuedVehicleRow(compact);
+
+    // DEFAULT: active cars only. Discontinued cars are shown only when explicitly requested.
+    if (!includeDiscontinued && discontinued) return false;
+
+    // If user specifically asks discontinued, show only discontinued.
+    if (wantDiscontinued && !discontinued) return false;
+
     if (parsed.entities.budgetMax && price && price > parsed.entities.budgetMax)
       return false;
     if (parsed.entities.budgetMin && price && price < parsed.entities.budgetMin)
@@ -852,8 +922,7 @@ const applyCatalogueFilters = (rows = [], parsed = {}) => {
       !transmissionMatches(compact, parsed.entities.transmission)
     )
       return false;
-    if (wantActive && compact.is_discontinued) return false;
-    if (wantDiscontinued && !compact.is_discontinued) return false;
+
     return true;
   });
 };
@@ -1367,9 +1436,11 @@ export const vehiclePricelist = async (parsed, access, trace) => {
         : "Sunroof was not found in the available feature data.",
     );
   }
-  const city = resolved.usedCityFallback
-    ? firstMeaningful(rows[0]?.city, resolved.requestedCity)
-    : resolved.requestedCity;
+  const city =
+    resolved.showingCity ||
+    (resolved.usedCityFallback
+      ? firstMeaningful(rows[0]?.city, resolved.requestedCity)
+      : resolved.requestedCity);
   const pricelistRows = uniqueRows(sortCatalogueRows(rows, parsed), (row) =>
     [
       row.city,
@@ -1399,6 +1470,9 @@ export const vehiclePricelist = async (parsed, access, trace) => {
         brand: make,
         model,
         city,
+        requestedCity: resolved.requestedCity,
+        showingCity: city,
+        cityFallbackUsed: Boolean(resolved.usedCityFallback),
         availableCities: cities.filter(Boolean).sort(),
         totalVariants: pricelistRows.length,
         summary,
@@ -1407,6 +1481,9 @@ export const vehiclePricelist = async (parsed, access, trace) => {
           brand: make,
           model,
           city,
+          requestedCity: resolved.requestedCity,
+          showingCity: city,
+          cityFallbackUsed: Boolean(resolved.usedCityFallback),
           cities: cities.filter(Boolean).sort(),
           availableCities: cities.filter(Boolean).sort(),
           total: pricelistRows.length,
@@ -1441,7 +1518,7 @@ export const vehiclePricelist = async (parsed, access, trace) => {
         notices: [
           ...notices,
           resolved.usedCityFallback
-            ? `${resolved.requestedCity} rows were not found. Showing available catalog rows for this model instead.`
+            ? `${titleCase(resolved.requestedCity)} pricing is not available in stored catalogue. Showing ${titleCase(city)} pricing instead.`
             : "Showing new-delhi by default when city is not specified.",
           "Price breakup is shown only where stored in catalog fields.",
         ],
@@ -2157,6 +2234,254 @@ export const vehicleColorSearch = async (parsed, access, trace) => {
   };
 };
 
+const parseNcapStars = (value) => {
+  const text = String(value ?? "").trim();
+  const number = firstNumber(text);
+  if (number > 0) return number;
+  if (/5\s*star/i.test(text)) return 5;
+  if (/4\s*star/i.test(text)) return 4;
+  if (/3\s*star/i.test(text)) return 3;
+  if (/2\s*star/i.test(text)) return 2;
+  if (/1\s*star/i.test(text)) return 1;
+  return 0;
+};
+
+const yesishFeature = (value) => {
+  const text = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return Boolean(
+    value === true ||
+    /^(yes|available|present|standard|optional|true|1)$/i.test(text),
+  );
+};
+
+const getFeatureValueByNeedles = (features = {}, needles = []) => {
+  const normalizedNeedles = needles
+    .map((item) => toWords(item))
+    .filter(Boolean);
+
+  for (const [key, value] of Object.entries(features || {})) {
+    const normalizedKey = toWords(key);
+    if (normalizedNeedles.some((needle) => normalizedKey.includes(needle))) {
+      return { key, value };
+    }
+  }
+
+  return null;
+};
+
+const buildSafetySummaryFromFeatureDoc = (featureDoc = {}) => {
+  const features = featureDoc?.features || {};
+
+  const adultNcapMatch = getFeatureValueByNeedles(features, [
+    "global ncap safety rating",
+    "adult safety rating",
+    "global ncap adult",
+  ]);
+
+  const childNcapMatch = getFeatureValueByNeedles(features, [
+    "global ncap child safety rating",
+    "child safety rating",
+    "global ncap child",
+  ]);
+
+  const airbagsMatch = getFeatureValueByNeedles(features, [
+    "no of airbags",
+    "number of airbags",
+    "airbags",
+  ]);
+
+  const adultNcap = parseNcapStars(adultNcapMatch?.value);
+  const childNcap = parseNcapStars(childNcapMatch?.value);
+  const maxAirbags = firstNumber(airbagsMatch?.value);
+
+  const safetyHighlights = flattenFeatures(features)
+    .filter((item) =>
+      /safety|airbag|adas|esc|esp|tpms|isofix|hill|lane|blind|collision|brake|abs|traction|stability/i.test(
+        `${item.key} ${item.value}`,
+      ),
+    )
+    .filter((item) => {
+      if (/not available|no|false|0/i.test(String(item.value))) return false;
+      return true;
+    })
+    .slice(0, 10)
+    .map((item) => `${item.name}: ${item.value}`);
+
+  const safetyFeatureCount = safetyHighlights.length;
+
+  let score = 0;
+  score += adultNcap * 100;
+  score += childNcap * 70;
+  score += maxAirbags * 20;
+  score += safetyFeatureCount * 8;
+
+  return {
+    adultNcap: adultNcap || null,
+    childNcap: childNcap || null,
+    maxAirbags: maxAirbags || null,
+    safetyFeatureCount,
+    safetyHighlights,
+    score,
+  };
+};
+
+const activeVariantRows = (rows = []) =>
+  rows.filter((row) => !isDiscontinuedVehicleRow(row));
+
+const modelGroupKey = (row = {}) =>
+  [firstMeaningful(row.brand, row.make), firstMeaningful(row.model)]
+    .join("|")
+    .toLowerCase();
+
+const aggregateModelCards = (variantRows = [], { safetyMode = false } = {}) => {
+  const groups = new Map();
+
+  for (const row of variantRows || []) {
+    const key = modelGroupKey(row);
+    if (!key.trim()) continue;
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        brand: firstMeaningful(row.brand, row.make),
+        model: row.model,
+        bodyType: row.bodyType,
+        variants: [],
+        scores: [],
+        matchedReasonsSet: new Set(),
+        fuelOptionsSet: new Set(),
+        transmissionOptionsSet: new Set(),
+        keyFeaturesSet: new Set(),
+        safetySummaries: [],
+      });
+    }
+
+    const group = groups.get(key);
+    group.variants.push(row);
+    group.scores.push(firstNumber(row.score));
+
+    if (!group.bodyType && row.bodyType) group.bodyType = row.bodyType;
+
+    for (const reason of row.matchedReasons || []) {
+      if (reason) group.matchedReasonsSet.add(reason);
+    }
+
+    if (row.fuelType) group.fuelOptionsSet.add(row.fuelType);
+    if (row.transmission) group.transmissionOptionsSet.add(row.transmission);
+
+    for (const feature of row.keyFeatures || []) {
+      if (feature) group.keyFeaturesSet.add(feature);
+    }
+
+    if (row.safetySummary) group.safetySummaries.push(row.safetySummary);
+  }
+
+  return [...groups.values()]
+    .map((group) => {
+      const prices = group.variants
+        .map((row) => firstNumber(row.onRoad, row.exShowroom))
+        .filter(Boolean);
+      const exPrices = group.variants
+        .map((row) => firstNumber(row.exShowroom))
+        .filter(Boolean);
+      const sortedByPrice = [...group.variants].sort(
+        (a, b) =>
+          firstNumber(a.onRoad, a.exShowroom) -
+          firstNumber(b.onRoad, b.exShowroom),
+      );
+      const sortedByScore = [...group.variants].sort(
+        (a, b) => firstNumber(b.score) - firstNumber(a.score),
+      );
+
+      const adultNcap =
+        Math.max(
+          ...group.safetySummaries.map((item) => firstNumber(item.adultNcap)),
+          0,
+        ) || null;
+      const childNcap =
+        Math.max(
+          ...group.safetySummaries.map((item) => firstNumber(item.childNcap)),
+          0,
+        ) || null;
+      const maxAirbags =
+        Math.max(
+          ...group.safetySummaries.map((item) => firstNumber(item.maxAirbags)),
+          0,
+        ) || null;
+      const safetyFeatureCount =
+        Math.max(
+          ...group.safetySummaries.map((item) =>
+            firstNumber(item.safetyFeatureCount),
+          ),
+          0,
+        ) || 0;
+      const safetyHighlights = [
+        ...new Set(
+          group.safetySummaries.flatMap((item) => item.safetyHighlights || []),
+        ),
+      ].slice(0, 8);
+
+      const safetyScore =
+        firstNumber(adultNcap) * 100 +
+        firstNumber(childNcap) * 70 +
+        firstNumber(maxAirbags) * 20 +
+        safetyFeatureCount * 8;
+
+      const score = safetyMode
+        ? safetyScore + Math.max(...group.scores, 0)
+        : Math.max(...group.scores, 0);
+
+      const bestVariant = sortedByScore[0] || sortedByPrice[0];
+      const cheapestVariant = sortedByPrice[0];
+      const topVariant = sortedByPrice[sortedByPrice.length - 1];
+
+      return {
+        id: `${group.brand}-${group.model}`
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-"),
+        brand: group.brand,
+        make: group.brand,
+        model: group.model,
+        bodyType: group.bodyType,
+        startingPrice: prices.length
+          ? Math.min(...prices)
+          : exPrices.length
+            ? Math.min(...exPrices)
+            : null,
+        topPrice: prices.length
+          ? Math.max(...prices)
+          : exPrices.length
+            ? Math.max(...exPrices)
+            : null,
+        variantCount: group.variants.length,
+        activeVariantCount: activeVariantRows(group.variants).length,
+        fuelOptions: [...group.fuelOptionsSet],
+        transmissionOptions: [...group.transmissionOptionsSet],
+        bestVariant,
+        cheapestVariant,
+        topVariant,
+        matchedReasons: [...group.matchedReasonsSet].slice(0, 6),
+        representativeFeatures: [...group.keyFeaturesSet].slice(0, 6),
+        safetySummary: {
+          adultNcap,
+          childNcap,
+          maxAirbags,
+          safetyFeatureCount,
+          safetyHighlights,
+        },
+        adultNcap,
+        childNcap,
+        maxAirbags,
+        safetyFeatureCount,
+        safetyHighlights,
+        score,
+        variants: group.variants,
+      };
+    })
+    .sort((a, b) => firstNumber(b.score) - firstNumber(a.score));
+};
+
 const recommendationRows = async (
   parsed,
   trace,
@@ -2167,10 +2492,12 @@ const recommendationRows = async (
   };
   if (parsed.entities.make)
     query.$and.push(makeOrBrandClause(parsed.entities.make));
+
   const raw = await findLean(Vehicle, query, {
     sort: { ex_showroom: 1 },
-    limit: 900,
+    limit: 1600,
   });
+
   const catalogRows = uniqueRows(
     applyCatalogueFilters(raw, parsed).map(vehicleRow),
     (row) =>
@@ -2178,13 +2505,20 @@ const recommendationRows = async (
         .join("|")
         .toLowerCase(),
   );
+
   pushModuleTrace(trace, "Vehicles", catalogRows.length, {
     city: cityFromParsed(parsed),
   });
-  const featureDocs = await findLean(VehicleFeature, {}, { limit: 1400 });
+
+  const featureDocs = await findLean(VehicleFeature, {}, { limit: 2500 });
   pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
+
+  const featureLookup =
+    typeof buildFeatureLookupMaps === "function"
+      ? buildFeatureLookupMaps(featureDocs)
+      : null;
   const featureMap = joinFeatureDocs(featureDocs);
-  const featureLookup = buildFeatureLookupMaps(featureDocs);
+
   const featureNeedles = [
     /^(automatic|manual|amt|at|mt|cvt|dct|ivt|transmission)$/i.test(
       parsed.entities.feature || "",
@@ -2207,7 +2541,10 @@ const recommendationRows = async (
             .join("|")
             .toLowerCase(),
         ) ||
-        resolveFeatureDocForCatalogueRow(row, featureLookup);
+        (featureLookup && typeof resolveFeatureDocForCatalogueRow === "function"
+          ? resolveFeatureDocForCatalogueRow(row, featureLookup)
+          : null);
+
       const resolvedBodyType = firstMeaningful(
         featureDoc?.body_type_bucket,
         row.bodyType,
@@ -2219,15 +2556,25 @@ const recommendationRows = async (
       if (
         parsed.entities.bodyType &&
         !bodyTypeMatches(resolvedBodyType, parsed.entities.bodyType)
-      ) {
+      )
         return null;
-      }
+
       const matchedReasons = catalogueFilterReason(row, parsed, featureDoc);
-      let score = matchedReasons.length * 20;
       const keyFeatures = [];
+
+      let score = matchedReasons.length * 20;
+
+      const allFeatureRows = flattenFeatures(featureDoc?.features || {});
+      const yesFeatureCount = allFeatureRows.filter((item) =>
+        yesishFeature(item.value),
+      ).length;
+
+      score += Math.min(yesFeatureCount, 120) * 0.8;
+
       for (const feature of featureNeedles) {
         const match = featureValueForAny(featureDoc?.features, feature);
         const answer = featureAnswerForValue(match);
+
         if (
           answer === "Yes" ||
           (feature === "6 airbags" && numericFromFeature(match?.value) >= 6)
@@ -2241,40 +2588,64 @@ const recommendationRows = async (
           return null;
         }
       }
+
+      const safetySummary = buildSafetySummaryFromFeatureDoc(featureDoc);
+
       if (safetyOnly) {
-        const safetyHits = flattenFeatures(featureDoc?.features).filter(
-          (item) =>
-            /safety|airbag|adas|esc|tpms|isofix|hill|lane|blind|collision|brake/i.test(
-              `${item.key} ${item.value}`,
-            ),
-        );
-        score += safetyHits.length * 4;
-        keyFeatures.push(
-          ...safetyHits
-            .slice(0, 5)
-            .map((item) => `${item.name}: ${item.value}`),
-        );
-        if (!safetyHits.length) return null;
+        if (
+          !safetySummary.adultNcap &&
+          !safetySummary.childNcap &&
+          !safetySummary.maxAirbags &&
+          !safetySummary.safetyFeatureCount
+        ) {
+          return null;
+        }
+
+        score += safetySummary.score;
+        keyFeatures.push(...(safetySummary.safetyHighlights || []).slice(0, 5));
       }
+
       if (specMode) {
-        const specHits = flattenFeatures(featureDoc?.features).filter((item) =>
+        const specHits = allFeatureRows.filter((item) =>
           new RegExp(specMode, "i").test(`${item.key} ${item.value}`),
         );
+
         score += specHits.length * 8;
         keyFeatures.push(
           ...specHits.slice(0, 5).map((item) => `${item.name}: ${item.value}`),
         );
       }
+
       if (useCase) {
         matchedReasons.push(
           `matched ${useCase} use case using captured fields`,
         );
         score += 15;
+
+        if (/family|parents/i.test(useCase)) {
+          score += firstNumber(safetySummary.maxAirbags) * 10;
+          score += firstNumber(safetySummary.adultNcap) * 25;
+          score += firstNumber(safetySummary.childNcap) * 20;
+        }
+
+        if (/low emi/i.test(useCase)) {
+          score += Math.max(
+            0,
+            40 - firstNumber(row.onRoad, row.exShowroom) / 100000,
+          );
+        }
+
+        if (/feature/i.test(useCase)) {
+          score += Math.min(yesFeatureCount, 100);
+        }
       }
+
       if (!matchedReasons.length) matchedReasons.push("price band match");
+
       return {
         id: row.id,
         brand: row.brand || row.make,
+        make: row.brand || row.make,
         model: normalizedModelLabel(row),
         variant: displayVariant(row),
         city: row.city,
@@ -2283,18 +2654,28 @@ const recommendationRows = async (
         transmission: row.transmission,
         exShowroom: row.exShowroomPrice,
         onRoad: row.onRoadPrice,
+        status: row.status,
+        is_discontinued: row.is_discontinued,
         keyFeatures,
         matchedReasons,
+        safetySummary,
+        adultNcap: safetySummary.adultNcap,
+        childNcap: safetySummary.childNcap,
+        maxAirbags: safetySummary.maxAirbags,
+        safetyHighlights: safetySummary.safetyHighlights,
+        featureCount: yesFeatureCount,
         score,
       };
     })
     .filter(Boolean)
-    .sort(
-      (a, b) =>
-        b.score - a.score ||
+    .sort((a, b) => {
+      if (firstNumber(b.score) !== firstNumber(a.score))
+        return firstNumber(b.score) - firstNumber(a.score);
+      return (
         firstNumber(a.onRoad, a.exShowroom) -
-          firstNumber(b.onRoad, b.exShowroom),
-    );
+        firstNumber(b.onRoad, b.exShowroom)
+      );
+    });
 };
 
 export const vehicleRecommendationSearch = async (parsed, access, trace) => {
@@ -2310,12 +2691,16 @@ export const vehicleRecommendationSearch = async (parsed, access, trace) => {
       ],
     };
   }
+
   const useCase =
     /family|parents|city driving|highway|daily running|low emi|safe|feature-loaded|feature loaded|long drives|chauffeur|rear seat|office|first car|upgrade|premium sedan/i.exec(
       parsed.lower,
     )?.[0] || parsed.intent;
-  const rows = await recommendationRows(parsed, trace, {
-    safetyOnly: parsed.intent === "vehicle_safety_expert",
+
+  const safetyMode = parsed.intent === "vehicle_safety_expert";
+
+  const variantRows = await recommendationRows(parsed, trace, {
+    safetyOnly: safetyMode,
     specMode:
       parsed.intent === "vehicle_dimension_space_search"
         ? "boot|ground|wheelbase|fuel tank|seating|capacity|space|dimension"
@@ -2324,48 +2709,54 @@ export const vehicleRecommendationSearch = async (parsed, access, trace) => {
           : "",
     useCase: parsed.intent === "vehicle_use_case_recommendation" ? useCase : "",
   });
-  const groupedByModel = Object.values(
-    rows.reduce((acc, row) => {
-      const key = `${row.brand}|${row.model}`.toLowerCase();
-      if (!acc[key])
-        acc[key] = {
-          brand: row.brand,
-          model: row.model,
-          rows: [],
-          bestVariant: row,
-        };
-      acc[key].rows.push(row);
-      if (row.score > acc[key].bestVariant.score) acc[key].bestVariant = row;
-      return acc;
-    }, {}),
-  );
+
+  const modelCards = aggregateModelCards(variantRows, { safetyMode });
+  const displayedModels = modelCards.slice(0, 12);
+
+  const widgetType = safetyMode
+    ? "vehicle_safety_results"
+    : parsed.intent?.includes("dimension") ||
+        parsed.intent?.includes("performance")
+      ? "vehicle_spec_ranking"
+      : "vehicle_recommendation_results";
+
   return {
     widgets: [
-      widget(
-        parsed.intent === "vehicle_safety_expert"
-          ? "vehicle_safety_results"
-          : parsed.intent?.includes("dimension") ||
-              parsed.intent?.includes("performance")
-            ? "vehicle_spec_ranking"
-            : "vehicle_recommendation_results",
-        "New car recommendations",
-        {
-          title: parsed.message,
-          city: cityFromParsed(parsed),
-          filters: {
-            budgetMin: parsed.entities.budgetMin,
-            budgetMax: parsed.entities.budgetMax,
-            bodyType: parsed.entities.bodyType,
-            fuelType: parsed.entities.fuelType,
-            transmission: parsed.entities.transmission,
-            requiredFeatures: [parsed.entities.feature].filter(Boolean),
-            useCase,
-          },
-          rows: rows.slice(0, LIMIT),
-          records: rows.slice(0, LIMIT),
-          groupedByModel: groupedByModel.slice(0, 30),
+      widget(widgetType, parsed.message || "New car recommendations", {
+        title: parsed.message,
+        city: cityFromParsed(parsed),
+        filters: {
+          budgetMin: parsed.entities.budgetMin,
+          budgetMax: parsed.entities.budgetMax,
+          bodyType: parsed.entities.bodyType,
+          fuelType: parsed.entities.fuelType,
+          transmission: parsed.entities.transmission,
+          requiredFeatures: [parsed.entities.feature].filter(Boolean),
+          useCase,
+          includeDiscontinued: includeDiscontinuedRequested(parsed),
         },
-      ),
+
+        // MODEL-FIRST OUTPUT
+        rows: displayedModels,
+        records: displayedModels,
+        modelCards: displayedModels,
+        groupedByModel: displayedModels,
+
+        // VARIANT DATA STILL AVAILABLE IF UI WANTS TO DRILL DOWN
+        variantRows: variantRows.slice(0, LIMIT),
+        variants: variantRows.slice(0, LIMIT),
+
+        totalMatchedVariants: variantRows.length,
+        totalMatchedModels: modelCards.length,
+        displayedModels: displayedModels.length,
+
+        notices: [
+          "Showing models first. Variant-level rows are available when you open a specific model.",
+          safetyMode
+            ? "Safety ranking is based only on stored catalogue safety fields. NCAP ratings are shown only where captured."
+            : "",
+        ].filter(Boolean),
+      }),
     ],
     followUpSuggestions: [
       "Compare top results",
@@ -2375,19 +2766,47 @@ export const vehicleRecommendationSearch = async (parsed, access, trace) => {
   };
 };
 
+const parseLoanPercentFromQuery = (lower = "") => {
+  const match =
+    lower.match(/\b(\d+(?:\.\d+)?)\s*%\s*(?:loan|finance|funding)\b/i) ||
+    lower.match(
+      /\b(\d+(?:\.\d+)?)\s*(?:percent)\s*(?:loan|finance|funding)\b/i,
+    ) ||
+    lower.match(
+      /\b(?:loan|finance|funding)\s*(?:of|for)?\s*(\d+(?:\.\d+)?)\s*%/i,
+    ) ||
+    lower.match(
+      /\b(?:loan|finance|funding)\s*(?:of|for)?\s*(\d+(?:\.\d+)?)\s*percent/i,
+    );
+
+  return match ? firstNumber(match[1]) : 0;
+};
+
+const parseDownPaymentPercentFromQuery = (lower = "") => {
+  const match =
+    lower.match(/\b(\d+(?:\.\d+)?)\s*%\s*(?:down payment|down|dp)\b/i) ||
+    lower.match(
+      /\b(\d+(?:\.\d+)?)\s*(?:percent)\s*(?:down payment|down|dp)\b/i,
+    );
+
+  return match ? firstNumber(match[1]) : 0;
+};
+
 export const vehicleEmiCalculator = async (parsed, access, trace) => {
   const resolved = await resolveVehicleCatalogRows(parsed, trace, {
     includeCity: true,
-    limit: 40,
+    limit: 80,
     moduleName: "Vehicles",
   });
+
   const rows = sortCatalogueRows(
     applyCatalogueFilters(resolved.rows, parsed),
     parsed,
   );
   const row = rows[0];
+
   const amountMatch = parsed.lower.match(
-    /\bon road\s*₹?\s*([\d,.]+)\s*(lakh|lac|l|cr|crore)?/i,
+    /\bon[- ]?road\s*₹?\s*([\d,.]+)\s*(lakh|lac|l|cr|crore)?/i,
   );
   const manualAmount = amountMatch
     ? firstNumber(amountMatch[1]) *
@@ -2397,9 +2816,14 @@ export const vehicleEmiCalculator = async (parsed, access, trace) => {
           ? 100000
           : 1)
     : 0;
+
   const compact = row ? vehicleRow(row) : {};
-  const onRoad = manualAmount || compact.onRoadPrice || compact.exShowroomPrice;
-  if (!onRoad)
+
+  const exShowroom = firstNumber(compact.exShowroomPrice);
+  const onRoad =
+    manualAmount || firstNumber(compact.onRoadPrice, compact.exShowroomPrice);
+
+  if (!onRoad) {
     return {
       widgets: [
         unavailableWidget(
@@ -2409,36 +2833,103 @@ export const vehicleEmiCalculator = async (parsed, access, trace) => {
         ),
       ],
     };
+  }
+
   const annualRate = parsed.entities.annualRate || 9;
   const tenureMonths = parsed.entities.tenureMonths || 60;
-  const downPayment =
-    parsed.entities.downPayment ||
-    Math.round(onRoad * ((parsed.entities.downPaymentPercent || 20) / 100));
-  const financeAmount = Math.max(onRoad - downPayment, 0);
+
+  const loanPercent = parseLoanPercentFromQuery(parsed.lower || "");
+  const explicitDownPaymentPercent =
+    parseDownPaymentPercentFromQuery(parsed.lower || "") ||
+    firstNumber(parsed.entities.downPaymentPercent);
+
+  const loanPercentOnRoad =
+    loanPercent > 0 &&
+    /\b(on[- ]?road|on road price)\b/i.test(parsed.lower || "");
+
+  let financeBasis = "on-road";
+  let financeAmount = 0;
+  let downPayment = 0;
+  let downPaymentPercent = explicitDownPaymentPercent || null;
+
+  if (loanPercent > 0) {
+    // User asked for 90% loan. By default this means 90% of ex-showroom.
+    financeBasis = loanPercentOnRoad ? "on-road" : "ex-showroom";
+
+    const financeBase =
+      financeBasis === "ex-showroom" && exShowroom ? exShowroom : onRoad;
+    financeAmount = Math.round(financeBase * (loanPercent / 100));
+
+    // Customer still pays the balance of total on-road amount.
+    downPayment = Math.max(0, onRoad - financeAmount);
+    downPaymentPercent = Math.round((downPayment / onRoad) * 100);
+  } else if (parsed.entities.downPayment) {
+    financeBasis = "on-road";
+    downPayment = firstNumber(parsed.entities.downPayment);
+    financeAmount = Math.max(onRoad - downPayment, 0);
+    downPaymentPercent = Math.round((downPayment / onRoad) * 100);
+  } else if (explicitDownPaymentPercent > 0) {
+    financeBasis = "on-road";
+    downPayment = Math.round(onRoad * (explicitDownPaymentPercent / 100));
+    financeAmount = Math.max(onRoad - downPayment, 0);
+    downPaymentPercent = explicitDownPaymentPercent;
+  } else {
+    financeBasis = "on-road";
+    downPayment = Math.round(onRoad * 0.2);
+    financeAmount = Math.max(onRoad - downPayment, 0);
+    downPaymentPercent = 20;
+  }
+
   const emi = Math.round(emiFor(financeAmount, annualRate, tenureMonths));
+
   const scenarios = [36, 48, 60, 84].map((months) => ({
     label: `${months / 12} years`,
     tenureMonths: months,
     emi: Math.round(emiFor(financeAmount, annualRate, months)),
   }));
+
   return {
     widgets: [
       widget("vehicle_emi_calculator", "Vehicle EMI calculator", {
         vehicle: compact.id ? compact : null,
-        price: { onRoad, exShowroom: compact.exShowroomPrice },
+        city: resolved.showingCity || compact.city || cityFromParsed(parsed),
+        requestedCity: resolved.requestedCity,
+        showingCity:
+          resolved.showingCity || compact.city || cityFromParsed(parsed),
+        cityFallbackUsed: Boolean(resolved.usedCityFallback),
+
+        price: {
+          onRoad,
+          exShowroom,
+        },
+
         inputs: {
+          financeBasis,
+          loanPercent: loanPercent || null,
           downPayment,
-          downPaymentPercent: Math.round((downPayment / onRoad) * 100),
+          downPaymentPercent,
           tenureMonths,
           annualRate,
         },
+
         result: {
+          loanAmount: financeAmount,
           financeAmount,
           emi,
           totalPayable: emi * tenureMonths + downPayment,
           totalInterest: emi * tenureMonths - financeAmount,
         },
+
         scenarios,
+
+        notices: [
+          loanPercent > 0
+            ? `${loanPercent}% loan is calculated on ${financeBasis === "ex-showroom" ? "ex-showroom price" : "on-road price"}.`
+            : "Default EMI assumes 20% down payment on on-road price when no down payment is specified.",
+          resolved.usedCityFallback
+            ? `${titleCase(resolved.requestedCity)} pricing is not available. EMI is calculated using ${titleCase(resolved.showingCity || "new-delhi")} pricing.`
+            : "",
+        ].filter(Boolean),
       }),
     ],
     followUpSuggestions: [
@@ -2451,12 +2942,14 @@ export const vehicleEmiCalculator = async (parsed, access, trace) => {
 
 export const vehicleEmiBudgetSearch = async (parsed, access, trace) => {
   const emiMax = parsed.entities.emiMax || 25000;
-  const rows = (await recommendationRows(parsed, trace))
+
+  const variantRows = (await recommendationRows(parsed, trace))
     .map((row) => {
       const onRoad = firstNumber(row.onRoad, row.exShowroom);
       const downPayment = Math.round(onRoad * 0.2);
       const financeAmount = onRoad - downPayment;
       const emi = Math.round(emiFor(financeAmount, 9, 60));
+
       return {
         ...row,
         emi,
@@ -2469,6 +2962,25 @@ export const vehicleEmiBudgetSearch = async (parsed, access, trace) => {
       };
     })
     .filter((row) => row.emi <= emiMax);
+
+  const modelCards = aggregateModelCards(variantRows).map((card) => {
+    const bestEmiVariant = [...(card.variants || [])].sort(
+      (a, b) => firstNumber(a.emi) - firstNumber(b.emi),
+    )[0];
+
+    return {
+      ...card,
+      bestEmiVariant,
+      estimatedEmi: bestEmiVariant?.emi,
+      financeAmount: bestEmiVariant?.financeAmount,
+      assumptions: bestEmiVariant?.assumptions,
+      matchedReasons: [
+        ...(card.matchedReasons || []),
+        `EMI under ₹${emiMax.toLocaleString("en-IN")}`,
+      ],
+    };
+  });
+
   return {
     widgets: [
       widget("vehicle_emi_recommendations", `Cars with EMI under ${emiMax}`, {
@@ -2478,8 +2990,20 @@ export const vehicleEmiBudgetSearch = async (parsed, access, trace) => {
           annualRate: 9,
           tenureMonths: 60,
         },
-        rows: rows.slice(0, LIMIT),
-        records: rows.slice(0, LIMIT),
+
+        // MODEL-FIRST
+        rows: modelCards.slice(0, 12),
+        records: modelCards.slice(0, 12),
+        modelCards: modelCards.slice(0, 12),
+        groupedByModel: modelCards.slice(0, 12),
+
+        // Drilldown
+        variantRows: variantRows.slice(0, LIMIT),
+        variants: variantRows.slice(0, LIMIT),
+
+        totalMatchedVariants: variantRows.length,
+        totalMatchedModels: modelCards.length,
+        displayedModels: Math.min(modelCards.length, 12),
       }),
     ],
   };
@@ -2665,42 +3189,154 @@ export const vehicleComparison = async (parsed, access, trace) => {
   };
 };
 
-export const vehicleVariantRecommendation = async (parsed, access, trace) => {
-  const effective = {
-    ...parsed,
-    entities: {
-      ...parsed.entities,
-      transmission:
-        parsed.entities.transmission ||
-        (/automatic/i.test(parsed.lower) ? "automatic" : ""),
-      feature:
-        parsed.entities.feature ||
-        (/sunroof/i.test(parsed.lower)
-          ? "sunroof"
-          : /adas/i.test(parsed.lower)
-            ? "adas"
-            : /6\s*airbags/i.test(parsed.lower)
-              ? "6 airbags"
-              : ""),
-    },
-  };
-  const rows = await recommendationRows(effective, trace);
-  const sameModelRows = rows.filter(
-    (row) =>
-      !parsed.entities.model || hasPhrase(row.model, parsed.entities.model),
+const featureScoreForDoc = (featureDoc = {}) => {
+  const features = flattenFeatures(featureDoc?.features || {});
+  const available = features.filter((item) => yesishFeature(item.value));
+
+  const safetySummary = buildSafetySummaryFromFeatureDoc(featureDoc);
+
+  const comfortHits = available.filter((item) =>
+    /sunroof|ventilated|climate|cruise|wireless|camera|parking|rear ac|touchscreen|speaker|android|apple/i.test(
+      `${item.key} ${item.value}`,
+    ),
   );
+
+  return {
+    featureCount: available.length,
+    comfortFeatureCount: comfortHits.length,
+    safetySummary,
+    score:
+      available.length * 1 +
+      comfortHits.length * 3 +
+      firstNumber(safetySummary.maxAirbags) * 8 +
+      firstNumber(safetySummary.adultNcap) * 30 +
+      firstNumber(safetySummary.childNcap) * 20 +
+      firstNumber(safetySummary.safetyFeatureCount) * 4,
+    highlights: [
+      ...comfortHits.slice(0, 5).map((item) => `${item.name}: ${item.value}`),
+      ...(safetySummary.safetyHighlights || []).slice(0, 5),
+    ],
+  };
+};
+
+export const vehicleVariantRecommendation = async (parsed, access, trace) => {
+  const pricelistResult = await vehiclePricelist(parsed, access, trace);
+  const priceWidget = pricelistResult.widgets?.find(
+    (item) => item.type === "vehicle_pricelist",
+  );
+
+  if (!priceWidget?.rows?.length) return pricelistResult;
+
+  const model =
+    parsed.entities.model || priceWidget.model || priceWidget.data?.model;
+  const rows = activeVariantRows(priceWidget.rows || []);
+
+  const featureDocs = await findLean(
+    VehicleFeature,
+    featureModelQuery(model, parsed.entities.make),
+    {
+      sort: { variant: 1 },
+      limit: 200,
+    },
+  );
+
+  pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
+
+  const featureLookup =
+    typeof buildFeatureLookupMaps === "function"
+      ? buildFeatureLookupMaps(featureDocs)
+      : null;
+
+  const prices = rows
+    .map((row) => firstNumber(row.onRoadPrice, row.exShowroomPrice))
+    .filter(Boolean);
+  const minPrice = prices.length ? Math.min(...prices) : 0;
+  const maxPrice = prices.length ? Math.max(...prices) : 0;
+  const spread = Math.max(maxPrice - minPrice, 1);
+
+  const rankedVariants = rows
+    .map((row) => {
+      const featureDoc =
+        featureLookup && typeof resolveFeatureDocForCatalogueRow === "function"
+          ? resolveFeatureDocForCatalogueRow(row, featureLookup)
+          : null;
+
+      const featureScore = featureScoreForDoc(featureDoc);
+      const price = firstNumber(row.onRoadPrice, row.exShowroomPrice);
+
+      // Best-value logic: cheapest does not automatically win.
+      // Mid variants with meaningful features get better value score.
+      const pricePosition = price ? (price - minPrice) / spread : 1;
+      const priceValueScore = Math.max(0, 70 - pricePosition * 45);
+
+      let score = featureScore.score + priceValueScore;
+
+      if (isDiscontinuedVehicleRow(row)) score -= 200;
+      if (!price) score -= 60;
+
+      // Penalize ultra-base variants if feature count is weak.
+      if (featureScore.featureCount < 30) score -= 35;
+
+      return {
+        ...row,
+        price,
+        featureScore: featureScore.score,
+        featureCount: featureScore.featureCount,
+        comfortFeatureCount: featureScore.comfortFeatureCount,
+        safetySummary: featureScore.safetySummary,
+        highlights: featureScore.highlights,
+        valueScore: Math.round(score),
+        score: Math.round(score),
+        matchedReasons: [
+          `${featureScore.featureCount} captured available features`,
+          `${featureScore.safetySummary?.maxAirbags || 0} airbags where captured`,
+          price
+            ? `priced at ₹${price.toLocaleString("en-IN")}`
+            : "price not captured",
+        ],
+      };
+    })
+    .sort((a, b) => firstNumber(b.score) - firstNumber(a.score));
+
+  const cheapestVariant = [...rankedVariants].sort(
+    (a, b) => firstNumber(a.price) - firstNumber(b.price),
+  )[0];
+  const featureLoadedVariant = [...rankedVariants].sort(
+    (a, b) => firstNumber(b.featureCount) - firstNumber(a.featureCount),
+  )[0];
+  const automaticRecommendation = rankedVariants.find((row) =>
+    transmissionMatches(row, "automatic"),
+  );
+  const recommendedVariant = rankedVariants[0];
+
   return {
     widgets: [
       widget(
         "vehicle_variant_recommendation",
-        `Best ${parsed.entities.model || "vehicle"} variant`,
+        `Best ${model || "vehicle"} variant`,
         {
-          model: parsed.entities.model,
-          topRecommendation: sameModelRows[0],
-          rows: sameModelRows.slice(0, 12),
-          alternatives: sameModelRows.slice(1, 6),
+          model,
+          recommendedVariant,
+          valueVariant: recommendedVariant,
+          cheapestVariant,
+          featureLoadedVariant,
+          automaticRecommendation,
+          topRecommendation: recommendedVariant,
+          rows: rankedVariants.slice(0, 12),
+          records: rankedVariants.slice(0, 12),
+          rankedVariants: rankedVariants.slice(0, 24),
+          alternatives: rankedVariants.slice(1, 6),
+          reasons: recommendedVariant?.matchedReasons || [],
+          tradeoffs: [
+            cheapestVariant &&
+            recommendedVariant &&
+            cheapestVariant.variant !== recommendedVariant.variant
+              ? `${cheapestVariant.variant} is cheaper, but ${recommendedVariant.variant} has stronger feature/safety value based on stored data.`
+              : "",
+          ].filter(Boolean),
           notes: [
             "Recommendation is based only on stored price and feature catalogue fields.",
+            "Discontinued variants are excluded unless explicitly requested.",
           ],
         },
       ),
@@ -2713,116 +3349,474 @@ export const vehicleVariantRecommendation = async (parsed, access, trace) => {
   };
 };
 
-export const vehicleVariantDifference = async (parsed, access, trace) => {
-  const resolved = await resolveVehicleCatalogRows(parsed, trace, {
-    includeCity: true,
-    limit: 80,
-    moduleName: "Vehicles",
-  });
-  const rows = sortCatalogueRows(
-    applyCatalogueFilters(resolved.rows, parsed),
-    parsed,
+const variantTokensFromMessage = (message = "") => [
+  ...new Set(
+    (
+      message.match(
+        /\b(?:sx\s?opt|s\s?opt|hte|htk|htx|gtx|sx|vx|zx|hx\d+|xza|xz|alpha|delta|sigma|base|top)(?:\s+(?:plus|opt|turbo|ivt|dct|mt|at|amt|cvt|dt))*\b/gi,
+      ) || []
+    ).map((item) => normalizeVariant(item)),
+  ),
+];
+
+const selectRepresentativeVariantRow = (rows = [], token = "") => {
+  const needle = normalizeVariant(token);
+
+  const matches = rows.filter((row) =>
+    normalizeVariant(displayVariant(row)).includes(needle),
   );
-  const variantsFromMessage = [
+
+  if (!matches.length) return null;
+
+  return [...matches].sort((a, b) => {
+    const aVariant = normalizeVariant(displayVariant(a));
+    const bVariant = normalizeVariant(displayVariant(b));
+
+    const aExact = aVariant === needle ? 1 : 0;
+    const bExact = bVariant === needle ? 1 : 0;
+
+    if (bExact !== aExact) return bExact - aExact;
+
+    // Prefer non-DT and simpler representative if multiple rows match.
+    const aDt = /\bdt\b/i.test(aVariant) ? 1 : 0;
+    const bDt = /\bdt\b/i.test(bVariant) ? 1 : 0;
+    if (aDt !== bDt) return aDt - bDt;
+
+    return (
+      firstNumber(a.onRoadPrice, a.exShowroomPrice) -
+      firstNumber(b.onRoadPrice, b.exShowroomPrice)
+    );
+  })[0];
+};
+
+const normalizeFeatureCompareValue = (value) => {
+  const text = String(value ?? "").trim();
+
+  if (!text) return "";
+  if (/^(not available|no|false|0|-|na|n\/a)$/i.test(text)) return "No";
+  if (/^(yes|available|true|1|standard)$/i.test(text)) return "Yes";
+
+  return text;
+};
+
+const featureMapForCompare = (featureDoc = {}) => {
+  const map = new Map();
+
+  for (const item of flattenFeatures(featureDoc?.features || {})) {
+    const key = toWords(item.key);
+    if (!key) continue;
+
+    map.set(key, {
+      group: item.group,
+      feature: item.name,
+      fullKey: item.key,
+      value: normalizeFeatureCompareValue(item.value),
+    });
+  }
+
+  return map;
+};
+
+const resolveFeatureDocForVariantRow = async (row, featureLookup, model) => {
+  if (featureLookup && typeof resolveFeatureDocForCatalogueRow === "function") {
+    const resolved = resolveFeatureDocForCatalogueRow(row, featureLookup);
+    if (resolved) return resolved;
+  }
+
+  const variantNeedle = normalizeVariant(displayVariant(row));
+
+  const docs = await findLean(
+    VehicleFeature,
+    featureModelQuery(model || row.model, row.brand || row.make),
+    {
+      sort: { variant: 1 },
+      limit: 200,
+    },
+  );
+
+  return (
+    docs.find((doc) => normalizeVariant(doc.variant) === variantNeedle) ||
+    docs.find((doc) => normalizeVariant(doc.variant).includes(variantNeedle)) ||
+    docs.find((doc) => variantNeedle.includes(normalizeVariant(doc.variant))) ||
+    null
+  );
+};
+
+export const vehicleVariantDifference = async (parsed, access, trace) => {
+  const messageText = String(
+    parsed.message || parsed.query || parsed.rawMessage || parsed.lower || "",
+  );
+
+  const variantTokens = [
     ...new Set(
       (
-        parsed.message.match(
+        messageText.match(
           /\b(?:sx\s?opt|s\s?opt|hte|htk|htx|gtx|sx|vx|zx|hx\d+|xza|xz|alpha|delta|sigma|base|top)(?:\s+(?:plus|opt|turbo|ivt|dct|mt|at|amt|cvt|dt))*\b/gi,
         ) || []
       ).map((item) => normalizeVariant(item)),
     ),
-  ];
-  const selected =
-    variantsFromMessage.length >= 2
-      ? rows.filter((row) =>
-          variantsFromMessage.some((variant) =>
-            normalizeVariant(row.variant).includes(variant),
-          ),
-        )
-      : rows.slice(0, 2);
-  const compact = uniqueRows(
-    selected.map((row) => vehicleRow(row)),
-    (row) =>
-      [row.variant, row.fuel, row.transmission, row.city]
-        .join("|")
-        .toLowerCase(),
-  ).slice(0, 2);
-  if (compact.length < 2) {
-    const ambiguity = maybeVariantAmbiguity(
-      parsed,
-      rows.map(vehicleRow),
-      "vehicle_variant_difference",
-    );
-    if (ambiguity) return ambiguity;
+  ].filter(Boolean);
+
+  if (variantTokens.length < 2) {
     return {
       widgets: [
         unavailableWidget(
           "Need two variants",
-          "Ask with two variants, for example: Difference between Verna SX and SX Opt.",
+          "Ask with two variants, for example: Difference between Verna HX6 and HX8.",
           ["Vehicles", "Vehicle Features"],
         ),
       ],
     };
   }
+
+  // IMPORTANT:
+  // Do not use parsed.entities.variant here, because router only extracts the first variant.
+  // For "Difference between Verna HX6 and HX8", parsed.entities.variant is HX6,
+  // which filters out HX8 before comparison.
+  const modelOnlyParsed = {
+    ...parsed,
+    entities: {
+      ...parsed.entities,
+      variant: "",
+    },
+  };
+
+  const resolved = await resolveVehicleCatalogRows(modelOnlyParsed, trace, {
+    includeCity: true,
+    limit: 240,
+    moduleName: "Vehicles",
+  });
+
+  const catalogueRows = sortCatalogueRows(
+    applyCatalogueFilters(resolved.rows, modelOnlyParsed),
+    modelOnlyParsed,
+  );
+
+  const compactRows = uniqueRows(
+    catalogueRows.map((row) => vehicleRow(row)),
+    (row) =>
+      [row.variant, row.fuel, row.transmission, row.city]
+        .join("|")
+        .toLowerCase(),
+  );
+
+  const pickVariantRow = (token) => {
+    const needle = normalizeVariant(token);
+
+    const candidates = compactRows.filter((row) => {
+      const variant = normalizeVariant(row.variant);
+      return (
+        variant === needle ||
+        variant.includes(needle) ||
+        needle.includes(variant)
+      );
+    });
+
+    if (!candidates.length) return null;
+
+    return [...candidates].sort((a, b) => {
+      const av = normalizeVariant(a.variant);
+      const bv = normalizeVariant(b.variant);
+
+      const aExact = av === needle ? 1 : 0;
+      const bExact = bv === needle ? 1 : 0;
+      if (bExact !== aExact) return bExact - aExact;
+
+      // Prefer simpler representative row if multiple city/fuel/DT rows exist.
+      const aDt = /\bdt\b/i.test(av) ? 1 : 0;
+      const bDt = /\bdt\b/i.test(bv) ? 1 : 0;
+      if (aDt !== bDt) return aDt - bDt;
+
+      return (
+        firstNumber(a.onRoadPrice, a.exShowroomPrice) -
+        firstNumber(b.onRoadPrice, b.exShowroomPrice)
+      );
+    })[0];
+  };
+
+  const baseRow = pickVariantRow(variantTokens[0]);
+  const compareRow = pickVariantRow(variantTokens[1]);
+
+  if (!baseRow || !compareRow) {
+    const availableVariants = compactRows
+      .map((row) => row.variant)
+      .filter(Boolean)
+      .slice(0, 20);
+
+    return {
+      widgets: [
+        unavailableWidget(
+          "Variants not found",
+          `I could not find both variants: ${variantTokens.join(" and ")}.`,
+          ["Vehicles", "Vehicle Features"],
+        ),
+        widget("variant_ambiguity", "Available matching variants", {
+          type: "variant_ambiguity",
+          model: parsed.entities.model,
+          options: availableVariants.map((variant) => ({
+            label: variant,
+            variant,
+            entityType: "catalogue_variant",
+          })),
+          rows: availableVariants.map((variant) => ({ variant })),
+        }),
+      ],
+    };
+  }
+
+  const model = parsed.entities.model || baseRow.model || compareRow.model;
+
   const featureDocs = await findLean(
     VehicleFeature,
     featureModelQuery(
-      parsed.entities.model || compact[0]?.model,
-      compact[0]?.brand,
+      model,
+      parsed.entities.make || baseRow.brand || baseRow.make,
     ),
-    { limit: 160 },
+    {
+      sort: { variant: 1 },
+      limit: 260,
+    },
   );
+
   pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
-  const map = joinFeatureDocs(featureDocs);
-  const featureSets = compact.map((row) => {
-    const doc =
-      map.get(catalogFeatureKey(row)) ||
-      map.get(
-        [row.brand, row.model, normalizeVariant(row.variant)]
-          .join("|")
-          .toLowerCase(),
-      );
-    return new Map(
-      flattenFeatures(doc?.features).map((item) => [item.key, item.value]),
+
+  const normalizeCompareKey = (value = "") =>
+    String(value || "")
+      .toLowerCase()
+      .replace(/&amp;/g, "&")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+
+  const pickFeatureDoc = (row, token) => {
+    const needle = normalizeVariant(token);
+    const rowVariant = normalizeVariant(row.variant);
+
+    return (
+      featureDocs.find((doc) => normalizeVariant(doc.variant) === rowVariant) ||
+      featureDocs.find((doc) =>
+        normalizeVariant(doc.variant).includes(needle),
+      ) ||
+      featureDocs.find((doc) =>
+        rowVariant.includes(normalizeVariant(doc.variant)),
+      ) ||
+      featureDocs.find((doc) =>
+        normalizeVariant(doc.variant).includes(rowVariant),
+      ) ||
+      null
     );
-  });
+  };
+
+  const baseFeatureDoc = pickFeatureDoc(baseRow, variantTokens[0]);
+  const compareFeatureDoc = pickFeatureDoc(compareRow, variantTokens[1]);
+
+  const normalizeCompareValue = (value) => {
+    const text = String(value ?? "").trim();
+    if (!text) return "";
+    if (/^(not available|no|false|0|-|na|n\/a)$/i.test(text)) return "No";
+    if (/^(yes|available|true|1|standard)$/i.test(text)) return "Yes";
+    return text;
+  };
+
+  const buildFeatureMap = (featureDoc = {}) => {
+    const map = new Map();
+
+    for (const item of flattenFeatures(featureDoc?.features || {})) {
+      const key = normalizeCompareKey(item.key);
+      if (!key) continue;
+
+      map.set(key, {
+        group:
+          item.group ||
+          String(item.key || "")
+            .split("|")[0]
+            ?.trim() ||
+          "Features",
+        feature:
+          item.name ||
+          String(item.key || "")
+            .split("|")
+            .pop()
+            ?.trim() ||
+          item.key,
+        fullKey: item.key,
+        value: normalizeCompareValue(item.value),
+      });
+    }
+
+    return map;
+  };
+
+  const baseFeatures = buildFeatureMap(baseFeatureDoc);
+  const compareFeatures = buildFeatureMap(compareFeatureDoc);
+
   const allKeys = [
-    ...new Set([...featureSets[0].keys(), ...featureSets[1].keys()]),
+    ...new Set([...baseFeatures.keys(), ...compareFeatures.keys()]),
   ];
-  const featureDifferences = allKeys
-    .map((key) => ({
-      feature: key,
-      values: featureSets.map((set) => set.get(key) ?? "Not captured"),
-    }))
-    .filter((row) => String(row.values[0]) !== String(row.values[1]))
-    .slice(0, 80);
+
+  const addedFeatures = [];
+  const removedFeatures = [];
+  const changedFeatures = [];
+  const sameImportantFeatures = [];
+
+  for (const key of allKeys) {
+    const base = baseFeatures.get(key);
+    const compare = compareFeatures.get(key);
+
+    const baseValue = base?.value || "";
+    const compareValue = compare?.value || "";
+    const feature = compare?.feature || base?.feature || key;
+    const group = compare?.group || base?.group || "Features";
+
+    if (!base && compare && compareValue && compareValue !== "No") {
+      addedFeatures.push({ group, feature, baseValue: "", compareValue });
+      continue;
+    }
+
+    if (base && !compare && baseValue && baseValue !== "No") {
+      removedFeatures.push({ group, feature, baseValue, compareValue: "" });
+      continue;
+    }
+
+    if (baseValue !== compareValue) {
+      if (
+        (baseValue === "No" || !baseValue) &&
+        compareValue &&
+        compareValue !== "No"
+      ) {
+        addedFeatures.push({ group, feature, baseValue, compareValue });
+      } else if (
+        baseValue &&
+        baseValue !== "No" &&
+        (compareValue === "No" || !compareValue)
+      ) {
+        removedFeatures.push({ group, feature, baseValue, compareValue });
+      } else {
+        changedFeatures.push({ group, feature, baseValue, compareValue });
+      }
+    } else if (
+      /airbag|sunroof|adas|esc|tpms|isofix|climate|camera|mileage|engine|transmission|boot|ground/i.test(
+        feature,
+      ) &&
+      baseValue
+    ) {
+      sameImportantFeatures.push({ group, feature, value: baseValue });
+    }
+  }
+
+  const safetyDifferences = [
+    ...addedFeatures,
+    ...removedFeatures,
+    ...changedFeatures,
+  ].filter((item) =>
+    /safety|airbag|adas|esc|tpms|isofix|hill|lane|blind|collision|brake|abs/i.test(
+      `${item.group} ${item.feature}`,
+    ),
+  );
+
+  const engineDifferences = [
+    ...addedFeatures,
+    ...removedFeatures,
+    ...changedFeatures,
+  ].filter((item) =>
+    /engine|transmission|gearbox|mileage|power|torque|fuel|performance|displacement/i.test(
+      `${item.group} ${item.feature}`,
+    ),
+  );
+
+  const baseOnRoad = firstNumber(
+    baseRow.onRoadPrice,
+    baseRow.price,
+    baseRow.exShowroomPrice,
+  );
+  const compareOnRoad = firstNumber(
+    compareRow.onRoadPrice,
+    compareRow.price,
+    compareRow.exShowroomPrice,
+  );
+  const priceDifference = compareOnRoad - baseOnRoad;
+
+  const recommendation =
+    priceDifference > 0 && addedFeatures.length
+      ? `${compareRow.variant} costs ₹${priceDifference.toLocaleString("en-IN")} more and adds ${addedFeatures.length} captured feature(s).`
+      : priceDifference > 0
+        ? `${compareRow.variant} costs ₹${priceDifference.toLocaleString("en-IN")} more, but no major extra captured features were found.`
+        : `${compareRow.variant} is not costlier than ${baseRow.variant} in the stored price data.`;
+
   return {
     widgets: [
-      widget("vehicle_variant_difference", "Variant difference", {
-        variants: compact,
-        priceDifference:
-          firstNumber(compact[1].onRoadPrice, compact[1].exShowroomPrice) -
-          firstNumber(compact[0].onRoadPrice, compact[0].exShowroomPrice),
-        featureDifferences,
-        comparisonRows: [
-          {
-            label: "On-road price",
-            values: compact.map((row) => row.onRoadPrice),
+      widget(
+        "vehicle_variant_difference",
+        `${baseRow.variant} vs ${compareRow.variant}`,
+        {
+          type: "vehicle_variant_difference",
+          model,
+          city: resolved.showingCity || baseRow.city,
+          requestedCity: resolved.requestedCity,
+          showingCity: resolved.showingCity || baseRow.city,
+          cityFallbackUsed: Boolean(resolved.usedCityFallback),
+
+          baseVariant: baseRow,
+          compareVariant: compareRow,
+
+          price: {
+            baseOnRoad,
+            compareOnRoad,
+            difference: priceDifference,
+            baseExShowroom: firstNumber(baseRow.exShowroomPrice),
+            compareExShowroom: firstNumber(compareRow.exShowroomPrice),
           },
-          {
-            label: "Ex-showroom",
-            values: compact.map((row) => row.exShowroomPrice),
+
+          addedFeatures,
+          removedFeatures,
+          changedFeatures,
+          sameImportantFeatures: sameImportantFeatures.slice(0, 20),
+          safetyDifferences,
+          engineDifferences,
+
+          summary: {
+            addedCount: addedFeatures.length,
+            removedCount: removedFeatures.length,
+            changedCount: changedFeatures.length,
+            recommendation,
           },
-          { label: "Fuel", values: compact.map((row) => row.fuel) },
-          {
-            label: "Transmission",
-            values: compact.map((row) => row.transmission),
-          },
-        ],
-        notes: [
-          "Differences are based only on stored catalogue and feature fields.",
-        ],
-      }),
+
+          rows: [
+            ...addedFeatures.map((item) => ({ type: "Added", ...item })),
+            ...removedFeatures.map((item) => ({ type: "Removed", ...item })),
+            ...changedFeatures.map((item) => ({ type: "Changed", ...item })),
+          ],
+
+          comparisonRows: [
+            { label: "On-road price", values: [baseOnRoad, compareOnRoad] },
+            {
+              label: "Ex-showroom",
+              values: [
+                firstNumber(baseRow.exShowroomPrice),
+                firstNumber(compareRow.exShowroomPrice),
+              ],
+            },
+            { label: "Fuel", values: [baseRow.fuel, compareRow.fuel] },
+            {
+              label: "Transmission",
+              values: [baseRow.transmission, compareRow.transmission],
+            },
+          ],
+
+          variants: [baseRow, compareRow],
+
+          notices: [
+            "Feature difference is based only on stored feature catalogue fields.",
+            !baseFeatureDoc || !compareFeatureDoc
+              ? "One or both exact feature records were not found; matched by nearest variant text where possible."
+              : "",
+          ].filter(Boolean),
+        },
+      ),
+    ],
+    followUpSuggestions: [
+      "Calculate EMI",
+      "Show price breakup",
+      "Compare with other variant",
     ],
   };
 };
