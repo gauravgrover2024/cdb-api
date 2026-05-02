@@ -13,6 +13,7 @@ import {
 import { findLean, LIMIT, pushModuleTrace, safeId } from "./aiAgent.tools.js";
 import { noteRestriction } from "./aiAgent.accessControl.js";
 import { normalizeVehicleDatasetRow } from "../../utils/vehicleDatasetNormalizer.js";
+import { calculateEMI } from "./aiAgent.loanCalc.js";
 
 const titleCase = (value) =>
   String(value || "")
@@ -2880,13 +2881,13 @@ export const vehicleEmiCalculator = async (parsed, access, trace) => {
     downPaymentPercent = 20;
   }
 
-  const emi = Math.round(emiFor(financeAmount, annualRate, tenureMonths));
-
   const scenarios = [36, 48, 60, 84].map((months) => ({
     label: `${months / 12} years`,
     tenureMonths: months,
     emi: Math.round(emiFor(financeAmount, annualRate, months)),
   }));
+
+  const emi = calculateEMI(financeAmount, annualRate, tenureMonths);
 
   return {
     widgets: [

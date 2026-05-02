@@ -4,7 +4,7 @@ import {
   normalizeRegistration,
   normalizeText,
 } from "./aiAgent.normalizers.js";
-
+import { routeAiAgentIntent } from "./aiAgent.intentRouter.js";
 const STOP_WORDS = new Set([
   "show",
   "all",
@@ -131,39 +131,135 @@ const CITY_HINTS = [
 ];
 
 const INTENT_PRIORITY = [
-  ["vehicle_city_change", /\b(change city|show .* price in|price in|on road in|on-road in)\b/],
-  ["vehicle_colors", /\b(colou?rs?|color options|available colou?rs?|show colou?rs?)\b/],
-  ["vehicle_comparison", /\b(compare|comparison| vs | versus |difference between)\b/],
-  ["similar_cars", /\b(similar cars|alternatives|competitors|same segment|cars like|similar to)\b/],
-  ["loan_disbursal_report", /\b(approved but not disbursed|approved not disbursed|pending disbursal|approval done disbursal pending|approved cases pending disbursal)\b/],
-  ["loan_pending_approval_report", /\b(pending approval|approval pending|not approved|approval stage)\b/],
-  ["loan_disbursed_report", /\b(disbursed cases|disbursed loans|loans disbursed)\b/],
-  ["missing_registration_report", /\b(without registration|missing registration|reg(?:istration)? number missing|registration not captured|vehicle number missing|cars without number|no registration)\b/],
-  ["payout_missing_report", /\b(payout missing|payout not entered|payout pending|payout blank|payout not received|receivable missing|net payout missing|cases with payout)\b/],
-  ["payout_entered_report", /\b(payout entered|payout has been entered|cases have payout entered|with payout entered|payout available)\b/],
-  ["payment_pending_report", /\b(payment pending|pending payment|balance pending|showroom payment|customer payment|amount pending|receivable pending)\b/],
-  ["active_loan_expired_insurance_report", /\b(active loan.*expired insurance|loan active.*insurance expired|insurance expired.*loan active)\b/],
-  ["latest_insurance", /\b(latest insurance|insurance of|policy of|active insurance|current policy|latest policy|insurance expiring|insurance expired)\b/],
-  ["insurance_expiry_report", /\b(policies expiring|insurance due|renewal due|expired policies|active policies)\b/],
-  ["loan_closure", /\b(loan closure|approx loan closure|closure amount|foreclosure|close loan|loan closing|settlement amount)\b/],
-  ["loan_status", /\b(loan status|loan case|bank status|approval status|disbursal status|active loan|loan of)\b/],
-  ["customer_360", /\b(customer\s*360|customer profile|full profile|show all cases of|all records of|full customer details)\b/],
-  ["vehicle_360", /\b(vehicle\s*360|vehicle profile|full vehicle history|full history of car|all records of vehicle)\b/],
-  ["delivery_order_report", /\b(delivery order|dealer letter|do created|do pending|delivery pending|approved loans without do|approved but no do)\b/],
-  ["inspection_report", /\b(inspection|pdi|inspection report|road test|engine noise|no-go|inspection pending|inspection done)\b/],
-  ["background_check_report", /\b(background check|bgc|noc|hypothecation|blacklist|ownership|transfer)\b/],
+  [
+    "vehicle_city_change",
+    /\b(change city|show .* price in|price in|on road in|on-road in)\b/,
+  ],
+  [
+    "vehicle_colors",
+    /\b(colou?rs?|color options|available colou?rs?|show colou?rs?)\b/,
+  ],
+  [
+    "vehicle_comparison",
+    /\b(compare|comparison| vs | versus |difference between)\b/,
+  ],
+  [
+    "similar_cars",
+    /\b(similar cars|alternatives|competitors|same segment|cars like|similar to)\b/,
+  ],
+  [
+    "loan_disbursal_report",
+    /\b(approved but not disbursed|approved not disbursed|pending disbursal|approval done disbursal pending|approved cases pending disbursal)\b/,
+  ],
+  [
+    "loan_pending_approval_report",
+    /\b(pending approval|approval pending|not approved|approval stage)\b/,
+  ],
+  [
+    "loan_disbursed_report",
+    /\b(disbursed cases|disbursed loans|loans disbursed)\b/,
+  ],
+  [
+    "missing_registration_report",
+    /\b(without registration|missing registration|reg(?:istration)? number missing|registration not captured|vehicle number missing|cars without number|no registration)\b/,
+  ],
+  [
+    "payout_missing_report",
+    /\b(payout missing|payout not entered|payout pending|payout blank|payout not received|receivable missing|net payout missing|cases with payout)\b/,
+  ],
+  [
+    "payout_entered_report",
+    /\b(payout entered|payout has been entered|cases have payout entered|with payout entered|payout available)\b/,
+  ],
+  [
+    "payment_pending_report",
+    /\b(payment pending|pending payment|balance pending|showroom payment|customer payment|amount pending|receivable pending)\b/,
+  ],
+  [
+    "active_loan_expired_insurance_report",
+    /\b(active loan.*expired insurance|loan active.*insurance expired|insurance expired.*loan active)\b/,
+  ],
+  [
+    "latest_insurance",
+    /\b(latest insurance|insurance of|policy of|active insurance|current policy|latest policy|insurance expiring|insurance expired)\b/,
+  ],
+  [
+    "insurance_expiry_report",
+    /\b(policies expiring|insurance due|renewal due|expired policies|active policies)\b/,
+  ],
+  [
+    "loan_closure",
+    /\b(loan closure|approx loan closure|closure amount|foreclosure|close loan|loan closing|settlement amount)\b/,
+  ],
+  [
+    "loan_status",
+    /\b(loan status|loan case|bank status|approval status|disbursal status|active loan|loan of)\b/,
+  ],
+  [
+    "customer_360",
+    /\b(customer\s*360|customer profile|full profile|show all cases of|all records of|full customer details)\b/,
+  ],
+  [
+    "vehicle_360",
+    /\b(vehicle\s*360|vehicle profile|full vehicle history|full history of car|all records of vehicle)\b/,
+  ],
+  [
+    "delivery_order_report",
+    /\b(delivery order|dealer letter|do created|do pending|delivery pending|approved loans without do|approved but no do)\b/,
+  ],
+  [
+    "inspection_report",
+    /\b(inspection|pdi|inspection report|road test|engine noise|no-go|inspection pending|inspection done)\b/,
+  ],
+  [
+    "background_check_report",
+    /\b(background check|bgc|noc|hypothecation|blacklist|ownership|transfer)\b/,
+  ],
   ["challan_report", /\b(challan|traffic fine|pending challan|e-challan)\b/],
-  ["rc_lookup", /\b(rc|registration certificate|vehicle registration|owner details|registration details)\b/],
-  ["document_report", /\b(document|pdf|policy copy|invoice|rc copy|upload|download|document missing|sanction letter)\b/],
-  ["followup_report", /\b(follow-up|follow up|callback|assign|task|due|pending follow-up)\b/],
-  ["price_history_report", /\b(new variants|variants.*added|price updated|price history|updated last|new prices|variant added)\b/],
-  ["vehicle_feature_answer", /\b(does|has|have|available|with)\b.*\b(sunroof|airbag|cruise|adas|camera|ventilated|automatic|dct|cvt|abs|esp|tpms|engine|mileage|boot space|ground clearance)\b/],
-  ["vehicle_features", /\b(features?|specs|specifications|catalogue|catalog|brochure|engine|mileage|boot space|ground clearance)\b/],
-  ["vehicle_pricelist", /\b(pricelist|price list|price|pricing|prices|rate list|on road|on-road|ex showroom|ex-showroom|variant price|new car price|new )\b/],
-  ["used_car_rc_pending_report", /\b(used car.*rc|rc check pending|challan check|used car lead|procurement lead|qualified lead|seller)\b/],
-  ["data_quality_workbench", /\b(data quality|data issues|missing data|cleanup workbench|quality workbench|duplicate|data issue|mismatch|blank|invalid|not captured|quality report)\b/],
-  ["operations_digest", /\b(what needs attention|attention today|today.*pending|pending today|operations digest|ops digest|daily digest|workbench)\b/],
-  ["finance_intelligence", /\b(finance intelligence|finance digest|receivable summary|payment intelligence|payout intelligence)\b/],
+  [
+    "rc_lookup",
+    /\b(rc|registration certificate|vehicle registration|owner details|registration details)\b/,
+  ],
+  [
+    "document_report",
+    /\b(document|pdf|policy copy|invoice|rc copy|upload|download|document missing|sanction letter)\b/,
+  ],
+  [
+    "followup_report",
+    /\b(follow-up|follow up|callback|assign|task|due|pending follow-up)\b/,
+  ],
+  [
+    "price_history_report",
+    /\b(new variants|variants.*added|price updated|price history|updated last|new prices|variant added)\b/,
+  ],
+  [
+    "vehicle_feature_answer",
+    /\b(does|has|have|available|with)\b.*\b(sunroof|airbag|cruise|adas|camera|ventilated|automatic|dct|cvt|abs|esp|tpms|engine|mileage|boot space|ground clearance)\b/,
+  ],
+  [
+    "vehicle_features",
+    /\b(features?|specs|specifications|catalogue|catalog|brochure|engine|mileage|boot space|ground clearance)\b/,
+  ],
+  [
+    "vehicle_pricelist",
+    /\b(pricelist|price list|price|pricing|prices|rate list|on road|on-road|ex showroom|ex-showroom|variant price|new car price|new )\b/,
+  ],
+  [
+    "used_car_rc_pending_report",
+    /\b(used car.*rc|rc check pending|challan check|used car lead|procurement lead|qualified lead|seller)\b/,
+  ],
+  [
+    "data_quality_workbench",
+    /\b(data quality|data issues|missing data|cleanup workbench|quality workbench|duplicate|data issue|mismatch|blank|invalid|not captured|quality report)\b/,
+  ],
+  [
+    "operations_digest",
+    /\b(what needs attention|attention today|today.*pending|pending today|operations digest|ops digest|daily digest|workbench)\b/,
+  ],
+  [
+    "finance_intelligence",
+    /\b(finance intelligence|finance digest|receivable summary|payment intelligence|payout intelligence)\b/,
+  ],
 ];
 
 const parseDateRange = (lower) => {
@@ -206,7 +302,8 @@ const detectIntent = (lower) => {
   for (const [intent, pattern] of INTENT_PRIORITY) {
     if (pattern.test(lower)) return intent;
   }
-  if (compact.includes("pricelist") || compact.includes("prices")) return "vehicle_pricelist";
+  if (compact.includes("pricelist") || compact.includes("prices"))
+    return "vehicle_pricelist";
   if (/^\d{4}$/.test(lower.trim())) return "vehicle_lookup";
   return "general_search";
 };
@@ -224,9 +321,10 @@ const extractLast4 = (message) => {
 
 const extractModelTokens = (lower) => {
   const compact = lower.replace(/[^a-z0-9]/g, "");
-  const models = MODEL_HINTS.filter((model) =>
-    new RegExp(`\\b${model.replace(/\s+/g, "\\s+")}\\b`, "i").test(lower) ||
-    compact.includes(model.replace(/\s+/g, "")),
+  const models = MODEL_HINTS.filter(
+    (model) =>
+      new RegExp(`\\b${model.replace(/\s+/g, "\\s+")}\\b`, "i").test(lower) ||
+      compact.includes(model.replace(/\s+/g, "")),
   );
   return [...new Set(models)];
 };
@@ -273,15 +371,22 @@ const extractName = (message, lower, models) => {
 };
 
 const extractCity = (lower, context = {}, filters = {}) => {
-  const explicit = CITY_HINTS.find((city) => new RegExp(`\\b${city}\\b`, "i").test(lower));
-  return explicit || context?.city || context?.entities?.city || filters?.city || "";
+  const explicit = CITY_HINTS.find((city) =>
+    new RegExp(`\\b${city}\\b`, "i").test(lower),
+  );
+  return (
+    explicit || context?.city || context?.entities?.city || filters?.city || ""
+  );
 };
 
 const extractVariant = (original, lower, models, intent) => {
   if (!/^vehicle_|^price_history_report$/.test(intent)) return "";
-  const known = original.match(/\b(sx|vx|zx|zxi|vxi|alpha|delta|sigma|sportz|asta|hx\d+|s\s?opt|sx\s?opt|top|base|ivt|dct|mt|at|cvt|turbo)\b(?:\s+\b(turbo|ivt|dct|mt|at|cvt|dt|opt)\b)*/i)?.[0];
+  const known = original.match(
+    /\b(sx|vx|zx|zxi|vxi|alpha|delta|sigma|sportz|asta|hx\d+|s\s?opt|sx\s?opt|top|base|ivt|dct|mt|at|cvt|turbo)\b(?:\s+\b(turbo|ivt|dct|mt|at|cvt|dt|opt)\b)*/i,
+  )?.[0];
   if (known) return normalizeText(known);
-  if (!/feature|spec|catalog|brochure|price|variant|does|has|have/.test(lower)) return "";
+  if (!/feature|spec|catalog|brochure|price|variant|does|has|have/.test(lower))
+    return "";
   const blocked = new Set([
     ...STOP_WORDS,
     ...MAKE_HINTS,
@@ -298,7 +403,11 @@ const extractVariant = (original, lower, models, intent) => {
     .split(/\s+/)
     .map((token) => token.replace(/[^a-zA-Z0-9]/g, ""))
     .filter(Boolean)
-    .filter((token) => !blocked.has(token.toLowerCase()) && !MODEL_HINTS.includes(token.toLowerCase()));
+    .filter(
+      (token) =>
+        !blocked.has(token.toLowerCase()) &&
+        !MODEL_HINTS.includes(token.toLowerCase()),
+    );
   return tokens.slice(0, 4).join(" ");
 };
 
@@ -323,12 +432,45 @@ const CUSTOMER_CONTEXT_INTENTS = new Set([
   "vehicle_registration_search",
 ]);
 
-export const parseAgentMessage = (message, context = {}, selectedEntity = null, filters = {}) => {
+const NEW_CAR_ROUTER_INTENTS = new Set([
+  "vehicle_pricelist",
+  "vehicle_city_change",
+  "vehicle_price_breakup",
+  "vehicle_colors",
+  "vehicle_color_search",
+  "vehicle_features",
+  "vehicle_feature_answer",
+  "vehicle_feature_discovery",
+  "similar_cars",
+  "vehicle_comparison",
+  "vehicle_budget_search",
+  "vehicle_use_case_recommendation",
+  "vehicle_emi_calculator",
+  "vehicle_emi_budget_search",
+  "vehicle_price_history",
+  "vehicle_launch_status",
+  "vehicle_body_type_search",
+  "vehicle_fuel_transmission_search",
+  "vehicle_dimension_space_search",
+  "vehicle_performance_mileage_search",
+  "vehicle_safety_expert",
+  "vehicle_best_variant_recommendation",
+  "vehicle_variant_difference",
+]);
+
+const parseAgentMessageLegacy = (
+  message,
+  context = {},
+  selectedEntity = null,
+  filters = {},
+) => {
   const original = normalizeText(message);
   const lower = original.toLowerCase();
   const intent = detectIntent(lower);
   const models = extractModelTokens(lower);
-  const make = MAKE_HINTS.find((hint) => new RegExp(`\\b${hint}\\b`, "i").test(lower)) || "";
+  const make =
+    MAKE_HINTS.find((hint) => new RegExp(`\\b${hint}\\b`, "i").test(lower)) ||
+    "";
   const explicitRegistrationNumber = extractFullRegistration(original);
   const explicitLast4 = extractLast4(original);
   const registrationNumber =
@@ -349,8 +491,16 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
     filters?.vehicleLast4 ||
     (registrationNumber ? digitsOnly(registrationNumber).slice(-4) : "");
   const nameIntent = CUSTOMER_CONTEXT_INTENTS.has(intent);
-  const explicitCustomerName = nameIntent ? extractName(original, lower, models) : "";
-  const hasFreshEntityInMessage = Boolean(explicitCustomerName || explicitRegistrationNumber || explicitLast4 || models.length || make);
+  const explicitCustomerName = nameIntent
+    ? extractName(original, lower, models)
+    : "";
+  const hasFreshEntityInMessage = Boolean(
+    explicitCustomerName ||
+    explicitRegistrationNumber ||
+    explicitLast4 ||
+    models.length ||
+    make,
+  );
   const canUseVehicleContext = VEHICLE_CONTEXT_INTENTS.has(intent);
   const canUseCustomerContext = CUSTOMER_CONTEXT_INTENTS.has(intent);
   const contextualCustomerName =
@@ -363,11 +513,19 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
     "";
   const customerName =
     explicitCustomerName ||
-    (!hasFreshEntityInMessage && canUseCustomerContext ? contextualCustomerName : "");
+    (!hasFreshEntityInMessage && canUseCustomerContext
+      ? contextualCustomerName
+      : "");
 
-  const statuses = ["pending", "missing", "expired", "active", "approved", "disbursed", "closed"].filter(
-    (status) => lower.includes(status),
-  );
+  const statuses = [
+    "pending",
+    "missing",
+    "expired",
+    "active",
+    "approved",
+    "disbursed",
+    "closed",
+  ].filter((status) => lower.includes(status));
   const featureTerm =
     [
       "sunroof",
@@ -399,18 +557,86 @@ export const parseAgentMessage = (message, context = {}, selectedEntity = null, 
       registrationNumber,
       last4,
       make,
-      model: models[0] || (!hasFreshEntityInMessage && canUseVehicleContext ? context?.model || context?.entities?.model || filters?.model || "" : ""),
+      model:
+        models[0] ||
+        (!hasFreshEntityInMessage && canUseVehicleContext
+          ? context?.model || context?.entities?.model || filters?.model || ""
+          : ""),
       models,
-      variant: extractVariant(original, lower, models, intent) || (!hasFreshEntityInMessage && canUseVehicleContext ? context?.variant || context?.entities?.variant || filters?.variant || "" : ""),
+      variant:
+        extractVariant(original, lower, models, intent) ||
+        (!hasFreshEntityInMessage && canUseVehicleContext
+          ? context?.variant ||
+            context?.entities?.variant ||
+            filters?.variant ||
+            ""
+          : ""),
       city: extractCity(lower, context, filters),
       feature: featureTerm,
     }),
     statusTerms: statuses,
-    financeTerms: ["payout", "receivable", "payment", "closure", "outstanding", "disbursal"].filter((term) =>
-      lower.includes(term),
-    ),
-    documentTerms: ["rc", "challan", "registration", "insurance", "policy"].filter((term) =>
-      lower.includes(term),
-    ),
+    financeTerms: [
+      "payout",
+      "receivable",
+      "payment",
+      "closure",
+      "outstanding",
+      "disbursal",
+    ].filter((term) => lower.includes(term)),
+    documentTerms: [
+      "rc",
+      "challan",
+      "registration",
+      "insurance",
+      "policy",
+    ].filter((term) => lower.includes(term)),
+  };
+};
+
+export const parseAgentMessage = (
+  message,
+  context = {},
+  selectedEntity = null,
+  filters = {},
+) => {
+  const legacyParsed = parseAgentMessageLegacy(
+    message,
+    context,
+    selectedEntity,
+    filters,
+  );
+
+  const routed = routeAiAgentIntent({
+    message,
+    context,
+    selectedEntity,
+    filters,
+  });
+
+  // Only let the new router override NEW-CAR intelligence.
+  // Everything else remains exactly as the legacy parser handled it.
+  if (!NEW_CAR_ROUTER_INTENTS.has(routed.intent)) {
+    return legacyParsed;
+  }
+
+  return {
+    ...legacyParsed,
+
+    intent: routed.intent,
+    confidence: routed.confidence ?? legacyParsed.confidence,
+
+    dateRange: routed.entities?.dateRange || legacyParsed.dateRange,
+
+    entities: compactObject({
+      ...legacyParsed.entities,
+      ...(routed.entities || {}),
+    }),
+
+    definition: routed.definition || null,
+    collections: routed.collections || [],
+    widgetType: routed.widgetType || legacyParsed.widgetType || "",
+    failureMessage: routed.failureMessage || "",
+    structured: routed.structured,
+    queryPlan: routed.queryPlan || null,
   };
 };
