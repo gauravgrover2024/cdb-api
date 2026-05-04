@@ -1465,12 +1465,80 @@ export const vehiclePricelist = async (parsed, access, trace) => {
     "city",
     vehicleModelClause(model, make),
   ).maxTimeMS(2500);
+  const colorsMap = getFieldMap("vehicle_colors");
+  let colorGallery = [];
+
+  try {
+    const colorCollection = mongoose.connection.db.collection(
+      colorsMap.collectionName,
+    );
+
+    const colorRows = await colorCollection
+      .find({
+        model: new RegExp(escapeRegex(model), "i"),
+        ...(make ? { brand: new RegExp(escapeRegex(make), "i") } : {}),
+      })
+      .project({
+        brand: 1,
+        model: 1,
+        color_name: 1,
+        hex: 1,
+        image_url: 1,
+        last_updated: 1,
+        scrape_timestamp: 1,
+        source_page: 1,
+      })
+      .limit(40)
+      .maxTimeMS(2500)
+      .toArray();
+
+    pushModuleTrace(
+      trace,
+      `${colorsMap.module} for pricelist image`,
+      colorRows.length,
+    );
+
+    colorGallery = uniqueRows(
+      colorRows
+        .map((item) => ({
+          id: safeId(item),
+          brand: item.brand,
+          make: item.brand,
+          model: item.model,
+          colorName: item.color_name,
+          hex: item.hex,
+          imageUrl: item.image_url,
+          image_url: item.image_url,
+          sourcePage: item.source_page,
+          lastUpdated: formatDateValue(
+            firstMeaningful(item.last_updated, item.scrape_timestamp),
+          ),
+        }))
+        .filter((item) => item.colorName || item.imageUrl),
+      (row) =>
+        [row.brand, row.model, row.colorName, row.imageUrl || row.hex]
+          .join("|")
+          .toLowerCase(),
+    );
+  } catch (error) {
+    pushModuleTrace(trace, `${colorsMap.module} for pricelist image`, 0, {
+      error: error?.message || "Unable to fetch vehicle color images",
+    });
+  }
+
+  const heroImage = firstMeaningful(
+    ...colorGallery.map((item) => item.imageUrl).filter(Boolean),
+  );
   return {
     widgets: [
       widget("vehicle_pricelist", `${model} pricelist`, {
         brand: make,
         model,
         city,
+        heroImage,
+        imageUrl: heroImage,
+        colors: colorGallery,
+        colorGallery,
         requestedCity: resolved.requestedCity,
         showingCity: city,
         cityFallbackUsed: Boolean(resolved.usedCityFallback),
@@ -1482,6 +1550,10 @@ export const vehiclePricelist = async (parsed, access, trace) => {
           brand: make,
           model,
           city,
+          heroImage,
+          imageUrl: heroImage,
+          colors: colorGallery,
+          colorGallery,
           requestedCity: resolved.requestedCity,
           showingCity: city,
           cityFallbackUsed: Boolean(resolved.usedCityFallback),
