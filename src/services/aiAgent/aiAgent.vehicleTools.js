@@ -2076,6 +2076,7 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
 
   return {
     widgets: [
+      widget("vehicle_pricelist", ..., { rows: compactVariantRows(catalogRows) })
       widget("vehicle_feature_answer", `${feature} availability in ${model}`, {
         question: parsed.message,
         model,
