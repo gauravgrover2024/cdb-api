@@ -6,6 +6,17 @@ import {
   buildFilters,
   unavailableWidget,
 } from "./aiAgent.responseBuilders.js";
+import {
+  buildContextSnapshot,
+  buildConversationSuggestions,
+  buildFollowUpSuggestions,
+  buildLeadingQuestions,
+} from "./aiAgent.actionBuilder.js";
+import {
+  getIntentForWidgetType,
+  getNewCarQuestionConfig,
+  mapIntentAlias,
+} from "./aiAgent.newCarQuestionMap.js";
 
 const fallbackHandler = async () => {
   return {
@@ -58,17 +69,87 @@ const countWidgetRows = (widget = {}) => {
   return 0;
 };
 
-const buildAssistantMessage = (parsed, result) => {
+const buildAssistantMessage = (parsed, result, contextSnapshot = null) => {
   if (result.ambiguity) return result.ambiguity.message;
   if (!result.widgets?.length)
     return "I checked live records but did not find a matching result.";
 
   const primary = result.widgets[0];
+  const widgetData = primary?.data || primary;
+  const model =
+    contextSnapshot?.anchorModel ||
+    widgetData?.model ||
+    parsed?.entities?.model ||
+    parsed?.entities?.models?.[0];
+  const variant =
+    contextSnapshot?.anchorVariant ||
+    widgetData?.variantQuery ||
+    parsed?.entities?.variant;
+  const city =
+    contextSnapshot?.city ||
+    contextSnapshot?.requestedCity ||
+    widgetData?.city ||
+    parsed?.entities?.city ||
+    "Delhi / New Delhi";
+  const feature = widgetData?.feature || parsed?.entities?.feature;
 
   if (primary.type === "unavailable_notice") {
     return (
       primary.data?.message || primary.message || "That data is unavailable."
     );
+  }
+
+  if (primary.type === "model_ambiguity") {
+    return `I found more than one model matching ${model || "your query"}. Which one should I use so I can show exact price, colors, features, and EMI?`;
+  }
+
+  if (primary.type === "variant_ambiguity") {
+    return `I found multiple matching variants for ${model || "this model"}. Please pick the exact variant so I can show precise price, features, and EMI.`;
+  }
+
+  if (primary.type === "vehicle_feature_answer") {
+    const answer = String(widgetData?.answer || "").toLowerCase();
+    const yesNo =
+      answer === "yes"
+        ? "Yes"
+        : answer === "no"
+          ? "No"
+          : answer === "mixed"
+            ? "It varies by variant"
+            : "I could not confirm it in the stored records";
+    return `${yesNo}, ${model || "this model"}${variant ? ` ${variant}` : ""}${feature ? ` ${feature}` : ""}. I checked the matched feature records and can now open full features, compare variants, or calculate EMI.`;
+  }
+
+  if (primary.type === "vehicle_pricelist") {
+    return `Here is the ${model || "selected model"} price list for ${city}. I can also show colors, calculate EMI, compare with relevant rivals, or prepare an ACI quotation.`;
+  }
+
+  if (primary.type === "vehicle_colors") {
+    return `Here are the available colors for ${model || "this model"}. I can also map color-by-variant, show pricing, calculate EMI, or proceed to quotation.`;
+  }
+
+  if (primary.type === "vehicle_model_comparison") {
+    const compareModels = (widgetData?.models || [])
+      .map((item) => item?.model || item?.name)
+      .filter(Boolean);
+    const label = compareModels.length
+      ? compareModels.join(" vs ")
+      : model || "selected models";
+    return `I compared ${label}. I can now break down feature differences, run EMI for each model, and prepare a quotation for your best fit.`;
+  }
+
+  if (
+    [
+      "vehicle_recommendation_results",
+      "vehicle_safety_results",
+      "vehicle_emi_recommendations",
+    ].includes(primary.type)
+  ) {
+    return `I shortlisted matching models based on your request. I can compare the top options, refine filters, or move to EMI and quotation for your preferred model.`;
+  }
+
+  if (primary.type === "vehicle_emi_calculator") {
+    return `I calculated EMI for ${model || "the selected model"}${variant ? ` ${variant}` : ""}. I can adjust down payment/tenure, compare EMI across variants, or add finance in quotation.`;
   }
 
   const count = countWidgetRows(primary);
@@ -91,6 +172,21 @@ const buildAssistantMessage = (parsed, result) => {
   return `Here is the ${intentLabel(parsed.intent)} result from live CDrive records.`;
 };
 
+const actionFromConversationSuggestion = (item = {}) => ({
+  label: item.title,
+  type: item.type || "ask",
+  query: item.query,
+  canvasType: item.canvasType || "",
+  inlineType: item.inlineType || "",
+  leadType: item.leadType || item?.contextPatch?.leadType || "",
+  route: item.route || "",
+  intent: item.intent,
+  entities: item.entities || {},
+  contextPatch: item.contextPatch || {},
+  icon: item.icon,
+  tone: item.tone,
+});
+
 export const chatWithAgent = async ({
   message,
   sessionId,
@@ -110,6 +206,54 @@ export const chatWithAgent = async ({
   const result = tool
     ? await tool.run(parsed, access, trace)
     : await fallbackHandler(parsed, access, trace);
+
+  const canonicalIntent = mapIntentAlias(parsed.intent);
+  const isStructuredNewCar = Boolean(getNewCarQuestionConfig(canonicalIntent));
+  const primaryWidget = result.widgets?.[0] || {};
+  const widgetIntent = getIntentForWidgetType(primaryWidget.type || "");
+  const resolvedConversationIntent =
+    ["model_ambiguity", "variant_ambiguity"].includes(primaryWidget.type)
+      ? widgetIntent || canonicalIntent
+      : canonicalIntent;
+  const parsedForConversation = {
+    ...parsed,
+    intent: resolvedConversationIntent,
+  };
+  const toolCollections = tool?.collectionsUsed || [];
+  const conversationContextResult = {
+    ...result,
+    modulesChecked: trace,
+    collectionsUsed: toolCollections,
+  };
+  let contextSnapshot = null;
+  let conversationSuggestions = [];
+  let derivedLeadingQuestions = result.leadingQuestions || [];
+  let derivedFollowUps = result.followUpSuggestions || [];
+  let derivedActions = result.actions || [];
+
+  if (isStructuredNewCar) {
+    contextSnapshot = buildContextSnapshot({
+      parsed: parsedForConversation,
+      result: conversationContextResult,
+      primaryWidget,
+      selectedEntity,
+      filters,
+      context,
+    });
+    conversationSuggestions = await buildConversationSuggestions({
+      parsed: parsedForConversation,
+      result: conversationContextResult,
+      contextSnapshot,
+      primaryWidget,
+    });
+    derivedLeadingQuestions = buildLeadingQuestions({
+      parsed: parsedForConversation,
+      result: conversationContextResult,
+      contextSnapshot,
+    });
+    derivedFollowUps = buildFollowUpSuggestions({ conversationSuggestions });
+    derivedActions = conversationSuggestions.map(actionFromConversationSuggestion);
+  }
 
   // Preserve module transparency for multi-intent chat questions where
   // primary intent is different from supporting feature/color intents.
@@ -175,7 +319,7 @@ export const chatWithAgent = async ({
 
   return assembleResponse({
     parsed,
-    assistantMessage: buildAssistantMessage(parsed, result),
+    assistantMessage: buildAssistantMessage(parsed, result, contextSnapshot),
     resultType: result.ambiguity
       ? "ambiguity"
       : result.widgets?.[0]?.type || "answer",
@@ -184,9 +328,11 @@ export const chatWithAgent = async ({
     filtersApplied: buildFilters(parsed).map(
       (chip) => `${chip.label}: ${chip.value}`,
     ),
-    actions: result.actions || [],
-    leadingQuestions: result.leadingQuestions || [],
-    followUpSuggestions: result.followUpSuggestions || [],
+    actions: derivedActions,
+    leadingQuestions: derivedLeadingQuestions,
+    followUpSuggestions: derivedFollowUps,
+    conversationSuggestions,
+    contextSnapshot,
     ambiguity: result.ambiguity,
     access,
     queryPlan,

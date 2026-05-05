@@ -434,11 +434,14 @@ const extractVariant = (original, lower, models, intent) => {
     );
   const cleaned = tokens.filter(
     (token) =>
-      !/^(in|at|for|with|under|below|around|about|near|city|price|emi|loan)$/i.test(
+      !/^(and|or|then|also|in|at|for|with|under|below|around|about|near|city|price|emi|loan)$/i.test(
         token,
       ),
   );
-  return cleaned.slice(0, 4).join(" ");
+  const variant = cleaned.slice(0, 4).join(" ").trim();
+  if (!variant) return "";
+  if (/^(and|or|then|also)$/i.test(variant)) return "";
+  return variant;
 };
 
 const VEHICLE_CONTEXT_INTENTS = new Set([

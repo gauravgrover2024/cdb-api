@@ -18,7 +18,99 @@ const adminUser = {
   name: "ACI Assist Test Harness",
 };
 
+const asArray = (value) => (Array.isArray(value) ? value : value ? [value] : []);
+
 const TEST_CASES = [
+  // Conversation flow anchor tests (A-J)
+  {
+    id: "A",
+    query: "Elevate pricelist",
+    expectIntent: "vehicle_pricelist",
+    expectAnchorModel: "elevate",
+    expectConversationSuggestions: true,
+    assertAnchoredSuggestions: true,
+    disallowSuggestionModels: ["city", "verna"],
+    expectCompareIncludesAnchor: true,
+  },
+  {
+    id: "B",
+    query: "Verna pricelist",
+    expectIntent: "vehicle_pricelist",
+    expectAnchorModel: "verna",
+    expectConversationSuggestions: true,
+    expectCompareIncludesAnchor: true,
+  },
+  {
+    id: "C",
+    query: "Show colors of Elevate",
+    expectIntent: "vehicle_colors",
+    expectAnchorModel: "elevate",
+    expectConversationSuggestions: true,
+    assertAnchoredSuggestions: true,
+    disallowSuggestionModels: ["verna"],
+  },
+  {
+    id: "D",
+    query: "Does Elevate ZX have ADAS?",
+    expectIntent: "vehicle_feature_answer",
+    expectInline: true,
+    expectAnchorModel: "elevate",
+    expectAnchorVariant: "zx",
+    expectConversationSuggestions: true,
+    expectVariantInSuggestions: true,
+  },
+  {
+    id: "E",
+    query: "Show Venue price",
+    expectIntent: "vehicle_model_ambiguity",
+    expectInline: true,
+    expectConversationSuggestions: true,
+    expectSuggestionTitles: ["venue", "n line"],
+  },
+  {
+    id: "F",
+    query: "SUVs under 20L",
+    expectIntent: "vehicle_budget_search",
+    expectModelGrouped: true,
+    expectConversationSuggestions: true,
+    disallowSuggestionModels: ["verna", "city"],
+  },
+  {
+    id: "G",
+    query: "Show Elevate price, colors and EMI",
+    expectIntent: "vehicle_pricelist",
+    expectAnchorModel: "elevate",
+    expectMulti: true,
+    expectConversationSuggestions: true,
+    expectSuggestionTitles: ["colors", "emi"],
+  },
+  {
+    id: "H",
+    query: "Compare Elevate with Creta",
+    expectIntent: "vehicle_comparison",
+    expectConversationSuggestions: true,
+    expectCompareIncludesAnchor: true,
+    expectSuggestionTitles: ["elevate", "creta"],
+  },
+  {
+    id: "I",
+    query: "Offers on Elevate",
+    expectIntent: "vehicle_offers",
+    expectAnchorModel: "elevate",
+    expectConversationSuggestions: true,
+    assertAnchoredSuggestions: true,
+    disallowSuggestionModels: ["verna", "city"],
+  },
+  {
+    id: "J",
+    query: "Get quotation for Elevate ZX",
+    expectIntent: "aci_new_car_quotation",
+    expectAnchorModel: "elevate",
+    expectAnchorVariant: "zx",
+    expectConversationSuggestions: true,
+    expectLeadSuggestion: true,
+  },
+
   // Core
   { query: "Verna pricelist", expectIntent: "vehicle_pricelist" },
   { query: "Verna price in Mumbai", expectIntent: "vehicle_city_price" },
@@ -142,6 +234,25 @@ const checkFrontendRegistryCoverage = () => {
 
 const validateLine = ({ test, parsed, tool, response }) => {
   const failures = [];
+  const suggestions = Array.isArray(response.conversationSuggestions)
+    ? response.conversationSuggestions
+    : [];
+  const suggestionsDump = suggestions
+    .map((item) =>
+      `${item.title || ""} ${item.query || ""} ${
+        item?.entities?.model || ""
+      } ${asArray(item?.entities?.models).join(" ")}`,
+    )
+    .join(" ")
+    .toLowerCase();
+  const snapshotModel = String(
+    response?.contextSnapshot?.model || response?.contextSnapshot?.anchorModel || "",
+  ).toLowerCase();
+  const snapshotVariant = String(
+    response?.contextSnapshot?.variant ||
+      response?.contextSnapshot?.anchorVariant ||
+      "",
+  ).toLowerCase();
 
   if (test.expectIntent && response.intent !== test.expectIntent) {
     if (
@@ -166,6 +277,116 @@ const validateLine = ({ test, parsed, tool, response }) => {
 
   if ((response.actions || []).length === 0) {
     failures.push("no actions returned");
+  }
+
+  if (
+    response.intent !== "new_car_unavailable_or_out_of_scope" &&
+    !response.contextSnapshot
+  ) {
+    failures.push("contextSnapshot missing for structured new-car response");
+  }
+
+  if (test.expectConversationSuggestions && suggestions.length === 0) {
+    failures.push("conversationSuggestions missing");
+  }
+
+  if (test.expectAnchorModel) {
+    const expected = String(test.expectAnchorModel).toLowerCase();
+    if (!snapshotModel.includes(expected)) {
+      failures.push(
+        `contextSnapshot.model expected to include ${expected}, got ${snapshotModel || "empty"}`,
+      );
+    }
+  }
+
+  if (test.expectAnchorVariant) {
+    const expected = String(test.expectAnchorVariant).toLowerCase();
+    if (!snapshotVariant.includes(expected)) {
+      failures.push(
+        `contextSnapshot.variant expected to include ${expected}, got ${snapshotVariant || "empty"}`,
+      );
+    }
+  }
+
+  if (test.assertAnchoredSuggestions && test.expectAnchorModel) {
+    const anchor = String(test.expectAnchorModel).toLowerCase();
+    const modelScoped = suggestions.filter((item) =>
+      [
+        "vehicle_pricelist",
+        "vehicle_colors",
+        "vehicle_feature_answer",
+        "vehicle_model_features_explorer",
+        "vehicle_emi_calculator",
+        "vehicle_offers",
+        "aci_new_car_quotation",
+      ].includes(item.intent),
+    );
+    const unanchored = modelScoped.filter((item) => {
+      const query = String(item.query || "").toLowerCase();
+      const model = String(item?.entities?.model || "").toLowerCase();
+      return !query.includes(anchor) && !model.includes(anchor);
+    });
+    if (unanchored.length) {
+      failures.push("found unanchored model-specific suggestions");
+    }
+  }
+
+  if (Array.isArray(test.disallowSuggestionModels)) {
+    for (const banned of test.disallowSuggestionModels) {
+      if (new RegExp(`\\b${banned}\\b`, "i").test(suggestionsDump)) {
+        failures.push(`suggestions contain unrelated model ${banned}`);
+      }
+    }
+  }
+
+  if (test.expectCompareIncludesAnchor && test.expectAnchorModel) {
+    const anchor = String(test.expectAnchorModel).toLowerCase();
+    const compareSuggestions = suggestions.filter(
+      (item) => item.intent === "vehicle_comparison",
+    );
+    const invalid = compareSuggestions.filter((item) => {
+      const query = String(item.query || "").toLowerCase();
+      const models = asArray(item?.entities?.models)
+        .map((model) => String(model).toLowerCase())
+        .join(" ");
+      const entityModel = String(item?.entities?.model || "").toLowerCase();
+      return (
+        !query.includes(anchor) &&
+        !models.includes(anchor) &&
+        !entityModel.includes(anchor)
+      );
+    });
+    if (invalid.length) {
+      failures.push("comparison suggestion does not include anchor model");
+    }
+  }
+
+  if (test.expectSuggestionTitles) {
+    for (const token of test.expectSuggestionTitles) {
+      if (!new RegExp(token, "i").test(suggestionsDump)) {
+        failures.push(`expected suggestion token missing: ${token}`);
+      }
+    }
+  }
+
+  if (test.expectVariantInSuggestions && test.expectAnchorVariant) {
+    const variant = String(test.expectAnchorVariant).toLowerCase();
+    const hasVariant = suggestions.some((item) => {
+      const query = String(item.query || "").toLowerCase();
+      const v = String(item?.entities?.variant || "").toLowerCase();
+      return query.includes(variant) || v.includes(variant);
+    });
+    if (!hasVariant) {
+      failures.push("variant-specific suggestion missing anchor variant");
+    }
+  }
+
+  if (test.expectLeadSuggestion) {
+    const hasLead = suggestions.some(
+      (item) =>
+        item.type === "lead" && (item.leadType || item?.contextPatch?.leadType),
+    );
+    if (!hasLead) failures.push("lead suggestion missing");
   }
 
   if (test.expectLeading && (response.leadingQuestions || []).length === 0) {
@@ -258,6 +479,7 @@ const run = async () => {
 
       const line = {
         query: test.query,
+        testId: test.id || "",
         detectedIntent: response.intent || parsed.intent,
         displayMode: response.displayMode || "",
         canvasType: response.canvasType || null,
@@ -267,6 +489,8 @@ const run = async () => {
           (item) => item.module,
         ),
         matchedCount: matchedCountFor(response),
+        conversationSuggestionsCount: (response.conversationSuggestions || [])
+          .length,
         leadingQuestionsCount: (response.leadingQuestions || []).length,
         actionsCount: (response.actions || []).length,
         pass: failures.length === 0,

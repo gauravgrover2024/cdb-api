@@ -1,5 +1,7 @@
 import { normalizeText } from "./aiAgent.normalizers.js";
 
+const unique = (items = []) => [...new Set(items.filter(Boolean))];
+
 export const NEW_CAR_CANVAS_TYPES = [
   "aci_home_canvas",
   "recommendation_results_canvas",
@@ -84,6 +86,9 @@ const PRIORITY_ORDER = [
   "vehicle_model_comparison",
   "vehicle_variant_comparison",
   "vehicle_variant_upgrade_value",
+  "vehicle_decision_help",
+  "vehicle_price_objection",
+  "vehicle_quality_doubt",
   "vehicle_variant_recommendation",
   "vehicle_feature_discovery",
   "vehicle_model_features_explorer",
@@ -162,11 +167,19 @@ const REGEX = {
   bodyType: /\b(suv|sedan|hatchback|mpv|7-seater|7 seater|compact suv)\b/i,
   recommendation:
     /\b(which car should i buy|suggest me a car|best car for|first car buyer|value for money)\b/i,
+  decisionHelp:
+    /\b(confused|help me decide|which should i choose|not sure)\b/i,
+  priceObjection:
+    /\b(expensive|costly|over budget|too high)\b/i,
+  qualityDoubt:
+    /\b(worth it|any issue|reliable|good or bad)\b/i,
   priceBreakup: /\b(price breakup|rto charges|insurance amount|other charges|on-road breakup)\b/i,
   price: /\b(pricelist|price|on-road|ex-showroom|variant price|cheapest variant|top model price)\b/i,
   outOfScope:
     /\b(used car|sell my used|payment status|loan closure|insurance renewal|bike loan|truck price|delivery order|receivable)\b/i,
 };
+
+const BUYING_SIGNALS = /\b(book|buy|finalize|proceed|i want this|take it)\b/i;
 
 const createConfig = (config) => ({
   ambiguityPolicy: "ask_before_assuming",
@@ -731,6 +744,42 @@ export const NEW_CAR_QUESTION_MAP = {
     toolIntent: "vehicle_variant_difference",
   }),
 
+  vehicle_decision_help: createConfig({
+    intent: "vehicle_decision_help",
+    displayMode: "canvas",
+    canvasType: "comparison_canvas",
+    inlineType: null,
+    exampleQuestions: ["I am confused, help me decide"],
+    dataSources: ["vehicles", "vehicle_features"],
+    regexes: [REGEX.decisionHelp],
+    priority: 15,
+    toolIntent: "vehicle_comparison",
+  }),
+
+  vehicle_price_objection: createConfig({
+    intent: "vehicle_price_objection",
+    displayMode: "inline",
+    canvasType: null,
+    inlineType: "fallback_card",
+    exampleQuestions: ["This is too expensive"],
+    dataSources: ["vehicles"],
+    regexes: [REGEX.priceObjection],
+    priority: 15,
+    toolIntent: "vehicle_pricelist",
+  }),
+
+  vehicle_quality_doubt: createConfig({
+    intent: "vehicle_quality_doubt",
+    displayMode: "inline",
+    canvasType: null,
+    inlineType: "fallback_card",
+    exampleQuestions: ["Is this worth it?"],
+    dataSources: ["vehicles", "vehicle_features"],
+    regexes: [REGEX.qualityDoubt],
+    priority: 15,
+    toolIntent: "vehicle_model_overview",
+  }),
+
   vehicle_variant_difference: createConfig({
     intent: "vehicle_variant_difference",
     displayMode: "canvas",
@@ -1114,6 +1163,37 @@ export const NEW_CAR_QUESTION_MAP = {
 
 export const NEW_CAR_INTENTS = Object.keys(NEW_CAR_QUESTION_MAP);
 
+export const INTENT_STAGE_MAP = {
+  vehicle_recommendation_discovery: "explore",
+  vehicle_budget_search: "explore",
+  vehicle_pricelist: "evaluate",
+  vehicle_comparison: "evaluate",
+  vehicle_variant_comparison: "evaluate",
+  vehicle_emi_calculator: "consider",
+  vehicle_emi_options: "consider",
+  aci_new_car_quotation: "buy",
+};
+
+export const INTENT_DEPENDENCY = {
+  vehicle_pricelist: [
+    "vehicle_colors",
+    "vehicle_model_features_explorer",
+    "vehicle_emi_calculator",
+    "vehicle_comparison",
+    "aci_new_car_quotation",
+  ],
+  vehicle_comparison: [
+    "vehicle_feature_answer",
+    "vehicle_emi_calculator",
+    "aci_new_car_quotation",
+  ],
+  vehicle_emi_calculator: [
+    "vehicle_price_breakup",
+    "new_car_loan_enquiry",
+    "aci_new_car_quotation",
+  ],
+};
+
 export const LEGACY_TO_CANONICAL_INTENT = {
   vehicle_pricelist: "vehicle_pricelist",
   vehicle_city_change: "vehicle_city_price",
@@ -1136,6 +1216,9 @@ export const LEGACY_TO_CANONICAL_INTENT = {
   vehicle_emi_budget_search: "vehicle_emi_options",
   vehicle_best_variant_recommendation: "vehicle_variant_recommendation",
   vehicle_variant_difference: "vehicle_variant_upgrade_value",
+  vehicle_decision_help: "vehicle_decision_help",
+  vehicle_price_objection: "vehicle_price_objection",
+  vehicle_quality_doubt: "vehicle_quality_doubt",
 };
 
 export const WIDGET_TO_CANONICAL_INTENT = {
@@ -1179,10 +1262,140 @@ export const sortIntentsByPriority = (intents = []) =>
     (a, b) => priorityFor(a) - priorityFor(b),
   );
 
+export function detectUserType(message = "") {
+  if (/first car|new driver/i.test(message)) return "first_time_buyer";
+  if (/performance|turbo/i.test(message)) return "enthusiast";
+  if (/family|parents/i.test(message)) return "family_buyer";
+  if (/budget|cheap|affordable/i.test(message)) return "budget_buyer";
+  return "general";
+}
+
+export function scoreIntents(message, context = {}) {
+  const text = normalizeText(message).toLowerCase();
+  const lastIntent = mapIntentAlias(context.lastIntent || context.intent || "");
+  const stage = String(context.stage || "").toLowerCase();
+  const keywordAliases = {
+    decision: ["decide", "choose", "confused", "not sure"],
+    price: ["expensive", "costly", "over budget", "too high"],
+    quality: ["worth it", "reliable", "good or bad", "issue"],
+  };
+
+  const scored = NEW_CAR_INTENTS.map((intent) => {
+    const def = NEW_CAR_QUESTION_MAP[intent];
+    let score = 0;
+    const regexMatched = Boolean(def.regexes?.some((regex) => regex?.test?.(text)));
+
+    if (regexMatched) score += 50;
+    if (regexMatched) score += 10;
+
+    const keyword = String(intent.split("_")[1] || "").toLowerCase();
+    if (keyword && text.includes(keyword)) score += 10;
+    if (
+      keyword &&
+      keywordAliases[keyword]?.some((alias) => text.includes(alias))
+    ) {
+      score += 10;
+    }
+
+    if (lastIntent === intent) score += 15;
+
+    if (stage === "buy" && intent === "aci_new_car_quotation") {
+      score += 40;
+    }
+
+    if (!def.regexes?.length) score -= 5;
+
+    return { intent, score };
+  }).sort((a, b) => b.score - a.score);
+
+  return scored;
+}
+
+export function resolveIntent(message, context = {}) {
+  const text = normalizeText(message).toLowerCase();
+  const userType = detectUserType(message);
+  const scored = scoreIntents(message, context);
+
+  if (
+    BUYING_SIGNALS.test(text) &&
+    !/\b(which car should i buy|which .*variant should i buy|should i buy)\b/i.test(
+      text,
+    )
+  ) {
+    return {
+      primaryIntent: "aci_new_car_quotation",
+      secondaryIntents: scored
+        .map((item) => item.intent)
+        .filter((intent) => intent !== "aci_new_car_quotation")
+        .slice(0, 3),
+      confidence: 0.95,
+      stage: "buy",
+      userType,
+      clarification: null,
+      debug: {
+        scores: scored.slice(0, 5),
+      },
+    };
+  }
+
+  const forcedFeatureDiscovery = /\bwhich\b.*\bvariants?\b/i.test(text);
+  const forcedFeatureAnswer = /\b(does|has)\b/i.test(text);
+
+  let primaryIntent = scored[0]?.intent || null;
+
+  if (forcedFeatureDiscovery) {
+    primaryIntent = "vehicle_feature_discovery";
+  } else if (forcedFeatureAnswer) {
+    primaryIntent = "vehicle_feature_answer";
+  }
+
+  const secondaryIntents = scored
+    .map((item) => item.intent)
+    .filter((intent) => intent && intent !== primaryIntent)
+    .slice(0, 3);
+
+  const topScore = forcedFeatureDiscovery || forcedFeatureAnswer ? 80 : scored[0]?.score || 0;
+  const confidence = Math.min(topScore / 100, 1);
+  const stage = INTENT_STAGE_MAP[primaryIntent] || "explore";
+  const clarification =
+    confidence < 0.6
+      ? ["Show price", "Compare cars", "Calculate EMI", "Show features"]
+      : null;
+
+  if (confidence < 0.6) {
+    return {
+      primaryIntent: null,
+      secondaryIntents,
+      confidence,
+      stage,
+      userType,
+      clarification,
+      debug: {
+        scores: scored.slice(0, 5),
+      },
+    };
+  }
+
+  return {
+    primaryIntent,
+    secondaryIntents,
+    confidence,
+    stage,
+    userType,
+    clarification: null,
+    debug: {
+      scores: scored.slice(0, 5),
+    },
+  };
+}
+
 export const detectNewCarIntentCandidates = (message = "") => {
   const text = normalizeText(message);
-  const lower = text.toLowerCase();
-  if (!lower) return [];
+  if (!text) return [];
+
+  if (REGEX.outOfScope.test(text)) {
+    return ["new_car_unavailable_or_out_of_scope"];
+  }
 
   const matches = NEW_CAR_INTENTS.filter((intent) => {
     const def = NEW_CAR_QUESTION_MAP[intent];
@@ -1191,21 +1404,38 @@ export const detectNewCarIntentCandidates = (message = "") => {
   });
 
   if (!matches.length) return [];
-
-  if (REGEX.outOfScope.test(text)) {
-    return ["new_car_unavailable_or_out_of_scope"];
-  }
-
   return sortIntentsByPriority(matches);
 };
 
-export const pickPrimaryIntent = (intents = [], fallback = "", message = "") => {
+export const pickPrimaryIntent = (
+  intents = [],
+  fallback = "",
+  message = "",
+  context = {},
+) => {
+  void context;
   const sorted = sortIntentsByPriority(intents);
   const text = normalizeText(message).toLowerCase();
   if (!sorted.length) return fallback;
 
   const has = (intent) => sorted.includes(intent);
   const hasAny = (list = []) => list.some((intent) => has(intent));
+
+  if (
+    /\b(does|has|have|how many|what is)\b.*\b(sunroof|adas|airbags?|boot space|ground clearance|mileage|engine|wireless|ventilated|camera)\b/i.test(
+      text,
+    ) &&
+    !/\bwhich\b.*\bvariants?\b/i.test(text) &&
+    !/\b(compare|comparison|vs|versus|difference between|which is better)\b/i.test(
+      text,
+    ) &&
+    !(/\bemi\b/i.test(text) && has("vehicle_emi_calculator")) &&
+    hasAny(["vehicle_feature_answer", "vehicle_spec_lookup"])
+  ) {
+    return has("vehicle_feature_answer")
+      ? "vehicle_feature_answer"
+      : "vehicle_spec_lookup";
+  }
 
   // Explicit multi-intent and disambiguation heuristics.
   if (has("aci_new_car_quotation")) return "aci_new_car_quotation";

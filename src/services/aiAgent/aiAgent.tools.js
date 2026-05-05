@@ -167,6 +167,8 @@ export const assembleResponse = ({
   access,
   queryPlan,
   filters,
+  conversationSuggestions = [],
+  contextSnapshot = null,
 }) => {
   const primaryWidget = widgets?.[0] || {};
   const canonicalIntent = mapIntentAlias(parsed.intent);
@@ -241,6 +243,11 @@ export const assembleResponse = ({
     canvasType: item.canvasType || "",
     leadType: item.leadType || "",
     route: item.route || "",
+    intent: item.intent || "",
+    entities: item.entities || {},
+    contextPatch: item.contextPatch || item.context || {},
+    icon: item.icon || "",
+    tone: item.tone || "",
   });
 
   const dedupeActions = (items = []) => {
@@ -266,14 +273,39 @@ export const assembleResponse = ({
       });
   };
 
-  const finalActions = dedupeActions([
-    ...(actions || []),
-    ...(primaryWidget.actions || []),
-    ...(questionConfig?.defaultActions || []),
-    ...secondaryConfigs.flatMap((config) =>
-      (config.defaultActions || []).slice(0, 2),
-    ),
-  ]);
+  const normalizedConversationSuggestions = (conversationSuggestions || [])
+    .filter(Boolean)
+    .map((item) => ({
+      ...item,
+      title: item.title || item.label || item.query || "",
+      query: item.query || item.message || "",
+    }))
+    .filter((item) => item.title || item.query);
+
+  const finalActions = dedupeActions(
+    normalizedConversationSuggestions.length
+      ? normalizedConversationSuggestions.map((item) => ({
+          label: item.title,
+          type: item.type || "ask",
+          query: item.query || "",
+          canvasType: item.canvasType || "",
+          leadType: item.leadType || item.contextPatch?.leadType || "",
+          route: item.route || "",
+          intent: item.intent,
+          entities: item.entities || {},
+          contextPatch: item.contextPatch || {},
+          icon: item.icon || "",
+          tone: item.tone || "",
+        }))
+      : [
+          ...(actions || []),
+          ...(primaryWidget.actions || []),
+          ...(questionConfig?.defaultActions || []),
+          ...secondaryConfigs.flatMap((config) =>
+            (config.defaultActions || []).slice(0, 2),
+          ),
+        ],
+  );
   const actionsWithFallback = finalActions.length
     ? finalActions
     : dedupeActions([
@@ -308,13 +340,55 @@ export const assembleResponse = ({
     };
   };
 
-  const finalLeadingQuestions = [
-    ...(leadingQuestions || []),
-    ...(questionConfig?.leadingQuestions || []),
-  ]
-    .map(normalizeLeadingQuestion)
+  const finalLeadingQuestions = (
+    normalizedConversationSuggestions.length
+      ? normalizedConversationSuggestions
+          .filter((item) =>
+            ["question", "clarification"].includes(item.kind || ""),
+          )
+          .map((item) =>
+            normalizeLeadingQuestion({
+              label: item.title,
+              query: item.query,
+              intent: item.intent || resolvedIntent,
+              displayMode: item.displayMode || undefined,
+              canvasType: item.canvasType || undefined,
+              inlineType: item.inlineType || undefined,
+            }),
+          )
+      : [
+          ...(leadingQuestions || []),
+          ...(questionConfig?.leadingQuestions || []),
+        ].map(normalizeLeadingQuestion)
+  )
     .filter((item) => item.label && item.query)
     .slice(0, 10);
+
+  const finalFollowUpSuggestions = normalizedConversationSuggestions.length
+    ? normalizedConversationSuggestions.map((item) => ({
+        id: item.id,
+        label: item.title,
+        title: item.title,
+        subtitle: item.subtitle || "",
+        query: item.query,
+        message: item.query,
+        intent: item.intent || resolvedIntent,
+        kind: item.kind || "",
+        type: item.type || "ask",
+        icon: item.icon || "",
+        tone: item.tone || "",
+        entities: item.entities || {},
+        contextPatch: item.contextPatch || {},
+        canvasType: item.canvasType || null,
+        inlineType: item.inlineType || null,
+        leadType: item.leadType || item.contextPatch?.leadType || "",
+        context: {
+          ...(item.contextPatch || {}),
+          actionContext: item,
+          entities: item.entities || {},
+        },
+      }))
+    : followUpSuggestions;
 
   const response = {
     assistantMessage,
@@ -327,6 +401,16 @@ export const assembleResponse = ({
     actions: actionsWithFallback,
     leadingQuestions: finalLeadingQuestions,
     entities: parsed.entities,
+    context: {
+      history: contextSnapshot?.history || {},
+      profile: contextSnapshot?.profile || {},
+      mode: contextSnapshot?.mode || "",
+      stage: contextSnapshot?.stage || "",
+      buyingSignals: contextSnapshot?.buyingSignals || [],
+      model: contextSnapshot?.anchorModel || contextSnapshot?.model || "",
+      variant: contextSnapshot?.anchorVariant || contextSnapshot?.variant || "",
+      city: contextSnapshot?.city || contextSnapshot?.requestedCity || "",
+    },
     confidence: parsed.confidence,
     filters: filters || buildFilters(parsed),
     resultType,
@@ -336,7 +420,15 @@ export const assembleResponse = ({
       filtersApplied,
       accessRestrictions: access?.restrictions || [],
     }),
-    followUpSuggestions,
+    followUpSuggestions: finalFollowUpSuggestions,
+    conversationSuggestions: normalizedConversationSuggestions,
+    suggestions: normalizedConversationSuggestions.slice(0, 5),
+    salesNudges: contextSnapshot?.salesNudges || [],
+    closingActions: contextSnapshot?.closingActions || [],
+    userProfile: contextSnapshot?.profile || {},
+    stage: contextSnapshot?.stage || "",
+    mode: contextSnapshot?.mode || "",
+    contextSnapshot,
     secondaryIntents: parsed.secondaryIntents || [],
   };
   if (ambiguity) response.ambiguity = ambiguity;
