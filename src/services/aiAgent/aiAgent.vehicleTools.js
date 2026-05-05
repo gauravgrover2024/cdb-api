@@ -713,17 +713,112 @@ const featureValueFor = (features = {}, featureTerm = "") => {
   return null;
 };
 
+const NEGATIVE_FEATURE_VALUES = new Set([
+  "",
+  "-",
+  "—",
+  "no",
+  "false",
+  "0",
+  "na",
+  "n/a",
+  "not available",
+  "not offered",
+  "unavailable",
+  "not found",
+  "none",
+  "nil",
+]);
+
+const POSITIVE_FEATURE_VALUES = new Set([
+  "yes",
+  "true",
+  "available",
+  "standard",
+  "included",
+  "present",
+  "offered",
+]);
+
+const cleanFeatureValue = (value) => {
+  if (value === null || value === undefined) return "";
+
+  if (typeof value === "boolean") {
+    return value ? "yes" : "no";
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 ? String(value) : "";
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(cleanFeatureValue).filter(Boolean).join(", ");
+  }
+
+  if (typeof value === "object") {
+    return cleanFeatureValue(
+      value.value ??
+        value.featureValue ??
+        value.feature_value ??
+        value.available ??
+        value.status ??
+        value.label ??
+        value.name ??
+        value.title ??
+        "",
+    );
+  }
+
+  return String(value).trim();
+};
+
+const featureAvailabilityFromValue = (value) => {
+  const cleaned = cleanFeatureValue(value);
+  const normalized = cleaned.toLowerCase().replace(/\s+/g, " ").trim();
+
+  if (!normalized || NEGATIVE_FEATURE_VALUES.has(normalized)) {
+    return {
+      answer: "No",
+      available: false,
+      displayValue: cleaned || "",
+    };
+  }
+
+  if (
+    normalized.includes("not available") ||
+    normalized.includes("not offered") ||
+    normalized.includes("unavailable") ||
+    normalized.includes("without ")
+  ) {
+    return {
+      answer: "No",
+      available: false,
+      displayValue: cleaned,
+    };
+  }
+
+  if (POSITIVE_FEATURE_VALUES.has(normalized)) {
+    return {
+      answer: "Yes",
+      available: true,
+      displayValue: cleaned,
+    };
+  }
+
+  // Important:
+  // Text feature values like "Panoramic", "Electric", "Single Pane",
+  // "Front", "LED", "6", "10.25 inch" mean the feature exists.
+  return {
+    answer: "Yes",
+    available: true,
+    displayValue: cleaned,
+  };
+};
+
 const featureAnswerForValue = (match) => {
   if (!match) return "Not found";
-  if (isFeatureYes(match.value)) return "Yes";
-  const text = String(match.value ?? "")
-    .trim()
-    .toLowerCase();
-  if (/^(no|n|false|not available|not applicable|na|n\/a|0|-)$/i.test(text))
-    return "No";
-  if (/no|not available|not applicable|absent|unavailable/.test(text))
-    return "No";
-  return text ? "Yes" : "Not found";
+
+  return featureAvailabilityFromValue(match.value).answer;
 };
 
 const compactVariantRows = (rows) =>
@@ -2409,19 +2504,24 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
 
   const baseEvidenceRows = scopedDocs.map((item) => {
     const match = featureValueFor(item.features, feature);
-    const answer = featureAnswerForValue(match);
+    const availability = featureAvailabilityFromValue(match?.value);
 
     return {
       id: safeId(item),
+
       brand: item.brand,
       make: item.brand,
       model: item.model,
       variant: item.variant,
+
       featureKey: match?.key || "",
-      featureValue: match?.value ?? "",
+      featureValue: availability.displayValue || match?.value || "",
       feature: match?.key || feature,
-      value: match?.value ?? "",
-      answer,
+      value: availability.displayValue || match?.value || "",
+
+      answer: match ? availability.answer : "Not found",
+      available: match ? availability.available : false,
+
       bodyType: item.body_type_bucket,
       seatingCapacity: item.seating_capacity,
       lastUpdated: formatDateValue(item.updatedAt),
