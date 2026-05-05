@@ -979,6 +979,299 @@ const summarizeCatalogueRows = (rows = []) => {
   };
 };
 
+const contextPriceRowForVariant = (priceRows = [], target = {}) => {
+  const targetVariant = normalizeVariant(
+    firstMeaningful(
+      target.variant,
+      target.variant_normalized,
+      target.variantName,
+      target.variant_name,
+    ),
+  );
+
+  if (!targetVariant) return null;
+
+  let bestRow = null;
+  let bestScore = 0;
+
+  for (const row of priceRows || []) {
+    const rowVariant = normalizeVariant(
+      firstMeaningful(
+        row.variant,
+        row.variant_normalized,
+        row.variantName,
+        row.variant_name,
+      ),
+    );
+
+    if (!rowVariant) continue;
+
+    let score = 0;
+
+    if (rowVariant === targetVariant) score = 100;
+    else if (rowVariant.includes(targetVariant)) score = 82;
+    else if (targetVariant.includes(rowVariant)) score = 72;
+    else {
+      const targetTokens = targetVariant.split(/\s+/).filter(Boolean);
+      const rowTokens = new Set(rowVariant.split(/\s+/).filter(Boolean));
+      const matched = targetTokens.filter((token) => rowTokens.has(token));
+      const ratio = targetTokens.length
+        ? matched.length / targetTokens.length
+        : 0;
+
+      if (ratio >= 0.8) score = 64;
+      else if (ratio >= 0.55) score = 42;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRow = row;
+    }
+  }
+
+  return bestScore >= 42 ? bestRow : null;
+};
+
+const buildVehicleCanvasContext = async (
+  parsed,
+  trace,
+  { model, make, city, limit = 180, moduleName = "Vehicles context" } = {},
+) => {
+  const contextParsed = {
+    ...parsed,
+    entities: {
+      ...parsed.entities,
+      model:
+        model ||
+        parsed.entities.model ||
+        parsed.entities.models?.[0] ||
+        parsed.context?.selectedModels?.[0],
+      make: make || parsed.entities.make,
+      city: city || parsed.entities.city || "new-delhi",
+    },
+  };
+
+  const contextModel =
+    contextParsed.entities.model || contextParsed.entities.models?.[0];
+
+  if (!contextModel) {
+    return {
+      make,
+      brand: make,
+      model,
+      city: cityFromParsed(parsed),
+      priceRows: [],
+      pricelistRows: [],
+      colors: [],
+      colorGallery: [],
+      heroImage: "",
+      imageUrl: "",
+      vehicleImageUrl: "",
+      availableCities: [],
+      pricingSummary: {},
+      priceContextAvailable: false,
+      imageContextAvailable: false,
+    };
+  }
+
+  const resolved = await resolveVehicleCatalogRows(contextParsed, trace, {
+    includeCity: true,
+    limit,
+    allowCityFallback: true,
+    moduleName,
+  });
+
+  const filteredRows = applyCatalogueFilters(resolved.rows, contextParsed);
+  const sourceRows = filteredRows.length ? filteredRows : resolved.rows;
+
+  const pricelistRows = uniqueRows(
+    sortCatalogueRows(sourceRows, contextParsed),
+    (row) =>
+      [
+        row.city,
+        row.make,
+        row.brand,
+        row.model,
+        row.variant,
+        row.fuel,
+        row.transmission,
+        row.exShowroomPrice,
+        row.onRoadPrice,
+      ]
+        .join("|")
+        .toLowerCase(),
+  );
+
+  const firstRow = pricelistRows[0] || vehicleRow(sourceRows[0] || {});
+
+  const resolvedModel = firstMeaningful(
+    model,
+    contextModel,
+    firstRow.model_normalized,
+    firstRow.model,
+  );
+
+  const resolvedMake = firstMeaningful(
+    make,
+    firstRow.make,
+    firstRow.brand,
+    firstRow.brand_normalized,
+    contextParsed.entities.make,
+  );
+
+  const resolvedCity =
+    resolved.showingCity ||
+    firstMeaningful(
+      firstRow.city,
+      resolved.requestedCity,
+      cityFromParsed(parsed),
+    );
+
+  let availableCities = [];
+
+  try {
+    if (resolvedModel) {
+      availableCities = await Vehicle.distinct(
+        "city",
+        vehicleModelClause(resolvedModel, resolvedMake),
+      ).maxTimeMS(2500);
+    }
+  } catch (error) {
+    pushModuleTrace(trace, `${moduleName} cities`, 0, {
+      error: error?.message || "Unable to fetch available cities",
+    });
+  }
+
+  let colorGallery = [];
+
+  try {
+    const colorsMap = getFieldMap("vehicle_colors");
+    const colorCollection = mongoose.connection.db.collection(
+      colorsMap.collectionName,
+    );
+
+    const colorRows = await colorCollection
+      .find({
+        model: new RegExp(escapeRegex(resolvedModel), "i"),
+        ...(resolvedMake
+          ? { brand: new RegExp(escapeRegex(resolvedMake), "i") }
+          : {}),
+      })
+      .project({
+        brand: 1,
+        model: 1,
+        color_name: 1,
+        hex: 1,
+        image_url: 1,
+        last_updated: 1,
+        scrape_timestamp: 1,
+        source_page: 1,
+      })
+      .limit(60)
+      .maxTimeMS(3500)
+      .toArray();
+
+    pushModuleTrace(trace, `${colorsMap.module} context`, colorRows.length);
+
+    colorGallery = uniqueRows(
+      colorRows
+        .map((item) => ({
+          id: safeId(item),
+          brand: item.brand,
+          make: item.brand,
+          model: item.model,
+          colorName: item.color_name,
+          hex: item.hex,
+          imageUrl: item.image_url,
+          image_url: item.image_url,
+          sourcePage: item.source_page,
+          lastUpdated: formatDateValue(
+            firstMeaningful(item.last_updated, item.scrape_timestamp),
+          ),
+        }))
+        .filter((item) => item.colorName || item.imageUrl),
+      (row) =>
+        [row.brand, row.model, row.colorName, row.imageUrl || row.hex]
+          .join("|")
+          .toLowerCase(),
+    );
+  } catch (error) {
+    pushModuleTrace(trace, `${moduleName} colors`, 0, {
+      error: error?.message || "Unable to fetch vehicle color context",
+    });
+  }
+
+  const heroImage = firstMeaningful(
+    ...colorGallery.map((item) => item.imageUrl).filter(Boolean),
+  );
+
+  return {
+    make: resolvedMake,
+    brand: resolvedMake,
+    model: resolvedModel,
+    city: resolvedCity,
+    requestedCity: resolved.requestedCity,
+    showingCity: resolvedCity,
+    cityFallbackUsed: Boolean(resolved.usedCityFallback),
+
+    priceRows: pricelistRows,
+    pricelistRows,
+    pricingSummary: summarizeCatalogueRows(pricelistRows),
+    priceContextAvailable: Boolean(pricelistRows.length),
+
+    colors: colorGallery,
+    colorGallery,
+    heroImage,
+    imageUrl: heroImage,
+    vehicleImageUrl: heroImage,
+    imageContextAvailable: Boolean(heroImage),
+
+    availableCities: availableCities.filter(Boolean).sort(),
+  };
+};
+
+const enrichRowWithVehicleContext = (row = {}, contextPayload = {}) => {
+  const priceRow = contextPriceRowForVariant(contextPayload.priceRows, row);
+
+  return {
+    ...row,
+
+    priceRow,
+    priceContextAvailable: Boolean(priceRow),
+
+    exShowroomPrice: firstMeaningful(
+      row.exShowroomPrice,
+      priceRow?.exShowroomPrice,
+      priceRow?.exShowroom,
+      priceRow?.ex_showroom,
+    ),
+    exShowroom: firstMeaningful(
+      row.exShowroom,
+      priceRow?.exShowroom,
+      priceRow?.exShowroomPrice,
+      priceRow?.ex_showroom,
+    ),
+    rto: firstMeaningful(row.rto, priceRow?.rto),
+    insurance: firstMeaningful(row.insurance, priceRow?.insurance),
+    onRoadPrice: firstMeaningful(
+      row.onRoadPrice,
+      priceRow?.onRoadPrice,
+      priceRow?.calculatedOnRoadPrice,
+      priceRow?.storedOnRoadPrice,
+    ),
+    optionalItems: row.optionalItems || priceRow?.optionalItems || [],
+    otherItems: row.otherItems || priceRow?.otherItems || [],
+    optionalOtherItems:
+      row.optionalOtherItems || priceRow?.optionalOtherItems || [],
+
+    heroImage: contextPayload.heroImage,
+    imageUrl: contextPayload.vehicleImageUrl,
+    vehicleImageUrl: contextPayload.vehicleImageUrl,
+    colors: contextPayload.colors || [],
+    colorGallery: contextPayload.colorGallery || [],
+  };
+};
+
 const modelOptionFromRows = (rows = []) => {
   const compact = rows.map(vehicleRow);
   const summary = summarizeCatalogueRows(compact);
@@ -1898,16 +2191,21 @@ export const vehicleFeatures = async (parsed, access, trace) => {
       ],
     };
   }
+
   const selectedRows = compactVariantRows(
     parsed.context?.selectedVariantRows || [],
   );
+
   const selectedVariantNames = selectedRows
     .map((row) => normalizeVariant(row.variant))
     .filter(Boolean);
+
   const contextModel =
     parsed.context?.selectedModels?.[0] || selectedRows[0]?.model;
+
   const model =
     parsed.entities.model || parsed.entities.models?.[0] || contextModel;
+
   if (!model) {
     return {
       widgets: [
@@ -1919,11 +2217,14 @@ export const vehicleFeatures = async (parsed, access, trace) => {
       ],
     };
   }
+
   let docs = [];
+
   if (selectedRows.length && !parsed.entities.model) {
     const clauses = selectedRows
       .map((row) => vehicleModelClause(row.model, row.make))
       .filter(Boolean);
+
     docs = clauses.length
       ? await findLean(
           VehicleFeature,
@@ -1933,13 +2234,17 @@ export const vehicleFeatures = async (parsed, access, trace) => {
       : [];
   } else {
     const query = featureModelQuery(model, parsed.entities.make);
+
     docs = await findLean(VehicleFeature, query, {
       sort: { variant: 1 },
       limit: 120,
     });
   }
+
   pushModuleTrace(trace, "Vehicle Features", docs.length);
+
   const variantNeedle = normalizeVariant(parsed.entities.variant);
+
   const matchedDocs = variantNeedle
     ? docs.filter((doc) =>
         normalizeVariant(doc.variant).includes(variantNeedle),
@@ -1953,9 +2258,11 @@ export const vehicleFeatures = async (parsed, access, trace) => {
           ),
         )
       : docs;
-  const rows = matchedDocs.slice(0, LIMIT).map((doc) => ({
+
+  const featureRows = matchedDocs.slice(0, LIMIT).map((doc) => ({
     id: safeId(doc),
     make: doc.brand,
+    brand: doc.brand,
     model: doc.model,
     variant: doc.variant,
     bodyType: doc.body_type_bucket,
@@ -1964,12 +2271,15 @@ export const vehicleFeatures = async (parsed, access, trace) => {
     features: doc.features || {},
     lastUpdated: formatDateValue(doc.updatedAt),
   }));
-  if (!rows.length) {
+
+  if (!featureRows.length) {
     return {
       widgets: [
         unavailableWidget(
           "No feature catalogue found",
-          `No feature record matched ${[model, parsed.entities.variant].filter(Boolean).join(" ")}.`,
+          `No feature record matched ${[model, parsed.entities.variant]
+            .filter(Boolean)
+            .join(" ")}.`,
           ["Vehicle Features"],
         ),
       ],
@@ -1980,18 +2290,67 @@ export const vehicleFeatures = async (parsed, access, trace) => {
       ],
     };
   }
+
+  const contextPayload = await buildVehicleCanvasContext(parsed, trace, {
+    model,
+    make: firstMeaningful(
+      parsed.entities.make,
+      featureRows[0]?.make,
+      featureRows[0]?.brand,
+    ),
+    city: parsed.entities.city,
+    moduleName: "Vehicles context for feature catalogue",
+  });
+
+  const rows = featureRows.map((row) =>
+    enrichRowWithVehicleContext(row, contextPayload),
+  );
+
   return {
     widgets: [
       widget("vehicle_features", `${model} feature catalogue`, {
+        ...contextPayload,
+
         data: {
+          ...contextPayload,
+
           model,
+          brand: contextPayload.brand,
+          make: contextPayload.make,
+          city: contextPayload.city,
           variant: parsed.entities.variant,
           total: matchedDocs.length,
+
+          priceRows: contextPayload.priceRows,
+          pricelistRows: contextPayload.pricelistRows,
+          colors: contextPayload.colors,
+          colorGallery: contextPayload.colorGallery,
+          heroImage: contextPayload.heroImage,
+          imageUrl: contextPayload.imageUrl,
+          vehicleImageUrl: contextPayload.vehicleImageUrl,
+          pricingSummary: contextPayload.pricingSummary,
         },
+
         rows,
         records: rows,
+
+        priceRows: contextPayload.priceRows,
+        pricelistRows: contextPayload.pricelistRows,
+        colors: contextPayload.colors,
+        colorGallery: contextPayload.colorGallery,
+        heroImage: contextPayload.heroImage,
+        imageUrl: contextPayload.imageUrl,
+        vehicleImageUrl: contextPayload.vehicleImageUrl,
+        pricingSummary: contextPayload.pricingSummary,
+
         notices: [
           "Feature values are shown only from stored feature catalogue fields.",
+          contextPayload.priceContextAvailable
+            ? "Price context is attached from vehicle catalogue rows."
+            : "Price context was not found for this feature response.",
+          contextPayload.imageContextAvailable
+            ? "Vehicle image is attached from stored color gallery data."
+            : "Vehicle image was not found in stored color gallery data.",
         ],
       }),
     ],
@@ -2016,8 +2375,10 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
       ],
     };
   }
+
   const model = parsed.entities.model || parsed.entities.models?.[0];
   const feature = parsed.entities.feature || "feature";
+
   if (!model || !feature) {
     return {
       widgets: [
@@ -2029,21 +2390,27 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
       ],
     };
   }
+
   const featureDocs = await findLean(
     VehicleFeature,
     featureModelQuery(model, parsed.entities.make),
     { limit: 120 },
   );
+
   pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
+
   const variantNeedle = normalizeVariant(parsed.entities.variant);
+
   const scopedDocs = variantNeedle
     ? featureDocs.filter((item) =>
         normalizeVariant(item.variant).includes(variantNeedle),
       )
     : featureDocs;
-  const evidenceRows = scopedDocs.map((item) => {
+
+  const baseEvidenceRows = scopedDocs.map((item) => {
     const match = featureValueFor(item.features, feature);
     const answer = featureAnswerForValue(match);
+
     return {
       id: safeId(item),
       brand: item.brand,
@@ -2060,11 +2427,30 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
       lastUpdated: formatDateValue(item.updatedAt),
     };
   });
+
+  const contextPayload = await buildVehicleCanvasContext(parsed, trace, {
+    model,
+    make: firstMeaningful(
+      parsed.entities.make,
+      baseEvidenceRows[0]?.make,
+      baseEvidenceRows[0]?.brand,
+    ),
+    city: parsed.entities.city,
+    moduleName: "Vehicles context for feature answer",
+  });
+
+  const evidenceRows = baseEvidenceRows.map((row) =>
+    enrichRowWithVehicleContext(row, contextPayload),
+  );
+
   const yesCount = evidenceRows.filter((row) => row.answer === "Yes").length;
+
   const noCount = evidenceRows.filter((row) => row.answer === "No").length;
+
   const notFoundCount = evidenceRows.filter(
     (row) => row.answer === "Not found",
   ).length;
+
   const answer =
     yesCount > 0 && noCount === 0 && notFoundCount === 0
       ? "Yes"
@@ -2077,22 +2463,45 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
   return {
     widgets: [
       widget("vehicle_feature_answer", `${feature} availability in ${model}`, {
+        ...contextPayload,
+
         question: parsed.message,
         model,
+        brand: contextPayload.brand,
+        make: contextPayload.make,
+        city: contextPayload.city,
         variantQuery: parsed.entities.variant,
         feature,
         answer,
+
+        priceRows: contextPayload.priceRows,
+        pricelistRows: contextPayload.pricelistRows,
+        colors: contextPayload.colors,
+        colorGallery: contextPayload.colorGallery,
+        heroImage: contextPayload.heroImage,
+        imageUrl: contextPayload.imageUrl,
+        vehicleImageUrl: contextPayload.vehicleImageUrl,
+        pricingSummary: contextPayload.pricingSummary,
+
         summary: {
           totalVariantsChecked: evidenceRows.length,
           yesCount,
           noCount,
           notFoundCount,
         },
+
         evidenceRows,
+
         data: {
+          ...contextPayload,
+
           model,
+          brand: contextPayload.brand,
+          make: contextPayload.make,
+          city: contextPayload.city,
           variantQuery: parsed.entities.variant,
           feature,
+
           total: evidenceRows.length,
           totalVariantsChecked: evidenceRows.length,
           yesCount,
@@ -2100,10 +2509,24 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
           notFoundCount,
           answer,
           question: parsed.message,
+
           evidenceRows,
+          rows: evidenceRows,
+          records: evidenceRows,
+
+          priceRows: contextPayload.priceRows,
+          pricelistRows: contextPayload.pricelistRows,
+          colors: contextPayload.colors,
+          colorGallery: contextPayload.colorGallery,
+          heroImage: contextPayload.heroImage,
+          imageUrl: contextPayload.imageUrl,
+          vehicleImageUrl: contextPayload.vehicleImageUrl,
+          pricingSummary: contextPayload.pricingSummary,
         },
+
         rows: evidenceRows,
         records: evidenceRows,
+
         columns: [
           "brand",
           "model",
@@ -2112,11 +2535,26 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
           "featureValue",
           "answer",
         ],
-        notices: evidenceRows.length
-          ? []
-          : [
-              `No ${feature} feature records were found for ${[model, parsed.entities.variant].filter(Boolean).join(" ")}.`,
-            ],
+
+        notices: [
+          ...(evidenceRows.length
+            ? []
+            : [
+                `No ${feature} feature records were found for ${[
+                  model,
+                  parsed.entities.variant,
+                ]
+                  .filter(Boolean)
+                  .join(" ")}.`,
+              ]),
+          contextPayload.priceContextAvailable
+            ? "Price context is attached from vehicle catalogue rows."
+            : "Price context was not found for this feature answer.",
+          contextPayload.imageContextAvailable
+            ? "Vehicle image is attached from stored color gallery data."
+            : "Vehicle image was not found in stored color gallery data.",
+        ],
+
         actions: [
           action("open_features", "Open features page", {
             route: "/loans/features",
