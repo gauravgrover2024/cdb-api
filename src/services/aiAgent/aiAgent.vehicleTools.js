@@ -1656,33 +1656,306 @@ const resolveFeatureDocForCatalogueRow = (row = {}, lookup = {}) => {
 };
 
 const variantGroupsForModels = async (models, trace, city = "new-delhi") => {
+  const normalizedCity = normalizeCitySlug(city || "new-delhi") || "new-delhi";
+
   const groups = await Promise.all(
-    models.map(async (model) => {
+    models.map(async (modelName) => {
       let docs = await findLean(
         Vehicle,
-        { $and: [vehicleModelClause(model), cityClause(city)].filter(Boolean) },
         {
-          sort: { model: 1, variant: 1, city: 1 },
-          limit: 80,
+          $and: [
+            vehicleModelClause(modelName),
+            cityClause(normalizedCity),
+          ].filter(Boolean),
+        },
+        {
+          sort: {
+            ex_showroom: 1,
+            exShowroom: 1,
+            variant_normalized: 1,
+            variant: 1,
+          },
+          limit: 220,
         },
       );
+
       if (!docs.length) {
-        docs = await findLean(Vehicle, vehicleModelClause(model), {
-          sort: { model: 1, variant: 1, city: 1 },
-          limit: 80,
+        docs = await findLean(Vehicle, vehicleModelClause(modelName), {
+          sort: {
+            city: 1,
+            ex_showroom: 1,
+            exShowroom: 1,
+            variant_normalized: 1,
+            variant: 1,
+          },
+          limit: 220,
         });
       }
-      pushModuleTrace(trace, `Variants ${model}`, docs.length, {
-        city: docs[0]?.city || city,
+
+      pushModuleTrace(trace, `Variants ${modelName}`, docs.length, {
+        city: docs[0]?.city || normalizedCity,
       });
+
+      const compactRows = uniqueRows(compactVariantRows(docs), (row) =>
+        [
+          row.city,
+          row.brand,
+          row.make,
+          row.model,
+          row.variant,
+          row.fuel,
+          row.transmission,
+          row.exShowroomPrice,
+          row.onRoadPrice,
+        ]
+          .join("|")
+          .toLowerCase(),
+      );
+
+      const firstRow = compactRows[0] || vehicleRow(docs[0] || {});
+
+      const resolvedMake = firstMeaningful(
+        firstRow.make,
+        firstRow.brand,
+        firstRow.brand_normalized,
+      );
+
+      const resolvedModel = firstMeaningful(
+        firstRow.model_normalized,
+        firstRow.model,
+        modelName,
+      );
+
+      const resolvedCity = firstMeaningful(firstRow.city, normalizedCity);
+
+      const featureDocs = await findLean(
+        VehicleFeature,
+        featureModelQuery(resolvedModel, resolvedMake),
+        {
+          sort: { variant: 1 },
+          limit: 260,
+        },
+      );
+
+      pushModuleTrace(
+        trace,
+        `Vehicle Features for ${resolvedModel}`,
+        featureDocs.length,
+      );
+
+      const featureLookup = buildFeatureLookupMaps(featureDocs);
+
+      const contextPayload = await buildVehicleCanvasContext(
+        {
+          message: `${resolvedModel} comparison context`,
+          lower: `${resolvedModel} comparison context`.toLowerCase(),
+          entities: {
+            model: resolvedModel,
+            make: resolvedMake,
+            city: resolvedCity,
+          },
+        },
+        trace,
+        {
+          model: resolvedModel,
+          make: resolvedMake,
+          city: resolvedCity,
+          limit: 240,
+          moduleName: `Vehicles context for ${resolvedModel} comparison`,
+        },
+      );
+
+      const enrichedVariants = compactRows.map((row) => {
+        const featureDoc = resolveFeatureDocForCatalogueRow(row, featureLookup);
+        const enrichedRow = enrichRowWithVehicleContext(row, contextPayload);
+
+        return {
+          ...enrichedRow,
+
+          id: row.id,
+          entityType: "catalogue_variant",
+
+          brand: firstMeaningful(row.brand, row.make, resolvedMake),
+          make: firstMeaningful(row.make, row.brand, resolvedMake),
+          model: firstMeaningful(
+            row.model_normalized,
+            row.model,
+            resolvedModel,
+          ),
+          variant: displayVariant(row),
+
+          fuel: firstMeaningful(row.fuel, row.fuel_type),
+          fuelType: firstMeaningful(row.fuelType, row.fuel, row.fuel_type),
+          fuel_type: firstMeaningful(row.fuel_type, row.fuel),
+
+          transmission: row.transmission,
+
+          exShowroomPrice: row.exShowroomPrice,
+          exShowroom: row.exShowroom,
+          ex_showroom: row.ex_showroom,
+
+          rto: row.rto,
+          rto_amount_cardekho: row.rto_amount_cardekho,
+
+          insurance: row.insurance,
+          insurance_amount_cardekho: row.insurance_amount_cardekho,
+
+          tcs: row.tcs,
+          other_tcsCharges: row.other_tcsCharges,
+
+          handlingOtherCharges: row.handlingOtherCharges,
+
+          optionalItems: row.optionalItems || [],
+          otherItems: row.otherItems || [],
+          optionalOtherItems: row.optionalOtherItems || [],
+          optionalOtherTotal: row.optionalOtherTotal,
+
+          optionalTotal: row.optionalTotal,
+          optional_total: row.optional_total,
+          optional_totalAccessories: row.optional_totalAccessories,
+          optional_totalAccessoriesInRs: row.optional_totalAccessoriesInRs,
+
+          other_totalOtherCharges: row.other_totalOtherCharges,
+          other_totalOtherChargesInRsFormat:
+            row.other_totalOtherChargesInRsFormat,
+
+          orpWithoutAccessories: row.orpWithoutAccessories,
+          orp_without_accessories: row.orp_without_accessories,
+
+          calculatedOnRoadPrice: row.calculatedOnRoadPrice,
+          storedOnRoadPrice: row.storedOnRoadPrice,
+          onRoadPrice: row.onRoadPrice,
+          onRoad: row.onRoadPrice,
+          price: row.onRoadPrice || row.exShowroomPrice,
+
+          on_road_price_cardekho: row.on_road_price_cardekho,
+          total_on_road_with_accessories: row.total_on_road_with_accessories,
+
+          priceFormula: row.priceFormula,
+
+          city: row.city || resolvedCity,
+          status: row.status,
+          is_discontinued: row.is_discontinued,
+          year: row.year,
+          lastUpdated: row.lastUpdated,
+          updatedAt: row.updatedAt,
+
+          bodyType: firstMeaningful(featureDoc?.body_type_bucket, row.bodyType),
+          body_type_bucket: featureDoc?.body_type_bucket,
+
+          seatingCapacity: firstMeaningful(
+            featureDoc?.seating_capacity,
+            row.seatingCapacity,
+          ),
+          seating_capacity: featureDoc?.seating_capacity,
+
+          features: featureDoc?.features || {},
+          featureGroups: featureDoc?.features || {},
+          featureDocId: featureDoc ? safeId(featureDoc) : "",
+
+          heroImage: contextPayload.heroImage,
+          imageUrl: contextPayload.vehicleImageUrl,
+          image_url: contextPayload.vehicleImageUrl,
+          vehicleImageUrl: contextPayload.vehicleImageUrl,
+          carImageUrl: contextPayload.vehicleImageUrl,
+
+          colors: contextPayload.colors || [],
+          colorGallery: contextPayload.colorGallery || [],
+        };
+      });
+
+      const activeVariants = activeVariantRows(enrichedVariants);
+      const variantsForSummary = activeVariants.length
+        ? activeVariants
+        : enrichedVariants;
+
+      const prices = variantsForSummary
+        .map((item) => firstNumber(item.onRoadPrice, item.exShowroomPrice))
+        .filter(Boolean);
+
+      const exPrices = variantsForSummary
+        .map((item) => firstNumber(item.exShowroomPrice))
+        .filter(Boolean);
+
       return {
-        model,
-        displayModel: docs[0]?.model || model,
-        make: firstMeaningful(docs[0]?.make, docs[0]?.brand),
-        variants: compactVariantRows(docs),
+        id: [resolvedMake, resolvedModel]
+          .filter(Boolean)
+          .join(":")
+          .toLowerCase(),
+
+        brand: resolvedMake,
+        make: resolvedMake,
+        model: resolvedModel,
+        displayModel: resolvedModel,
+        city: resolvedCity,
+
+        startingPrice: prices.length
+          ? Math.min(...prices)
+          : exPrices.length
+            ? Math.min(...exPrices)
+            : null,
+
+        topPrice: prices.length
+          ? Math.max(...prices)
+          : exPrices.length
+            ? Math.max(...exPrices)
+            : null,
+
+        variantCount: variantsForSummary.length,
+        activeVariantCount: activeVariants.length,
+
+        fuelOptions: [
+          ...new Set(
+            enrichedVariants
+              .map((item) => firstMeaningful(item.fuel, item.fuelType))
+              .filter(Boolean),
+          ),
+        ],
+
+        transmissionOptions: [
+          ...new Set(
+            enrichedVariants.map((item) => item.transmission).filter(Boolean),
+          ),
+        ],
+
+        bodyType: firstMeaningful(
+          enrichedVariants.find((item) => item.bodyType)?.bodyType,
+          enrichedVariants.find((item) => item.body_type_bucket)
+            ?.body_type_bucket,
+        ),
+
+        heroImage: contextPayload.heroImage,
+        imageUrl: contextPayload.vehicleImageUrl,
+        vehicleImageUrl: contextPayload.vehicleImageUrl,
+        colorGallery: contextPayload.colorGallery || [],
+        colors: contextPayload.colors || [],
+
+        pricingSummary: summarizeCatalogueRows(enrichedVariants),
+        priceRows: contextPayload.priceRows || [],
+        pricelistRows: contextPayload.pricelistRows || [],
+
+        featureDocs: featureDocs.map((doc) => ({
+          id: safeId(doc),
+          brand: doc.brand,
+          make: doc.brand,
+          model: doc.model,
+          variant: doc.variant,
+          bodyType: doc.body_type_bucket,
+          body_type_bucket: doc.body_type_bucket,
+          seatingCapacity: doc.seating_capacity,
+          seating_capacity: doc.seating_capacity,
+          features: doc.features || {},
+          featureGroups: doc.features || {},
+          lastUpdated: formatDateValue(doc.updatedAt),
+        })),
+
+        variants: enrichedVariants,
+        variantRows: enrichedVariants,
+        options: enrichedVariants,
       };
     }),
   );
+
   return groups;
 };
 
@@ -3722,9 +3995,11 @@ export const vehicleComparison = async (parsed, access, trace) => {
       ],
     };
   }
+
   const models = parsed.entities.models || [];
   const selectedVariantIds =
     parsed.context?.selectedVariantIds || parsed.filters?.selectedVariantIds;
+
   if (Array.isArray(selectedVariantIds) && selectedVariantIds.length >= 2) {
     return exactVariantComparison(
       selectedVariantIds,
@@ -3732,6 +4007,7 @@ export const vehicleComparison = async (parsed, access, trace) => {
       parsed.context || {},
     );
   }
+
   if (models.length < 2) {
     return {
       widgets: [
@@ -3743,48 +4019,218 @@ export const vehicleComparison = async (parsed, access, trace) => {
       ],
     };
   }
-  const groups = await variantGroupsForModels(
-    models,
-    trace,
-    parsed.entities.city || "Delhi",
-  );
-  const rows = groups.map((group) => {
-    const docs = group.variants;
-    const prices = docs
+
+  const city =
+    normalizeCitySlug(parsed.entities.city || "new-delhi") || "new-delhi";
+
+  const groups = await variantGroupsForModels(models, trace, city);
+
+  const modelSummaries = groups.map((group) => {
+    const variants = activeVariantRows(group.variants || []).length
+      ? activeVariantRows(group.variants || [])
+      : group.variants || [];
+
+    const prices = variants
       .map((item) => firstNumber(item.onRoadPrice, item.exShowroomPrice))
       .filter(Boolean);
+
+    const exPrices = variants
+      .map((item) => firstNumber(item.exShowroomPrice))
+      .filter(Boolean);
+
     return {
-      make: group.make,
-      model: group.displayModel,
-      startingPrice: prices.length ? Math.min(...prices) : null,
-      topPrice: prices.length ? Math.max(...prices) : null,
-      variantCount: docs.length,
-      fuelOptions: [...new Set(docs.map((item) => item.fuel).filter(Boolean))],
-      transmissionOptions: [
-        ...new Set(docs.map((item) => item.transmission).filter(Boolean)),
+      id: group.id,
+      brand: group.brand || group.make,
+      make: group.make || group.brand,
+      model: group.model || group.displayModel,
+      displayModel: group.displayModel || group.model,
+      city: group.city,
+
+      startingPrice: prices.length
+        ? Math.min(...prices)
+        : exPrices.length
+          ? Math.min(...exPrices)
+          : group.startingPrice,
+
+      topPrice: prices.length
+        ? Math.max(...prices)
+        : exPrices.length
+          ? Math.max(...exPrices)
+          : group.topPrice,
+
+      variantCount: variants.length,
+      activeVariantCount: activeVariantRows(variants).length,
+
+      fuelOptions: [
+        ...new Set(
+          variants
+            .map((item) => firstMeaningful(item.fuel, item.fuelType))
+            .filter(Boolean),
+        ),
       ],
-      lastUpdated: formatDateValue(docs[0]?.updatedAt),
+
+      transmissionOptions: [
+        ...new Set(variants.map((item) => item.transmission).filter(Boolean)),
+      ],
+
+      bodyType: group.bodyType,
+
+      heroImage: group.heroImage,
+      imageUrl: group.imageUrl,
+      vehicleImageUrl: group.vehicleImageUrl,
+
+      variants,
+      variantRows: variants,
+      options: variants,
+
       actions: [
         action("open_pricelist_prefilled", "Open Pricelist", {
           route: "/vehicles/price-list",
-          query: { make: group.make, model: group.displayModel },
+          query: {
+            make: group.make || group.brand,
+            model: group.model || group.displayModel,
+            city: group.city || city,
+          },
         }),
       ],
     };
   });
+
+  const allSelectedDefaultVariants = groups
+    .map((group) => {
+      const variants = activeVariantRows(group.variants || []).length
+        ? activeVariantRows(group.variants || [])
+        : group.variants || [];
+
+      return [...variants]
+        .filter((item) => firstNumber(item.exShowroomPrice, item.onRoadPrice))
+        .sort(
+          (a, b) =>
+            firstNumber(a.exShowroomPrice, a.onRoadPrice) -
+            firstNumber(b.exShowroomPrice, b.onRoadPrice),
+        )[0];
+    })
+    .filter(Boolean);
+
+  const allFeatureDocs = groups.flatMap((group) => group.featureDocs || []);
+  const allVariantRows = groups.flatMap((group) => group.variants || []);
+  const allPriceRows = groups.flatMap((group) => group.priceRows || []);
+  const allPricelistRows = groups.flatMap((group) => group.pricelistRows || []);
+  const allColors = groups.flatMap((group) => group.colors || []);
+  const allColorGallery = groups.flatMap((group) => group.colorGallery || []);
+
+  const comparisonRows = [
+    {
+      category: "Price",
+      label: "Ex-showroom price",
+      values: allSelectedDefaultVariants.map((row) => row.exShowroomPrice),
+    },
+    {
+      category: "Price",
+      label: "On-road price",
+      values: allSelectedDefaultVariants.map((row) => row.onRoadPrice),
+    },
+    {
+      category: "Fuel",
+      label: "Fuel type",
+      values: allSelectedDefaultVariants.map((row) =>
+        firstMeaningful(row.fuel, row.fuelType),
+      ),
+    },
+    {
+      category: "Transmission",
+      label: "Transmission",
+      values: allSelectedDefaultVariants.map((row) => row.transmission),
+    },
+    {
+      category: "Dimensions",
+      label: "Body type",
+      values: allSelectedDefaultVariants.map((row) => row.bodyType),
+    },
+    {
+      category: "Dimensions",
+      label: "Seating capacity",
+      values: allSelectedDefaultVariants.map((row) => row.seatingCapacity),
+    },
+  ].filter((row) => row.values.some((value) => firstMeaningful(value)));
+
   return {
     widgets: [
-      widget("vehicle_model_comparison", "Choose variants to compare", {
-        subtitle: "Pick one variant per model, then compare exact variants.",
-        models: rows,
+      widget("vehicle_model_comparison", "Compare models", {
+        title: `Compare ${models.join(", ")}`,
+        subtitle:
+          "Lowest priced variants are selected automatically. Change variant from each model dropdown.",
+
+        city,
+        requestedCity: city,
+        showingCity: city,
+
+        models: modelSummaries,
         variantOptionsByModel: groups,
-        data: { models: groups, summary: rows },
+
+        rows: modelSummaries,
+        records: modelSummaries,
+
+        comparisonRows,
+
+        selectedDefaultVariants: allSelectedDefaultVariants,
+        variants: allSelectedDefaultVariants,
+        variantRows: allVariantRows,
+
+        priceRows: allPriceRows,
+        pricelistRows: allPricelistRows,
+
+        features: allFeatureDocs,
+        featureDocs: allFeatureDocs,
+
+        colors: allColors,
+        colorGallery: allColorGallery,
+
+        data: {
+          city,
+          requestedCity: city,
+          showingCity: city,
+
+          models: groups,
+          summary: modelSummaries,
+
+          rows: modelSummaries,
+          records: modelSummaries,
+
+          comparisonRows,
+
+          selectedDefaultVariants: allSelectedDefaultVariants,
+          variants: allSelectedDefaultVariants,
+          variantRows: allVariantRows,
+
+          priceRows: allPriceRows,
+          pricelistRows: allPricelistRows,
+
+          features: allFeatureDocs,
+          featureDocs: allFeatureDocs,
+
+          colors: allColors,
+          colorGallery: allColorGallery,
+
+          totalModels: groups.length,
+          totalVariants: allVariantRows.length,
+        },
+
         context: {
           comparisonModels: models,
           selectedModels: models,
-          city: parsed.entities.city || groups[0]?.variants?.[0]?.city,
+          selectedVariantRows: allSelectedDefaultVariants,
+          city,
+          compareMode: "models",
         },
-        rows,
+
+        notices: [
+          "Lowest-priced variants are selected automatically for comparison.",
+          "Each model dropdown contains all stored variants with price breakup fields.",
+          "Feature comparison uses stored VehicleFeature catalogue fields.",
+          "Vehicle images are attached from stored color gallery data where available.",
+        ],
+
         actions: [
           action("show_more_inline", "Show catalogues", {
             message: `Show catalogue for ${models.join(" ")}`,
@@ -3792,10 +4238,12 @@ export const vehicleComparison = async (parsed, access, trace) => {
         ],
       }),
     ],
+
     followUpSuggestions: [
       "Compare top variants",
-      "Show catalogues",
-      "Show similar cars",
+      "Show features",
+      "Show price breakup",
+      "Calculate EMI",
     ],
   };
 };
@@ -4069,6 +4517,9 @@ export const vehicleVariantDifference = async (parsed, access, trace) => {
   ].filter(Boolean);
 
   if (variantTokens.length < 2) {
+    pushModuleTrace(trace, "Vehicle Features", 0, {
+      reason: "Variant clarification required before feature difference lookup",
+    });
     return {
       widgets: [
         unavailableWidget(

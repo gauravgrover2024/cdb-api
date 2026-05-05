@@ -1,541 +1,323 @@
 import dotenv from "dotenv";
+import fs from "fs";
 import mongoose from "mongoose";
 import connectDB from "../config/db.js";
-import Loan from "../models/Loan.js";
 import { chatWithAgent } from "../services/aiAgent/aiAgent.service.js";
-import { AI_AGENT_FIELD_MAPS } from "../services/aiAgent/aiAgent.fieldMaps.js";
-import { routeAiAgentIntent } from "../services/aiAgent/aiAgent.intentRouter.js";
+import { parseAgentMessage } from "../services/aiAgent/aiAgent.intentParser.js";
 import { getToolForIntent } from "../services/aiAgent/aiAgent.toolRegistry.js";
+import {
+  NEW_CAR_CANVAS_TYPES,
+  NEW_CAR_INLINE_TYPES,
+} from "../services/aiAgent/aiAgent.newCarQuestionMap.js";
 
 dotenv.config();
 
 const adminUser = {
   _id: "000000000000000000000000",
   role: "admin",
-  name: "AI Agent Test",
+  name: "ACI Assist Test Harness",
 };
 
-const baseTests = [
-  {
-    query: "Venue pricelist",
-    expectedIntent: "vehicle_pricelist",
-    assert: ({ response }) => {
-      const isAmbiguous = response.widgets?.some(
-        (w) => w.type === "model_ambiguity",
-      );
-      const isMixed =
-        response.widgets?.[0]?.rows?.some((r) => /n line/i.test(r.model)) &&
-        response.widgets?.[0]?.rows?.some((r) => !/n line/i.test(r.model));
-      return isAmbiguous || !isMixed;
-    },
-  },
-  {
-    query: "Venue N Line pricelist",
-    expectedIntent: "vehicle_pricelist",
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "vehicle_pricelist");
-      return (
-        widget?.type === "vehicle_pricelist" &&
-        widget?.rows?.every((r) =>
-          /n line/i.test(r.model_normalized || r.model),
-        )
-      );
-    },
-  },
-  {
-    query: "Show all Venue models",
-    expectedIntent: "vehicle_pricelist",
-    allowedWidgets: ["vehicle_pricelist", "model_group_results"],
-    assert: ({ response }) => {
-      const widget =
-        widgetOf(response, "vehicle_pricelist") ||
-        widgetOf(response, "model_group_results");
-      const rows = widget?.rows || widget?.groups || [];
-      return Array.isArray(rows);
-    },
-  },
-  {
-    query: "Verna pricelist",
-    expectedIntent: "vehicle_pricelist",
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "vehicle_pricelist");
-      return (
-        widget?.type === "vehicle_pricelist" &&
-        /delhi/i.test(widget?.city || "") &&
-        widget?.rows?.length > 0
-      );
-    },
-  },
-  {
-    query: "Prices in Gurgaon",
-    context: { intent: "vehicle_pricelist", model: "verna", city: "delhi" },
-    expectedIntent: "vehicle_city_change",
-    assert: ({ response }) => {
-      const widget = response.widgets?.[0];
-      return (
-        (widget?.type === "vehicle_pricelist" &&
-          /gurgaon/i.test(widget?.city || widget?.data?.city || "")) ||
-        widget?.type === "unavailable_notice"
-      );
-    },
-  },
-  {
-    query: "Verna HX6 price",
-    expectedIntent: "vehicle_pricelist",
-    assert: ({ response }) =>
-      response.widgets?.some((w) => w.type === "variant_ambiguity"),
-  },
-  {
-    query: "Verna HX6 price breakup",
-    expectedIntent: "vehicle_price_breakup",
-    assert: ({ response }) =>
-      response.widgets?.some(
-        (w) =>
-          w.type === "vehicle_price_breakup" || w.type === "variant_ambiguity",
-      ),
-  },
-  {
-    query: "Show features of Verna SX",
-    expectedIntent: "vehicle_features",
-    expectedWidgets: ["vehicle_features"],
-  },
-  {
-    query: "Does Verna SX have sunroof?",
-    expectedIntent: "vehicle_feature_answer",
-    expectedWidgets: ["vehicle_feature_answer"],
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "vehicle_feature_answer");
-      return (
-        !!widget?.answer &&
-        (widget?.evidenceRows?.length > 0 ||
-          widget?.data?.evidenceRows?.length > 0)
-      );
-    },
-  },
-  {
-    query: "Which Verna variants have sunroof?",
-    expectedIntent: "vehicle_feature_discovery",
-    expectedWidgets: ["vehicle_feature_discovery"],
-  },
-  {
-    query: "Which cars have 6 airbags under 20L?",
-    expectedIntent: "vehicle_feature_discovery",
-    expectedWidgets: ["vehicle_feature_discovery"],
-  },
-  {
-    query: "Show colors of Verna",
-    expectedIntent: "vehicle_colors",
-    expectedWidgets: ["vehicle_colors"],
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "vehicle_colors");
-      const colors =
-        widget?.colors || widget?.data?.colors || widget?.rows || [];
-      return (
-        colors.length > 0 &&
-        colors.some((color) => color.imageUrl || color.image_url || color.hex)
-      );
-    },
-  },
-  {
-    query: "Which cars are available in black?",
-    expectedIntent: "vehicle_color_search",
-    expectedWidgets: ["vehicle_color_search"],
-  },
-  {
-    query: "Show similar cars to Verna",
-    expectedIntent: "similar_cars",
-    expectedWidgets: ["similar_cars"],
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "similar_cars");
-      return (
-        (widget?.rows || []).length > 0 &&
-        (widget?.rows || []).every(
-          (r) => r.reason || r.score || r.matchedReason,
-        )
-      );
-    },
-  },
-  {
-    query: "Compare Verna City Slavia",
-    expectedIntent: "vehicle_comparison",
-    assert: ({ response }) => {
-      const widget =
-        widgetOf(response, "vehicle_model_comparison") ||
-        widgetOf(response, "variant_selector");
-      return (
-        (widget?.models || []).length === 3 ||
-        (widget?.options || []).length === 3
-      );
-    },
-  },
-  {
-    query: "Compare selected variants",
-    expectedIntent: "vehicle_comparison",
-    allowedWidgets: [
-      "vehicle_variant_comparison",
-      "variant_selector",
-      "unavailable_notice",
-    ],
-    context: { selectedVariants: ["v1", "v2"] },
-    assert: ({ response }) => {
-      const widgets = widgetTypesFor(response);
+const TEST_CASES = [
+  // Core
+  { query: "Verna pricelist", expectIntent: "vehicle_pricelist" },
+  { query: "Verna price in Mumbai", expectIntent: "vehicle_city_price" },
+  { query: "Verna SX price", expectIntent: "vehicle_variant_price" },
+  { query: "Show colors of Verna", expectIntent: "vehicle_colors" },
+  { query: "Show features of Verna", expectIntent: "vehicle_model_features_explorer" },
+  { query: "Does Verna SX have sunroof?", expectIntent: "vehicle_feature_answer", expectInline: true },
+  { query: "Which Verna variants have sunroof?", expectIntent: "vehicle_feature_discovery" },
+  { query: "SUVs under 20L", expectIntent: "vehicle_budget_search", expectModelGrouped: true, expectLeading: true },
+  { query: "Safest SUVs under 20L", expectIntent: "vehicle_safety_search", expectModelGrouped: true, expectLeading: true },
+  { query: "Automatic cars under 15 lakh", expectIntent: "vehicle_budget_search", expectModelGrouped: true, expectLeading: true },
+  { query: "Compare Verna City Slavia", expectIntent: "vehicle_comparison" },
+  { query: "Cars similar to Verna", expectIntent: "vehicle_similar_cars" },
+  { query: "Which Verna variant should I buy?", expectIntent: "vehicle_variant_recommendation" },
+  { query: "Difference between Verna SX and SX(O)", expectIntent: "vehicle_variant_upgrade_value" },
+  { query: "EMI for Verna with 90% loan for 5 years at 9 percent", expectIntent: "vehicle_emi_calculator" },
+  { query: "EMI for Verna with 2 lakh down payment", expectIntent: "vehicle_emi_calculator" },
+  { query: "What documents are required for car loan?", expectIntent: "new_car_finance_faq", expectInline: true },
+  { query: "Latest offers on Verna", expectIntent: "vehicle_offers" },
+  { query: "Get quotation for Verna SX in Delhi", expectIntent: "aci_new_car_quotation" },
+  { query: "Nearest Hyundai service center in Delhi", expectIntent: "new_car_service_center_search" },
+  { query: "Verna service cost", expectIntent: "new_car_service_cost" },
+  { query: "Is Verna available in Delhi?", expectIntent: "vehicle_availability" },
 
-      // Dummy v1/v2 are not real DB IDs, so unavailable_notice is acceptable here.
-      // Real selected-variant comparison should be tested separately after we fetch real variant IDs.
-      return (
-        widgets.includes("vehicle_variant_comparison") ||
-        widgets.includes("variant_selector") ||
-        widgets.includes("unavailable_notice")
-      );
-    },
-  },
-  {
-    query: "SUVs under 20L",
-    expectedIntent: "vehicle_budget_search",
-    expectedWidgets: ["vehicle_recommendation_results"],
-    expectedEntities: {
-      bodyType: "suv",
-      budgetMax: 2000000,
-    },
-    assert: ({ response, route }) => {
-      const bodyType = String(route.entities?.bodyType || "").toLowerCase();
-      const widget = widgetOf(response, "vehicle_recommendation_results");
-      const rows = rowsOfWidget(widget);
+  // Analytical
+  { query: "Which car is cheapest to own for 5 years?", expectIntent: "vehicle_tco_analysis", expectLeading: true },
+  { query: "Should I buy petrol or diesel for Creta?", expectIntent: "vehicle_fuel_decision_advisor", expectLeading: true },
+  { query: "Which car has best resale value?", expectIntent: "vehicle_resale_value_analysis", expectLeading: true },
+  { query: "Best car for my lifestyle", expectIntent: "vehicle_lifestyle_fit_score", expectLeading: true },
+  { query: "Best car for parents", expectIntent: "vehicle_senior_friendly_recommendation", expectLeading: true },
+  { query: "Most spacious cars under 20 lakh", expectIntent: "vehicle_space_practicality_advisor", expectLeading: true },
+  { query: "Best performance car under 20 lakh", expectIntent: "vehicle_performance_advisor", expectLeading: true },
+  { query: "Cars with highest ground clearance", expectIntent: "vehicle_spec_ranking", expectLeading: true },
+  { query: "I want automatic, sunroof and 6 airbags under 15 lakh", expectIntent: "vehicle_must_have_feature_builder", expectLeading: true },
+  { query: "My monthly budget is 30000, which car can I buy?", expectIntent: "vehicle_monthly_budget_planner", expectLeading: true },
+  { query: "What extra features do I get by paying 1.5 lakh more?", expectIntent: "vehicle_variant_upgrade_value" },
 
-      return bodyType === "suv" && Array.isArray(rows);
-    },
-  },
-  {
-    query: "Automatic SUVs under 20L",
-    expectedIntent: "vehicle_budget_search",
-    expectedWidgets: ["vehicle_recommendation_results"],
-    expectedEntities: {
-      bodyType: "suv",
-      transmission: "automatic",
-      budgetMax: 2000000,
-    },
-    assert: ({ response, route }) => {
-      const bodyType = String(route.entities?.bodyType || "").toLowerCase();
-      const transmission = String(
-        route.entities?.transmission || "",
-      ).toLowerCase();
-      const widget = widgetOf(response, "vehicle_recommendation_results");
-      const rows = rowsOfWidget(widget);
+  // Ambiguity
+  { query: "Show Venue price", expectIntent: "vehicle_model_ambiguity", expectInline: true, allowAmbiguityFallback: true },
+  { query: "Verna SX price", expectIntent: "vehicle_variant_price", allowVariantAmbiguity: true },
 
-      return (
-        bodyType === "suv" &&
-        transmission === "automatic" &&
-        Array.isArray(rows)
-      );
-    },
-  },
+  // Multi-intent
+  { query: "Show Verna price, colors and EMI", expectIntent: "vehicle_pricelist", expectMulti: true },
   {
-    query: "Cars with sunroof under 15L",
-    expectedIntent: "vehicle_feature_discovery",
-    expectedWidgets: ["vehicle_feature_discovery"],
+    query: "Does Verna SX have sunroof and what is EMI with 2 lakh down payment?",
+    expectIntent: "vehicle_emi_calculator",
+    expectMulti: true,
   },
-  {
-    query: "Best family car under 20L",
-    expectedIntent: "vehicle_use_case_recommendation",
-    expectedWidgets: ["vehicle_recommendation_results"],
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "vehicle_recommendation_results");
-      return (
-        (widget?.rows || []).length > 0 &&
-        (widget?.rows || []).every(
-          (r) => r.matchedReasons || r.reason || r.matchedReason,
-        )
-      );
-    },
-  },
-  {
-    query:
-      "EMI for Verna HX6 with 2 lakh down payment for 5 years at 9 percent",
-    expectedIntent: "vehicle_emi_calculator",
-    allowedWidgets: ["vehicle_emi_calculator", "variant_ambiguity"],
-    forbiddenEntities: ["last4"],
-    expectedEntities: {
-      model: "verna",
-      variant: "HX6",
-      downPayment: 200000,
-      tenureMonths: 60,
-      annualRate: 9,
-    },
-    assert: ({ response, route }) => {
-      const widgets = widgetTypesFor(response);
+  { query: "Compare Creta and Seltos and tell me which has better mileage", expectIntent: "vehicle_comparison", expectMulti: true },
+  { query: "Show offers and quotation for Safari in Delhi", expectIntent: "aci_new_car_quotation", expectMulti: true },
+  { query: "Find Hyundai service center and service cost for Verna", expectIntent: "new_car_service_center_search", expectMulti: true },
 
-      if (route.entities?.last4) return false;
-      if (route.entities?.transmission === "at") return false;
+  // Out of scope
+  { query: "Loan closure 7077", expectIntent: "new_car_unavailable_or_out_of_scope", expectInline: true },
+  { query: "Sell my used car", expectIntent: "new_car_unavailable_or_out_of_scope", expectInline: true },
 
-      return (
-        widgets.includes("vehicle_emi_calculator") ||
-        widgets.includes("variant_ambiguity")
-      );
-    },
-  },
-  {
-    query: "Cars with EMI under 25000",
-    expectedIntent: "vehicle_emi_budget_search",
-  },
-  {
-    query: "Show Verna price history",
-    expectedIntent: "vehicle_price_history",
-  },
-  {
-    query: "Safest SUVs under 20L",
-    expectedIntent: "vehicle_safety_expert",
-    allowedWidgets: [
-      "vehicle_safety_results",
-      "vehicle_recommendation_results",
-      "unavailable_notice",
-    ],
-    expectedEntities: {
-      budgetMax: 2000000,
-    },
-    assert: ({ response, route }) => {
-      const bodyType = String(route.entities?.bodyType || "").toLowerCase();
-      const widgets = widgetTypesFor(response);
-
-      return (
-        ["suv", "suvs"].includes(bodyType) &&
-        (widgets.includes("vehicle_safety_results") ||
-          widgets.includes("vehicle_recommendation_results") ||
-          widgets.includes("unavailable_notice"))
-      );
-    },
-  },
-  {
-    query: "Which Verna variant should I buy?",
-    expectedIntent: "vehicle_best_variant_recommendation",
-  },
-  {
-    query: "Difference between Verna HX6 and HX8",
-    expectedIntent: "vehicle_variant_difference",
-    expectedWidgets: ["vehicle_variant_difference"],
-    assert: ({ response }) => {
-      const widget = widgetOf(response, "vehicle_variant_difference");
-      return Boolean(
-        widget &&
-        widget.baseVariant &&
-        widget.compareVariant &&
-        widget.price &&
-        (Array.isArray(widget.addedFeatures) ||
-          Array.isArray(widget.changedFeatures) ||
-          Array.isArray(widget.removedFeatures)),
-      );
-    },
-  },
+  // City fallback transparency
+  { query: "Verna price in Patna", expectIntent: "vehicle_city_price", expectFallbackNotice: true },
 ];
-
-const physicalCollectionsFor = (tool) =>
-  (tool?.collectionsUsed || []).map(
-    (key) => AI_AGENT_FIELD_MAPS[key]?.collectionName || key,
-  );
-
-const widgetTypesFor = (response) => {
-  if (response.ambiguity)
-    return [
-      "ambiguity",
-      ...(response.widgets || []).map((widget) => widget.type).filter(Boolean),
-    ];
-  return (response.widgets || []).map((widget) => widget.type).filter(Boolean);
-};
 
 const rowsOfWidget = (widget = {}) => {
   if (!widget) return [];
-
   if (Array.isArray(widget.rows)) return widget.rows;
   if (Array.isArray(widget.records)) return widget.records;
   if (Array.isArray(widget.options)) return widget.options;
   if (Array.isArray(widget.colors)) return widget.colors;
   if (Array.isArray(widget.models)) return widget.models;
   if (Array.isArray(widget.variants)) return widget.variants;
-
   if (Array.isArray(widget.data?.rows)) return widget.data.rows;
   if (Array.isArray(widget.data?.records)) return widget.data.records;
   if (Array.isArray(widget.data?.options)) return widget.data.options;
-  if (Array.isArray(widget.data?.groupedByModel))
-    return widget.data.groupedByModel;
+  if (Array.isArray(widget.data?.groupedByModel)) return widget.data.groupedByModel;
   if (Array.isArray(widget.groupedByModel)) return widget.groupedByModel;
-  if (Array.isArray(widget.groups)) return widget.groups;
-
   return [];
 };
 
-const widgetOf = (response, type) =>
-  (response.widgets || []).find((widget) => widget.type === type);
-
-const matchedCountFor = (response) => {
-  const topLevelAmbiguityCount = response.ambiguity?.options?.length || 0;
-
-  const widgetCount = (response.widgets || []).reduce((sum, widget) => {
+const matchedCountFor = (response) =>
+  (response.widgets || []).reduce((sum, widget) => {
     const directCount =
       widget?.summary?.total ?? widget?.data?.total ?? widget?.total ?? null;
-
     if (directCount !== null && directCount !== undefined) {
       return sum + (Number(directCount) || 0);
     }
-
     return sum + rowsOfWidget(widget).length;
-  }, 0);
+  }, response?.ambiguity?.options?.length || 0);
 
-  return topLevelAmbiguityCount + widgetCount;
+const containsAny = (text = "", patterns = []) =>
+  patterns.some((item) => text.toLowerCase().includes(String(item).toLowerCase()));
+
+const hasGroupedModels = (response = {}) => {
+  const primary = response.widgets?.[0] || {};
+  if (Array.isArray(primary.modelCards) && primary.modelCards.length) return true;
+  if (Array.isArray(primary.groupedByModel) && primary.groupedByModel.length)
+    return true;
+  if (Array.isArray(primary.data?.groupedByModel) && primary.data.groupedByModel.length)
+    return true;
+  const rows = rowsOfWidget(primary);
+  if (!rows.length) return false;
+  return rows.every((row) => row.model && !row.variant);
 };
 
-const hasRecords = (response) =>
-  (response.widgets || []).some((widget) => rowsOfWidget(widget).length > 0);
+const checkFrontendRegistryCoverage = () => {
+  const registryPath =
+    "/Users/gauravgrover/cdb-frontend/src/components/aci-assist/canvasRegistry.js";
 
-const buildLine = ({ test, route, tool, response }) => {
-  const widgetTypes = widgetTypesFor(response);
-  const physicalCollections = physicalCollectionsFor(tool);
+  const source = fs.readFileSync(registryPath, "utf8");
+
+  const missingCanvas = NEW_CAR_CANVAS_TYPES.filter((type) =>
+    !new RegExp(`\\b${type}\\s*:`).test(source),
+  );
+  const missingInline = NEW_CAR_INLINE_TYPES.filter((type) =>
+    !new RegExp(`\\b${type}\\s*:`).test(source),
+  );
+
+  return {
+    pass: missingCanvas.length === 0 && missingInline.length === 0,
+    missingCanvas,
+    missingInline,
+  };
+};
+
+const validateLine = ({ test, parsed, tool, response }) => {
   const failures = [];
 
-  if (test.expectedEntities) {
-    for (const [key, expectedValue] of Object.entries(test.expectedEntities)) {
-      const actualValue = route.entities?.[key];
-
-      if (Array.isArray(expectedValue)) {
-        if (!expectedValue.includes(actualValue)) {
-          failures.push(
-            `entity ${key} expected one of ${expectedValue.join(", ")}, got ${actualValue}`,
-          );
-        }
-      } else if (actualValue !== expectedValue) {
-        failures.push(
-          `entity ${key} expected ${expectedValue}, got ${actualValue}`,
-        );
-      }
+  if (test.expectIntent && response.intent !== test.expectIntent) {
+    if (
+      !(test.allowAmbiguityFallback && response.intent === "vehicle_pricelist") &&
+      !(test.allowVariantAmbiguity && response.intent === "vehicle_variant_ambiguity")
+    ) {
+      failures.push(`intent expected ${test.expectIntent}, got ${response.intent}`);
     }
   }
 
-  if (test.forbiddenEntities?.length) {
-    for (const key of test.forbiddenEntities) {
-      if (route.entities?.[key]) {
-        failures.push(
-          `forbidden entity ${key} was extracted as ${route.entities[key]}`,
-        );
-      }
+  if (
+    response.intent !== "new_car_unavailable_or_out_of_scope" &&
+    !response.canvasType &&
+    !response.inlineType
+  ) {
+    failures.push("structured intent has no canvasType/inlineType");
+  }
+
+  if ((response.widgets || []).length === 0) {
+    failures.push("no widget returned for structured response");
+  }
+
+  if ((response.actions || []).length === 0) {
+    failures.push("no actions returned");
+  }
+
+  if (test.expectLeading && (response.leadingQuestions || []).length === 0) {
+    failures.push("leadingQuestions missing for exploratory intent");
+  }
+
+  if (test.expectModelGrouped && !hasGroupedModels(response)) {
+    failures.push("broad recommendation is not grouped by model");
+  }
+
+  if (test.expectFallbackNotice) {
+    const notices = (response.widgets || [])
+      .flatMap((widget) => [
+        ...(Array.isArray(widget.notices) ? widget.notices : []),
+        ...(Array.isArray(widget.data?.notices) ? widget.data.notices : []),
+        widget?.data?.message,
+      ])
+      .filter(Boolean)
+      .join(" ");
+
+    if (!containsAny(notices, ["showing", "fallback", "instead"])) {
+      failures.push("unsupported city fallback notice missing");
     }
   }
 
-  if (test.expectedIntent && route.intent !== test.expectedIntent)
-    failures.push(
-      `intent expected ${test.expectedIntent}, got ${route.intent}`,
+  if (test.query.toLowerCase().includes("color")) {
+    const modules = (response.sourceTransparency?.modulesChecked || []).map(
+      (item) => item.module,
     );
-  if (test.forbiddenIntent && route.intent === test.forbiddenIntent)
-    failures.push(`forbidden intent ${test.forbiddenIntent}`);
-  if (route.structured && widgetTypes.length === 0)
-    failures.push("structured intent returned blank widgetType");
-  if (
-    test.expectedWidgets?.length &&
-    !test.expectedWidgets.some((widget) => widgetTypes.includes(widget))
-  ) {
-    failures.push(
-      `expected widget ${test.expectedWidgets.join(" or ")}, got ${widgetTypes.join(", ") || "none"}`,
-    );
+    if (!modules.some((item) => /color/i.test(item))) {
+      failures.push("colors query did not use color collection/module trace");
+    }
   }
-  if (
-    test.allowedWidgets?.length &&
-    !test.allowedWidgets.some((widget) => widgetTypes.includes(widget))
-  ) {
-    failures.push(
-      `allowed widgets ${test.allowedWidgets.join(", ")}, got ${widgetTypes.join(", ") || "none"}`,
-    );
-  }
-  if (test.requiredWidget && !widgetTypes.includes(test.requiredWidget))
-    failures.push(`missing required widget ${test.requiredWidget}`);
-  if (test.requireRecords && !hasRecords(response))
-    failures.push("expected actual records, got count-only response");
-  if (
-    test.expectedPhysicalCollections?.length &&
-    !test.expectedPhysicalCollections.some((collection) =>
-      physicalCollections.includes(collection),
-    )
-  ) {
-    failures.push(
-      `expected physical collection ${test.expectedPhysicalCollections.join(" or ")}, got ${physicalCollections.join(", ") || "none"}`,
-    );
-  }
-  if (test.assert && !test.assert({ response, route, tool }))
-    failures.push("custom assertion failed");
 
-  return {
-    query: test.query,
-    intent: route.intent,
-    entities: route.entities,
-    selectedTool: tool?.intent || "generic_search",
-    logicalAdapterUsed: tool?.collectionsUsed || route.collections || [],
-    physicalCollectionUsed: physicalCollections,
-    widgetType: widgetTypes[0] || "",
-    widgetTypes,
-    matchedCount: matchedCountFor(response),
-    pass: failures.length === 0,
-    failureReason: failures.join("; "),
-  };
-};
+  if (test.query.toLowerCase().includes("sunroof") || test.query.toLowerCase().includes("feature")) {
+    const modules = (response.sourceTransparency?.modulesChecked || []).map(
+      (item) => item.module,
+    );
+    const hasFeatureModule = modules.some((item) => /feature/i.test(item));
+    if (!hasFeatureModule) {
+      failures.push("feature query did not use feature collection/module trace");
+    }
+  }
 
-const selectedEntityTest = async () => {
-  const loan = await Loan.findOne({
-    $or: [
-      { rc_redg_no: /7077$/i },
-      { registrationNumber: /7077$/i },
-      { vehicleRegNo: /7077$/i },
-    ],
-  }).lean();
-  if (!loan) return null;
-  return {
-    query: "Loan closure 7077",
-    expectedIntent: "loan_closure_pos",
-    allowedWidgets: ["loan_closure_card", "unavailable_notice"],
-    expectedPhysicalCollections: ["loans"],
-    selectedEntity: {
-      id: String(loan._id),
-      entityType: "loan",
-      customerName: loan.customerName,
-      registrationNumber:
-        loan.rc_redg_no || loan.registrationNumber || loan.vehicleRegNo,
-      context: { loanId: loan.loanId },
-    },
-    assert: ({ response }) => {
-      const data = response.widgets?.[0]?.data || {};
-      return !data.id || data.id === String(loan._id);
-    },
-  };
+  if (test.expectInline && response.displayMode === "canvas") {
+    failures.push("expected inline response but got canvas mode");
+  }
+
+  const fullDump = JSON.stringify(response);
+  if (
+    containsAny(fullDump, [
+      "Himgiri Hyundai",
+      "2-4 Weeks",
+      "Value Retention",
+      "Family Explorer",
+    ])
+  ) {
+    failures.push("dummy data marker detected in response payload");
+  }
+
+  return failures;
 };
 
 const run = async () => {
   await connectDB();
-  const dynamicTest = await selectedEntityTest();
-  const tests = dynamicTest ? [...baseTests, dynamicTest] : baseTests;
-  let failed = 0;
-  for (const test of tests) {
-    const route = routeAiAgentIntent({
-      message: test.query,
-      context: test.context || {},
-      selectedEntity: test.selectedEntity,
-    });
-    const tool = getToolForIntent(route.intent);
-    const response = await chatWithAgent({
-      message: test.query,
-      context: test.context || {},
-      selectedEntity: test.selectedEntity,
-      user: adminUser,
-      debug: true,
-    });
-    const line = buildLine({ test, route, tool, response });
-    if (!line.pass) failed += 1;
-    console.log(JSON.stringify(line, null, 2));
+
+  const registryCoverage = checkFrontendRegistryCoverage();
+  if (!registryCoverage.pass) {
+    console.log("[FAIL] Frontend canvas registry coverage check", registryCoverage);
+  } else {
+    console.log("[PASS] Frontend canvas registry coverage check");
   }
+
+  const lines = [];
+
+  for (const test of TEST_CASES) {
+    try {
+      const parsed = parseAgentMessage(test.query, {}, null, {});
+      const tool = getToolForIntent(parsed.intent);
+
+      const response = await chatWithAgent({
+        message: test.query,
+        context: {},
+        selectedEntity: null,
+        filters: {},
+        user: adminUser,
+      });
+
+      const failures = validateLine({ test, parsed, tool, response });
+
+      const line = {
+        query: test.query,
+        detectedIntent: response.intent || parsed.intent,
+        displayMode: response.displayMode || "",
+        canvasType: response.canvasType || null,
+        inlineType: response.inlineType || null,
+        selectedTool: tool?.intent || "generic_search",
+        collectionsModulesUsed: (response.sourceTransparency?.modulesChecked || []).map(
+          (item) => item.module,
+        ),
+        matchedCount: matchedCountFor(response),
+        leadingQuestionsCount: (response.leadingQuestions || []).length,
+        actionsCount: (response.actions || []).length,
+        pass: failures.length === 0,
+        failureReason: failures.join("; "),
+      };
+
+      lines.push(line);
+      console.log(JSON.stringify(line, null, 2));
+    } catch (error) {
+      const line = {
+        query: test.query,
+        detectedIntent: "error",
+        displayMode: "",
+        canvasType: null,
+        inlineType: null,
+        selectedTool: "error",
+        collectionsModulesUsed: [],
+        matchedCount: 0,
+        leadingQuestionsCount: 0,
+        actionsCount: 0,
+        pass: false,
+        failureReason: error?.message || "Unhandled error",
+      };
+      lines.push(line);
+      console.log(JSON.stringify(line, null, 2));
+    }
+  }
+
+  const failed = lines.filter((line) => !line.pass).length;
+  const passed = lines.length - failed;
+
+  console.log("\n--- Summary ---");
+  console.log(
+    JSON.stringify(
+      {
+        total: lines.length,
+        passed,
+        failed,
+        frontendRegistryCoverage: registryCoverage,
+      },
+      null,
+      2,
+    ),
+  );
+
   await mongoose.connection.close();
-  if (failed) {
-    console.error(`ACI Assist harness failed ${failed} test(s).`);
-    process.exit(1);
-  }
-  console.log("ACI Assist harness passed.");
+  process.exit(failed > 0 || !registryCoverage.pass ? 1 : 0);
 };
 
 run().catch(async (error) => {
-  console.error("ACI Assist harness crashed:", error);
+  console.error("ACI Assist test harness crashed:", error);
   await mongoose.connection.close().catch(() => {});
   process.exit(1);
 });

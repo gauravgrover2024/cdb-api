@@ -12,6 +12,11 @@ import {
   normalizeText,
   registrationConditions,
 } from "./aiAgent.normalizers.js";
+import {
+  getIntentForWidgetType,
+  getNewCarQuestionConfig,
+  mapIntentAlias,
+} from "./aiAgent.newCarQuestionMap.js";
 
 export const LIMIT = 50;
 export const QUERY_TIMEOUT_MS = 3500;
@@ -156,14 +161,171 @@ export const assembleResponse = ({
   modulesChecked = [],
   filtersApplied = [],
   followUpSuggestions = [],
+  actions = [],
+  leadingQuestions = [],
   ambiguity,
   access,
   queryPlan,
   filters,
 }) => {
+  const primaryWidget = widgets?.[0] || {};
+  const canonicalIntent = mapIntentAlias(parsed.intent);
+  const widgetIntent = getIntentForWidgetType(primaryWidget.type || "");
+  const resolvedIntent =
+    primaryWidget.type === "model_ambiguity" ||
+    primaryWidget.type === "variant_ambiguity"
+      ? widgetIntent || canonicalIntent
+      : canonicalIntent || widgetIntent;
+  const questionConfig =
+    getNewCarQuestionConfig(resolvedIntent) ||
+    getNewCarQuestionConfig(canonicalIntent);
+  const secondaryConfigs = (parsed.secondaryIntents || [])
+    .map((intent) => getNewCarQuestionConfig(intent))
+    .filter(Boolean);
+
+  const inferCanvasTypeFromWidget = (type = "") =>
+    ({
+      vehicle_pricelist: "pricelist_canvas",
+      vehicle_price_breakup: "price_breakup_canvas",
+      vehicle_colors: "color_studio_canvas",
+      vehicle_color_search: "color_studio_canvas",
+      vehicle_features: "feature_explorer_canvas",
+      vehicle_feature_discovery: "feature_explorer_canvas",
+      vehicle_feature_answer: null,
+      vehicle_model_comparison: "comparison_canvas",
+      vehicle_variant_difference: "variant_upgrade_value_canvas",
+      vehicle_variant_recommendation: "variant_finder_canvas",
+      vehicle_emi_calculator: "emi_calculator_canvas",
+      vehicle_emi_recommendations: "emi_calculator_canvas",
+      similar_cars: "similar_cars_canvas",
+      vehicle_recommendation_results: "recommendation_results_canvas",
+      vehicle_safety_results: "safety_advisor_canvas",
+      vehicle_spec_ranking: "performance_spec_ranking_canvas",
+      model_ambiguity: null,
+      variant_ambiguity: null,
+      unavailable_notice: null,
+    }[type] || null);
+
+  const inferInlineTypeFromWidget = (type = "") =>
+    ({
+      vehicle_feature_answer: "feature_answer_card",
+      model_ambiguity: "model_ambiguity_card",
+      variant_ambiguity: "variant_ambiguity_card",
+      unavailable_notice: "fallback_card",
+    }[type] || null);
+
+  const displayMode =
+    questionConfig?.displayMode ||
+    (questionConfig?.canvasType
+      ? "canvas"
+      : questionConfig?.inlineType
+        ? "inline"
+        : inferInlineTypeFromWidget(primaryWidget.type)
+          ? "inline"
+          : "canvas");
+
+  const canvasType =
+    questionConfig?.canvasType ??
+    primaryWidget.canvasType ??
+    inferCanvasTypeFromWidget(primaryWidget.type);
+
+  const inlineType =
+    questionConfig?.inlineType ??
+    primaryWidget.inlineType ??
+    inferInlineTypeFromWidget(primaryWidget.type);
+
+  const normalizeAction = (item = {}) => ({
+    label: item.label || item.text || item.title || "",
+    type: item.type || item.action || item.kind || "ask",
+    query: item.query || item.message || item.followUpQuery || "",
+    canvasType: item.canvasType || "",
+    leadType: item.leadType || "",
+    route: item.route || "",
+  });
+
+  const dedupeActions = (items = []) => {
+    const seen = new Set();
+    return items
+      .map(normalizeAction)
+      .filter((item) => item.label || item.query)
+      .filter((item) => {
+        const key = [
+          item.label,
+          item.type,
+          item.query,
+          item.canvasType,
+          item.leadType,
+          item.route,
+        ]
+          .filter(Boolean)
+          .join("|")
+          .toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  };
+
+  const finalActions = dedupeActions([
+    ...(actions || []),
+    ...(primaryWidget.actions || []),
+    ...(questionConfig?.defaultActions || []),
+    ...secondaryConfigs.flatMap((config) =>
+      (config.defaultActions || []).slice(0, 2),
+    ),
+  ]);
+  const actionsWithFallback = finalActions.length
+    ? finalActions
+    : dedupeActions([
+        { label: "Show price", type: "open_canvas", canvasType: "pricelist_canvas" },
+        { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
+        { label: "Get quotation", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      ]);
+
+  const normalizeLeadingQuestion = (item) => {
+    if (typeof item === "string") {
+      return {
+        label: item,
+        query: item,
+        intent: resolvedIntent,
+        displayMode:
+          questionConfig?.displayMode ||
+          (questionConfig?.canvasType ? "canvas" : "inline"),
+        canvasType: questionConfig?.canvasType || undefined,
+        inlineType: questionConfig?.inlineType || undefined,
+      };
+    }
+    return {
+      label: item?.label || item?.query || "",
+      query: item?.query || item?.label || "",
+      intent: item?.intent || resolvedIntent,
+      displayMode:
+        item?.displayMode ||
+        questionConfig?.displayMode ||
+        (questionConfig?.canvasType ? "canvas" : "inline"),
+      canvasType: item?.canvasType || questionConfig?.canvasType || undefined,
+      inlineType: item?.inlineType || questionConfig?.inlineType || undefined,
+    };
+  };
+
+  const finalLeadingQuestions = [
+    ...(leadingQuestions || []),
+    ...(questionConfig?.leadingQuestions || []),
+  ]
+    .map(normalizeLeadingQuestion)
+    .filter((item) => item.label && item.query)
+    .slice(0, 10);
+
   const response = {
     assistantMessage,
-    intent: parsed.intent,
+    intent: resolvedIntent || parsed.intent,
+    displayMode,
+    canvasType: canvasType || null,
+    inlineType: inlineType || null,
+    title: primaryWidget.title || "ACI Assist",
+    answer: assistantMessage,
+    actions: actionsWithFallback,
+    leadingQuestions: finalLeadingQuestions,
     entities: parsed.entities,
     confidence: parsed.confidence,
     filters: filters || buildFilters(parsed),
@@ -175,6 +337,7 @@ export const assembleResponse = ({
       accessRestrictions: access?.restrictions || [],
     }),
     followUpSuggestions,
+    secondaryIntents: parsed.secondaryIntents || [],
   };
   if (ambiguity) response.ambiguity = ambiguity;
   if (queryPlan) response.queryPlan = queryPlan;

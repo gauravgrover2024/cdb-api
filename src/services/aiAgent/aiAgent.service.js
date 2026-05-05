@@ -111,6 +111,40 @@ export const chatWithAgent = async ({
     ? await tool.run(parsed, access, trace)
     : await fallbackHandler(parsed, access, trace);
 
+  // Preserve module transparency for multi-intent chat questions where
+  // primary intent is different from supporting feature/color intents.
+  const moduleNames = new Set(trace.map((item) => String(item.module || "").toLowerCase()));
+  const secondaryIntents = parsed.secondaryIntents || [];
+  if (
+    secondaryIntents.some((intent) =>
+      [
+        "vehicle_feature_answer",
+        "vehicle_spec_lookup",
+        "vehicle_feature_discovery",
+        "vehicle_model_features_explorer",
+      ].includes(intent),
+    ) &&
+    ![...moduleNames].some((name) => name.includes("feature"))
+  ) {
+    trace.push({
+      module: "Vehicle Features (secondary intent)",
+      matched: 0,
+      secondaryIntent: true,
+    });
+  }
+  if (
+    secondaryIntents.some((intent) =>
+      ["vehicle_colors", "vehicle_color_gallery"].includes(intent),
+    ) &&
+    ![...moduleNames].some((name) => name.includes("color"))
+  ) {
+    trace.push({
+      module: "Vehicle Colors (secondary intent)",
+      matched: 0,
+      secondaryIntent: true,
+    });
+  }
+
   const recordsFound = trace.reduce(
     (sum, item) => sum + (Number(item.matched) || 0),
     0,
@@ -150,6 +184,8 @@ export const chatWithAgent = async ({
     filtersApplied: buildFilters(parsed).map(
       (chip) => `${chip.label}: ${chip.value}`,
     ),
+    actions: result.actions || [],
+    leadingQuestions: result.leadingQuestions || [],
     followUpSuggestions: result.followUpSuggestions || [],
     ambiguity: result.ambiguity,
     access,

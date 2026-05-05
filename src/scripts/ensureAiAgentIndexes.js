@@ -33,6 +33,13 @@ const ensure = async (collection, specs) => {
   return results;
 };
 
+const optionalCollection = async (name) => {
+  const exists = await mongoose.connection.db
+    .listCollections({ name }, { nameOnly: true })
+    .toArray();
+  return exists.length ? mongoose.connection.db.collection(name) : null;
+};
+
 const run = async () => {
   try {
     await connectDB();
@@ -68,6 +75,9 @@ const run = async () => {
           [{ model: 1, variant: 1, city: 1 }, { name: "ai_vehicle_model_variant_city" }],
           [{ brand: 1, model: 1, variant: 1, city: 1 }, { name: "ai_vehicle_brand_model_variant_city" }],
           [{ model: 1, on_road_price_cardekho: 1, ex_showroom: 1 }, { name: "ai_vehicle_model_prices" }],
+          [{ brand_normalized: 1, model_normalized: 1, variant_normalized: 1, city: 1 }, { name: "ai_vehicle_normalized_catalogue_city" }],
+          [{ city: 1, is_discontinued: 1, LastSeenDate: -1 }, { name: "ai_vehicle_city_active_seen" }],
+          [{ bodyType: 1, fuel: 1, transmission: 1, ex_showroom: 1 }, { name: "ai_vehicle_body_fuel_trans_price" }],
         ],
       ],
       [
@@ -76,6 +86,8 @@ const run = async () => {
         [
           [{ model: 1, variant: 1 }, { name: "ai_feature_model_variant" }],
           [{ model: 1, updatedAt: -1 }, { name: "ai_feature_model_updated" }],
+          [{ brand: 1, model: 1, variant: 1, updatedAt: -1 }, { name: "ai_feature_brand_model_variant_updated" }],
+          [{ model: 1, variant: 1, body_type_bucket: 1 }, { name: "ai_feature_model_variant_body_type" }],
         ],
       ],
       [
@@ -124,6 +136,37 @@ const run = async () => {
     for (const [label, collection, specs] of plan) {
       const created = await ensure(collection, specs);
       console.log(`${label}: ${created.join(", ")}`);
+    }
+
+    const vehicleColorsCollection = await optionalCollection("vehicle_colors");
+    if (vehicleColorsCollection) {
+      const created = await ensure(vehicleColorsCollection, [
+        [{ brand: 1, model: 1, color_name: 1 }, { name: "ai_vehicle_colors_brand_model_color" }],
+        [{ model: 1, updatedAt: -1 }, { name: "ai_vehicle_colors_model_updated" }],
+      ]);
+      console.log(`vehicle_colors: ${created.join(", ")}`);
+    } else {
+      console.log("vehicle_colors: collection not present, skipped optional indexes");
+    }
+
+    const offersCollection = await optionalCollection("offers");
+    if (offersCollection) {
+      const created = await ensure(offersCollection, [
+        [{ brand: 1, model: 1, city: 1, updatedAt: -1 }, { name: "ai_offers_brand_model_city_updated" }],
+      ]);
+      console.log(`offers: ${created.join(", ")}`);
+    } else {
+      console.log("offers: collection not present, skipped optional indexes");
+    }
+
+    const serviceCentersCollection = await optionalCollection("service_centers");
+    if (serviceCentersCollection) {
+      const created = await ensure(serviceCentersCollection, [
+        [{ brand: 1, city: 1, location: 1, updatedAt: -1 }, { name: "ai_service_centers_brand_city_location_updated" }],
+      ]);
+      console.log(`service_centers: ${created.join(", ")}`);
+    } else {
+      console.log("service_centers: collection not present, skipped optional indexes");
     }
   } catch (error) {
     console.error("Failed to ensure AI Agent indexes:", error);

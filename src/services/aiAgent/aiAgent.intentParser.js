@@ -5,6 +5,13 @@ import {
   normalizeText,
 } from "./aiAgent.normalizers.js";
 import { routeAiAgentIntent } from "./aiAgent.intentRouter.js";
+import {
+  detectNewCarIntentCandidates,
+  mapIntentAlias,
+  NEW_CAR_INTENTS,
+  pickPrimaryIntent,
+  sortIntentsByPriority,
+} from "./aiAgent.newCarQuestionMap.js";
 const STOP_WORDS = new Set([
   "show",
   "all",
@@ -374,13 +381,30 @@ const extractCity = (lower, context = {}, filters = {}) => {
   const explicit = CITY_HINTS.find((city) =>
     new RegExp(`\\b${city}\\b`, "i").test(lower),
   );
+  const genericFromIn =
+    lower.match(
+      /\b(?:price|on[-\s]?road|show|available|offers?|quotation|quote|emi|service center|service centre)\b[\s\w-]*\bin\s+([a-z][a-z\s-]{1,30})\b/i,
+    )?.[1] || lower.match(/\bin\s+([a-z][a-z\s-]{1,30})\b/i)?.[1] || "";
+  const genericCity = normalizeText(genericFromIn)
+    .split(/\s+/)
+    .slice(0, 3)
+    .join(" ")
+    .trim();
   return (
-    explicit || context?.city || context?.entities?.city || filters?.city || ""
+    explicit ||
+    genericCity ||
+    context?.city ||
+    context?.entities?.city ||
+    filters?.city ||
+    ""
   );
 };
 
 const extractVariant = (original, lower, models, intent) => {
   if (!/^vehicle_|^price_history_report$/.test(intent)) return "";
+  if (/\b(price|pricelist|on[-\s]?road|ex[-\s]?showroom)\b.*\bin\s+[a-z]/i.test(lower)) {
+    return "";
+  }
   const known = original.match(
     /\b(sx|vx|zx|zxi|vxi|alpha|delta|sigma|sportz|asta|hx\d+|s\s?opt|sx\s?opt|top|base|ivt|dct|mt|at|cvt|turbo)\b(?:\s+\b(turbo|ivt|dct|mt|at|cvt|dt|opt)\b)*/i,
   )?.[0];
@@ -408,7 +432,13 @@ const extractVariant = (original, lower, models, intent) => {
         !blocked.has(token.toLowerCase()) &&
         !MODEL_HINTS.includes(token.toLowerCase()),
     );
-  return tokens.slice(0, 4).join(" ");
+  const cleaned = tokens.filter(
+    (token) =>
+      !/^(in|at|for|with|under|below|around|about|near|city|price|emi|loan)$/i.test(
+        token,
+      ),
+  );
+  return cleaned.slice(0, 4).join(" ");
 };
 
 const VEHICLE_CONTEXT_INTENTS = new Set([
@@ -430,32 +460,6 @@ const CUSTOMER_CONTEXT_INTENTS = new Set([
   "customer_360",
   "vehicle_360",
   "vehicle_registration_search",
-]);
-
-const NEW_CAR_ROUTER_INTENTS = new Set([
-  "vehicle_pricelist",
-  "vehicle_city_change",
-  "vehicle_price_breakup",
-  "vehicle_colors",
-  "vehicle_color_search",
-  "vehicle_features",
-  "vehicle_feature_answer",
-  "vehicle_feature_discovery",
-  "similar_cars",
-  "vehicle_comparison",
-  "vehicle_budget_search",
-  "vehicle_use_case_recommendation",
-  "vehicle_emi_calculator",
-  "vehicle_emi_budget_search",
-  "vehicle_price_history",
-  "vehicle_launch_status",
-  "vehicle_body_type_search",
-  "vehicle_fuel_transmission_search",
-  "vehicle_dimension_space_search",
-  "vehicle_performance_mileage_search",
-  "vehicle_safety_expert",
-  "vehicle_best_variant_recommendation",
-  "vehicle_variant_difference",
 ]);
 
 const parseAgentMessageLegacy = (
@@ -613,16 +617,28 @@ export const parseAgentMessage = (
     filters,
   });
 
-  // Only let the new router override NEW-CAR intelligence.
-  // Everything else remains exactly as the legacy parser handled it.
-  if (!NEW_CAR_ROUTER_INTENTS.has(routed.intent)) {
+  const routedIntent = mapIntentAlias(routed.intent);
+  const candidateIntents = detectNewCarIntentCandidates(message);
+  const inferredIntents = sortIntentsByPriority(
+    candidateIntents.length ? candidateIntents : [routedIntent],
+  ).filter((intent) => NEW_CAR_INTENTS.includes(intent));
+
+  const isNewCarRequest = inferredIntents.length > 0;
+
+  // Keep legacy parser behavior for non new-car requests.
+  if (!isNewCarRequest) {
     return legacyParsed;
   }
+
+  const primaryIntent = pickPrimaryIntent(inferredIntents, routedIntent, message);
+  const secondaryIntents = inferredIntents.filter(
+    (intent) => intent !== primaryIntent,
+  );
 
   return {
     ...legacyParsed,
 
-    intent: routed.intent,
+    intent: primaryIntent,
     confidence: routed.confidence ?? legacyParsed.confidence,
 
     dateRange: routed.entities?.dateRange || legacyParsed.dateRange,
@@ -630,13 +646,24 @@ export const parseAgentMessage = (
     entities: compactObject({
       ...legacyParsed.entities,
       ...(routed.entities || {}),
+      city:
+        (legacyParsed.entities?.city &&
+        /(\bin\s+[a-z])/i.test(legacyParsed.lower || "") &&
+        ["new-delhi", "delhi"].includes(
+          normalizeText(routed.entities?.city || "")
+            .toLowerCase()
+            .replace(/\s+/g, "-"),
+        )
+          ? legacyParsed.entities.city
+          : routed.entities?.city) || legacyParsed.entities?.city,
     }),
 
     definition: routed.definition || null,
     collections: routed.collections || [],
     widgetType: routed.widgetType || legacyParsed.widgetType || "",
     failureMessage: routed.failureMessage || "",
-    structured: routed.structured,
+    structured: true,
     queryPlan: routed.queryPlan || null,
+    secondaryIntents,
   };
 };
