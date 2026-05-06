@@ -1,8 +1,11 @@
 import asyncHandler from "express-async-handler";
 import { chatWithAgent } from "../services/aiAgent/aiAgent.service.js";
+import { logInteraction } from "../services/aiAgent/aiAgent.learningEngine.js";
 
 export const chatWithAiAgent = asyncHandler(async (req, res) => {
-  const { message, sessionId, context, selectedEntity, filters, debug } = req.body || {};
+  const { message, sessionId, context, selectedEntity, filters, debug } =
+    req.body || {};
+
   if (!message || typeof message !== "string") {
     res.status(400);
     throw new Error("message is required");
@@ -19,4 +22,26 @@ export const chatWithAiAgent = asyncHandler(async (req, res) => {
   });
 
   res.json(response);
+});
+
+export const logAiSuggestionInteraction = asyncHandler(async (req, res) => {
+  const { suggestionId, intent, actionTaken = true } = req.body || {};
+
+  if (!suggestionId || !intent) {
+    res.status(400);
+    throw new Error("suggestionId and intent are required");
+  }
+
+  const result = await logInteraction({
+    userId: String(req.user?._id || req.user?.id || ""),
+    intent,
+    suggestionId,
+    actionTaken: true,
+    countImpression: false,
+  });
+
+  res.json({
+    success: true,
+    result,
+  });
 });

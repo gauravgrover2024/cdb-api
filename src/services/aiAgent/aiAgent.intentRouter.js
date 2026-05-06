@@ -284,6 +284,45 @@ const VEHICLE_QUERY_STOPWORDS = new Set([
 
 export const INTENT_DEFINITIONS = [
   /* --------------------------- New-car expert ---------------------------- */
+  {
+    intent: "aci_new_car_quotation",
+    priority: 2,
+    patterns: [
+      /\b(quotation|quote|best price|final price|best quotation|get quote|get quotation|prepare quote|prepare quotation)\b/i,
+    ],
+    collections: ["vehicles", "leads"],
+
+    requiredEntities: [],
+    optionalEntities: ["make", "model", "variant", "city", "color"],
+    widgetType: "aci_quotation_canvas",
+    failureMessage: "Ask for a quotation with a model, variant, or city.",
+  },
+
+  {
+    intent: "vehicle_test_drive_request",
+    priority: 3,
+    patterns: [
+      /\b(test drive|book test drive|schedule test drive|drive experience)\b/i,
+    ],
+    collections: ["vehicles", "leads"],
+    requiredEntities: [],
+    optionalEntities: ["make", "model", "variant", "city"],
+    widgetType: "aci_quotation_canvas",
+    failureMessage: "Ask for a test drive with a model or city.",
+  },
+
+  {
+    intent: "vehicle_callback_request",
+    priority: 4,
+    patterns: [
+      /\b(callback|call me|request call|talk to advisor|speak to advisor)\b/i,
+    ],
+    collections: ["vehicles", "leads"],
+    requiredEntities: [],
+    optionalEntities: ["make", "model", "variant", "city"],
+    widgetType: "fallback_card",
+    failureMessage: "Ask for a callback with a model or contact context.",
+  },
 
   {
     intent: "vehicle_price_history",
@@ -760,6 +799,9 @@ const sortedDefinitions = [...INTENT_DEFINITIONS].sort(
 const VEHICLE_CONTEXT_INTENTS = new Set([
   "vehicle_colors",
   "vehicle_color_search",
+  "aci_new_car_quotation",
+  "vehicle_test_drive_request",
+  "vehicle_callback_request",
   "vehicle_features",
   "vehicle_feature_answer",
   "vehicle_feature_discovery",
@@ -835,6 +877,24 @@ const getDynamicModelHints = (context = {}) => {
     .filter(Boolean);
 };
 
+const getDynamicMakeHints = (context = {}) => {
+  const raw =
+    context?.catalogueMakeHints ||
+    context?.makeHints ||
+    context?.availableMakes ||
+    context?.catalogueMakes ||
+    [];
+
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .map((item) => {
+      if (typeof item === "string") return item;
+      return item?.make || item?.brand || item?.name || item?.displayName || "";
+    })
+    .filter(Boolean);
+};
+
 const buildModelHints = (context = {}) => {
   const hints = unique([
     ...getDynamicModelHints(context),
@@ -846,6 +906,12 @@ const buildModelHints = (context = {}) => {
 
   return hints.sort((a, b) => b.length - a.length);
 };
+
+const buildMakeHints = (context = {}) =>
+  unique([...getDynamicMakeHints(context), ...MAKE_HINTS])
+    .map((item) => normalizeText(item).toLowerCase())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
 
 const shouldTreatCityAsHondaCity = (lower) => {
   if (
@@ -905,8 +971,8 @@ export const extractModels = (lower, context = {}) => {
   return cleaned;
 };
 
-const extractMake = (lower) =>
-  MAKE_HINTS.find((make) =>
+const extractMake = (lower, context = {}) =>
+  buildMakeHints(context).find((make) =>
     new RegExp(`\\b${escapeRegex(make).replace(/\s+/g, "\\s+")}\\b`, "i").test(
       lower,
     ),
@@ -1073,7 +1139,18 @@ const extractVariant = (message) => {
     /\b(hte|htk|htx|gtx|sx|vx|zx|lxi|zxi|vxi|xza|xz|alpha|delta|sigma|sportz|asta|premium|comfortline|highline|hx\d+|s\s?opt|sx\s?opt|top|base|ivt|dct|mt|at|amt|cvt|turbo)\b(?:\s+\b(plus|turbo|ivt|dct|mt|at|amt|cvt|dt|opt|automatic|manual|line|hybrid)\b)*/i,
   );
 
-  return normalizeText(match?.[0] || "");
+  const value = normalizeText(match?.[0] || "");
+  if (!value) return "";
+
+  // Avoid EMI phrases like "at 9 percent" being parsed as AT variant.
+  if (
+    value.toLowerCase() === "at" &&
+    /\bat\s+\d+(?:\.\d+)?\s*(percent|%)?\b/i.test(message)
+  ) {
+    return "";
+  }
+
+  return value;
 };
 
 const extractUseCase = (lower) => {
@@ -1116,7 +1193,7 @@ const extractSection = (lower) => {
   return sections.find((section) => lower.includes(section)) || "";
 };
 
-const extractCustomerName = (message, intent, models) => {
+const extractCustomerName = (message, intent, models, context = {}) => {
   if (
     ![
       "latest_insurance",
@@ -1133,6 +1210,8 @@ const extractCustomerName = (message, intent, models) => {
     .replace(/[A-Z]{2}[\s-]?\d{1,2}[\s-]?[A-Z]{1,3}[\s-]?\d{4}/gi, " ")
     .replace(/\b\d{4}\b/g, " ");
 
+  const makeHints = buildMakeHints(context);
+
   const modelSet = new Set(models.map((item) => item.toLowerCase()));
 
   const tokens = text
@@ -1144,7 +1223,7 @@ const extractCustomerName = (message, intent, models) => {
       return (
         !STOP_NAME_WORDS.has(lowerToken) &&
         !modelSet.has(lowerToken) &&
-        !MAKE_HINTS.includes(lowerToken)
+        !makeHints.includes(lowerToken)
       );
     });
 
@@ -1173,7 +1252,7 @@ const likelyVehicleCatalogueQuery = ({
 };
 
 const isFollowUpVehicleQuery = (lower) =>
-  /^(show colors?|show colours?|show features?|show specs?|calculate emi|emi|change city|show similar|similar cars|compare with|show price breakup|price breakup|show variants?|open features|show safety|show engine|show adas|show only differences)\b/i.test(
+  /^(show colors?|show colours?|show features?|show specs?|calculate emi|emi|change city|show similar|similar cars|compare with|show price breakup|price breakup|show variants?|open features|show safety|show engine|show adas|show only differences|get quote|get quotation|prepare quote|prepare quotation|book test drive|schedule test drive|test drive|call me|callback|request call|talk to advisor|speak to advisor)\b/i.test(
     lower.trim(),
   );
 
@@ -1235,7 +1314,7 @@ export const routeAiAgentIntent = ({
   );
 
   const models = extractModels(lower, context);
-  const make = extractMake(lower);
+  const make = extractMake(lower, context);
   const explicitVariant = extractVariant(text);
   const normalizedRegistration =
     normalizeVehicleNumber(text).match(/[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}/)?.[0] ||
@@ -1391,7 +1470,7 @@ export const routeAiAgentIntent = ({
   const manualAmount = extractManualAmount(lower);
 
   const customerName =
-    extractCustomerName(text, intent, carriedModels) ||
+    extractCustomerName(text, intent, carriedModels, context) ||
     (!hasExplicitTopLevelEntity(freshEntities) && customerIntent
       ? context?.customerName ||
         context?.entities?.customerName ||

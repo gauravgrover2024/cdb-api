@@ -20,6 +20,7 @@ import bookingsRouter from "./routes/bookings.js";
 import usedCarRoutes from "./routes/usedCarRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
 import aiAgentRoutes from "./routes/aiAgent.routes.js";
+import { refreshVehicleHintsFromDb } from "./services/aiAgent/aiAgent.intentParser.js";
 
 dotenv.config();
 
@@ -70,6 +71,10 @@ app.use(
 app.use(async (req, res, next) => {
   try {
     await connectDB();
+
+    // Non-blocking warmup for DB-backed vehicle model/make hints.
+    refreshVehicleHintsFromDb().catch(() => {});
+
     next();
   } catch (error) {
     next(error);

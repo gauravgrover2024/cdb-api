@@ -6,6 +6,17 @@ const toLocalDate = (value) => {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 };
 
+const addOneEmiMonth = (date) => {
+  const originalDay = date.getDate();
+  const next = new Date(date);
+  next.setDate(1);
+  next.setMonth(next.getMonth() + 1);
+  next.setDate(
+    Math.min(originalDay, getDaysInMonth(next.getFullYear(), next.getMonth())),
+  );
+  return next;
+};
+
 const getDaysInMonth = (year, monthIndex) => new Date(year, monthIndex + 1, 0).getDate();
 
 export const calculateEMI = (principal, annualRate, tenureMonths, type = "Reducing") => {
@@ -33,7 +44,7 @@ export const generateRepaymentSchedule = (principal, annualRate, tenureMonths, f
   let balance = P;
   return Array.from({ length: N }, (_, index) => {
     const interestPayment = Math.round(balance * monthlyRate);
-    const principalPayment = emi - interestPayment;
+    const principalPayment = index === N - 1 ? balance : emi - interestPayment;
     balance = Math.max(0, balance - principalPayment);
     const row = {
       month: index + 1,
@@ -43,7 +54,7 @@ export const generateRepaymentSchedule = (principal, annualRate, tenureMonths, f
       interestPayment,
       outstandingBalance: Math.round(balance),
     };
-    currentDate = new Date(currentDate.setMonth(currentDate.getMonth() + 1));
+    currentDate = addOneEmiMonth(currentDate);
     return row;
   });
 };

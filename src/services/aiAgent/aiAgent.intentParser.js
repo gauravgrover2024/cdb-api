@@ -4,14 +4,17 @@ import {
   normalizeRegistration,
   normalizeText,
 } from "./aiAgent.normalizers.js";
+import Vehicle from "../../models/Vehicle.js";
 import { routeAiAgentIntent } from "./aiAgent.intentRouter.js";
 import {
   detectNewCarIntentCandidates,
   mapIntentAlias,
   NEW_CAR_INTENTS,
   pickPrimaryIntent,
+  resolveIntent,
   sortIntentsByPriority,
 } from "./aiAgent.newCarQuestionMap.js";
+
 const STOP_WORDS = new Set([
   "show",
   "all",
@@ -72,7 +75,7 @@ const STOP_WORDS = new Set([
   "report",
 ]);
 
-const MODEL_HINTS = [
+const STATIC_MODEL_HINTS = [
   "verna",
   "city",
   "slavia",
@@ -100,7 +103,7 @@ const MODEL_HINTS = [
   "ciaz",
 ];
 
-const MAKE_HINTS = [
+const STATIC_MAKE_HINTS = [
   "hyundai",
   "honda",
   "volkswagen",
@@ -112,6 +115,141 @@ const MAKE_HINTS = [
   "kia",
   "toyota",
 ];
+
+let cachedModelHints = [...STATIC_MODEL_HINTS];
+let cachedMakeHints = [...STATIC_MAKE_HINTS];
+let vehicleHintsLoadedAt = 0;
+let vehicleHintsRefreshPromise = null;
+
+const VEHICLE_HINTS_TTL_MS = 10 * 60 * 1000;
+
+const normalizeHint = (value = "") => normalizeText(value).toLowerCase().trim();
+
+const uniqueHints = (items = []) =>
+  [...new Set(items.map(normalizeHint).filter(Boolean))];
+
+const HINT_BLOCKLIST = new Set([
+  "car",
+  "cars",
+  "new",
+  "vehicle",
+  "variant",
+  "variants",
+  "price",
+  "prices",
+  "loan",
+  "finance",
+  "offer",
+  "offers",
+  "service",
+  "center",
+  "centre",
+  "automatic",
+  "manual",
+  "petrol",
+  "diesel",
+  "cng",
+  "hybrid",
+  "electric",
+  "model",
+  "models",
+]);
+
+const isLikelyHintToken = (hint) => {
+  if (!hint) return false;
+  if (HINT_BLOCKLIST.has(hint)) return false;
+  if (hint.length < 2 || hint.length > 40) return false;
+  return /^[a-z0-9][a-z0-9\s&.'-]*$/.test(hint);
+};
+
+export const refreshVehicleHintsFromDb = async ({ force = false } = {}) => {
+  const now = Date.now();
+
+  if (
+    !force &&
+    vehicleHintsLoadedAt &&
+    now - vehicleHintsLoadedAt < VEHICLE_HINTS_TTL_MS
+  ) {
+    return {
+      models: cachedModelHints,
+      makes: cachedMakeHints,
+      fromCache: true,
+    };
+  }
+
+  try {
+    const rows = await Vehicle.find({})
+      .select({
+        brand: 1,
+        make: 1,
+        model: 1,
+        modelName: 1,
+      })
+      .limit(10000)
+      .lean();
+
+    const modelHints = [];
+    const makeHints = [];
+
+    for (const row of rows) {
+      const brand = normalizeHint(row.brand || row.make);
+      const model = normalizeHint(row.model || row.modelName);
+
+      if (isLikelyHintToken(brand)) makeHints.push(brand);
+
+      if (isLikelyHintToken(model)) {
+        modelHints.push(model);
+
+        // If model is stored as "kia seltos", also add "seltos".
+        if (brand && model.startsWith(`${brand} `)) {
+          const shortModel = model.replace(`${brand} `, "").trim();
+          if (isLikelyHintToken(shortModel)) modelHints.push(shortModel);
+        }
+      }
+      // Do not add variant strings as model hints.
+    }
+
+    cachedModelHints = uniqueHints([...STATIC_MODEL_HINTS, ...modelHints]);
+    cachedMakeHints = uniqueHints([...STATIC_MAKE_HINTS, ...makeHints]);
+    vehicleHintsLoadedAt = now;
+
+    return {
+      models: cachedModelHints,
+      makes: cachedMakeHints,
+      fromCache: false,
+    };
+  } catch (error) {
+    return {
+      models: cachedModelHints,
+      makes: cachedMakeHints,
+      fromCache: true,
+      error: error.message,
+    };
+  }
+};
+
+const getModelHints = () =>
+  cachedModelHints.length ? cachedModelHints : STATIC_MODEL_HINTS;
+
+const getMakeHints = () =>
+  cachedMakeHints.length ? cachedMakeHints : STATIC_MAKE_HINTS;
+
+const scheduleVehicleHintsRefresh = () => {
+  const now = Date.now();
+
+  if (
+    vehicleHintsRefreshPromise ||
+    (vehicleHintsLoadedAt && now - vehicleHintsLoadedAt < VEHICLE_HINTS_TTL_MS)
+  ) {
+    return;
+  }
+
+  vehicleHintsRefreshPromise = refreshVehicleHintsFromDb()
+    .catch(() => null)
+    .finally(() => {
+      vehicleHintsRefreshPromise = null;
+    });
+};
 
 const DATE_RANGE_KEYS = [
   ["last 30 days", "last_30_days"],
@@ -138,6 +276,18 @@ const CITY_HINTS = [
 ];
 
 const INTENT_PRIORITY = [
+  [
+    "vehicle_test_drive_request",
+    /\b(test drive|book test drive|schedule test drive|drive experience)\b/,
+  ],
+  [
+    "vehicle_callback_request",
+    /\b(callback|call me|request call|talk to advisor|speak to advisor)\b/,
+  ],
+  [
+    "aci_new_car_quotation",
+    /\b(quotation|quote|best price|final price|best quotation|get quote|get quotation)\b/,
+  ],
   [
     "vehicle_city_change",
     /\b(change city|show .* price in|price in|on road in|on-road in)\b/,
@@ -328,7 +478,8 @@ const extractLast4 = (message) => {
 
 const extractModelTokens = (lower) => {
   const compact = lower.replace(/[^a-z0-9]/g, "");
-  const models = MODEL_HINTS.filter(
+  const modelHints = getModelHints();
+  const models = modelHints.filter(
     (model) =>
       new RegExp(`\\b${model.replace(/\s+/g, "\\s+")}\\b`, "i").test(lower) ||
       compact.includes(model.replace(/\s+/g, "")),
@@ -350,8 +501,8 @@ const extractName = (message, lower, models) => {
     return (
       token.length > 1 &&
       !STOP_WORDS.has(lowerToken) &&
-      !MODEL_HINTS.includes(lowerToken) &&
-      !MAKE_HINTS.includes(lowerToken) &&
+      !getModelHints().includes(lowerToken) &&
+      !getMakeHints().includes(lowerToken) &&
       !modelSet.has(lowerToken)
     );
   });
@@ -411,9 +562,11 @@ const extractVariant = (original, lower, models, intent) => {
   if (known) return normalizeText(known);
   if (!/feature|spec|catalog|brochure|price|variant|does|has|have/.test(lower))
     return "";
+  const modelHints = getModelHints();
+  const makeHints = getMakeHints();
   const blocked = new Set([
     ...STOP_WORDS,
-    ...MAKE_HINTS,
+    ...makeHints,
     ...models,
     "feature",
     "features",
@@ -422,6 +575,20 @@ const extractVariant = (original, lower, models, intent) => {
     "catalogue",
     "catalog",
     "brochure",
+    "does",
+    "has",
+    "have",
+    "sunroof",
+    "airbag",
+    "airbags",
+    "adas",
+    "camera",
+    "mileage",
+    "engine",
+    "boot",
+    "space",
+    "ground",
+    "clearance",
   ]);
   const tokens = normalizeText(original)
     .split(/\s+/)
@@ -430,7 +597,7 @@ const extractVariant = (original, lower, models, intent) => {
     .filter(
       (token) =>
         !blocked.has(token.toLowerCase()) &&
-        !MODEL_HINTS.includes(token.toLowerCase()),
+        !modelHints.includes(token.toLowerCase()),
     );
   const cleaned = tokens.filter(
     (token) =>
@@ -465,18 +632,27 @@ const CUSTOMER_CONTEXT_INTENTS = new Set([
   "vehicle_registration_search",
 ]);
 
+const INTERNAL_LOAN_INTENTS = new Set([
+  "loan_closure",
+  "loan_closure_pos",
+  "loan_status",
+]);
+
 const parseAgentMessageLegacy = (
   message,
   context = {},
   selectedEntity = null,
   filters = {},
 ) => {
+  scheduleVehicleHintsRefresh();
+
   const original = normalizeText(message);
   const lower = original.toLowerCase();
   const intent = detectIntent(lower);
   const models = extractModelTokens(lower);
+  const makeHints = getMakeHints();
   const make =
-    MAKE_HINTS.find((hint) => new RegExp(`\\b${hint}\\b`, "i").test(lower)) ||
+    makeHints.find((hint) => new RegExp(`\\b${hint}\\b`, "i").test(lower)) ||
     "";
   const explicitRegistrationNumber = extractFullRegistration(original);
   const explicitLast4 = extractLast4(original);
@@ -597,6 +773,11 @@ const parseAgentMessageLegacy = (
       "insurance",
       "policy",
     ].filter((term) => lower.includes(term)),
+    vehicleHintMeta: {
+      modelHintsCount: getModelHints().length,
+      makeHintsCount: getMakeHints().length,
+      vehicleHintsLoadedAt,
+    },
   };
 };
 
@@ -613,36 +794,153 @@ export const parseAgentMessage = (
     filters,
   );
 
+  // Keep internal loan flows in legacy path even if out-of-scope new-car
+  // regexes match generic words like "loan closure".
+  if (INTERNAL_LOAN_INTENTS.has(legacyParsed.intent)) {
+    return legacyParsed;
+  }
+
+  const routerContext = {
+    ...context,
+    catalogueModelHints: getModelHints(),
+    catalogueMakeHints: getMakeHints(),
+  };
+
   const routed = routeAiAgentIntent({
     message,
-    context,
+    context: routerContext,
     selectedEntity,
     filters,
   });
 
   const routedIntent = mapIntentAlias(routed.intent);
   const candidateIntents = detectNewCarIntentCandidates(message);
+
   const inferredIntents = sortIntentsByPriority(
     candidateIntents.length ? candidateIntents : [routedIntent],
   ).filter((intent) => NEW_CAR_INTENTS.includes(intent));
 
-  const isNewCarRequest = inferredIntents.length > 0;
+  const intentContext = {
+    ...context,
+    lastIntent:
+      context?.lastIntent || context?.intent || context?.previousIntent || "",
+    stage: context?.stage || context?.mode || "",
+    profile: context?.profile || {},
+    secondaryIntents: inferredIntents,
+    entities: {
+      ...(context?.entities || {}),
+      ...(legacyParsed.entities || {}),
+      ...(routed.entities || {}),
+    },
+  };
 
-  // Keep legacy parser behavior for non new-car requests.
+  const resolvedIntent = resolveIntent(message, intentContext);
+  const resolvedPrimaryIntent = mapIntentAlias(
+    resolvedIntent.primaryIntent || "",
+  );
+
+  const resolvedIsStructuredNewCar =
+    resolvedPrimaryIntent &&
+    resolvedPrimaryIntent !== "new_car_unavailable_or_out_of_scope" &&
+    NEW_CAR_INTENTS.includes(resolvedPrimaryIntent);
+
+  const routedIsStructuredNewCar =
+    routedIntent &&
+    routedIntent !== "new_car_unavailable_or_out_of_scope" &&
+    NEW_CAR_INTENTS.includes(routedIntent);
+
+  const inferredHasStructuredNewCar = inferredIntents.some(
+    (intent) => intent !== "new_car_unavailable_or_out_of_scope",
+  );
+
+  const resolvedIsExplicitOutOfScope =
+    resolvedPrimaryIntent === "new_car_unavailable_or_out_of_scope" &&
+    inferredIntents.includes("new_car_unavailable_or_out_of_scope");
+
+  const isNewCarRequest =
+    inferredHasStructuredNewCar ||
+    routedIsStructuredNewCar ||
+    resolvedIsStructuredNewCar ||
+    resolvedIsExplicitOutOfScope;
+
+  // Keep legacy parser behavior for internal/non-new-car requests.
+  // Example: "Loan closure 7077" must stay loan_closure / loan_closure_pos.
   if (!isNewCarRequest) {
     return legacyParsed;
   }
 
-  const primaryIntent = pickPrimaryIntent(inferredIntents, routedIntent, message);
-  const secondaryIntents = inferredIntents.filter(
-    (intent) => intent !== primaryIntent,
+  const primaryIntent =
+    resolvedIsStructuredNewCar || resolvedIsExplicitOutOfScope
+      ? resolvedPrimaryIntent
+      : pickPrimaryIntent(
+          inferredIntents,
+          routedIntent,
+          message,
+          intentContext,
+        );
+
+  const secondaryIntents = [
+    ...(resolvedIntent.secondaryIntents || []),
+    ...inferredIntents.filter((intent) => intent !== primaryIntent),
+  ]
+    .map(mapIntentAlias)
+    .filter((intent) => intent && intent !== primaryIntent)
+    .filter((intent, index, array) => array.indexOf(intent) === index);
+
+  const lowerMessage = legacyParsed.lower || "";
+  const hasModelEntity = Boolean(
+    legacyParsed.entities?.model || routed.entities?.model,
   );
+  const colorNeedleRegex =
+    /\b(color|colour|white|black|grey|gray|red|blue|silver|green|brown|orange|yellow|pearl|metallic)\b/i;
+
+  let finalPrimaryIntent = primaryIntent;
+
+  if (
+    /\bbank\b.*\b(best|offer|scheme|rate)\b/i.test(lowerMessage) &&
+    /\bloan|finance|emi\b/i.test(lowerMessage)
+  ) {
+    finalPrimaryIntent = "new_car_loan_enquiry";
+  } else if (
+    /\bunder\b.*\b(lakh|lac|crore|cr|\d)\b/i.test(lowerMessage) &&
+    /\b(automatic|sunroof|airbags?|adas|360 camera|ventilated|tpms|isofix|wireless charging|apple carplay|android auto)\b/i.test(
+      lowerMessage,
+    ) &&
+    /\b(and|with|want)\b/i.test(lowerMessage)
+  ) {
+    finalPrimaryIntent = "vehicle_must_have_feature_builder";
+  } else if (
+    /\b(documents?|interest rate|processing fee|cibil|eligibility|prepay|foreclosure|min(?:imum)? down payment|max(?:imum)? tenure)\b/i.test(
+      lowerMessage,
+    )
+  ) {
+    finalPrimaryIntent = "new_car_finance_faq";
+  } else if (
+    /\b(safest|safe|safety|ncap|crash rating|airbags?)\b/i.test(lowerMessage) &&
+    /\b(under|budget|lakh|lac|crore|cr)\b/i.test(lowerMessage)
+  ) {
+    finalPrimaryIntent = "vehicle_safety_search";
+  } else if (
+    /\b(offer|offers|discount|scheme|exchange bonus|exchange benefit|corporate discount|loyalty bonus)\b/i.test(
+      lowerMessage,
+    )
+  ) {
+    finalPrimaryIntent = "vehicle_offers";
+  } else if (
+    hasModelEntity &&
+    /\bdoes\b.*\b(get|come|have)\b/i.test(lowerMessage) &&
+    colorNeedleRegex.test(lowerMessage)
+  ) {
+    finalPrimaryIntent = "vehicle_colors";
+  }
 
   return {
     ...legacyParsed,
 
-    intent: primaryIntent,
-    confidence: routed.confidence ?? legacyParsed.confidence,
+    intent: finalPrimaryIntent,
+
+    confidence:
+      resolvedIntent.confidence ?? routed.confidence ?? legacyParsed.confidence,
 
     dateRange: routed.entities?.dateRange || legacyParsed.dateRange,
 
@@ -667,6 +965,16 @@ export const parseAgentMessage = (
     failureMessage: routed.failureMessage || "",
     structured: true,
     queryPlan: routed.queryPlan || null,
-    secondaryIntents,
+    secondaryIntents: secondaryIntents.filter(
+      (intent) => intent !== finalPrimaryIntent,
+    ),
+
+    intentStage: resolvedIntent.stage || null,
+    userType: resolvedIntent.userType || "general",
+    clarification: resolvedIntent.clarification || null,
+    nextLikelyIntents: resolvedIntent.nextLikelyIntents || [],
+    intentDebug: resolvedIntent.debug || null,
   };
 };
+
+refreshVehicleHintsFromDb().catch(() => {});

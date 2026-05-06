@@ -116,7 +116,8 @@ const REGEX = {
     /\b(monthly budget|emi under|emi around|afford|down payment needed|can i buy with)\b/i,
   financeFaq:
     /\b(documents?|interest rate|processing fee|prepay|foreclosure|cibil|eligibility|loan without itr|maximum tenure|min(?:imum)? down payment)\b/i,
-  offers: /\b(offers?|discount|bonus|festive|year-end|corporate discount|exchange bonus|loyalty bonus|scrappage)\b/i,
+  offers:
+    /\b(offers?|discount|bonus|festive|year-end|corporate discount|exchange bonus|loyalty bonus|scrappage)\b/i,
   availability:
     /\b(available|availability|waiting period|delivery time|immediate delivery|fast delivery|discontinued)\b/i,
   serviceCenter:
@@ -126,8 +127,7 @@ const REGEX = {
   tco: /\b(total cost of ownership|tco|real monthly cost|own for\s*\d+\s*years?)\b/i,
   fuelDecision:
     /\b(petrol vs diesel|petrol or diesel|diesel or petrol|cng vs petrol|cng or petrol|ev vs petrol|ev or petrol|fuel type is best|diesel worth)\b/i,
-  resale:
-    /\b(resale|depreciation|value retention|lowest depreciation)\b/i,
+  resale: /\b(resale|depreciation|value retention|lowest depreciation)\b/i,
   lifestyle:
     /\b(lifestyle|daily \d+ ?km|office and family|city plus highway|chauffeur-driven)\b/i,
   senior:
@@ -150,36 +150,241 @@ const REGEX = {
     /\b(extra features|worth paying extra|price difference|what do i lose|is the top model worth|difference between)\b/i,
   featureQuestion:
     /\b(does|have|has|how many|what is)\b.*\b(sunroof|adas|airbags?|boot space|ground clearance|mileage|engine|wireless|ventilated|camera)\b/i,
-  featureExplorer:
-    /\b(show|all)\b.*\b(features?|specs?)\b/i,
+  featureExplorer: /\b(show|all)\b.*\b(features?|specs?)\b/i,
   featureDiscovery:
     /\b(which .*variants? have|cars? with|suvs? with)\b.*\b(sunroof|adas|airbags?|ventilated|wireless|camera)\b/i,
   featureBuilder:
     /\b(i want|must have|all features)\b.*\b(automatic|sunroof|adas|airbags?|ventilated|wireless|camera)\b/i,
-  safety:
-    /\b(safest|safety|5-star|5 star|ncap|child safety|6 airbags|adas)\b/i,
+  safety: /\b(safest|safety|5-star|5 star|ncap|child safety|6 airbags|adas)\b/i,
   mileage:
     /\b(mileage|fuel efficient|running cost|cheapest to run|cost per km)\b/i,
   modelOverview:
     /\b(tell me about|is .* good|is .* worth buying|show .* details|what is special about)\b/i,
-  brandSearch: /\b(show|best)\b.*\b(hyundai|tata|maruti|kia|toyota|honda|mahindra|skoda|volkswagen)\b/i,
-  budgetSearch: /\b(under|below|less than|between)\b.*\b(\d+\s*l\b|lakh|lac|crore|cr|on-road)\b/i,
+  brandSearch:
+    /\b(show|best)\b.*\b(hyundai|tata|maruti|kia|toyota|honda|mahindra|skoda|volkswagen)\b/i,
+  budgetSearch:
+    /\b(under|below|less than|between)\b.*\b(\d+\s*l\b|lakh|lac|crore|cr|on-road)\b/i,
   bodyType: /\b(suv|sedan|hatchback|mpv|7-seater|7 seater|compact suv)\b/i,
   recommendation:
     /\b(which car should i buy|suggest me a car|best car for|first car buyer|value for money)\b/i,
-  decisionHelp:
-    /\b(confused|help me decide|which should i choose|not sure)\b/i,
-  priceObjection:
-    /\b(expensive|costly|over budget|too high)\b/i,
-  qualityDoubt:
-    /\b(worth it|any issue|reliable|good or bad)\b/i,
-  priceBreakup: /\b(price breakup|rto charges|insurance amount|other charges|on-road breakup)\b/i,
-  price: /\b(pricelist|price|on-road|ex-showroom|variant price|cheapest variant|top model price)\b/i,
+  decisionHelp: /\b(confused|help me decide|which should i choose|not sure)\b/i,
+  priceObjection: /\b(expensive|costly|over budget|too high)\b/i,
+  qualityDoubt: /\b(worth it|any issue|reliable|good or bad)\b/i,
+  priceBreakup:
+    /\b(price breakup|rto charges|insurance amount|other charges|on-road breakup)\b/i,
+  price:
+    /\b(pricelist|price|on-road|ex-showroom|variant price|cheapest variant|top model price)\b/i,
   outOfScope:
     /\b(used car|sell my used|payment status|loan closure|insurance renewal|bike loan|truck price|delivery order|receivable)\b/i,
 };
 
 const BUYING_SIGNALS = /\b(book|buy|finalize|proceed|i want this|take it)\b/i;
+
+const CONFIDENCE_CLARIFICATION_THRESHOLD = 0.52;
+const SCORE_GAP_CLARIFICATION_THRESHOLD = 12;
+
+const NEGATED_BUYING_PATTERNS =
+  /\b(should i buy|which .* should i buy|which car should i buy|can i buy|worth buying|buying advice|planning to buy)\b/i;
+
+const STAGE_INTENT_BOOSTS = {
+  explore: {
+    vehicle_recommendation_discovery: 20,
+    vehicle_budget_search: 16,
+    vehicle_body_type_search: 12,
+    vehicle_use_case_search: 12,
+  },
+  evaluate: {
+    vehicle_pricelist: 16,
+    vehicle_comparison: 16,
+    vehicle_variant_price: 14,
+    vehicle_model_features_explorer: 12,
+    vehicle_colors: 10,
+  },
+  consider: {
+    vehicle_emi_calculator: 18,
+    vehicle_emi_options: 14,
+    vehicle_offers: 12,
+    vehicle_price_breakup: 10,
+    aci_new_car_quotation: 8,
+  },
+  buy: {
+    aci_new_car_quotation: 24,
+    vehicle_test_drive_request: 18,
+    vehicle_callback_request: 14,
+    vehicle_offers: 10,
+  },
+};
+
+const CONTEXT_INTENT_BOOSTS = {
+  vehicle_pricelist: {
+    vehicle_colors: 10,
+    vehicle_model_features_explorer: 10,
+    vehicle_emi_calculator: 12,
+    vehicle_comparison: 10,
+    aci_new_car_quotation: 8,
+  },
+  vehicle_comparison: {
+    vehicle_emi_calculator: 12,
+    aci_new_car_quotation: 10,
+    vehicle_feature_answer: 8,
+    vehicle_variant_recommendation: 8,
+  },
+  vehicle_emi_calculator: {
+    aci_new_car_quotation: 14,
+    new_car_loan_enquiry: 10,
+    vehicle_price_breakup: 8,
+  },
+  vehicle_colors: {
+    vehicle_pricelist: 10,
+    aci_new_car_quotation: 8,
+  },
+};
+
+const KEYWORD_ALIASES_BY_INTENT = {
+  vehicle_decision_help: [
+    "confused",
+    "decide",
+    "choose",
+    "not sure",
+    "help me",
+  ],
+  vehicle_price_objection: ["expensive", "costly", "over budget", "too high"],
+  vehicle_quality_doubt: ["worth it", "reliable", "issues", "good or bad"],
+  vehicle_pricelist: [
+    "price",
+    "pricelist",
+    "on road",
+    "on-road",
+    "ex showroom",
+    "ex-showroom",
+  ],
+  vehicle_emi_calculator: ["emi", "down payment", "loan", "tenure"],
+  vehicle_comparison: ["compare", "vs", "versus", "which is better"],
+  aci_new_car_quotation: ["quote", "quotation", "final price", "best price"],
+};
+
+const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
+
+const getStageBoost = (intent, stage = "") =>
+  STAGE_INTENT_BOOSTS[String(stage || "").toLowerCase()]?.[intent] || 0;
+
+const getContextBoost = (intent, context = {}) => {
+  const lastIntent = mapIntentAlias(context.lastIntent || context.intent || "");
+  const dependencyBoost = CONTEXT_INTENT_BOOSTS[lastIntent]?.[intent] || 0;
+
+  const directRepeatBoost = lastIntent === intent ? 12 : 0;
+
+  const profileBoost =
+    Number(context.profile?.intentAffinity?.[intent] || 0) > 0
+      ? Math.min(Number(context.profile.intentAffinity[intent]) * 3, 15)
+      : 0;
+
+  return dependencyBoost + directRepeatBoost + profileBoost;
+};
+
+const getKeywordBoost = (intent, text) => {
+  const aliases = KEYWORD_ALIASES_BY_INTENT[intent] || [];
+  let boost = 0;
+
+  for (const alias of aliases) {
+    if (text.includes(alias)) boost += 8;
+  }
+
+  return Math.min(boost, 24);
+};
+
+const shouldForceBuyingIntent = (text = "") =>
+  BUYING_SIGNALS.test(text) &&
+  !NEGATED_BUYING_PATTERNS.test(text) &&
+  !/\b(price|emi|budget|under|compare|which|features?)\b/i.test(text) &&
+  !/\b(test drive|book test drive|call me|callback|speak to advisor)\b/i.test(
+    text,
+  );
+
+const getForcedFeatureIntent = (text = "") => {
+  if (/\bwhich\b.*\bvariants?\b.*\b(have|has|with|get|gets)\b/i.test(text)) {
+    return "vehicle_feature_discovery";
+  }
+
+  const isFeatureOrSpecQuestion =
+    /\b(does|has|have|how many|what is)\b.*\b(sunroof|adas|airbags?|boot space|ground clearance|mileage|engine|wireless|ventilated|camera|tpms|esc|esp|isofix)\b/i.test(
+      text,
+    );
+
+  const isComparisonQuestion =
+    /\b(compare|comparison|vs|versus|difference)\b/i.test(text);
+
+  if (!isFeatureOrSpecQuestion || isComparisonQuestion) {
+    return "";
+  }
+
+  if (
+    /\bwhat is\b.*\b(boot space|ground clearance|mileage|engine)\b/i.test(text)
+  ) {
+    return "vehicle_spec_lookup";
+  }
+
+  return "vehicle_feature_answer";
+};
+
+const calculateConfidence = (topScore = 0, secondScore = 0) => {
+  if (topScore <= 0) return 0;
+
+  const absoluteConfidence = clamp(topScore / 100);
+  const gap = Math.max(topScore - secondScore, 0);
+  const gapConfidence = clamp(gap / 50);
+
+  return clamp(absoluteConfidence * 0.65 + gapConfidence * 0.35);
+};
+
+const shouldAskClarification = ({
+  confidence,
+  topScore,
+  secondScore,
+  primaryIntent,
+}) => {
+  if (!primaryIntent) return true;
+  if (topScore <= 0) return true;
+
+  const scoreGap = topScore - secondScore;
+
+  return (
+    confidence < CONFIDENCE_CLARIFICATION_THRESHOLD &&
+    secondScore > 0 &&
+    scoreGap < SCORE_GAP_CLARIFICATION_THRESHOLD
+  );
+};
+
+const buildClarificationOptions = (message = "", scored = []) => {
+  const text = normalizeText(message).toLowerCase();
+
+  if (/\b(sx|vx|zx|htx|gtx|variant|model)\b/i.test(text)) {
+    return ["Show price", "Show features", "Compare variants", "Calculate EMI"];
+  }
+
+  const topIntents = scored
+    .filter((item) => item.score > 0)
+    .slice(0, 4)
+    .map((item) => {
+      const config = getNewCarQuestionConfig(item.intent);
+      return config?.exampleQuestions?.[0];
+    })
+    .filter(Boolean);
+
+  return unique([
+    ...topIntents,
+    "Show price",
+    "Compare cars",
+    "Calculate EMI",
+    "Show features",
+  ]).slice(0, 4);
+};
+
+export const getIntentStage = (intent = "") =>
+  INTENT_STAGE_MAP[mapIntentAlias(intent)] || "explore";
+
+export const getNextLikelyIntents = (intent = "") =>
+  INTENT_DEPENDENCY[mapIntentAlias(intent)] || [];
 
 const createConfig = (config) => ({
   ambiguityPolicy: "ask_before_assuming",
@@ -217,9 +422,21 @@ export const NEW_CAR_QUESTION_MAP = {
     defaultActions: [
       { label: "Compare top 3", type: "ask", query: "Compare top 3 options" },
       { label: "Show variants", type: "ask", query: "Show variants" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Check offers", type: "open_canvas", canvasType: "offers_canvas" },
-      { label: "Get quotation", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Check offers",
+        type: "open_canvas",
+        canvasType: "offers_canvas",
+      },
+      {
+        label: "Get quotation",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
       { label: "Book test drive", type: "lead", leadType: "test_drive" },
     ],
     dataSources: ["vehicles", "vehicle_features"],
@@ -244,11 +461,31 @@ export const NEW_CAR_QUESTION_MAP = {
     ],
     defaultActions: [
       { label: "Show variants", type: "ask", query: "Show variants" },
-      { label: "Compare top results", type: "ask", query: "Compare top results" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Check safety", type: "open_canvas", canvasType: "safety_advisor_canvas" },
-      { label: "Check offers", type: "open_canvas", canvasType: "offers_canvas" },
-      { label: "Get quotation", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Compare top results",
+        type: "ask",
+        query: "Compare top results",
+      },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Check safety",
+        type: "open_canvas",
+        canvasType: "safety_advisor_canvas",
+      },
+      {
+        label: "Check offers",
+        type: "open_canvas",
+        canvasType: "offers_canvas",
+      },
+      {
+        label: "Get quotation",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicles", "vehicle_features"],
     frontendNotes: "Show models first and variants on drill-down.",
@@ -272,10 +509,26 @@ export const NEW_CAR_QUESTION_MAP = {
     ],
     defaultActions: [
       { label: "Compare", type: "ask", query: "Compare shortlisted options" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Check offers", type: "open_canvas", canvasType: "offers_canvas" },
-      { label: "Service cost", type: "open_canvas", canvasType: "ownership_service_warranty_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Check offers",
+        type: "open_canvas",
+        canvasType: "offers_canvas",
+      },
+      {
+        label: "Service cost",
+        type: "open_canvas",
+        canvasType: "ownership_service_warranty_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
       { label: "Book test drive", type: "lead", leadType: "test_drive" },
     ],
     dataSources: ["vehicles", "vehicle_features"],
@@ -301,13 +554,34 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "brand_results_canvas",
     inlineType: null,
     exampleQuestions: ["Show Hyundai cars", "Kia SUVs under 20 lakh"],
-    leadingQuestions: ["All models or within budget?", "Body type preference?", "City?", "Active models only?"],
+    leadingQuestions: [
+      "All models or within budget?",
+      "Body type preference?",
+      "City?",
+      "Active models only?",
+    ],
     defaultActions: [
-      { label: "Open model overview", type: "ask", query: "Open model overview" },
-      { label: "Compare models", type: "ask", query: "Compare shortlisted models" },
+      {
+        label: "Open model overview",
+        type: "ask",
+        query: "Open model overview",
+      },
+      {
+        label: "Compare models",
+        type: "ask",
+        query: "Compare shortlisted models",
+      },
       { label: "Offers", type: "open_canvas", canvasType: "offers_canvas" },
-      { label: "Service centers", type: "open_canvas", canvasType: "service_center_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Service centers",
+        type: "open_canvas",
+        canvasType: "service_center_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicles", "vehicle_features"],
     regexes: [REGEX.brandSearch],
@@ -321,12 +595,30 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "model_overview_canvas",
     inlineType: null,
     exampleQuestions: ["Tell me about Verna", "Is Creta good?"],
-    leadingQuestions: ["Price?", "Variants?", "Features?", "Colors?", "Compare with competitors?"],
+    leadingQuestions: [
+      "Price?",
+      "Variants?",
+      "Features?",
+      "Colors?",
+      "Compare with competitors?",
+    ],
     defaultActions: [
-      { label: "Which variant should I buy", type: "open_canvas", canvasType: "variant_finder_canvas" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
+      {
+        label: "Which variant should I buy",
+        type: "open_canvas",
+        canvasType: "variant_finder_canvas",
+      },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
       { label: "Offers", type: "open_canvas", canvasType: "offers_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
       { label: "Book test drive", type: "lead", leadType: "test_drive" },
     ],
     dataSources: ["vehicles", "vehicle_features", "vehicle_colors"],
@@ -358,7 +650,11 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: "variant_ambiguity_card",
     exampleQuestions: ["Verna SX price", "Creta SX features"],
     defaultActions: [
-      { label: "Compare SX variants", type: "ask", query: "Compare SX variants" },
+      {
+        label: "Compare SX variants",
+        type: "ask",
+        query: "Compare SX variants",
+      },
       { label: "Show all variants", type: "ask", query: "Show all variants" },
     ],
     dataSources: ["vehicles", "vehicle_features"],
@@ -373,21 +669,55 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "pricelist_canvas",
     inlineType: null,
     exampleQuestions: ["Verna pricelist", "Show Verna price"],
-    leadingQuestions: ["Ex-showroom or on-road?", "Which city?", "Automatic only?", "Fuel preference?"],
+    leadingQuestions: [
+      "Ex-showroom or on-road?",
+      "Which city?",
+      "Automatic only?",
+      "Fuel preference?",
+    ],
     defaultActions: [
-      { label: "Toggle ex-showroom/on-road", type: "ask", query: "Show ex-showroom and on-road" },
+      {
+        label: "Toggle ex-showroom/on-road",
+        type: "ask",
+        query: "Show ex-showroom and on-road",
+      },
       { label: "Change city", type: "ask", query: "Change city price" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Price breakup", type: "open_canvas", canvasType: "price_breakup_canvas" },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Price breakup",
+        type: "open_canvas",
+        canvasType: "price_breakup_canvas",
+      },
       { label: "Offers", type: "open_canvas", canvasType: "offers_canvas" },
-      { label: "Compare variants", type: "open_canvas", canvasType: "comparison_canvas" },
-      { label: "Features", type: "open_canvas", canvasType: "feature_explorer_canvas" },
-      { label: "Colors", type: "open_canvas", canvasType: "color_studio_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Compare variants",
+        type: "open_canvas",
+        canvasType: "comparison_canvas",
+      },
+      {
+        label: "Features",
+        type: "open_canvas",
+        canvasType: "feature_explorer_canvas",
+      },
+      {
+        label: "Colors",
+        type: "open_canvas",
+        canvasType: "color_studio_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
       { label: "Book test drive", type: "lead", leadType: "test_drive" },
     ],
     dataSources: ["vehicles"],
-    frontendNotes: "Default city Delhi/New Delhi; mention fallback when city unavailable.",
+    frontendNotes:
+      "Default city Delhi/New Delhi; mention fallback when city unavailable.",
     regexes: [REGEX.price],
     priority: 40,
     toolIntent: "vehicle_pricelist",
@@ -412,10 +742,22 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: "short_price_card",
     exampleQuestions: ["Verna SX price", "Verna SX on-road price"],
     defaultActions: [
-      { label: "Open pricelist", type: "open_canvas", canvasType: "pricelist_canvas" },
+      {
+        label: "Open pricelist",
+        type: "open_canvas",
+        canvasType: "pricelist_canvas",
+      },
       { label: "Change city", type: "ask", query: "Change city" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicles"],
     regexes: [/\b(sx|vx|zx|htx|variant)\b.*\bprice\b/i],
@@ -430,9 +772,21 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["Show on-road breakup", "RTO charges of Creta"],
     defaultActions: [
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Check offers", type: "open_canvas", canvasType: "offers_canvas" },
-      { label: "Get exact quotation", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Check offers",
+        type: "open_canvas",
+        canvasType: "offers_canvas",
+      },
+      {
+        label: "Get exact quotation",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
       { label: "Change city", type: "ask", query: "Change city" },
     ],
     dataSources: ["vehicles"],
@@ -448,12 +802,36 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: "feature_answer_card",
     exampleQuestions: ["Does Verna SX have sunroof?"],
     defaultActions: [
-      { label: "Open features", type: "open_canvas", canvasType: "feature_explorer_canvas" },
-      { label: "Show variants with this feature", type: "ask", query: "Show variants with this feature" },
-      { label: "Compare variants", type: "open_canvas", canvasType: "comparison_canvas" },
-      { label: "Show price", type: "open_canvas", canvasType: "pricelist_canvas" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Open features",
+        type: "open_canvas",
+        canvasType: "feature_explorer_canvas",
+      },
+      {
+        label: "Show variants with this feature",
+        type: "ask",
+        query: "Show variants with this feature",
+      },
+      {
+        label: "Compare variants",
+        type: "open_canvas",
+        canvasType: "comparison_canvas",
+      },
+      {
+        label: "Show price",
+        type: "open_canvas",
+        canvasType: "pricelist_canvas",
+      },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicle_features"],
     regexes: [REGEX.featureQuestion],
@@ -468,9 +846,21 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: "spec_answer_card",
     exampleQuestions: ["What is boot space of Verna?"],
     defaultActions: [
-      { label: "Open features", type: "open_canvas", canvasType: "feature_explorer_canvas" },
-      { label: "Compare variants", type: "open_canvas", canvasType: "comparison_canvas" },
-      { label: "Show price", type: "open_canvas", canvasType: "pricelist_canvas" },
+      {
+        label: "Open features",
+        type: "open_canvas",
+        canvasType: "feature_explorer_canvas",
+      },
+      {
+        label: "Compare variants",
+        type: "open_canvas",
+        canvasType: "comparison_canvas",
+      },
+      {
+        label: "Show price",
+        type: "open_canvas",
+        canvasType: "pricelist_canvas",
+      },
     ],
     dataSources: ["vehicle_features"],
     regexes: [REGEX.featureQuestion],
@@ -485,11 +875,31 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["Show features of Verna"],
     defaultActions: [
-      { label: "Search another feature", type: "ask", query: "Search another feature" },
-      { label: "Compare selected variants", type: "open_canvas", canvasType: "comparison_canvas" },
-      { label: "Find best variant", type: "open_canvas", canvasType: "variant_finder_canvas" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Get quotation", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Search another feature",
+        type: "ask",
+        query: "Search another feature",
+      },
+      {
+        label: "Compare selected variants",
+        type: "open_canvas",
+        canvasType: "comparison_canvas",
+      },
+      {
+        label: "Find best variant",
+        type: "open_canvas",
+        canvasType: "variant_finder_canvas",
+      },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Get quotation",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicle_features", "vehicles"],
     frontendNotes:
@@ -517,12 +927,34 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "feature_match_builder_canvas",
     inlineType: null,
     exampleQuestions: ["I want automatic, sunroof and 6 airbags under 15 lakh"],
-    leadingQuestions: ["Must-have features?", "Optional features?", "Budget?", "SUV only?", "Automatic only?"],
+    leadingQuestions: [
+      "Must-have features?",
+      "Optional features?",
+      "Budget?",
+      "SUV only?",
+      "Automatic only?",
+    ],
     defaultActions: [
-      { label: "Compare matching cars", type: "open_canvas", canvasType: "comparison_canvas" },
-      { label: "Show closest matches", type: "ask", query: "Show closest matches" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Compare matching cars",
+        type: "open_canvas",
+        canvasType: "comparison_canvas",
+      },
+      {
+        label: "Show closest matches",
+        type: "ask",
+        query: "Show closest matches",
+      },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicles", "vehicle_features"],
     regexes: [REGEX.featureBuilder],
@@ -556,7 +988,9 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: "feature_answer_card",
     exampleQuestions: ["Does Verna have 6 airbags?"],
     dataSources: ["vehicle_features"],
-    regexes: [/(\bdoes\b|\bhas\b|\bhave\b|\bhow many\b).*\b(airbags?|adas|ncap|isofix|esc|esp|tpms|hill assist)\b/i],
+    regexes: [
+      /(\bdoes\b|\bhas\b|\bhave\b|\bhow many\b).*\b(airbags?|adas|ncap|isofix|esc|esp|tpms|hill assist)\b/i,
+    ],
     priority: 29,
     toolIntent: "vehicle_feature_answer",
   }),
@@ -568,7 +1002,9 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["Which is safer Verna or Slavia?"],
     dataSources: ["vehicle_features", "vehicles"],
-    regexes: [/\b(compare|comparison|vs|versus|which is safer)\b.*\b(safety|safe|ncap|airbags?|adas|esc|tpms)\b|\b(safety|safe|ncap|airbags?|adas|esc|tpms)\b.*\b(compare|comparison|vs|versus|which is safer)\b/i],
+    regexes: [
+      /\b(compare|comparison|vs|versus|which is safer)\b.*\b(safety|safe|ncap|airbags?|adas|esc|tpms)\b|\b(safety|safe|ncap|airbags?|adas|esc|tpms)\b.*\b(compare|comparison|vs|versus|which is safer)\b/i,
+    ],
     priority: 28,
     toolIntent: "vehicle_comparison",
   }),
@@ -623,9 +1059,21 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["Show colors of Verna"],
     defaultActions: [
-      { label: "Color by variant", type: "ask", query: "Show color availability by variant" },
-      { label: "Show price", type: "open_canvas", canvasType: "pricelist_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Color by variant",
+        type: "ask",
+        query: "Show color availability by variant",
+      },
+      {
+        label: "Show price",
+        type: "open_canvas",
+        canvasType: "pricelist_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
       { label: "Book test drive", type: "lead", leadType: "test_drive" },
     ],
     dataSources: ["vehicle_colors", "vehicles"],
@@ -677,7 +1125,9 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["Compare Verna SX and SX(O)"],
     dataSources: ["vehicles", "vehicle_features"],
-    regexes: [/\b(compare|difference between|vs|versus)\b.*\b(sx|vx|zx|htx|gtx|opt|plus|turbo|dct|ivt|mt|at|cvt)\b/i],
+    regexes: [
+      /\b(compare|difference between|vs|versus)\b.*\b(sx|vx|zx|htx|gtx|opt|plus|turbo|dct|ivt|mt|at|cvt)\b/i,
+    ],
     priority: 20,
     toolIntent: "vehicle_variant_difference",
   }),
@@ -713,11 +1163,31 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["Which Verna variant should I buy?"],
     defaultActions: [
-      { label: "Compare with top model", type: "open_canvas", canvasType: "comparison_canvas" },
-      { label: "Feature difference", type: "open_canvas", canvasType: "variant_upgrade_value_canvas" },
-      { label: "Price difference", type: "open_canvas", canvasType: "variant_upgrade_value_canvas" },
-      { label: "EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Compare with top model",
+        type: "open_canvas",
+        canvasType: "comparison_canvas",
+      },
+      {
+        label: "Feature difference",
+        type: "open_canvas",
+        canvasType: "variant_upgrade_value_canvas",
+      },
+      {
+        label: "Price difference",
+        type: "open_canvas",
+        canvasType: "variant_upgrade_value_canvas",
+      },
+      {
+        label: "EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicles", "vehicle_features"],
     regexes: [REGEX.variantFinder],
@@ -732,10 +1202,26 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["Is SX(O) worth paying extra over SX?"],
     defaultActions: [
-      { label: "Calculate EMI difference", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Open full feature diff", type: "open_canvas", canvasType: "feature_explorer_canvas" },
-      { label: "Get quote for better value", type: "open_canvas", canvasType: "aci_quotation_canvas" },
-      { label: "Compare another variant", type: "ask", query: "Compare another variant" },
+      {
+        label: "Calculate EMI difference",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Open full feature diff",
+        type: "open_canvas",
+        canvasType: "feature_explorer_canvas",
+      },
+      {
+        label: "Get quote for better value",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
+      {
+        label: "Compare another variant",
+        type: "ask",
+        query: "Compare another variant",
+      },
       { label: "Book test drive", type: "lead", leadType: "test_drive" },
     ],
     dataSources: ["vehicles", "vehicle_features"],
@@ -799,12 +1285,32 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["EMI for Verna with 2 lakh down payment"],
     defaultActions: [
-      { label: "Show ex-showroom EMI", type: "ask", query: "Show EMI on ex-showroom price" },
-      { label: "Show on-road EMI", type: "ask", query: "Show EMI on on-road price" },
-      { label: "Change down payment", type: "ask", query: "Change down payment" },
+      {
+        label: "Show ex-showroom EMI",
+        type: "ask",
+        query: "Show EMI on ex-showroom price",
+      },
+      {
+        label: "Show on-road EMI",
+        type: "ask",
+        query: "Show EMI on on-road price",
+      },
+      {
+        label: "Change down payment",
+        type: "ask",
+        query: "Change down payment",
+      },
       { label: "Change tenure", type: "ask", query: "Change EMI tenure" },
-      { label: "Finance guide", type: "open_canvas", canvasType: "finance_guide_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Finance guide",
+        type: "open_canvas",
+        canvasType: "finance_guide_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicles"],
     regexes: [REGEX.emi],
@@ -818,11 +1324,28 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "emi_calculator_canvas",
     inlineType: null,
     exampleQuestions: ["Cars with EMI under 25000"],
-    leadingQuestions: ["EMI-only or total monthly budget?", "Down payment budget?", "Preferred tenure?", "Fuel/body type preference?"],
+    leadingQuestions: [
+      "EMI-only or total monthly budget?",
+      "Down payment budget?",
+      "Preferred tenure?",
+      "Fuel/body type preference?",
+    ],
     defaultActions: [
-      { label: "Compare EMI", type: "open_canvas", canvasType: "comparison_canvas" },
-      { label: "Open EMI calculator", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Compare EMI",
+        type: "open_canvas",
+        canvasType: "comparison_canvas",
+      },
+      {
+        label: "Open EMI calculator",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicles"],
     regexes: [REGEX.emi, /\bemi under\b/i],
@@ -836,12 +1359,26 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "monthly_budget_planner_canvas",
     inlineType: null,
     exampleQuestions: ["My monthly budget is 30000, which car can I buy?"],
-    leadingQuestions: ["EMI only or EMI + running cost?", "Down payment?", "Tenure?", "ROI assumption?", "Safe or stretch budget?"],
+    leadingQuestions: [
+      "EMI only or EMI + running cost?",
+      "Down payment?",
+      "Tenure?",
+      "ROI assumption?",
+      "Safe or stretch budget?",
+    ],
     defaultActions: [
       { label: "Comfort plan", type: "ask", query: "Show comfort budget plan" },
       { label: "Stretch plan", type: "ask", query: "Show stretch budget plan" },
-      { label: "Exact EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Finance eligibility", type: "open_canvas", canvasType: "finance_guide_canvas" },
+      {
+        label: "Exact EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Finance eligibility",
+        type: "open_canvas",
+        canvasType: "finance_guide_canvas",
+      },
     ],
     dataSources: ["vehicles"],
     regexes: [REGEX.budgetEmi],
@@ -856,9 +1393,21 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: "finance_faq_card",
     exampleQuestions: ["What documents are needed for car loan?"],
     defaultActions: [
-      { label: "Open finance guide", type: "open_canvas", canvasType: "finance_guide_canvas" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Documents required", type: "ask", query: "Documents required for car loan" },
+      {
+        label: "Open finance guide",
+        type: "open_canvas",
+        canvasType: "finance_guide_canvas",
+      },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Documents required",
+        type: "ask",
+        query: "Documents required for car loan",
+      },
       { label: "Request callback", type: "lead", leadType: "finance_callback" },
     ],
     dataSources: ["finance_faq"],
@@ -886,11 +1435,27 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["Latest offers on Verna"],
     defaultActions: [
-      { label: "Exchange eligibility", type: "ask", query: "Check exchange eligibility" },
-      { label: "Corporate eligibility", type: "ask", query: "Check corporate eligibility" },
+      {
+        label: "Exchange eligibility",
+        type: "ask",
+        query: "Check exchange eligibility",
+      },
+      {
+        label: "Corporate eligibility",
+        type: "ask",
+        query: "Check corporate eligibility",
+      },
       { label: "Loyalty bonus", type: "ask", query: "Check loyalty bonus" },
-      { label: "EMI after offer", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Final quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "EMI after offer",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Final quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
       { label: "Request callback", type: "lead", leadType: "callback" },
     ],
     dataSources: ["offers", "vehicles"],
@@ -911,6 +1476,58 @@ export const NEW_CAR_QUESTION_MAP = {
     toolIntent: "vehicle_offers",
   }),
 
+  vehicle_test_drive_request: createConfig({
+    intent: "vehicle_test_drive_request",
+    displayMode: "canvas",
+    canvasType: "aci_quotation_canvas",
+    inlineType: null,
+    exampleQuestions: [
+      "Book test drive for Verna",
+      "Schedule test drive for Creta",
+    ],
+    defaultActions: [
+      {
+        label: "Get quotation",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
+      {
+        label: "Check availability",
+        type: "open_canvas",
+        canvasType: "availability_waiting_canvas",
+      },
+      { label: "Request callback", type: "lead", leadType: "callback" },
+    ],
+    dataSources: ["vehicles", "leads"],
+    regexes: [
+      /\b(test drive|book test drive|schedule test drive|drive experience)\b/i,
+    ],
+    priority: 2,
+    toolIntent: "vehicle_test_drive_request",
+  }),
+  vehicle_callback_request: createConfig({
+    intent: "vehicle_callback_request",
+    displayMode: "inline",
+    canvasType: null,
+    inlineType: "fallback_card",
+    exampleQuestions: ["Call me about Verna", "Request callback for Creta"],
+    defaultActions: [
+      {
+        label: "Get quotation",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
+      { label: "Book test drive", type: "lead", leadType: "test_drive" },
+    ],
+    dataSources: ["vehicles", "leads"],
+    regexes: [
+      /\b(callback|call me|request call|talk to advisor|speak to advisor)\b/i,
+    ],
+    priority: 2,
+    toolIntent: "vehicle_callback_request",
+  }),
+  
+
   aci_new_car_quotation: createConfig({
     intent: "aci_new_car_quotation",
     displayMode: "canvas",
@@ -918,7 +1535,11 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["Get quotation for Verna SX in Delhi"],
     defaultActions: [
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
       { label: "Download quote", type: "ask", query: "Download quotation" },
       { label: "WhatsApp quote", type: "lead", leadType: "quote_whatsapp" },
       { label: "Book test drive", type: "lead", leadType: "test_drive" },
@@ -937,10 +1558,22 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: "availability_answer_card",
     exampleQuestions: ["Is Verna available in Delhi?"],
     defaultActions: [
-      { label: "Fastest variant", type: "ask", query: "Show fastest delivery variant" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Fastest variant",
+        type: "ask",
+        query: "Show fastest delivery variant",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
       { label: "Request callback", type: "lead", leadType: "callback" },
-      { label: "Show alternatives", type: "open_canvas", canvasType: "similar_cars_canvas" },
+      {
+        label: "Show alternatives",
+        type: "open_canvas",
+        canvasType: "similar_cars_canvas",
+      },
     ],
     dataSources: ["vehicles", "availability"],
     regexes: [REGEX.availability],
@@ -955,8 +1588,16 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: "availability_answer_card",
     exampleQuestions: ["Waiting period of Creta"],
     defaultActions: [
-      { label: "Fastest variant", type: "ask", query: "Show fastest delivery variant" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Fastest variant",
+        type: "ask",
+        query: "Show fastest delivery variant",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicles", "availability"],
     regexes: [REGEX.availability],
@@ -974,8 +1615,16 @@ export const NEW_CAR_QUESTION_MAP = {
       { label: "Directions", type: "navigate", route: "/" },
       { label: "Call", type: "lead", leadType: "callback" },
       { label: "Book service", type: "lead", leadType: "service" },
-      { label: "Service cost", type: "open_canvas", canvasType: "ownership_service_warranty_canvas" },
-      { label: "Warranty", type: "open_canvas", canvasType: "ownership_service_warranty_canvas" },
+      {
+        label: "Service cost",
+        type: "open_canvas",
+        canvasType: "ownership_service_warranty_canvas",
+      },
+      {
+        label: "Warranty",
+        type: "open_canvas",
+        canvasType: "ownership_service_warranty_canvas",
+      },
     ],
     dataSources: ["service_centers"],
     regexes: [REGEX.serviceCenter],
@@ -1002,11 +1651,27 @@ export const NEW_CAR_QUESTION_MAP = {
     inlineType: null,
     exampleQuestions: ["What is Verna service cost?"],
     defaultActions: [
-      { label: "Service center", type: "open_canvas", canvasType: "service_center_canvas" },
+      {
+        label: "Service center",
+        type: "open_canvas",
+        canvasType: "service_center_canvas",
+      },
       { label: "Book service", type: "lead", leadType: "service" },
-      { label: "Compare maintenance", type: "ask", query: "Compare maintenance cost" },
-      { label: "Extended warranty", type: "ask", query: "Show extended warranty details" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Compare maintenance",
+        type: "ask",
+        query: "Compare maintenance cost",
+      },
+      {
+        label: "Extended warranty",
+        type: "ask",
+        query: "Show extended warranty details",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["service_costs"],
     regexes: [REGEX.ownership],
@@ -1032,11 +1697,29 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "tco_canvas",
     inlineType: null,
     exampleQuestions: ["Which car is cheapest to own for 5 years?"],
-    leadingQuestions: ["Monthly running?", "City/highway split?", "Include EMI?", "3-year or 5-year horizon?", "Fuel price assumption?"],
+    leadingQuestions: [
+      "Monthly running?",
+      "City/highway split?",
+      "Include EMI?",
+      "3-year or 5-year horizon?",
+      "Fuel price assumption?",
+    ],
     defaultActions: [
-      { label: "Compare another car", type: "open_canvas", canvasType: "comparison_canvas" },
-      { label: "Adjust assumptions", type: "ask", query: "Adjust TCO assumptions" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Compare another car",
+        type: "open_canvas",
+        canvasType: "comparison_canvas",
+      },
+      {
+        label: "Adjust assumptions",
+        type: "ask",
+        query: "Adjust TCO assumptions",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
       { label: "Book test drive", type: "lead", leadType: "test_drive" },
     ],
     dataSources: ["vehicles", "vehicle_features"],
@@ -1051,11 +1734,28 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "resale_value_canvas",
     inlineType: null,
     exampleQuestions: ["Which car has best resale value?"],
-    leadingQuestions: ["Ownership period?", "Segment preference?", "Fuel/transmission?", "Resale vs features priority?"],
+    leadingQuestions: [
+      "Ownership period?",
+      "Segment preference?",
+      "Fuel/transmission?",
+      "Resale vs features priority?",
+    ],
     defaultActions: [
-      { label: "Best resale variants", type: "ask", query: "Show best resale variants" },
-      { label: "Ownership cost", type: "open_canvas", canvasType: "tco_canvas" },
-      { label: "Get quote", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+      {
+        label: "Best resale variants",
+        type: "ask",
+        query: "Show best resale variants",
+      },
+      {
+        label: "Ownership cost",
+        type: "open_canvas",
+        canvasType: "tco_canvas",
+      },
+      {
+        label: "Get quote",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
     ],
     dataSources: ["vehicles", "resale"],
     regexes: [REGEX.resale],
@@ -1069,7 +1769,13 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "lifestyle_fit_canvas",
     inlineType: null,
     exampleQuestions: ["Best car for my lifestyle"],
-    leadingQuestions: ["Passengers?", "Monthly running?", "City/highway split?", "Comfort/mileage/safety/performance priority?", "Must-have features?"],
+    leadingQuestions: [
+      "Passengers?",
+      "Monthly running?",
+      "City/highway split?",
+      "Comfort/mileage/safety/performance priority?",
+      "Must-have features?",
+    ],
     dataSources: ["vehicles", "vehicle_features"],
     regexes: [REGEX.lifestyle],
     priority: 3,
@@ -1082,7 +1788,13 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "senior_friendly_advisor_canvas",
     inlineType: null,
     exampleQuestions: ["Best car for parents"],
-    leadingQuestions: ["Driver or passenger?", "Need high seating?", "City/highway usage?", "Automatic required?", "Budget?"],
+    leadingQuestions: [
+      "Driver or passenger?",
+      "Need high seating?",
+      "City/highway usage?",
+      "Automatic required?",
+      "Budget?",
+    ],
     dataSources: ["vehicles", "vehicle_features"],
     regexes: [REGEX.senior],
     priority: 3,
@@ -1095,7 +1807,13 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "space_practicality_canvas",
     inlineType: null,
     exampleQuestions: ["Most spacious cars under 20 lakh"],
-    leadingQuestions: ["How many people?", "Boot space priority?", "Need 7 seats?", "Rear comfort priority?", "Budget?"],
+    leadingQuestions: [
+      "How many people?",
+      "Boot space priority?",
+      "Need 7 seats?",
+      "Rear comfort priority?",
+      "Budget?",
+    ],
     dataSources: ["vehicles", "vehicle_features"],
     regexes: [REGEX.space],
     priority: 3,
@@ -1108,7 +1826,13 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "performance_spec_ranking_canvas",
     inlineType: null,
     exampleQuestions: ["Best performance car under 20 lakh"],
-    leadingQuestions: ["Fuel preference?", "Transmission preference?", "Mileage tradeoff acceptable?", "City/highway split?", "Budget?"],
+    leadingQuestions: [
+      "Fuel preference?",
+      "Transmission preference?",
+      "Mileage tradeoff acceptable?",
+      "City/highway split?",
+      "Budget?",
+    ],
     dataSources: ["vehicles", "vehicle_features"],
     regexes: [REGEX.performance],
     priority: 3,
@@ -1121,7 +1845,13 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "performance_spec_ranking_canvas",
     inlineType: null,
     exampleQuestions: ["Cars with highest ground clearance"],
-    leadingQuestions: ["Which spec matters most?", "Budget range?", "Preferred body type?", "City or mixed roads?", "Automatic required?"],
+    leadingQuestions: [
+      "Which spec matters most?",
+      "Budget range?",
+      "Preferred body type?",
+      "City or mixed roads?",
+      "Automatic required?",
+    ],
     dataSources: ["vehicles", "vehicle_features"],
     regexes: [REGEX.specRanking],
     priority: 3,
@@ -1134,7 +1864,13 @@ export const NEW_CAR_QUESTION_MAP = {
     canvasType: "performance_spec_ranking_canvas",
     inlineType: null,
     exampleQuestions: ["Best car for bad roads"],
-    leadingQuestions: ["Ground clearance target?", "Body type preference?", "Budget?", "City or rural roads?", "Need automatic?"],
+    leadingQuestions: [
+      "Ground clearance target?",
+      "Body type preference?",
+      "Budget?",
+      "City or rural roads?",
+      "Need automatic?",
+    ],
     dataSources: ["vehicles", "vehicle_features"],
     regexes: [REGEX.specRanking],
     priority: 3,
@@ -1150,9 +1886,21 @@ export const NEW_CAR_QUESTION_MAP = {
     defaultActions: [
       { label: "New car prices", type: "ask", query: "Show new car prices" },
       { label: "Compare cars", type: "ask", query: "Compare cars" },
-      { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-      { label: "Get quotation", type: "open_canvas", canvasType: "aci_quotation_canvas" },
-      { label: "Find service center", type: "open_canvas", canvasType: "service_center_canvas" },
+      {
+        label: "Calculate EMI",
+        type: "open_canvas",
+        canvasType: "emi_calculator_canvas",
+      },
+      {
+        label: "Get quotation",
+        type: "open_canvas",
+        canvasType: "aci_quotation_canvas",
+      },
+      {
+        label: "Find service center",
+        type: "open_canvas",
+        canvasType: "service_center_canvas",
+      },
     ],
     dataSources: [],
     regexes: [REGEX.outOfScope],
@@ -1272,40 +2020,42 @@ export function detectUserType(message = "") {
 
 export function scoreIntents(message, context = {}) {
   const text = normalizeText(message).toLowerCase();
-  const lastIntent = mapIntentAlias(context.lastIntent || context.intent || "");
-  const stage = String(context.stage || "").toLowerCase();
-  const keywordAliases = {
-    decision: ["decide", "choose", "confused", "not sure"],
-    price: ["expensive", "costly", "over budget", "too high"],
-    quality: ["worth it", "reliable", "good or bad", "issue"],
-  };
+  const stage = String(context.stage || context.mode || "").toLowerCase();
 
   const scored = NEW_CAR_INTENTS.map((intent) => {
     const def = NEW_CAR_QUESTION_MAP[intent];
     let score = 0;
-    const regexMatched = Boolean(def.regexes?.some((regex) => regex?.test?.(text)));
+    const matchedRegexes = [];
 
-    if (regexMatched) score += 50;
-    if (regexMatched) score += 10;
-
-    const keyword = String(intent.split("_")[1] || "").toLowerCase();
-    if (keyword && text.includes(keyword)) score += 10;
-    if (
-      keyword &&
-      keywordAliases[keyword]?.some((alias) => text.includes(alias))
-    ) {
-      score += 10;
+    for (const regex of def.regexes || []) {
+      if (regex?.test?.(text)) {
+        score += 55;
+        matchedRegexes.push(String(regex));
+      }
     }
 
-    if (lastIntent === intent) score += 15;
+    score += getKeywordBoost(intent, text);
+    score += getStageBoost(intent, stage);
+    score += getContextBoost(intent, context);
+
+    if (context.secondaryIntents?.includes?.(intent)) score += 8;
 
     if (stage === "buy" && intent === "aci_new_car_quotation") {
-      score += 40;
+      score += 20;
     }
 
-    if (!def.regexes?.length) score -= 5;
+    if (!def.regexes?.length) score -= 4;
 
-    return { intent, score };
+    return {
+      intent,
+      score,
+      debug: {
+        matchedRegexes,
+        stageBoost: getStageBoost(intent, stage),
+        contextBoost: getContextBoost(intent, context),
+        keywordBoost: getKeywordBoost(intent, text),
+      },
+    };
   }).sort((a, b) => b.score - a.score);
 
   return scored;
@@ -1316,61 +2066,91 @@ export function resolveIntent(message, context = {}) {
   const userType = detectUserType(message);
   const scored = scoreIntents(message, context);
 
-  if (
-    BUYING_SIGNALS.test(text) &&
-    !/\b(which car should i buy|which .*variant should i buy|should i buy)\b/i.test(
-      text,
-    )
-  ) {
+  if (shouldForceBuyingIntent(text)) {
+    const secondaryIntents = scored
+      .map((item) => item.intent)
+      .filter(
+        (intent) =>
+          intent &&
+          intent !== "aci_new_car_quotation" &&
+          itemHasPositiveScore(scored, intent),
+      )
+      .slice(0, 3);
+
     return {
       primaryIntent: "aci_new_car_quotation",
-      secondaryIntents: scored
-        .map((item) => item.intent)
-        .filter((intent) => intent !== "aci_new_car_quotation")
-        .slice(0, 3),
+      secondaryIntents,
       confidence: 0.95,
       stage: "buy",
       userType,
       clarification: null,
       debug: {
+        reason: "buying_signal_override",
         scores: scored.slice(0, 5),
       },
     };
   }
 
-  const forcedFeatureDiscovery = /\bwhich\b.*\bvariants?\b/i.test(text);
-  const forcedFeatureAnswer = /\b(does|has)\b/i.test(text);
+  const forcedFeatureIntent = getForcedFeatureIntent(text);
 
-  let primaryIntent = scored[0]?.intent || null;
+  let primaryIntent = forcedFeatureIntent || scored[0]?.intent || null;
 
-  if (forcedFeatureDiscovery) {
-    primaryIntent = "vehicle_feature_discovery";
-  } else if (forcedFeatureAnswer) {
-    primaryIntent = "vehicle_feature_answer";
+  const topScore = forcedFeatureIntent ? 90 : scored[0]?.score || 0;
+  const secondScore =
+    scored.find((item) => item.intent !== primaryIntent)?.score || 0;
+  const confidence = calculateConfidence(topScore, secondScore);
+
+  if (topScore <= 0) {
+    return {
+      primaryIntent: null,
+      secondaryIntents: [],
+      confidence: 0,
+      stage: "explore",
+      userType,
+      clarification: [
+        "Show price",
+        "Compare cars",
+        "Calculate EMI",
+        "Show features",
+      ],
+      debug: {
+        reason: "no_intent_score",
+        scores: scored.slice(0, 5),
+      },
+    };
   }
 
   const secondaryIntents = scored
     .map((item) => item.intent)
-    .filter((intent) => intent && intent !== primaryIntent)
+    .filter(
+      (intent) =>
+        intent &&
+        intent !== primaryIntent &&
+        itemHasPositiveScore(scored, intent),
+    )
     .slice(0, 3);
 
-  const topScore = forcedFeatureDiscovery || forcedFeatureAnswer ? 80 : scored[0]?.score || 0;
-  const confidence = Math.min(topScore / 100, 1);
-  const stage = INTENT_STAGE_MAP[primaryIntent] || "explore";
-  const clarification =
-    confidence < 0.6
-      ? ["Show price", "Compare cars", "Calculate EMI", "Show features"]
-      : null;
+  const stage = getIntentStage(primaryIntent);
 
-  if (confidence < 0.6) {
+  if (
+    shouldAskClarification({
+      confidence,
+      topScore,
+      secondScore,
+      primaryIntent,
+    })
+  ) {
     return {
       primaryIntent: null,
       secondaryIntents,
       confidence,
       stage,
       userType,
-      clarification,
+      clarification: buildClarificationOptions(message, scored),
       debug: {
+        reason: "low_confidence_or_close_scores",
+        topScore,
+        secondScore,
         scores: scored.slice(0, 5),
       },
     };
@@ -1383,11 +2163,85 @@ export function resolveIntent(message, context = {}) {
     stage,
     userType,
     clarification: null,
+    nextLikelyIntents: getNextLikelyIntents(primaryIntent),
     debug: {
+      reason: forcedFeatureIntent
+        ? "forced_feature_resolution"
+        : "scored_resolution",
+      topScore,
+      secondScore,
       scores: scored.slice(0, 5),
     },
   };
 }
+
+export async function resolveIntentAdaptive(message, context = {}) {
+  const base = resolveIntent(message, context);
+
+  try {
+    const learningModule = await import("./aiAgent.learningEngine.js");
+    const getIntentScore = learningModule.getIntentScore;
+
+    if (typeof getIntentScore !== "function") return base;
+
+    const candidates = unique([
+      base.primaryIntent,
+      ...(base.secondaryIntents || []),
+    ]).filter(Boolean);
+
+    if (!candidates.length) return base;
+
+    const adaptiveScores = await Promise.all(
+      candidates.map(async (intent) => ({
+        intent,
+        learningScore: await getIntentScore({
+          userId: context.userId || "anonymous",
+          intent,
+          userType: base.userType,
+        }),
+      })),
+    );
+
+    const bestAdaptive = adaptiveScores.sort(
+      (a, b) => Number(b.learningScore || 0) - Number(a.learningScore || 0),
+    )[0];
+
+    if (
+      bestAdaptive?.intent &&
+      bestAdaptive.intent !== base.primaryIntent &&
+      Number(bestAdaptive.learningScore || 0) >= 0.25 &&
+      base.confidence < 0.7
+    ) {
+      return {
+        ...base,
+        primaryIntent: bestAdaptive.intent,
+        secondaryIntents: unique([
+          base.primaryIntent,
+          ...(base.secondaryIntents || []),
+        ]).filter((intent) => intent && intent !== bestAdaptive.intent),
+        stage: getIntentStage(bestAdaptive.intent),
+        debug: {
+          ...(base.debug || {}),
+          adaptiveOverride: true,
+          adaptiveScores,
+        },
+      };
+    }
+
+    return {
+      ...base,
+      debug: {
+        ...(base.debug || {}),
+        adaptiveScores,
+      },
+    };
+  } catch {
+    return base;
+  }
+}
+
+const itemHasPositiveScore = (scored = [], intent = "") =>
+  Number(scored.find((item) => item.intent === intent)?.score || 0) > 0;
 
 export const detectNewCarIntentCandidates = (message = "") => {
   const text = normalizeText(message);
@@ -1413,8 +2267,16 @@ export const pickPrimaryIntent = (
   message = "",
   context = {},
 ) => {
-  void context;
   const sorted = sortIntentsByPriority(intents);
+  const resolved = resolveIntent(message, context);
+  if (
+    resolved.primaryIntent &&
+    sorted.includes(resolved.primaryIntent) &&
+    resolved.confidence >= 0.55
+  ) {
+    return resolved.primaryIntent;
+  }
+
   const text = normalizeText(message).toLowerCase();
   if (!sorted.length) return fallback;
 
@@ -1439,14 +2301,13 @@ export const pickPrimaryIntent = (
 
   // Explicit multi-intent and disambiguation heuristics.
   if (has("aci_new_car_quotation")) return "aci_new_car_quotation";
-  if (
-    /\bprice\b.*\bin\s+[a-z]/i.test(text) &&
-    has("vehicle_city_price")
-  ) {
+  if (/\bprice\b.*\bin\s+[a-z]/i.test(text) && has("vehicle_city_price")) {
     return "vehicle_city_price";
   }
   if (
-    /\b(sx|vx|zx|htx|gtx|opt|plus|turbo|dct|ivt|mt|at|cvt)\b.*\bprice\b/i.test(text) &&
+    /\b(sx|vx|zx|htx|gtx|opt|plus|turbo|dct|ivt|mt|at|cvt)\b.*\bprice\b/i.test(
+      text,
+    ) &&
     has("vehicle_variant_price")
   ) {
     return "vehicle_variant_price";
@@ -1461,7 +2322,10 @@ export const pickPrimaryIntent = (
       ? "vehicle_variant_upgrade_value"
       : "vehicle_variant_comparison";
   }
-  if (/\b(compare|vs|versus|which is better)\b/i.test(text) && has("vehicle_comparison")) {
+  if (
+    /\b(compare|vs|versus|which is better)\b/i.test(text) &&
+    has("vehicle_comparison")
+  ) {
     return "vehicle_comparison";
   }
   if (
@@ -1490,14 +2354,24 @@ export const pickPrimaryIntent = (
     /\bunder\b.*\b(\d+\s*l|lakh|lac|cr|crore)\b/i.test(text) &&
     has("vehicle_budget_search")
   ) {
-    if (has("vehicle_must_have_feature_builder")) return "vehicle_must_have_feature_builder";
-    if (has("vehicle_safety_search") && /\bsaf(est|ety)|ncap|airbags?|adas\b/i.test(text)) {
+    if (has("vehicle_must_have_feature_builder"))
+      return "vehicle_must_have_feature_builder";
+    if (
+      has("vehicle_safety_search") &&
+      /\bsaf(est|ety)|ncap|airbags?|adas\b/i.test(text)
+    ) {
       return "vehicle_safety_search";
     }
-    if (has("vehicle_performance_advisor") && /\bperformance|fastest|powerful|turbo\b/i.test(text)) {
+    if (
+      has("vehicle_performance_advisor") &&
+      /\bperformance|fastest|powerful|turbo\b/i.test(text)
+    ) {
       return "vehicle_performance_advisor";
     }
-    if (has("vehicle_space_practicality_advisor") && /\bspacious|boot|7[\s-]?seater|rear seat|luggage\b/i.test(text)) {
+    if (
+      has("vehicle_space_practicality_advisor") &&
+      /\bspacious|boot|7[\s-]?seater|rear seat|luggage\b/i.test(text)
+    ) {
       return "vehicle_space_practicality_advisor";
     }
     return "vehicle_budget_search";
@@ -1518,16 +2392,20 @@ export const pickPrimaryIntent = (
   }
 
   if (
-    /\bservice center|workshop|authorized.*service|nearest.*service\b/i.test(text) &&
+    /\bservice center|workshop|authorized.*service|nearest.*service\b/i.test(
+      text,
+    ) &&
     has("new_car_service_center_search")
   ) {
     return "new_car_service_center_search";
   }
 
   if (hasAny(["vehicle_model_ambiguity", "vehicle_variant_ambiguity"])) {
-    const intent =
-      has("vehicle_model_ambiguity") ? "vehicle_model_ambiguity" : "vehicle_variant_ambiguity";
-    if (!hasAny(["vehicle_fuel_decision_advisor", "vehicle_tco_analysis"])) return intent;
+    const intent = has("vehicle_model_ambiguity")
+      ? "vehicle_model_ambiguity"
+      : "vehicle_variant_ambiguity";
+    if (!hasAny(["vehicle_fuel_decision_advisor", "vehicle_tco_analysis"]))
+      return intent;
   }
 
   return sorted[0] || fallback;

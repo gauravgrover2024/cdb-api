@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Vehicle from "../../models/Vehicle.js";
 import VehicleFeature from "../../models/VehicleFeature.js";
+import BankDirectory from "../../models/BankDirectory.js";
 import { getFieldMap } from "./aiAgent.fieldMaps.js";
 import { action, unavailableWidget, widget } from "./aiAgent.renderPayloads.js";
 import {
@@ -14,11 +15,28 @@ import { findLean, LIMIT, pushModuleTrace, safeId } from "./aiAgent.tools.js";
 import { noteRestriction } from "./aiAgent.accessControl.js";
 import { normalizeVehicleDatasetRow } from "../../utils/vehicleDatasetNormalizer.js";
 import { calculateEMI } from "./aiAgent.loanCalc.js";
+import { resolveVehiclePriceBreakup } from "./aiAgent.priceResolver.js";
+import { buildFeatureProfile } from "./aiAgent.featureProfile.js";
+import {
+  scoreAutomaticValue,
+  scoreFamily,
+  scoreFeatureMatch,
+  scorePerformance,
+  scoreSafety,
+  scoreSeniorFriendly,
+  scoreSimilarity,
+  scoreSpace,
+  scoreTcoEstimate,
+  scoreVariantUpgrade,
+} from "./aiAgent.recommendationEngine.js";
 
 const titleCase = (value) =>
   String(value || "")
     .toLowerCase()
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+const asArray = (value) =>
+  Array.isArray(value) ? value : value ? [value] : [];
 
 const MAKE_ALIASES = [
   "Hyundai",
@@ -60,7 +78,7 @@ const modelAliases = (model) => {
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const vehicleModelClause = (model, make) => {
+const vehicleModelClause = (model, make, { exactModelOnly = false } = {}) => {
   if (!model) return null;
   const aliases = modelAliases(model);
   const modelValues = aliases.flatMap(exactValues);
@@ -77,15 +95,24 @@ const vehicleModelClause = (model, make) => {
           .model_normalized,
     )
     .filter(Boolean);
+  const strictModelValues = [...new Set(modelValues)];
+  const strictNormalized = [...new Set(normalizedModels)];
+  if (exactModelOnly) {
+    return {
+      $or: [
+        { model: { $in: strictModelValues } },
+        ...(strictNormalized.length
+          ? [{ model_normalized: { $in: strictNormalized } }]
+          : []),
+      ],
+    };
+  }
   return {
     $or: [
       { model: { $in: [...new Set([...modelValues, ...prefixed])] } },
-      ...normalizedModels.map((normalized) => ({
-        model_normalized: {
-          $regex: `^${escapeRegex(normalized)}$`,
-          $options: "i",
-        },
-      })),
+      ...(strictNormalized.length
+        ? [{ model_normalized: { $in: strictNormalized } }]
+        : []),
     ],
   };
 };
@@ -115,12 +142,18 @@ const makeOrBrandClause = (make) => {
 
 const cityClause = (city) => {
   const clean = normalizeCitySlug(city || "new-delhi") || "new-delhi";
+  const values = unique(
+    [
+      clean,
+      clean.replace(/-/g, " "),
+      titleCase(clean.replace(/-/g, " ")),
+      clean.toLowerCase(),
+      clean.toUpperCase(),
+    ].filter(Boolean),
+  );
   return clean
     ? {
-        city: {
-          $regex: `^${clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-          $options: "i",
-        },
+        city: { $in: values },
       }
     : null;
 };
@@ -128,10 +161,13 @@ const cityClause = (city) => {
 const vehicleModelQuery = (parsed, { includeCity = true } = {}) => {
   const model = parsed.entities.model || parsed.entities.models?.[0];
   const make = parsed.entities.make;
+  const exactModelOnly = Boolean(
+    parsed?.context?.forceModelSelection || parsed?.context?.exactModelOnly,
+  );
   const city =
     normalizeCitySlug(parsed.entities.city || "new-delhi") || "new-delhi";
   const and = [];
-  if (model) and.push(vehicleModelClause(model, make));
+  if (model) and.push(vehicleModelClause(model, make, { exactModelOnly }));
   if (make) and.push(makeOrBrandClause(make));
   if (parsed.entities.variant)
     and.push({ variant: { $regex: parsed.entities.variant, $options: "i" } });
@@ -336,6 +372,7 @@ const resolveVehicleCatalogRows = async (
   {
     includeCity = true,
     limit = 80,
+    maxTimeMS = 3000,
     allowCityFallback = true,
     moduleName = "Vehicles",
   } = {},
@@ -351,6 +388,7 @@ const resolveVehicleCatalogRows = async (
     ? await findLean(Vehicle, built.query, {
         sort,
         limit: Math.max(limit * 2, limit),
+        maxTimeMS,
       })
     : [];
   let usedCityFallback = false;
@@ -361,28 +399,31 @@ const resolveVehicleCatalogRows = async (
   if (!rows.length && includeCity && allowCityFallback) {
     // If requested city is not available, first fallback specifically to Delhi/New Delhi,
     // not to all cities. This avoids empty responses for unsupported cities like Mumbai.
-    const fallbackParsed = {
-      ...parsed,
-      entities: {
-        ...parsed.entities,
-        city: "new-delhi",
-      },
-    };
+    if (showingCity !== "new-delhi") {
+      const fallbackParsed = {
+        ...parsed,
+        entities: {
+          ...parsed.entities,
+          city: "new-delhi",
+        },
+      };
 
-    const fallbackDelhi = buildCatalogueQuery(fallbackParsed, {
-      includeCity: true,
-    });
+      const fallbackDelhi = buildCatalogueQuery(fallbackParsed, {
+        includeCity: true,
+      });
 
-    rows = Object.keys(fallbackDelhi.query).length
-      ? await findLean(Vehicle, fallbackDelhi.query, {
-          sort,
-          limit: Math.max(limit * 2, limit),
-        })
-      : [];
+      rows = Object.keys(fallbackDelhi.query).length
+        ? await findLean(Vehicle, fallbackDelhi.query, {
+            sort,
+            limit: Math.max(limit * 2, limit),
+            maxTimeMS,
+          })
+        : [];
 
-    if (rows.length) {
-      usedCityFallback = true;
-      showingCity = "new-delhi";
+      if (rows.length) {
+        usedCityFallback = true;
+        showingCity = "new-delhi";
+      }
     }
 
     // Last fallback: if even Delhi does not exist, then show available catalogue rows.
@@ -392,6 +433,7 @@ const resolveVehicleCatalogRows = async (
         ? await findLean(Vehicle, fallbackAny.query, {
             sort: { ...sort, city: 1 },
             limit: Math.max(limit * 2, limit),
+            maxTimeMS,
           })
         : [];
 
@@ -433,7 +475,7 @@ const resolveVehicleCatalogRows = async (
                 })),
               }
             : {},
-          { sort, limit: 30 },
+          { sort, limit: 30, maxTimeMS },
         ),
       );
 
@@ -545,45 +587,16 @@ const priceLineItemsFrom = (value, fallbackLabel = "Item") => {
 };
 
 const vehicleRow = (item) => {
-  const optionalItems = priceLineItemsFrom(item.optional_list, "Optional item");
-  const otherItems = priceLineItemsFrom(item.other_list, "Other charge");
+  const breakup = resolveVehiclePriceBreakup(item || {});
+  const optionalItems = breakup.optionalItems || [];
+  const otherItems = breakup.otherItems || [];
   const optionalOtherItems = [...optionalItems, ...otherItems];
-  const optionalOtherTotal = optionalOtherItems.reduce(
-    (sum, row) => sum + priceNumber(row.amount),
-    0,
-  );
-  const exShowroomPrice = priceNumber(
-    firstMeaningful(
-      item.ex_showroom,
-      item.exShowroom,
-      item.ex_showroom_price_cardekho,
-    ),
-  );
-  const rto = priceNumber(
-    firstMeaningful(
-      item.rto,
-      item.roadTax,
-      item.rto_amount_cardekho,
-      item.other_roadTax,
-    ),
-  );
-  const insurance = priceNumber(
-    firstMeaningful(
-      item.insurance,
-      item.insuranceAmount,
-      item.insurance_amount_cardekho,
-      item.other_insurance,
-    ),
-  );
-  const calculatedOnRoadPrice =
-    exShowroomPrice + rto + insurance + optionalOtherTotal;
-  const storedOnRoadPrice = priceNumber(
-    firstMeaningful(
-      item.onRoadPrice,
-      item.on_road_price_cardekho,
-      item.total_on_road_with_accessories,
-    ),
-  );
+  const optionalOtherTotal = firstNumber(breakup.optionalTotal, 0) + firstNumber(breakup.otherTotal, 0);
+  const exShowroomPrice = firstNumber(breakup.exShowroom, 0);
+  const rto = firstNumber(breakup.rto, 0);
+  const insurance = firstNumber(breakup.insurance, 0);
+  const calculatedOnRoadPrice = firstNumber(breakup.computedOnRoad, 0);
+  const storedOnRoadPrice = firstNumber(breakup.canonicalOnRoadPrice, 0);
 
   return {
     id: safeId(item),
@@ -599,7 +612,7 @@ const vehicleRow = (item) => {
     fuel: firstMeaningful(item.fuel, item.fuel_type),
     fuel_type: firstMeaningful(item.fuel_type, item.fuel),
     transmission: firstMeaningful(item.transmission, item.transmission_type),
-    price: calculatedOnRoadPrice || storedOnRoadPrice || exShowroomPrice,
+    price: storedOnRoadPrice || calculatedOnRoadPrice || exShowroomPrice,
     colors: item.colors_normalized || [],
     colors_normalized: item.colors_normalized || [],
     city: item.city,
@@ -619,11 +632,8 @@ const vehicleRow = (item) => {
     otherItems,
     optionalOtherItems,
     optionalOtherTotal,
-    optionalTotal: firstMeaningful(
-      item.optional_total,
-      item.optional_totalAccessories,
-      item.optional_totalAccessoriesInRs,
-    ),
+    optionalTotal: firstNumber(breakup.optionalTotal, 0),
+    otherTotal: firstNumber(breakup.otherTotal, 0),
     optional_total: firstMeaningful(item.optional_total),
     optional_totalAccessories: firstMeaningful(item.optional_totalAccessories),
     optional_totalAccessoriesInRs: firstMeaningful(
@@ -640,15 +650,25 @@ const vehicleRow = (item) => {
       item.otherCharges,
       item.other_totalOtherCharges,
     ),
-    orpWithoutAccessories: firstMeaningful(item.orp_without_accessories),
-    orp_without_accessories: firstMeaningful(item.orp_without_accessories),
+    orpWithoutAccessories: firstNumber(breakup.orpWithoutOptional, 0),
+    orp_without_accessories: firstNumber(breakup.orpWithoutOptional, 0),
     calculatedOnRoadPrice,
     storedOnRoadPrice,
-    onRoadPrice: calculatedOnRoadPrice || storedOnRoadPrice,
+    canonicalOnRoadPrice: storedOnRoadPrice,
+    computedOnRoad: calculatedOnRoadPrice,
+    onRoadPrice: storedOnRoadPrice || calculatedOnRoadPrice,
     on_road_price_cardekho: firstMeaningful(item.on_road_price_cardekho),
     total_on_road_with_accessories: firstMeaningful(
       item.total_on_road_with_accessories,
     ),
+    priceBreakupLines: breakup.priceBreakupLines || [],
+    priceIntegrity: breakup.priceIntegrity || {
+      isValid: false,
+      difference: 0,
+      computedOnRoad: calculatedOnRoadPrice,
+      canonicalOnRoadPrice: storedOnRoadPrice,
+      warnings: [],
+    },
     priceFormula: {
       ex_showroom: exShowroomPrice,
       rto,
@@ -860,6 +880,8 @@ const uniqueRows = (rows, keyFor) => {
     return true;
   });
 };
+
+const unique = (items = []) => [...new Set(items.filter(Boolean))];
 
 const FEATURE_GROUP_ORDER = [
   "Comfort & Convenience",
@@ -1391,23 +1413,76 @@ const modelOptionFromRows = (rows = []) => {
   };
 };
 
+const withForcedModelSelection = (parsed = {}) => {
+  if (!parsed?.context?.forceModelSelection) return parsed;
+
+  const forcedModel = firstMeaningful(
+    parsed?.context?.entities?.model,
+    parsed?.context?.selectedModels?.[0],
+    parsed?.context?.selectedEntity?.model,
+    parsed?.selectedEntity?.model,
+  );
+
+  if (!forcedModel) return parsed;
+
+  return {
+    ...parsed,
+    context: {
+      ...(parsed.context || {}),
+      forceModelSelection: true,
+      exactModelOnly: true,
+    },
+    entities: {
+      ...(parsed.entities || {}),
+      model: forcedModel,
+      models: [forcedModel],
+    },
+  };
+};
+
 const findModelAmbiguity = async (parsed, trace) => {
+  if (parsed?.context?.forceModelSelection) return null;
+
   const model = parsed.entities.model || parsed.entities.models?.[0];
+  const make = parsed.entities.make || "";
+  const rawMessage = toWords(parsed.message || parsed.lower || "");
+  const explicitMakeModelPhrase =
+    make &&
+    model &&
+    rawMessage.includes(toWords(`${make} ${model}`)) &&
+    !/\b(or|all|compare)\b/i.test(rawMessage);
+  if (explicitMakeModelPhrase) return null;
+
   if (
     !model ||
     /n line|x line|hybrid|show all|include|compare/i.test(parsed.lower || "")
   )
     return null;
-  const regex = new RegExp(escapeRegex(model), "i");
+  const normalizedNeedle = normalizeVariant(model);
+  const regex = new RegExp(
+    `^${escapeRegex(normalizedNeedle).replace(/\s+/g, "\\s+")}(\\b|\\s|$)`,
+    "i",
+  );
   const rows = await findLean(
     Vehicle,
     {
       $and: [
         { $or: [{ model_normalized: regex }, { model: regex }] },
         cityClause(parsed.entities.city || "new-delhi"),
+        { is_discontinued: { $ne: true } },
       ],
     },
-    { sort: { model_normalized: 1, ex_showroom: 1 }, limit: 180 },
+    {
+      select: {
+        brand: 1,
+        make: 1,
+        model: 1,
+        model_normalized: 1,
+      },
+      sort: { model_normalized: 1 },
+      limit: 80,
+      maxTimeMS: 2500,
+    },
   );
   const grouped = new Map();
   for (const row of rows) {
@@ -1979,7 +2054,7 @@ const exactVariantComparison = async (variantIds, trace, context = {}) => {
   };
   return {
     widgets: [
-      widget("vehicle_comparison", "Selected variant comparison", {
+      widget("vehicle_model_comparison", "Selected variant comparison", {
         rows: compactRows.map(comparisonRowFromVariant),
         data: selectedContext,
         notices: rows.length
@@ -2008,6 +2083,17 @@ const exactVariantComparison = async (variantIds, trace, context = {}) => {
 };
 
 export const vehiclePricelist = async (parsed, access, trace) => {
+  const startedAt = Date.now();
+  const timings = {
+    vehicleQueryMs: 0,
+    featureQueryMs: 0,
+    colorQueryMs: 0,
+    rivalSuggestionMs: 0,
+    groupingMs: 0,
+    totalMs: 0,
+  };
+  const parsedWithSelection = withForcedModelSelection(parsed);
+
   if (!access.canAccess("vehicles")) {
     noteRestriction(access, "Vehicles", "No vehicle catalog access");
     return {
@@ -2020,19 +2106,22 @@ export const vehiclePricelist = async (parsed, access, trace) => {
       ],
     };
   }
-  const modelAmbiguity = await findModelAmbiguity(parsed, trace);
+  const modelAmbiguity = await findModelAmbiguity(parsedWithSelection, trace);
   if (modelAmbiguity) return modelAmbiguity;
-  const resolved = await resolveVehicleCatalogRows(parsed, trace, {
+  const vehicleQueryStartedAt = Date.now();
+  const resolved = await resolveVehicleCatalogRows(parsedWithSelection, trace, {
     includeCity: true,
-    limit: 160,
+    limit: 120,
+    maxTimeMS: 3000,
     moduleName: "Vehicles",
   });
-  const rows = applyCatalogueFilters(resolved.rows, parsed);
+  timings.vehicleQueryMs = Date.now() - vehicleQueryStartedAt;
+  const rows = applyCatalogueFilters(resolved.rows, parsedWithSelection);
   if (
     !rows.length &&
     !resolved.tokens.length &&
-    !parsed.entities.model &&
-    !parsed.entities.variant
+    !parsedWithSelection.entities.model &&
+    !parsedWithSelection.entities.variant
   ) {
     return {
       widgets: [
@@ -2068,7 +2157,7 @@ export const vehiclePricelist = async (parsed, access, trace) => {
   }
   const firstRow = vehicleRow(rows[0]);
   const model = firstMeaningful(
-    parsed.entities.model,
+    parsedWithSelection.entities.model,
     firstRow.model_normalized,
     firstRow.model,
   );
@@ -2077,14 +2166,22 @@ export const vehiclePricelist = async (parsed, access, trace) => {
     firstRow.brand,
     firstRow.brand_normalized,
   );
-  const featureDocs = await findLean(
-    VehicleFeature,
-    featureModelQuery(model, rows[0]?.make || rows[0]?.brand),
-    { limit: 12 },
+  const shouldFetchFeatureDocs = /\b(feature|features|safety|sunroof|spec|specification|airbag|adas|mileage|ground clearance|boot space|power|torque)\b/i.test(
+    parsed.lower || "",
   );
-  pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
-  const wantsColors = /colors|colours/.test(parsed.lower);
-  const wantsSunroof = /sunroof/.test(parsed.lower);
+  let featureDocs = [];
+  if (shouldFetchFeatureDocs) {
+    const featureQueryStartedAt = Date.now();
+    featureDocs = await findLean(
+      VehicleFeature,
+      featureModelQuery(model, rows[0]?.make || rows[0]?.brand),
+      { limit: 8, maxTimeMS: 2500 },
+    );
+    timings.featureQueryMs = Date.now() - featureQueryStartedAt;
+    pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
+  }
+  const wantsColors = /colors|colours/.test(parsed.lower || "");
+  const wantsSunroof = /sunroof/.test(parsed.lower || "");
   const notices = [];
   if (wantsColors)
     notices.push(
@@ -2103,55 +2200,66 @@ export const vehiclePricelist = async (parsed, access, trace) => {
     (resolved.usedCityFallback
       ? firstMeaningful(rows[0]?.city, resolved.requestedCity)
       : resolved.requestedCity);
-  const pricelistRows = uniqueRows(sortCatalogueRows(rows, parsed), (row) =>
-    [
-      row.city,
-      row.make,
-      row.model,
-      row.variant,
-      row.fuel,
-      row.transmission,
-      row.exShowroomPrice,
-      row.onRoadPrice,
-    ].join("|"),
+  const groupingStartedAt = Date.now();
+  const pricelistRows = uniqueRows(
+    sortCatalogueRows(rows, parsed).slice(0, 120),
+    (row) =>
+      [
+        row.city,
+        row.make,
+        row.model,
+        row.variant,
+        row.fuel,
+        row.transmission,
+        row.exShowroomPrice,
+        row.onRoadPrice,
+      ].join("|"),
   );
+  timings.groupingMs = Date.now() - groupingStartedAt;
   const variantAmbiguity = maybeVariantAmbiguity(
-    parsed,
+    parsedWithSelection,
     pricelistRows,
     "vehicle_pricelist",
   );
   if (variantAmbiguity) return variantAmbiguity;
   const summary = summarizeCatalogueRows(pricelistRows);
-  const cities = await Vehicle.distinct(
-    "city",
-    vehicleModelClause(model, make),
-  ).maxTimeMS(2500);
+  const cities = unique(
+    pricelistRows
+      .map((row) => firstMeaningful(row.city, resolved.showingCity))
+      .filter(Boolean),
+  );
   const colorsMap = getFieldMap("vehicle_colors");
   let colorGallery = [];
+  const includeColorPreview = /\b(photo|image|gallery|picture)\b/i.test(
+    parsed.lower || "",
+  );
 
-  try {
-    const colorCollection = mongoose.connection.db.collection(
-      colorsMap.collectionName,
-    );
+  if (includeColorPreview) {
+    try {
+      const colorQueryStartedAt = Date.now();
+      const colorCollection = mongoose.connection.db.collection(
+        colorsMap.collectionName,
+      );
 
-    const colorRows = await colorCollection
-      .find({
-        model: new RegExp(escapeRegex(model), "i"),
-        ...(make ? { brand: new RegExp(escapeRegex(make), "i") } : {}),
-      })
-      .project({
-        brand: 1,
-        model: 1,
-        color_name: 1,
-        hex: 1,
-        image_url: 1,
-        last_updated: 1,
-        scrape_timestamp: 1,
-        source_page: 1,
-      })
-      .limit(40)
-      .maxTimeMS(2500)
-      .toArray();
+      const colorRows = await colorCollection
+        .find({
+          model: new RegExp(escapeRegex(model), "i"),
+          ...(make ? { brand: new RegExp(escapeRegex(make), "i") } : {}),
+        })
+        .project({
+          brand: 1,
+          model: 1,
+          color_name: 1,
+          hex: 1,
+          image_url: 1,
+          last_updated: 1,
+          scrape_timestamp: 1,
+          source_page: 1,
+        })
+        .limit(40)
+        .maxTimeMS(2500)
+        .toArray();
+      timings.colorQueryMs = Date.now() - colorQueryStartedAt;
 
     pushModuleTrace(
       trace,
@@ -2159,33 +2267,35 @@ export const vehiclePricelist = async (parsed, access, trace) => {
       colorRows.length,
     );
 
-    colorGallery = uniqueRows(
-      colorRows
-        .map((item) => ({
-          id: safeId(item),
-          brand: item.brand,
-          make: item.brand,
-          model: item.model,
-          colorName: item.color_name,
-          hex: item.hex,
-          imageUrl: item.image_url,
-          image_url: item.image_url,
-          sourcePage: item.source_page,
-          lastUpdated: formatDateValue(
-            firstMeaningful(item.last_updated, item.scrape_timestamp),
-          ),
-        }))
-        .filter((item) => item.colorName || item.imageUrl),
-      (row) =>
-        [row.brand, row.model, row.colorName, row.imageUrl || row.hex]
-          .join("|")
-          .toLowerCase(),
-    );
-  } catch (error) {
-    pushModuleTrace(trace, `${colorsMap.module} for pricelist image`, 0, {
-      error: error?.message || "Unable to fetch vehicle color images",
-    });
+      colorGallery = uniqueRows(
+        colorRows
+          .map((item) => ({
+            id: safeId(item),
+            brand: item.brand,
+            make: item.brand,
+            model: item.model,
+            colorName: item.color_name,
+            hex: item.hex,
+            imageUrl: item.image_url,
+            image_url: item.image_url,
+            sourcePage: item.source_page,
+            lastUpdated: formatDateValue(
+              firstMeaningful(item.last_updated, item.scrape_timestamp),
+            ),
+          }))
+          .filter((item) => item.colorName || item.imageUrl),
+        (row) =>
+          [row.brand, row.model, row.colorName, row.imageUrl || row.hex]
+            .join("|")
+            .toLowerCase(),
+      );
+    } catch (error) {
+      pushModuleTrace(trace, `${colorsMap.module} for pricelist image`, 0, {
+        error: error?.message || "Unable to fetch vehicle color images",
+      });
+    }
   }
+  timings.totalMs = Date.now() - startedAt;
 
   const heroImage = firstMeaningful(
     ...colorGallery.map((item) => item.imageUrl).filter(Boolean),
@@ -2229,6 +2339,7 @@ export const vehiclePricelist = async (parsed, access, trace) => {
           matchPriority:
             "search_text > variant_normalized > model_normalized > fuzzy",
           query: resolved.phrase,
+          ...(parsed.wantsDebug ? { timings } : {}),
         },
         columns: [
           "Make",
@@ -2262,14 +2373,15 @@ export const vehiclePricelist = async (parsed, access, trace) => {
             query: { make, model, city },
           }),
         ],
+        ...(parsed.wantsDebug ? { timings } : {}),
       }),
     ],
     followUpSuggestions: [
-      "Show similar cars",
-      "Compare with City and Slavia",
-      "Show colors",
-      "Show top variants",
-      "Open full pricelist",
+      `Show colors of ${model}`,
+      `Show features of ${model}`,
+      `Calculate EMI for ${model}`,
+      `Compare ${model} with similar cars`,
+      `Get quotation for ${model}`,
     ],
   };
 };
@@ -2364,6 +2476,8 @@ export const vehiclePriceBreakup = async (parsed, access, trace) => {
 };
 
 export const vehicleColors = async (parsed, access, trace) => {
+  const parsedWithSelection = withForcedModelSelection(parsed);
+
   if (!access.canAccess("vehicles")) {
     noteRestriction(access, "Vehicles", "No vehicle catalog access");
     return {
@@ -2376,22 +2490,22 @@ export const vehicleColors = async (parsed, access, trace) => {
       ],
     };
   }
-  const modelAmbiguity = await findModelAmbiguity(parsed, trace);
+  const modelAmbiguity = await findModelAmbiguity(parsedWithSelection, trace);
   if (modelAmbiguity) return modelAmbiguity;
-  const resolved = await resolveVehicleCatalogRows(parsed, trace, {
+  const resolved = await resolveVehicleCatalogRows(parsedWithSelection, trace, {
     includeCity: false,
     limit: 120,
     moduleName: "Vehicles",
   });
   const catalogRows = resolved.rows.map(vehicleRow);
   const model = firstMeaningful(
-    parsed.entities.model,
+    parsedWithSelection.entities.model,
     catalogRows[0]?.model_normalized,
     catalogRows[0]?.model,
-    parsed.entities.models?.[0],
+    parsedWithSelection.entities.models?.[0],
   );
   const brand = firstMeaningful(
-    parsed.entities.make,
+    parsedWithSelection.entities.make,
     catalogRows[0]?.make,
     catalogRows[0]?.brand,
     catalogRows[0]?.brand_normalized,
@@ -2441,7 +2555,10 @@ export const vehicleColors = async (parsed, access, trace) => {
       .map((item) => ({
         id: safeId(item),
         colorName: item.color_name,
-        hex: item.hex,
+        normalizedColorName: normalizeVariant(item.color_name || ""),
+        hex: String(item.hex || "").trim()
+          ? `#${String(item.hex || "").trim().replace(/^#/, "")}`
+          : "",
         imageUrl: item.image_url,
         image_url: item.image_url,
         model: item.model,
@@ -2454,7 +2571,7 @@ export const vehicleColors = async (parsed, access, trace) => {
       }))
       .filter((item) => item.colorName),
     (row) =>
-      `${row.brand}|${row.model}|${row.colorName}|${row.imageUrl || row.hex}`.toLowerCase(),
+      `${row.brand}|${row.model}|${row.normalizedColorName || row.colorName}`.toLowerCase(),
   );
   const normalizedColorNames = [
     ...new Set(
@@ -2508,40 +2625,86 @@ export const vehicleColors = async (parsed, access, trace) => {
         }),
       ],
       followUpSuggestions: [
-        "Show pricelist",
-        "Show features",
-        "Compare with City and Slavia",
+        `Show ${model} pricelist`,
+        `Show features of ${model}`,
+        `Calculate EMI for ${model}`,
+        `Compare ${model} with similar cars`,
+        `Get quotation for ${model}`,
       ],
     };
   }
   const displayColors = uniqueColors.length ? uniqueColors : fallbackColorRows;
+  const requestedVariant = normalizeVariant(parsed.entities.variant || "");
+  const requestedColor = displayColors.find((item) =>
+    normalizeVariant(parsed.lower || "").includes(
+      normalizeVariant(item.colorName || ""),
+    ),
+  );
+  if (requestedVariant && requestedColor) {
+    return {
+      widgets: [
+        widget("vehicle_colors", `${model} color availability`, {
+          model,
+          brand: uniqueColors[0]?.brand || brand,
+          colorAvailabilityLevel: "model",
+          variantWiseAvailabilityAvailable: false,
+          rows: displayColors,
+          records: displayColors,
+          colors: displayColors,
+          data: {
+            model,
+            brand: uniqueColors[0]?.brand || brand,
+            colorAvailabilityLevel: "model",
+            variantWiseAvailabilityAvailable: false,
+            colors: displayColors,
+          },
+          notices: [
+            `I have model-level color data for ${model}, but variant-wise color availability is not stored. I can include ${requestedColor.colorName} in your quotation or callback request for confirmation.`,
+          ],
+        }),
+      ],
+      followUpSuggestions: [
+        `Get quotation for ${model} in ${requestedColor.colorName}`,
+        `Confirm ${requestedColor.colorName} for your preferred ${model} variant`,
+        `Show ${model} pricelist`,
+        `Show features of ${model}`,
+        `Calculate EMI for ${model}`,
+      ],
+    };
+  }
   return {
     widgets: [
       widget("vehicle_colors", `${model} colors`, {
         model,
         brand: uniqueColors[0]?.brand || brand,
+        colorAvailabilityLevel: "model",
+        variantWiseAvailabilityAvailable: false,
         colors: displayColors,
         colors_normalized: normalizedColorNames,
         variantGroups,
         data: {
           model,
           brand: uniqueColors[0]?.brand || brand,
+          colorAvailabilityLevel: "model",
+          variantWiseAvailabilityAvailable: false,
           total: displayColors.length,
           colors: displayColors,
           colors_normalized: normalizedColorNames,
           variantGroups,
         },
         rows: displayColors,
-        records: variantGroups.length ? variantGroups : displayColors,
+        records: displayColors,
         notices: [
-          "Showing only colors stored in catalog fields. No colors are inferred.",
+          "Showing only model-level colors stored in vehicle_colors. Variant-wise color availability is not stored.",
         ],
       }),
     ],
     followUpSuggestions: [
-      "Show pricelist",
-      "Show features",
-      "Compare with City and Slavia",
+      `Show ${model} pricelist`,
+      `Show features of ${model}`,
+      `Calculate EMI for ${model}`,
+      `Compare ${model} with similar cars`,
+      `Get quotation for ${model}`,
     ],
   };
 };
@@ -2652,23 +2815,46 @@ export const vehicleFeatures = async (parsed, access, trace) => {
         ),
       ],
       followUpSuggestions: [
-        "Show pricelist",
-        "Show variants",
-        "Show similar cars",
+        `Show colors of ${model}`,
+        `Show features of ${model}`,
+        `Calculate EMI for ${model}`,
+        `Compare ${model} with similar cars`,
+        `Get quotation for ${model}`,
       ],
     };
   }
 
-  const contextPayload = await buildVehicleCanvasContext(parsed, trace, {
-    model,
-    make: firstMeaningful(
-      parsed.entities.make,
-      featureRows[0]?.make,
-      featureRows[0]?.brand,
-    ),
-    city: parsed.entities.city,
-    moduleName: "Vehicles context for feature catalogue",
-  });
+  const needsRichContext = Boolean(
+    parsed.entities.variant ||
+      /price|emi|compare|image|color|quotation/i.test(parsed.lower || ""),
+  );
+  const contextPayload = needsRichContext
+    ? await buildVehicleCanvasContext(parsed, trace, {
+        model,
+        make: firstMeaningful(
+          parsed.entities.make,
+          featureRows[0]?.make,
+          featureRows[0]?.brand,
+        ),
+        city: parsed.entities.city,
+        moduleName: "Vehicles context for feature catalogue",
+      })
+    : {
+        model,
+        brand: firstMeaningful(parsed.entities.make, featureRows[0]?.brand, ""),
+        make: firstMeaningful(parsed.entities.make, featureRows[0]?.make, ""),
+        city: parsed.entities.city || "new-delhi",
+        priceRows: [],
+        pricelistRows: [],
+        colors: [],
+        colorGallery: [],
+        heroImage: "",
+        imageUrl: "",
+        vehicleImageUrl: "",
+        pricingSummary: null,
+        priceContextAvailable: false,
+        imageContextAvailable: false,
+      };
 
   const rows = featureRows.map((row) =>
     enrichRowWithVehicleContext(row, contextPayload),
@@ -2723,9 +2909,11 @@ export const vehicleFeatures = async (parsed, access, trace) => {
       }),
     ],
     followUpSuggestions: [
-      "Show pricelist",
-      "Compare variants",
-      "Show similar cars",
+      `Show colors of ${model}`,
+      `Show features of ${model}`,
+      `Calculate EMI for ${model}`,
+      `Compare ${model} with similar cars`,
+      `Get quotation for ${model}`,
     ],
   };
 };
@@ -2801,16 +2989,37 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
     };
   });
 
-  const contextPayload = await buildVehicleCanvasContext(parsed, trace, {
-    model,
-    make: firstMeaningful(
-      parsed.entities.make,
-      baseEvidenceRows[0]?.make,
-      baseEvidenceRows[0]?.brand,
-    ),
-    city: parsed.entities.city,
-    moduleName: "Vehicles context for feature answer",
-  });
+  const needsRichContext = Boolean(
+    parsed.entities.variant ||
+      /price|emi|compare|quotation|image|color/i.test(parsed.lower || ""),
+  );
+  const contextPayload = needsRichContext
+    ? await buildVehicleCanvasContext(parsed, trace, {
+        model,
+        make: firstMeaningful(
+          parsed.entities.make,
+          baseEvidenceRows[0]?.make,
+          baseEvidenceRows[0]?.brand,
+        ),
+        city: parsed.entities.city,
+        moduleName: "Vehicles context for feature answer",
+      })
+    : {
+        model,
+        brand: firstMeaningful(parsed.entities.make, baseEvidenceRows[0]?.brand, ""),
+        make: firstMeaningful(parsed.entities.make, baseEvidenceRows[0]?.make, ""),
+        city: parsed.entities.city || "new-delhi",
+        priceRows: [],
+        pricelistRows: [],
+        colors: [],
+        colorGallery: [],
+        heroImage: "",
+        imageUrl: "",
+        vehicleImageUrl: "",
+        pricingSummary: null,
+        priceContextAvailable: false,
+        imageContextAvailable: false,
+      };
 
   const evidenceRows = baseEvidenceRows.map((row) =>
     enrichRowWithVehicleContext(row, contextPayload),
@@ -2846,6 +3055,12 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
         variantQuery: parsed.entities.variant,
         feature,
         answer,
+        yesCount,
+        noCount,
+        notFoundCount,
+        evidenceRows,
+        rows: evidenceRows,
+        records: evidenceRows,
 
         priceRows: contextPayload.priceRows,
         pricelistRows: contextPayload.pricelistRows,
@@ -2862,8 +3077,6 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
           noCount,
           notFoundCount,
         },
-
-        evidenceRows,
 
         data: {
           ...contextPayload,
@@ -2941,9 +3154,11 @@ export const vehicleFeatureAvailability = async (parsed, access, trace) => {
       }),
     ],
     followUpSuggestions: [
-      "Show pricelist",
-      "Compare variants",
-      "Show similar cars",
+      `Show colors of ${model}`,
+      `Show features of ${model}`,
+      `Calculate EMI for ${model}`,
+      `Compare ${model} with similar cars`,
+      `Get quotation for ${model}`,
     ],
   };
 };
@@ -2964,18 +3179,95 @@ export const vehicleFeatureDiscovery = async (parsed, access, trace) => {
   const feature =
     parsed.entities.feature ||
     (/6\s*airbags/i.test(parsed.lower) ? "6 airbags" : "feature");
+  const isVariantColorQuestion =
+    /\b(variants?|variant)\b.*\b(colou?r)\b/i.test(parsed.lower || "") ||
+    /\b(colou?r)\b.*\b(variants?|variant)\b/i.test(parsed.lower || "");
+  if (isVariantColorQuestion && parsed.entities.model) {
+    const model = parsed.entities.model;
+    return {
+      widgets: [
+        widget(
+          "vehicle_feature_discovery",
+          `Variant-wise color availability for ${model}`,
+          {
+            model,
+            feature,
+            rows: [],
+            records: [],
+            data: {
+              model,
+              feature,
+              rows: [],
+              records: [],
+            },
+            notices: [
+              `Variant-wise color mapping is limited in current records for ${model}.`,
+              `I can show ${model} colors now and then open pricelist/feature explorer for exact variant decision.`,
+            ],
+          },
+        ),
+      ],
+      followUpSuggestions: [
+        `Show colors of ${model}`,
+        `Show ${model} pricelist`,
+        `Compare ${model} variants`,
+        `Get quotation for ${model}`,
+      ],
+    };
+  }
   const featureQuery = parsed.entities.model
     ? featureModelQuery(parsed.entities.model, parsed.entities.make)
     : {};
   const docs = await findLean(VehicleFeature, featureQuery, {
+    select: {
+      brand: 1,
+      model: 1,
+      variant: 1,
+      body_type_bucket: 1,
+      features: 1,
+    },
     sort: { model: 1, variant: 1 },
-    limit: 500,
+    limit: parsed.entities.model ? 220 : 300,
+    maxTimeMS: 3000,
   });
   pushModuleTrace(trace, "Vehicle Features", docs.length, { feature });
+
+  const vehicleAnd = [cityClause(parsed.entities.city || "new-delhi")].filter(
+    Boolean,
+  );
+  if (parsed.entities.model) {
+    vehicleAnd.push(vehicleModelClause(parsed.entities.model, parsed.entities.make));
+  }
   const catalogRows = await findLean(
     Vehicle,
-    { $and: [cityClause(parsed.entities.city || "new-delhi")].filter(Boolean) },
-    { sort: { ex_showroom: 1 }, limit: 900 },
+    { $and: vehicleAnd },
+    {
+      select: {
+        brand: 1,
+        make: 1,
+        model: 1,
+        model_normalized: 1,
+        variant: 1,
+        variant_normalized: 1,
+        city: 1,
+        fuel: 1,
+        fuel_type: 1,
+        transmission: 1,
+        ex_showroom: 1,
+        exShowroom: 1,
+        onRoadPrice: 1,
+        on_road_price_cardekho: 1,
+        total_on_road_with_accessories: 1,
+        status: 1,
+        model_status: 1,
+        is_discontinued: 1,
+        bodyType: 1,
+        segment: 1,
+      },
+      sort: { ex_showroom: 1 },
+      limit: parsed.entities.model ? 180 : 300,
+      maxTimeMS: 3000,
+    },
   );
   pushModuleTrace(trace, "Vehicles", catalogRows.length, {
     city: cityFromParsed(parsed),
@@ -3030,6 +3322,12 @@ export const vehicleFeatureDiscovery = async (parsed, access, trace) => {
     no: rows.filter((row) => row.answer === "No"),
     notFound: rows.filter((row) => row.answer === "Not found"),
   };
+  const model =
+    parsed.entities?.model ||
+    parsed.entities?.models?.[0] ||
+    rows[0]?.model ||
+    "";
+  const modelLabel = model || "this model";
   return {
     widgets: [
       widget("vehicle_feature_discovery", `${feature} availability`, {
@@ -3047,9 +3345,11 @@ export const vehicleFeatureDiscovery = async (parsed, access, trace) => {
       }),
     ],
     followUpSuggestions: [
-      "Show pricelist",
-      "Compare matching variants",
-      "Show similar cars",
+      `Show colors of ${modelLabel}`,
+      `Show features of ${modelLabel}`,
+      `Calculate EMI for ${modelLabel}`,
+      `Compare ${modelLabel} with similar cars`,
+      `Get quotation for ${modelLabel}`,
     ],
   };
 };
@@ -3057,6 +3357,13 @@ export const vehicleFeatureDiscovery = async (parsed, access, trace) => {
 export const vehicleColorSearch = async (parsed, access, trace) => {
   const color = parsed.entities.color;
   if (parsed.entities.model) return vehicleColors(parsed, access, trace);
+  const model =
+    parsed.entities?.model ||
+    parsed.entities?.models?.[0] ||
+    parsed.entities?.makeModel ||
+    parsed.entities?.vehicleModel ||
+    "";
+  const modelLabel = model || "this model";
   const colorsMap = getFieldMap("vehicle_colors");
   const colorCollection = mongoose.connection.db.collection(
     colorsMap.collectionName,
@@ -3111,9 +3418,11 @@ export const vehicleColorSearch = async (parsed, access, trace) => {
       }),
     ],
     followUpSuggestions: [
-      "Show pricelist",
-      "Compare models",
-      "Show similar cars",
+      `Show colors of ${modelLabel}`,
+      `Show features of ${modelLabel}`,
+      `Calculate EMI for ${modelLabel}`,
+      `Compare ${modelLabel} with similar cars`,
+      `Get quotation for ${modelLabel}`,
     ],
   };
 };
@@ -3378,8 +3687,44 @@ const recommendationRows = async (
     query.$and.push(makeOrBrandClause(parsed.entities.make));
 
   const raw = await findLean(Vehicle, query, {
+    select: {
+      make: 1,
+      brand: 1,
+      model: 1,
+      variant: 1,
+      brand_normalized: 1,
+      model_normalized: 1,
+      variant_normalized: 1,
+      search_text: 1,
+      variant_short: 1,
+      fuel: 1,
+      fuel_type: 1,
+      transmission: 1,
+      transmission_type: 1,
+      ex_showroom: 1,
+      exShowroom: 1,
+      ex_showroom_price_cardekho: 1,
+      onRoadPrice: 1,
+      on_road_price_cardekho: 1,
+      total_on_road_with_accessories: 1,
+      city: 1,
+      bodyType: 1,
+      body_type_bucket: 1,
+      segment: 1,
+      vehicleType: 1,
+      status: 1,
+      model_status: 1,
+      is_discontinued: 1,
+      discontinued: 1,
+      isDiscontinued: 1,
+      year: 1,
+      LastSeenDate: 1,
+      LastPriceChangeDate: 1,
+      updatedAt: 1,
+    },
     sort: { ex_showroom: 1 },
-    limit: 1600,
+    limit: 500,
+    maxTimeMS: 3000,
   });
 
   const catalogRows = uniqueRows(
@@ -3394,15 +3739,6 @@ const recommendationRows = async (
     city: cityFromParsed(parsed),
   });
 
-  const featureDocs = await findLean(VehicleFeature, {}, { limit: 2500 });
-  pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
-
-  const featureLookup =
-    typeof buildFeatureLookupMaps === "function"
-      ? buildFeatureLookupMaps(featureDocs)
-      : null;
-  const featureMap = joinFeatureDocs(featureDocs);
-
   const featureNeedles = [
     /^(automatic|manual|amt|at|mt|cvt|dct|ivt|transmission)$/i.test(
       parsed.entities.feature || "",
@@ -3416,7 +3752,37 @@ const recommendationRows = async (
     /ventilated/i.test(parsed.lower) ? "ventilated seats" : "",
   ].filter(Boolean);
 
-  return catalogRows
+  const needsDeepFeatureJoin = Boolean(
+    featureNeedles.length ||
+      safetyOnly ||
+      specMode ||
+      /feature|safety|safe|family|parents/i.test(useCase || ""),
+  );
+
+  const featureDocs = needsDeepFeatureJoin
+    ? await findLean(VehicleFeature, {}, {
+        limit: 300,
+        maxTimeMS: 3000,
+      })
+    : [];
+  pushModuleTrace(trace, "Vehicle Features", featureDocs.length);
+
+  const featureLookup =
+    featureDocs.length && typeof buildFeatureLookupMaps === "function"
+      ? buildFeatureLookupMaps(featureDocs)
+      : null;
+  const featureMap = featureDocs.length ? joinFeatureDocs(featureDocs) : new Map();
+
+  const exactModelRequested = Boolean(
+    parsed.entities?.model || parsed.entities?.models?.[0],
+  );
+  const maxVariantRows = exactModelRequested ? 240 : 80;
+  const candidateRows = catalogRows.slice(
+    0,
+    exactModelRequested ? 240 : 120,
+  );
+
+  return candidateRows
     .map((row) => {
       const featureDoc =
         featureMap.get(catalogFeatureKey(row)) ||
@@ -3447,13 +3813,16 @@ const recommendationRows = async (
       const keyFeatures = [];
 
       let score = matchedReasons.length * 20;
+      let allFeatureRows = [];
+      let yesFeatureCount = 0;
 
-      const allFeatureRows = flattenFeatures(featureDoc?.features || {});
-      const yesFeatureCount = allFeatureRows.filter((item) =>
-        yesishFeature(item.value),
-      ).length;
-
-      score += Math.min(yesFeatureCount, 120) * 0.8;
+      if (needsDeepFeatureJoin && featureDoc?.features) {
+        allFeatureRows = flattenFeatures(featureDoc.features);
+        yesFeatureCount = allFeatureRows.filter((item) =>
+          yesishFeature(item.value),
+        ).length;
+        score += Math.min(yesFeatureCount, 120) * 0.8;
+      }
 
       for (const feature of featureNeedles) {
         const match = featureValueForAny(featureDoc?.features, feature);
@@ -3473,7 +3842,17 @@ const recommendationRows = async (
         }
       }
 
-      const safetySummary = buildSafetySummaryFromFeatureDoc(featureDoc);
+      const safetySummary =
+        needsDeepFeatureJoin || safetyOnly
+          ? buildSafetySummaryFromFeatureDoc(featureDoc)
+          : {
+              adultNcap: null,
+              childNcap: null,
+              maxAirbags: null,
+              safetyFeatureCount: 0,
+              safetyHighlights: [],
+              score: 0,
+            };
 
       if (safetyOnly) {
         if (
@@ -3559,10 +3938,541 @@ const recommendationRows = async (
         firstNumber(a.onRoad, a.exShowroom) -
         firstNumber(b.onRoad, b.exShowroom)
       );
+    })
+    .slice(0, maxVariantRows);
+};
+
+const BROAD_RECOMMENDATION_INTENTS = new Set([
+  "vehicle_budget_search",
+  "vehicle_body_type_search",
+  "vehicle_use_case_search",
+  "vehicle_brand_search",
+  "vehicle_safety_search",
+  "vehicle_must_have_feature_builder",
+  "vehicle_monthly_budget_planner",
+  "vehicle_tco_analysis",
+  "vehicle_resale_value_analysis",
+  "vehicle_lifestyle_fit_score",
+  "vehicle_senior_friendly_recommendation",
+  "vehicle_space_practicality_advisor",
+  "vehicle_performance_advisor",
+  "vehicle_spec_ranking",
+  "vehicle_fuel_decision_advisor",
+]);
+
+const isBroadRecommendationQuery = (parsed = {}) =>
+  BROAD_RECOMMENDATION_INTENTS.has(parsed.intent) ||
+  /\b(show all|under\s*\d+|budget|suvs?|compact suv|automatic cars?|safest)\b/i.test(
+    parsed.message || parsed.lower || "",
+  );
+
+const bodyBucket = (value = "") => {
+  const text = toWords(value);
+  if (!text) return "unknown";
+  if (/\bcompact suv|compactsuv\b/.test(text)) return "compact suv";
+  if (/\bsuv|crossover\b/.test(text)) return "suv";
+  if (/\bsedan\b/.test(text)) return "sedan";
+  if (/\bhatchback\b/.test(text)) return "hatchback";
+  if (/\bmpv|muv|van\b/.test(text)) return "mpv";
+  return "unknown";
+};
+
+const requestedFeaturesFromParsed = (parsed = {}) => {
+  const lower = String(parsed.lower || parsed.message || "").toLowerCase();
+  const seed = [
+    parsed.entities?.feature,
+    parsed.entities?.features,
+    /automatic/.test(lower) ? "automatic" : "",
+    /sunroof/.test(lower) ? "sunroof" : "",
+    /panoramic sunroof/.test(lower) ? "panoramic sunroof" : "",
+    /\\b6\\s*airbags?\\b/.test(lower) ? "6 airbags" : "",
+    /adas/.test(lower) ? "adas" : "",
+    /360/.test(lower) && /camera/.test(lower) ? "360 camera" : "",
+    /ventilat/.test(lower) ? "ventilated seats" : "",
+    /rear camera/.test(lower) ? "rear camera" : "",
+    /tpms/.test(lower) ? "tpms" : "",
+    /isofix/.test(lower) ? "isofix" : "",
+    /wireless charg/.test(lower) ? "wireless charging" : "",
+  ];
+  return unique(
+    seed
+      .flatMap((item) => (Array.isArray(item) ? item : [item]))
+      .map((item) => String(item || "").toLowerCase().trim())
+      .filter(Boolean),
+  );
+};
+
+const inferPriceForBudget = (row = {}, parsed = {}) => {
+  const basis = /\bex\\s*-?\\s*showroom\b/i.test(parsed.lower || "")
+    ? "ex_showroom"
+    : "on_road";
+  const price =
+    basis === "ex_showroom"
+      ? firstNumber(row.exShowroomPrice, row.ex_showroom)
+      : firstNumber(row.canonicalOnRoadPrice, row.onRoadPrice, row.price);
+  return { basis, price };
+};
+
+const cityQueryValues = (city = "new-delhi") => {
+  const normalized = normalizeCitySlug(city || "new-delhi") || "new-delhi";
+  return unique(
+    [
+      normalized,
+      normalized.replace(/-/g, " "),
+      titleCase(normalized.replace(/-/g, " ")),
+      normalized.toLowerCase(),
+      normalized.toUpperCase(),
+    ].filter(Boolean),
+  );
+};
+
+const buildPriceBreakupLines = (row = {}) => {
+  if (Array.isArray(row.priceBreakupLines) && row.priceBreakupLines.length) {
+    return row.priceBreakupLines;
+  }
+  const breakup = resolveVehiclePriceBreakup(row);
+  return breakup.priceBreakupLines || [];
+};
+
+const buildBroadRecommendationData = async (parsed, trace, { safetyMode = false } = {}) => {
+  const timings = {
+    vehicleQueryMs: 0,
+    groupingMs: 0,
+    featureQueryMs: 0,
+    colorQueryMs: 0,
+    rivalSuggestionMs: 0,
+    scoringMs: 0,
+    totalMs: 0,
+  };
+  const startedAt = Date.now();
+
+  const requestedCity = normalizeCitySlug(parsed.entities.city || "new-delhi") || "new-delhi";
+  const requestedCityValues = cityQueryValues(requestedCity);
+  const baseAnd = [
+    { is_discontinued: { $ne: true } },
+    { city: { $in: requestedCityValues } },
+  ];
+  if (parsed.entities.make) baseAnd.push(makeOrBrandClause(parsed.entities.make));
+
+  const vehicleSelect = {
+    brand: 1,
+    make: 1,
+    model: 1,
+    model_normalized: 1,
+    variant: 1,
+    variant_normalized: 1,
+    fuel_type: 1,
+    fuel: 1,
+    transmission: 1,
+    ex_showroom: 1,
+    exShowroom: 1,
+    onRoadPrice: 1,
+    total_on_road_with_accessories: 1,
+    on_road_price_cardekho: 1,
+    orp_without_accessories: 1,
+    city: 1,
+    status: 1,
+    model_status: 1,
+    is_discontinued: 1,
+    optional_list: 1,
+    other_list: 1,
+    rto: 1,
+    insurance: 1,
+    bodyType: 1,
+    body_type_bucket: 1,
+    segment: 1,
+  };
+
+  const vehicleQueryStartedAt = Date.now();
+  let rawRows = await findLean(
+    Vehicle,
+    { $and: baseAnd.filter(Boolean) },
+    {
+      select: vehicleSelect,
+      limit: 220,
+      maxTimeMS: 3000,
+    },
+  );
+  timings.vehicleQueryMs = Date.now() - vehicleQueryStartedAt;
+
+  if (!rawRows.length && requestedCity !== "new-delhi") {
+    const fallbackAnd = [...baseAnd];
+    const cityIndex = fallbackAnd.findIndex((item) => item?.city);
+    if (cityIndex >= 0) {
+      fallbackAnd[cityIndex] = {
+        city: { $in: cityQueryValues("new-delhi") },
+      };
+    }
+    const fallbackStartedAt = Date.now();
+    rawRows = await findLean(
+      Vehicle,
+      { $and: fallbackAnd.filter(Boolean) },
+      {
+        select: vehicleSelect,
+        limit: 220,
+        maxTimeMS: 3000,
+      },
+    );
+    timings.vehicleQueryMs += Date.now() - fallbackStartedAt;
+  }
+
+  const groupingStartedAt = Date.now();
+  const compactRows = applyCatalogueFilters(rawRows, parsed)
+    .map(vehicleRow)
+    .filter((row) => !isDiscontinuedVehicleRow(row))
+    .filter((row) => {
+      if (!parsed.entities.budgetMax) return true;
+      const max = Number(parsed.entities.budgetMax) || 0;
+      if (!max) return true;
+      const { basis, price } = inferPriceForBudget(row, parsed);
+      if (!price) return true;
+      return price <= max || (basis === "on_road" && firstNumber(row.exShowroomPrice) <= max);
+    })
+    .filter((row) => {
+      const transmissionNeedle = String(parsed.entities.transmission || "").toLowerCase();
+      if (!transmissionNeedle) return true;
+      return transmissionMatches(row, transmissionNeedle);
     });
+
+  const grouped = new Map();
+  for (const row of compactRows) {
+    const modelKey = normalizeVariant(firstMeaningful(row.model_normalized, row.model));
+    if (!modelKey) continue;
+    if (!grouped.has(modelKey)) {
+      grouped.set(modelKey, {
+        key: modelKey,
+        brand: firstMeaningful(row.brand, row.make),
+        model: firstMeaningful(row.model_normalized, row.model),
+        variants: [],
+      });
+    }
+    grouped.get(modelKey).variants.push(row);
+  }
+  const groupedModels = [...grouped.values()].slice(0, 40);
+  timings.groupingMs = Date.now() - groupingStartedAt;
+
+  const featureStartedAt = Date.now();
+  const candidateModelNames = groupedModels
+    .map((item) => item.model)
+    .filter(Boolean)
+    .slice(0, 24);
+  const normalizedModelNames = candidateModelNames.map((name) => normalizeVariant(name)).filter(Boolean);
+  const modelSlugs = normalizedModelNames.map((item) => item.replace(/\s+/g, "-"));
+  const wantsAutomatic =
+    parsed.entities.transmission === "automatic" ||
+    /\bautomatic|amt|cvt|dct|ivt\b/i.test(parsed.lower || "");
+  const requestedFeatures = requestedFeaturesFromParsed(parsed);
+  const nonTransmissionRequestedFeatures = requestedFeatures.filter(
+    (feature) => feature !== "automatic",
+  );
+  const automaticSuvBudgetQuickPath = Boolean(
+    parsed.intent === "vehicle_budget_search" &&
+      wantsAutomatic &&
+      /\bsuv|compact suv\b/i.test(parsed.lower || ""),
+  );
+
+  const needsFeatureDocs = Boolean(
+    !automaticSuvBudgetQuickPath &&
+      (safetyMode ||
+        [
+          "vehicle_must_have_feature_builder",
+          "vehicle_senior_friendly_recommendation",
+          "vehicle_space_practicality_advisor",
+          "vehicle_performance_advisor",
+          "vehicle_spec_ranking",
+          "vehicle_tco_analysis",
+          "vehicle_lifestyle_fit_score",
+        ].includes(parsed.intent) ||
+        nonTransmissionRequestedFeatures.length > 0),
+  );
+
+  const featureDocs = needsFeatureDocs && candidateModelNames.length
+    ? (await Promise.race([
+        findLean(
+          VehicleFeature,
+          {
+            $or: [
+              { model_normalized: { $in: normalizedModelNames } },
+              { model_slug: { $in: modelSlugs } },
+              { model: { $in: candidateModelNames } },
+            ],
+          },
+          {
+            select: {
+              brand: 1,
+              model: 1,
+              variant: 1,
+              model_normalized: 1,
+              model_slug: 1,
+              body_type_bucket: 1,
+              seating_capacity: 1,
+              features: 1,
+            },
+            limit: 80,
+            maxTimeMS: 2000,
+          },
+        ),
+        new Promise((resolve) => setTimeout(() => resolve([]), 2000)),
+      ]))
+    : [];
+  timings.featureQueryMs = Date.now() - featureStartedAt;
+
+  const bodyByModel = new Map();
+  const profileByModel = new Map();
+  for (const doc of featureDocs.slice(0, 300)) {
+    const key = normalizeVariant(doc.model_normalized || doc.model);
+    if (!key) continue;
+    if (!bodyByModel.has(key)) {
+      bodyByModel.set(
+        key,
+        firstMeaningful(doc.body_type_bucket, doc.segment, doc.category, ""),
+      );
+    }
+    if (!profileByModel.has(key)) {
+      profileByModel.set(key, buildFeatureProfile(doc));
+    }
+  }
+
+  const scoringStartedAt = Date.now();
+  const requestedBody = /\bcompact suv\b/i.test(parsed.lower || "")
+    ? "compact suv"
+    : parsed.entities.bodyType || "";
+  const requestedBodyBucket = bodyBucket(requestedBody);
+  const modelCards = groupedModels
+    .map((group) => {
+      const variants = uniqueRows(group.variants, (item) =>
+        [
+          item.model,
+          item.variant,
+          item.fuel,
+          item.transmission,
+          item.exShowroomPrice,
+          item.onRoadPrice,
+        ]
+          .join("|")
+          .toLowerCase(),
+      )
+        .sort(
+          (a, b) =>
+            firstNumber(a.onRoadPrice, a.exShowroomPrice) -
+            firstNumber(b.onRoadPrice, b.exShowroomPrice),
+        )
+        .slice(0, 80);
+
+      if (!variants.length) return null;
+
+      const cheapestVariant = variants[0];
+      const automaticVariant = variants.find((variant) =>
+        transmissionMatches(variant, "automatic"),
+      );
+
+      const representativeVariants = uniqueRows(
+        [
+          cheapestVariant,
+          wantsAutomatic ? automaticVariant : null,
+          variants[variants.length - 1],
+        ].filter(Boolean),
+        (variant) => [variant.variant, variant.fuel, variant.transmission].join("|").toLowerCase(),
+      ).slice(0, 3);
+
+      const fuelOptions = unique(
+        variants.map((variant) => firstMeaningful(variant.fuel, variant.fuel_type)),
+      ).slice(0, 6);
+      const transmissionOptions = unique(
+        variants.map((variant) => variant.transmission),
+      ).slice(0, 6);
+
+      const bodyText = firstMeaningful(
+        bodyByModel.get(group.key),
+        variants[0]?.bodyType,
+        variants[0]?.body_type_bucket,
+        variants[0]?.segment,
+      );
+      const modelBodyBucket = bodyBucket(bodyText);
+      if (requestedBodyBucket === "compact suv" || requestedBodyBucket === "suv") {
+        if (["sedan", "hatchback", "mpv"].includes(modelBodyBucket)) return null;
+      }
+
+      if (["sedan", "hatchback", "mpv"].includes(requestedBodyBucket)) {
+        if (modelBodyBucket !== requestedBodyBucket) return null;
+      }
+
+      const primaryVariant = representativeVariants[0] || cheapestVariant;
+      const modelProfile = profileByModel.get(group.key) || {
+        model: group.model,
+        variant: primaryVariant?.variant,
+        bodyType: bodyText || primaryVariant?.bodyType || "",
+        fuelType: firstMeaningful(primaryVariant?.fuel, primaryVariant?.fuel_type),
+        transmissionType: primaryVariant?.transmission || "",
+        isAutomatic: transmissionMatches(primaryVariant, "automatic"),
+        rawFeatureMap: {},
+        missingData: ["feature_profile"],
+      };
+
+      let score = 50;
+      const reasonTags = [];
+      const reasons = [];
+      const missingData = [];
+      const penalties = [];
+      let scoringSummary = { score: 0, reasons: [], missingData: [], penalties: [] };
+      const { basis: priceBasisType, price: representativePrice } = inferPriceForBudget(
+        primaryVariant,
+        parsed,
+      );
+
+      if (requestedBodyBucket === "compact suv") {
+        if (modelBodyBucket === "compact suv") {
+          score += 25;
+          reasonTags.push("compact-suv match");
+        } else if (modelBodyBucket === "suv") {
+          score += 15;
+          reasonTags.push("suv match");
+        }
+      }
+
+      if (wantsAutomatic) {
+        if (automaticVariant) {
+          score += 20;
+          reasonTags.push("automatic available");
+        } else {
+          score -= 12;
+        }
+      }
+
+      if (parsed.entities.budgetMax && representativePrice) {
+        if (representativePrice <= parsed.entities.budgetMax) {
+          score += 12;
+          reasonTags.push("within budget");
+        } else {
+          score -= 25;
+        }
+      }
+
+      if (parsed.intent === "vehicle_safety_search" || safetyMode) {
+        scoringSummary = scoreSafety(modelProfile);
+      } else if (parsed.intent === "vehicle_must_have_feature_builder") {
+        scoringSummary = scoreFeatureMatch(modelProfile, requestedFeatures);
+      } else if (parsed.intent === "vehicle_senior_friendly_recommendation") {
+        scoringSummary = scoreSeniorFriendly(modelProfile);
+      } else if (parsed.intent === "vehicle_space_practicality_advisor") {
+        scoringSummary = scoreSpace(modelProfile);
+      } else if (
+        parsed.intent === "vehicle_performance_advisor" ||
+        parsed.intent === "vehicle_spec_ranking"
+      ) {
+        scoringSummary = scorePerformance(modelProfile, representativePrice);
+      } else if (parsed.intent === "vehicle_tco_analysis") {
+        scoringSummary = scoreTcoEstimate(primaryVariant, modelProfile);
+      } else if (parsed.intent === "vehicle_lifestyle_fit_score") {
+        const family = scoreFamily(modelProfile);
+        const senior = scoreSeniorFriendly(modelProfile);
+        scoringSummary = {
+          score: Math.round((family.score + senior.score) / 2),
+          reasons: unique([...family.reasons.slice(0, 2), ...senior.reasons.slice(0, 2)]),
+          missingData: unique([...family.missingData, ...senior.missingData]),
+          penalties: unique([...family.penalties, ...senior.penalties]),
+        };
+      } else if (wantsAutomatic) {
+        scoringSummary = scoreAutomaticValue(primaryVariant, modelProfile, parsed.entities.budgetMax || 0);
+      } else {
+        const family = scoreFamily(modelProfile);
+        const perf = scorePerformance(modelProfile, representativePrice);
+        scoringSummary = {
+          score: Math.round(family.score * 0.65 + perf.score * 0.35),
+          reasons: unique([...family.reasons.slice(0, 2), ...perf.reasons.slice(0, 2)]),
+          missingData: unique([...family.missingData, ...perf.missingData]),
+          penalties: unique([...family.penalties, ...perf.penalties]),
+        };
+      }
+
+      score += firstNumber(scoringSummary.score);
+      reasons.push(...(scoringSummary.reasons || []));
+      missingData.push(...(scoringSummary.missingData || []));
+      penalties.push(...(scoringSummary.penalties || []));
+      reasonTags.push(...(scoringSummary.reasons || []).slice(0, 3));
+      if (!reasons.length) {
+        reasons.push(
+          safetyMode || parsed.intent === "vehicle_safety_search"
+            ? "Matched safety-focused shortlist criteria from stored catalogue data."
+            : "Matched your shortlist criteria from stored catalogue data.",
+        );
+      }
+      if (!reasonTags.length) {
+        reasonTags.push(
+          safetyMode || parsed.intent === "vehicle_safety_search"
+            ? "safety-focused shortlist"
+            : "criteria match",
+        );
+      }
+
+      return {
+        id: `${normalizeVariant(group.brand)}-${group.key}`.replace(/\s+/g, "-"),
+        brand: group.brand,
+        make: group.brand,
+        model: group.model,
+        representativeVariant: representativeVariants[0]?.variant || cheapestVariant.variant,
+        price: representativePrice || null,
+        canonicalOnRoadPrice: firstNumber(
+          primaryVariant.canonicalOnRoadPrice,
+          primaryVariant.onRoadPrice,
+        ),
+        priceBasis: priceBasisType,
+        priceBreakupLines: buildPriceBreakupLines(primaryVariant),
+        priceIntegrity:
+          primaryVariant.priceIntegrity || {
+            isValid: false,
+            difference: 0,
+            warnings: [],
+          },
+        bodyType: bodyText || "Unknown",
+        fuelOptions,
+        transmissionOptions,
+        reasonTags: unique(reasonTags),
+        reasons: unique(reasons),
+        missingData: unique(missingData),
+        penalties: unique(penalties),
+        scoringSummary,
+        score,
+        variantsCount: variants.length,
+        variantCount: variants.length,
+        variants: variants.slice(0, 5),
+        cheapestVariant,
+        bestVariant: representativeVariants[0] || cheapestVariant,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (firstNumber(b.score) !== firstNumber(a.score))
+        return firstNumber(b.score) - firstNumber(a.score);
+      return firstNumber(a.price) - firstNumber(b.price);
+    })
+    .slice(0, 12);
+
+  const variantRows = modelCards
+    .flatMap((card) => card.variants || [])
+    .slice(0, 50);
+  timings.scoringMs = Date.now() - scoringStartedAt;
+  timings.totalMs = Date.now() - startedAt;
+
+  return {
+    modelCards,
+    variantRows,
+    timings,
+    scoringSummary: {
+      methodology:
+        "deterministic catalogue scoring using price + normalized feature profile",
+      processedModels: groupedModels.length,
+      processedFeatureDocs: featureDocs.length,
+      requestedFeatures,
+      priceBasis: /\bex\\s*-?\\s*showroom\b/i.test(parsed.lower || "")
+        ? "ex_showroom"
+        : "on_road",
+    },
+  };
 };
 
 export const vehicleRecommendationSearch = async (parsed, access, trace) => {
+  const startedAt = Date.now();
   if (!access.canAccess("vehicles")) {
     noteRestriction(access, "Vehicles", "No vehicle catalog access");
     return {
@@ -3581,21 +4491,81 @@ export const vehicleRecommendationSearch = async (parsed, access, trace) => {
       parsed.lower,
     )?.[0] || parsed.intent;
 
-  const safetyMode = parsed.intent === "vehicle_safety_expert";
+  const safetyMode =
+    parsed.intent === "vehicle_safety_expert" ||
+    parsed.intent === "vehicle_safety_search";
+  const broadMode = isBroadRecommendationQuery(parsed);
 
-  const variantRows = await recommendationRows(parsed, trace, {
-    safetyOnly: safetyMode,
-    specMode:
-      parsed.intent === "vehicle_dimension_space_search"
-        ? "boot|ground|wheelbase|fuel tank|seating|capacity|space|dimension"
-        : parsed.intent === "vehicle_performance_mileage_search"
-          ? "mileage|power|torque|engine|displacement|turbo|bhp|ps|nm"
-          : "",
-    useCase: parsed.intent === "vehicle_use_case_recommendation" ? useCase : "",
-  });
+  let variantRows = [];
+  let modelCards = [];
+  let timings = {
+    vehicleQueryMs: 0,
+    featureQueryMs: 0,
+    colorQueryMs: 0,
+    rivalSuggestionMs: 0,
+    groupingMs: 0,
+    scoringMs: 0,
+    totalMs: 0,
+  };
+  let scoringSummary = {};
 
-  const modelCards = aggregateModelCards(variantRows, { safetyMode });
+  try {
+    if (broadMode) {
+      const broad = await buildBroadRecommendationData(parsed, trace, {
+        safetyMode,
+      });
+      variantRows = broad.variantRows || [];
+      modelCards = broad.modelCards || [];
+      timings = broad.timings || null;
+      scoringSummary = broad.scoringSummary || {};
+    } else {
+      const queryStartedAt = Date.now();
+      variantRows = await recommendationRows(parsed, trace, {
+        safetyOnly: safetyMode,
+        specMode:
+          parsed.intent === "vehicle_dimension_space_search"
+            ? "boot|ground|wheelbase|fuel tank|seating|capacity|space|dimension"
+            : parsed.intent === "vehicle_performance_mileage_search"
+              ? "mileage|power|torque|engine|displacement|turbo|bhp|ps|nm"
+              : "",
+        useCase:
+          parsed.intent === "vehicle_use_case_recommendation" ? useCase : "",
+      });
+      timings.vehicleQueryMs = Date.now() - queryStartedAt;
+      const groupingStartedAt = Date.now();
+      modelCards = aggregateModelCards(variantRows, { safetyMode });
+      timings.groupingMs = Date.now() - groupingStartedAt;
+      scoringSummary = {
+        methodology: "deterministic model aggregation from filtered variants",
+        processedVariants: variantRows.length,
+      };
+    }
+  } catch (error) {
+    return {
+      widgets: [
+        widget("unavailable_notice", "Recommendation search timed out", {
+          data: {
+            message:
+              "I found too many matching vehicles. Please narrow by budget, fuel, or transmission.",
+            checked: ["Vehicles", "Vehicle Features"],
+            error: error?.message || "Query timed out",
+          },
+          notices: [
+            "I found too many matching vehicles. Please narrow by budget, fuel, or transmission.",
+          ],
+        }),
+      ],
+    };
+  }
+  timings.totalMs = Date.now() - startedAt;
+
   const displayedModels = modelCards.slice(0, 12);
+  const allMissingData = unique(
+    displayedModels.flatMap((item) => asArray(item.missingData)),
+  );
+  const priceBasisType = /\bex\\s*-?\\s*showroom\b/i.test(parsed.lower || "")
+    ? "ex_showroom"
+    : "on_road";
 
   const widgetType = safetyMode
     ? "vehicle_safety_results"
@@ -3634,18 +4604,60 @@ export const vehicleRecommendationSearch = async (parsed, access, trace) => {
         totalMatchedModels: modelCards.length,
         displayedModels: displayedModels.length,
 
+        data: {
+          rows: displayedModels,
+          records: displayedModels,
+          modelCards: displayedModels,
+          groupedByModel: displayedModels,
+
+          variantRows: variantRows.slice(0, LIMIT),
+          variants: variantRows.slice(0, LIMIT),
+
+          totalMatchedVariants: variantRows.length,
+          totalMatchedModels: modelCards.length,
+          displayedModels: displayedModels.length,
+          scoringSummary,
+          missingData: allMissingData,
+          filtersApplied: {
+            budgetMin: parsed.entities.budgetMin,
+            budgetMax: parsed.entities.budgetMax,
+            bodyType: parsed.entities.bodyType,
+            fuelType: parsed.entities.fuelType,
+            transmission: parsed.entities.transmission,
+            includeDiscontinued: includeDiscontinuedRequested(parsed),
+          },
+          priceBasis: priceBasisType,
+          ...(parsed.wantsDebug && timings ? { timings } : {}),
+        },
+        scoringSummary,
+        missingData: allMissingData,
+        filtersApplied: {
+          budgetMin: parsed.entities.budgetMin,
+          budgetMax: parsed.entities.budgetMax,
+          bodyType: parsed.entities.bodyType,
+          fuelType: parsed.entities.fuelType,
+          transmission: parsed.entities.transmission,
+          includeDiscontinued: includeDiscontinuedRequested(parsed),
+        },
+        priceBasis: priceBasisType,
+
         notices: [
           "Showing models first. Variant-level rows are available when you open a specific model.",
           safetyMode
             ? "Safety ranking is based only on stored catalogue safety fields. NCAP ratings are shown only where captured."
             : "",
+          broadMode
+            ? "Broad search optimization is applied to keep response times stable."
+            : "",
         ].filter(Boolean),
       }),
     ],
     followUpSuggestions: [
-      "Compare top results",
-      "Show features",
-      "Calculate EMI",
+      `Compare top 3 results`,
+      `Show automatic options only`,
+      `Show safest options`,
+      `Calculate EMI for top result`,
+      `Get quotation for top result`,
     ],
   };
 };
@@ -3702,6 +4714,12 @@ export const vehicleEmiCalculator = async (parsed, access, trace) => {
     : 0;
 
   const compact = row ? vehicleRow(row) : {};
+  const resolvedCity =
+    resolved.showingCity || compact.city || cityFromParsed(parsed);
+  const resolvedModel = compact.model || parsed.entities.model || "";
+  const resolvedVariant = compact.variant || parsed.entities.variant || "";
+  const resolvedMake = compact.make || compact.brand || parsed.entities.make || "";
+  const resolvedBrand = compact.brand || compact.make || parsed.entities.make || "";
 
   const exShowroom = firstNumber(compact.exShowroomPrice);
   const onRoad =
@@ -3771,16 +4789,30 @@ export const vehicleEmiCalculator = async (parsed, access, trace) => {
   }));
 
   const emi = calculateEMI(financeAmount, annualRate, tenureMonths);
+  const modelLabel = resolvedModel || "this model";
+  const variantLabel = resolvedVariant ? ` ${resolvedVariant}` : "";
 
   return {
     widgets: [
       widget("vehicle_emi_calculator", "Vehicle EMI calculator", {
+        model: resolvedModel,
+        variant: resolvedVariant,
+        make: resolvedMake,
+        brand: resolvedBrand,
+        city: resolvedCity,
         vehicle: compact.id ? compact : null,
-        city: resolved.showingCity || compact.city || cityFromParsed(parsed),
         requestedCity: resolved.requestedCity,
-        showingCity:
-          resolved.showingCity || compact.city || cityFromParsed(parsed),
+        showingCity: resolvedCity,
         cityFallbackUsed: Boolean(resolved.usedCityFallback),
+        priceBreakupLines: compact.priceBreakupLines || [],
+        priceIntegrity: compact.priceIntegrity || null,
+        optionalItems: compact.optionalItems || [],
+        otherItems: compact.otherItems || [],
+        canonicalOnRoadPrice: firstNumber(
+          compact.canonicalOnRoadPrice,
+          compact.onRoadPrice,
+          onRoad,
+        ),
 
         price: {
           onRoad,
@@ -3806,6 +4838,47 @@ export const vehicleEmiCalculator = async (parsed, access, trace) => {
 
         scenarios,
 
+        data: {
+          model: resolvedModel,
+          variant: resolvedVariant,
+          make: resolvedMake,
+          brand: resolvedBrand,
+          city: resolvedCity,
+          vehicle: compact.id ? compact : null,
+          requestedCity: resolved.requestedCity,
+          showingCity: resolvedCity,
+          cityFallbackUsed: Boolean(resolved.usedCityFallback),
+          priceBreakupLines: compact.priceBreakupLines || [],
+          priceIntegrity: compact.priceIntegrity || null,
+          optionalItems: compact.optionalItems || [],
+          otherItems: compact.otherItems || [],
+          canonicalOnRoadPrice: firstNumber(
+            compact.canonicalOnRoadPrice,
+            compact.onRoadPrice,
+            onRoad,
+          ),
+          price: {
+            onRoad,
+            exShowroom,
+          },
+          inputs: {
+            financeBasis,
+            loanPercent: loanPercent || null,
+            downPayment,
+            downPaymentPercent,
+            tenureMonths,
+            annualRate,
+          },
+          result: {
+            loanAmount: financeAmount,
+            financeAmount,
+            emi,
+            totalPayable: emi * tenureMonths + downPayment,
+            totalInterest: emi * tenureMonths - financeAmount,
+          },
+          scenarios,
+        },
+
         notices: [
           loanPercent > 0
             ? `${loanPercent}% loan is calculated on ${financeBasis === "ex-showroom" ? "ex-showroom price" : "on-road price"}.`
@@ -3817,9 +4890,11 @@ export const vehicleEmiCalculator = async (parsed, access, trace) => {
       }),
     ],
     followUpSuggestions: [
-      "Show pricelist",
-      "Compare EMI",
-      "Cars with EMI under 25000",
+      `Change down payment for ${modelLabel}${variantLabel}`,
+      `Compare EMI across ${modelLabel} variants`,
+      `Show price breakup of ${modelLabel}${variantLabel}`,
+      `Get quotation for ${modelLabel}${variantLabel}`,
+      `Request finance callback`,
     ],
   };
 };
@@ -3888,9 +4963,260 @@ export const vehicleEmiBudgetSearch = async (parsed, access, trace) => {
         totalMatchedVariants: variantRows.length,
         totalMatchedModels: modelCards.length,
         displayedModels: Math.min(modelCards.length, 12),
+
+        data: {
+          rows: modelCards.slice(0, 12),
+          records: modelCards.slice(0, 12),
+          modelCards: modelCards.slice(0, 12),
+          groupedByModel: modelCards.slice(0, 12),
+          variantRows: variantRows.slice(0, LIMIT),
+          variants: variantRows.slice(0, LIMIT),
+          totalMatchedVariants: variantRows.length,
+          totalMatchedModels: modelCards.length,
+          displayedModels: Math.min(modelCards.length, 12),
+        },
       }),
     ],
   };
+};
+
+export const buildLeadPayloadFromParsed = async (
+  parsed = {},
+  trace = [],
+  leadType = "quotation",
+) => {
+  const resolved = await resolveVehicleCatalogRows(parsed, trace, {
+    includeCity: true,
+    limit: 40,
+    moduleName: "Vehicles",
+  });
+  const row = sortCatalogueRows(applyCatalogueFilters(resolved.rows, parsed), parsed)[0];
+  const compact = row ? vehicleRow(row) : null;
+  const model = firstMeaningful(
+    parsed.entities?.model,
+    parsed.entities?.models?.[0],
+    compact?.model,
+    "",
+  );
+  const variant = firstMeaningful(parsed.entities?.variant, compact?.variant, "");
+  const brand = firstMeaningful(parsed.entities?.make, compact?.brand, compact?.make, "");
+  const city = firstMeaningful(parsed.entities?.city, compact?.city, resolved.showingCity, "new-delhi");
+  const customerName = firstMeaningful(
+    parsed.entities?.customerName,
+    parsed.context?.customerName,
+    parsed.context?.profile?.name,
+    "",
+  );
+  const mobile = firstMeaningful(parsed.entities?.mobile, parsed.context?.mobile, "");
+
+  const leadPayload = {
+    source: "ACI Assist",
+    sourceChannel: "customer_portal",
+    leadType,
+    customer: {
+      name: customerName || "",
+      mobile: mobile || "",
+      email: firstMeaningful(parsed.entities?.email, parsed.context?.email, ""),
+      city,
+      pincode: firstMeaningful(parsed.entities?.pincode, parsed.context?.pincode, ""),
+    },
+    vehicle: {
+      brand,
+      model,
+      variant,
+      fuel: firstMeaningful(compact?.fuel, compact?.fuel_type),
+      transmission: compact?.transmission || "",
+      color: firstMeaningful(parsed.entities?.color, parsed.context?.preferredColor, ""),
+      city,
+    },
+    priceContext: compact
+      ? {
+          onRoadPrice: firstNumber(compact.canonicalOnRoadPrice, compact.onRoadPrice),
+          exShowroom: firstNumber(compact.exShowroomPrice),
+          rto: firstNumber(compact.rto),
+          insurance: firstNumber(compact.insurance),
+          optionalItems: compact.optionalItems || [],
+          optionalTotal: firstNumber(compact.optionalTotal),
+          otherItems: compact.otherItems || [],
+          otherTotal: firstNumber(compact.otherTotal),
+          priceBreakupLines: compact.priceBreakupLines || [],
+          priceIntegrity: compact.priceIntegrity || null,
+        }
+      : null,
+    financeContext: {
+      interested: /finance|loan|emi/i.test(parsed.lower || ""),
+      downPayment: firstNumber(parsed.entities?.downPayment),
+      loanAmount: firstNumber(parsed.entities?.loanAmount),
+      tenureMonths: firstNumber(parsed.entities?.tenureMonths),
+      roi: firstNumber(parsed.entities?.annualRate),
+      estimatedEmi: firstNumber(parsed.entities?.emi),
+      preferredBank: firstMeaningful(parsed.entities?.bankName, ""),
+    },
+    offerContext: {
+      offerConfirmationRequired: leadType === "offer_enquiry",
+      requestedOfferTypes:
+        leadType === "offer_enquiry"
+          ? [
+              "cash_discount",
+              "exchange_bonus",
+              "corporate_offer",
+              "finance_scheme",
+              "insurance_offer",
+            ]
+          : [],
+    },
+    conversationContext: {
+      originalQuery: parsed.message || "",
+      lastIntent: parsed.intent || "",
+      stage: firstMeaningful(parsed.context?.stage, parsed.context?.mode, ""),
+      buyingSignals: asArray(parsed.context?.buyingSignals),
+      userProfile: parsed.context?.profile || {},
+      selectedSuggestions: asArray(parsed.context?.selectedSuggestions),
+    },
+  };
+
+  return {
+    leadPayload,
+    leadCaptureRequired: !(customerName && mobile),
+    fieldsRequired: !(customerName && mobile) ? ["name", "mobile"] : [],
+  };
+};
+
+const dataUnavailableWithActions = async ({
+  parsed,
+  trace,
+  title,
+  message,
+  missingData = [],
+  leadType = "callback",
+  widgetType = "unavailable_notice",
+}) => {
+  const { leadPayload, leadCaptureRequired, fieldsRequired } =
+    await buildLeadPayloadFromParsed(parsed, trace, leadType);
+  const modelLabel = firstMeaningful(
+    leadPayload?.vehicle?.model,
+    parsed.entities?.model,
+    "this model",
+  );
+  return {
+    widgets: [
+      widget(widgetType, title, {
+        data: {
+          message,
+          missingData,
+          leadPayload,
+          leadCaptureRequired,
+          fieldsRequired,
+          model: leadPayload?.vehicle?.model || parsed.entities?.model || "",
+        },
+        missingData,
+        leadPayload,
+        leadCaptureRequired,
+        fieldsRequired,
+        notices: [message],
+      }),
+    ],
+    actions: [
+      action("lead", `Get quotation for ${modelLabel}`, {
+        leadType: "quotation",
+        query: `Get quotation for ${modelLabel}`,
+        contextPatch: {
+          leadType: "quotation",
+          leadPayload: { ...leadPayload, leadType: "quotation" },
+        },
+      }),
+      action("ask", `Calculate EMI for ${modelLabel}`, {
+        query: `Calculate EMI for ${modelLabel}`,
+      }),
+      action("lead", `Book test drive for ${modelLabel}`, {
+        leadType: "test_drive",
+        query: `Book test drive for ${modelLabel}`,
+        contextPatch: {
+          leadType: "test_drive",
+          leadPayload: { ...leadPayload, leadType: "test_drive" },
+        },
+      }),
+      action("lead", "Request callback", {
+        leadType: "callback",
+        query: `Call me about ${modelLabel}`,
+        contextPatch: {
+          leadType: "callback",
+          leadPayload: { ...leadPayload, leadType: "callback" },
+        },
+      }),
+    ],
+    followUpSuggestions: [
+      `Get quotation for ${modelLabel}`,
+      `Show ${modelLabel} price`,
+      `Calculate EMI for ${modelLabel}`,
+      `Book test drive for ${modelLabel}`,
+      `Request callback for ${modelLabel}`,
+    ],
+  };
+};
+
+export const vehicleOffersUnavailable = async (parsed, access, trace) => {
+  void access;
+  return dataUnavailableWithActions({
+    parsed,
+    trace,
+    title: "Offers data unavailable",
+    message:
+      "Verified live scheme data is not stored yet. I can still prepare a quotation and request live offer confirmation.",
+    missingData: ["verified_live_offers"],
+    leadType: "offer_enquiry",
+    widgetType: "offers_unavailable",
+  });
+};
+
+export const vehicleServiceDataUnavailable = async (parsed, access, trace) => {
+  void access;
+  return dataUnavailableWithActions({
+    parsed,
+    trace,
+    title: "Service data unavailable",
+    message:
+      "Verified service-center/service-cost data is not stored yet. I can help with price, EMI, and a callback for service confirmation.",
+    missingData: ["verified_service_center_data", "verified_service_cost"],
+    leadType: "callback",
+    widgetType: "service_unavailable",
+  });
+};
+
+export const vehicleFinanceFaqUnavailable = async (parsed, access, trace) => {
+  void access;
+  const hasBankSchemeQuery = /\bbank\b.*\b(best|offer|scheme|rate)\b/i.test(
+    parsed.lower || "",
+  );
+  const ifscMatch = (parsed.message || "").match(/\b[A-Z]{4}0[A-Z0-9]{6}\b/i);
+  let ifscInfo = null;
+  if (ifscMatch?.[0]) {
+    ifscInfo = await BankDirectory.findOne({ ifsc: ifscMatch[0].toUpperCase() })
+      .select({ ifsc: 1, bankName: 1, branch: 1, active: 1, source: 1, lastVerifiedAt: 1 })
+      .maxTimeMS(3000)
+      .lean()
+      .catch(() => null);
+    pushModuleTrace(trace, "Bank Directory", ifscInfo ? 1 : 0);
+  }
+  const response = await dataUnavailableWithActions({
+    parsed,
+    trace,
+    title: "Finance scheme data unavailable",
+    message: hasBankSchemeQuery
+      ? "Verified bank-wise finance scheme data is not stored yet. I can calculate EMI using your chosen ROI/tenure or request a finance callback."
+      : "Verified finance scheme/policy data is not stored yet. I can still calculate EMI and request a finance callback.",
+    missingData: ["bank_wise_finance_schemes"],
+    leadType: "finance_callback",
+    widgetType: "finance_unavailable",
+  });
+  if (ifscInfo) {
+    response.widgets[0].data.ifscLookup = ifscInfo;
+    response.widgets[0].notices = [
+      ...(response.widgets[0].notices || []),
+      `IFSC ${ifscInfo.ifsc} maps to ${ifscInfo.bankName} - ${ifscInfo.branch}.`,
+    ];
+  }
+  return response;
 };
 
 export const similarCars = async (parsed, access, trace) => {
@@ -3910,62 +5236,255 @@ export const similarCars = async (parsed, access, trace) => {
           },
         }
       : parsed;
-  const baseResult = await vehiclePricelist(effectiveParsed, access, trace);
-  const baseRows = baseResult.widgets?.[0]?.rows || [];
-  if (!baseRows.length) return baseResult;
-  const prices = baseRows
-    .map((row) => Number(row.onRoadPrice || row.exShowroomPrice || 0))
-    .filter(Boolean);
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
-  const anchorModel = effectiveParsed.entities.model;
-  const query = {
-    model: { $not: new RegExp(anchorModel, "i") },
-    $or: [
-      { onRoadPrice: { $gte: min * 0.85, $lte: max * 1.15 } },
-      { exShowroom: { $gte: min * 0.85, $lte: max * 1.15 } },
-      { ex_showroom: { $gte: min * 0.85, $lte: max * 1.15 } },
-    ],
-  };
-  const vehicles = await findLean(Vehicle, query, { limit: 120 });
-  pushModuleTrace(trace, "Vehicles similar", vehicles.length);
+  const anchorModel = effectiveParsed.entities.model || selectedModel || "";
+  if (!anchorModel) {
+    return {
+      widgets: [
+        unavailableWidget(
+          "Need a model",
+          "Please share a model, for example: Cars similar to Verna.",
+          ["Vehicles"],
+        ),
+      ],
+    };
+  }
+
+  const anchorCity = cityFromParsed(effectiveParsed);
+  const anchorRowsRaw = await findLean(
+    Vehicle,
+    {
+      $and: [
+        cityClause(anchorCity),
+        vehicleModelClause(anchorModel, effectiveParsed.entities.make),
+        { is_discontinued: { $ne: true } },
+      ].filter(Boolean),
+    },
+    {
+      select: {
+        brand: 1,
+        make: 1,
+        model: 1,
+        model_normalized: 1,
+        variant: 1,
+        variant_normalized: 1,
+        city: 1,
+        fuel: 1,
+        fuel_type: 1,
+        transmission: 1,
+        ex_showroom: 1,
+        exShowroom: 1,
+        onRoadPrice: 1,
+        on_road_price_cardekho: 1,
+        total_on_road_with_accessories: 1,
+        optional_list: 1,
+        other_list: 1,
+        rto: 1,
+        insurance: 1,
+        bodyType: 1,
+        body_type_bucket: 1,
+        segment: 1,
+      },
+      sort: { ex_showroom: 1, exShowroom: 1 },
+      limit: 80,
+      maxTimeMS: 3000,
+    },
+  );
+  const baseRows = applyCatalogueFilters(anchorRowsRaw, effectiveParsed).map(vehicleRow);
+  if (!baseRows.length) {
+    return {
+      widgets: [
+        unavailableWidget(
+          "No anchor model found",
+          `I could not find active catalogue rows for ${anchorModel} in ${titleCase(anchorCity)}.`,
+          ["Vehicles"],
+        ),
+      ],
+    };
+  }
+
+  const anchor = baseRows[0];
+  const anchorProfileDoc = await Promise.race([
+    findLean(
+      VehicleFeature,
+      featureModelQuery(anchorModel, anchor.make || anchor.brand),
+      {
+        sort: { variant: 1 },
+        limit: 1,
+        maxTimeMS: 1500,
+      },
+    ),
+    new Promise((resolve) => setTimeout(() => resolve([]), 1500)),
+  ]);
+  const anchorProfile = buildFeatureProfile(anchorProfileDoc?.[0] || {});
+  const anchorPrice = firstNumber(
+    anchor.canonicalOnRoadPrice,
+    anchor.onRoadPrice,
+    anchor.exShowroomPrice,
+  );
+
+  const candidatesRaw = await findLean(
+    Vehicle,
+    {
+      $and: [
+        cityClause(anchor.city || parsed.entities.city || "new-delhi"),
+        { is_discontinued: { $ne: true } },
+      ].filter(Boolean),
+    },
+    {
+      select: {
+        brand: 1,
+        make: 1,
+        model: 1,
+        model_normalized: 1,
+        variant: 1,
+        variant_normalized: 1,
+        city: 1,
+        fuel: 1,
+        fuel_type: 1,
+        transmission: 1,
+        ex_showroom: 1,
+        exShowroom: 1,
+        onRoadPrice: 1,
+        on_road_price_cardekho: 1,
+        total_on_road_with_accessories: 1,
+        optional_list: 1,
+        other_list: 1,
+        rto: 1,
+        insurance: 1,
+        bodyType: 1,
+        body_type_bucket: 1,
+        segment: 1,
+        is_discontinued: 1,
+      },
+      limit: 260,
+      maxTimeMS: 2500,
+    },
+  );
+  pushModuleTrace(trace, "Vehicles similar", candidatesRaw.length);
+
   const grouped = new Map();
-  for (const item of vehicles) {
-    const key = `${item.make || ""}:${item.model || ""}`.toLowerCase();
+  const anchorNeedle = normalizeVariant(anchorModel);
+  for (const item of candidatesRaw.map(vehicleRow)) {
+    const itemModelNeedle = normalizeVariant(
+      firstMeaningful(item.model_normalized, item.model),
+    );
+    if (!itemModelNeedle || itemModelNeedle === anchorNeedle) continue;
+    const itemPrice = firstNumber(
+      item.canonicalOnRoadPrice,
+      item.onRoadPrice,
+      item.exShowroomPrice,
+    );
+    if (anchorPrice && itemPrice) {
+      if (itemPrice < anchorPrice * 0.75 || itemPrice > anchorPrice * 1.35) {
+        continue;
+      }
+    }
+    const key = normalizeVariant(
+      `${item.brand || item.make} ${item.model || ""}`.trim(),
+    );
+    if (!key) continue;
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(item);
   }
-  const rows = [...grouped.values()].slice(0, 12).map((items) => {
-    const prices = items.map(pickVehiclePrice).filter(Boolean);
-    return {
-      make: items[0].make,
-      model: items[0].model,
-      segment: firstMeaningful(
-        items[0].segment,
-        items[0].bodyType,
-        items[0].body_type,
-      ),
-      priceRange: prices.length
-        ? { min: Math.min(...prices), max: Math.max(...prices) }
-        : null,
-      fuelOptions: [
-        ...new Set(
-          items
-            .map((item) => firstMeaningful(item.fuel, item.fuel_type))
-            .filter(Boolean),
+
+  const candidateModelNames = [...grouped.values()]
+    .map((items) => firstMeaningful(items[0]?.model_normalized, items[0]?.model))
+    .filter(Boolean)
+    .slice(0, 24);
+  const candidateFeatureDocs = candidateModelNames.length
+    ? (await Promise.race([
+        findLean(
+          VehicleFeature,
+          {
+            $or: [
+              { model_normalized: { $in: candidateModelNames.map((v) => normalizeVariant(v)) } },
+              { model: { $in: candidateModelNames } },
+            ],
+          },
+          {
+            sort: { variant: 1 },
+            limit: 60,
+            maxTimeMS: 1500,
+          },
         ),
-      ],
-      transmissionOptions: [
-        ...new Set(items.map((item) => item.transmission).filter(Boolean)),
-      ],
-      matchedReason: "Similar catalog price band",
-    };
-  });
+        new Promise((resolve) => setTimeout(() => resolve([]), 1500)),
+      ]))
+    : [];
+  const profileByModel = new Map();
+  for (const doc of candidateFeatureDocs) {
+    const key = normalizeVariant(doc.model_normalized || doc.model);
+    if (!key || profileByModel.has(key)) continue;
+    profileByModel.set(key, buildFeatureProfile(doc));
+  }
+
+  const rows = [...grouped.values()]
+    .map((items) => {
+      const sorted = [...items].sort(
+        (a, b) =>
+          firstNumber(a.canonicalOnRoadPrice, a.onRoadPrice, a.exShowroomPrice) -
+          firstNumber(b.canonicalOnRoadPrice, b.onRoadPrice, b.exShowroomPrice),
+      );
+      const best = sorted[0];
+      const modelKey = normalizeVariant(best.model_normalized || best.model);
+      const profile = profileByModel.get(modelKey) || {
+        model: best.model,
+        bodyType: best.bodyType || "",
+        fuelType: firstMeaningful(best.fuel, best.fuel_type),
+        transmissionType: best.transmission || "",
+      };
+      const similarity = scoreSimilarity(
+        anchorProfile,
+        profile,
+        anchorPrice,
+        firstNumber(best.canonicalOnRoadPrice, best.onRoadPrice, best.exShowroomPrice),
+      );
+      if (similarity.score < 0) return null;
+      return {
+        make: best.make,
+        brand: best.brand,
+        model: best.model,
+        representativeVariant: best.variant,
+        bodyType: profile.bodyType || best.bodyType,
+        price: firstNumber(
+          best.canonicalOnRoadPrice,
+          best.onRoadPrice,
+          best.exShowroomPrice,
+        ),
+        priceBreakupLines: best.priceBreakupLines || [],
+        priceIntegrity: best.priceIntegrity || null,
+        fuelOptions: unique(
+          sorted.map((item) => firstMeaningful(item.fuel, item.fuel_type)),
+        ),
+        transmissionOptions: unique(sorted.map((item) => item.transmission)),
+        reasons: similarity.reasons,
+        missingData: similarity.missingData,
+        penalties: similarity.penalties,
+        score: similarity.score,
+        variantsCount: sorted.length,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => firstNumber(b.score) - firstNumber(a.score))
+    .slice(0, 5);
+
   return {
     widgets: [
       widget("similar_cars", `Similar cars to ${anchorModel}`, {
         rows,
-        data: { anchorModel, priceBand: { min, max } },
+        records: rows,
+        modelCards: rows,
+        groupedByModel: rows,
+        data: {
+          anchorModel,
+          records: rows,
+          modelCards: rows,
+          groupedByModel: rows,
+          scoringSummary: {
+            methodology: "deterministic similarity scoring",
+            anchorBodyType: anchorProfile.bodyType || anchor.bodyType || "",
+            anchorPrice,
+          },
+        },
         actions: rows.map((row) =>
           action("open_pricelist_prefilled", `Open ${row.model}`, {
             route: "/vehicles/price-list",
@@ -3975,7 +5494,9 @@ export const similarCars = async (parsed, access, trace) => {
       }),
     ],
     followUpSuggestions: [
-      "Compare with City and Slavia",
+      anchorModel
+        ? `Compare ${anchorModel} with similar cars`
+        : "Compare top updated models",
       "View variants",
       "Open full pricelist",
     ],
@@ -3997,6 +5518,18 @@ export const vehicleComparison = async (parsed, access, trace) => {
   }
 
   const models = parsed.entities.models || [];
+  const variantNoise = /^(difference|differences|feature|features|comparison)$/i.test(
+    String(parsed.entities?.variant || "").trim(),
+  );
+  const effectiveParsed = variantNoise
+    ? {
+        ...parsed,
+        entities: {
+          ...(parsed.entities || {}),
+          variant: "",
+        },
+      }
+    : parsed;
   const selectedVariantIds =
     parsed.context?.selectedVariantIds || parsed.filters?.selectedVariantIds;
 
@@ -4023,7 +5556,191 @@ export const vehicleComparison = async (parsed, access, trace) => {
   const city =
     normalizeCitySlug(parsed.entities.city || "new-delhi") || "new-delhi";
 
+  const fastComparisonEligible =
+    models.length <= 3 &&
+    !effectiveParsed.entities.variant &&
+    !/\b(exact variant|variant difference|trim level)\b/i.test(parsed.lower || "");
+
+  if (fastComparisonEligible) {
+    const modelNames = models.slice(0, 3).filter(Boolean);
+    const modelNeedles = modelNames
+      .map((item) => normalizeVariant(item))
+      .filter(Boolean);
+
+    const quickRowsRaw = (
+      await Promise.all(
+        modelNames.map((modelName) =>
+          findLean(
+            Vehicle,
+            {
+              $and: [
+                cityClause(city),
+                vehicleModelClause(modelName, parsed.entities.make),
+              ].filter(Boolean),
+            },
+            {
+              select: {
+                brand: 1,
+                make: 1,
+                model: 1,
+                model_normalized: 1,
+                variant: 1,
+                variant_normalized: 1,
+                city: 1,
+                fuel: 1,
+                fuel_type: 1,
+                transmission: 1,
+                ex_showroom: 1,
+                exShowroom: 1,
+                onRoadPrice: 1,
+                on_road_price_cardekho: 1,
+                total_on_road_with_accessories: 1,
+                status: 1,
+                model_status: 1,
+                is_discontinued: 1,
+                bodyType: 1,
+                segment: 1,
+              },
+              sort: { ex_showroom: 1 },
+              limit: 80,
+              maxTimeMS: 3000,
+            },
+          ),
+        ),
+      )
+    ).flat();
+
+    const quickRows = applyCatalogueFilters(quickRowsRaw, effectiveParsed)
+      .map(vehicleRow)
+      .filter((row) => !isDiscontinuedVehicleRow(row));
+    pushModuleTrace(trace, "Vehicles quick comparison", quickRows.length, {
+      city,
+    });
+
+    const modelSummaries = modelNeedles
+      .map((needle) => {
+        const rowsForModel = quickRows.filter((row) => {
+          const rowNeedle = normalizeVariant(
+            firstMeaningful(row.model_normalized, row.model),
+          );
+          return rowNeedle === needle || rowNeedle.includes(needle);
+        });
+        if (!rowsForModel.length) return null;
+
+        const sortedRows = [...rowsForModel].sort(
+          (a, b) =>
+            firstNumber(a.onRoadPrice, a.exShowroomPrice) -
+            firstNumber(b.onRoadPrice, b.exShowroomPrice),
+        );
+        const cheapest = sortedRows[0];
+        const prices = sortedRows
+          .map((row) => firstNumber(row.onRoadPrice, row.exShowroomPrice))
+          .filter(Boolean);
+        const exPrices = sortedRows
+          .map((row) => firstNumber(row.exShowroomPrice))
+          .filter(Boolean);
+
+        return {
+          id: `${normalizeVariant(cheapest.brand || cheapest.make)}-${needle}`.replace(
+            /\s+/g,
+            "-",
+          ),
+          brand: cheapest.brand || cheapest.make,
+          make: cheapest.make || cheapest.brand,
+          model: cheapest.model_normalized || cheapest.model,
+          displayModel: cheapest.model_normalized || cheapest.model,
+          city,
+          startingPrice: prices.length
+            ? Math.min(...prices)
+            : exPrices.length
+              ? Math.min(...exPrices)
+              : null,
+          topPrice: prices.length
+            ? Math.max(...prices)
+            : exPrices.length
+              ? Math.max(...exPrices)
+              : null,
+          variantCount: sortedRows.length,
+          activeVariantCount: sortedRows.length,
+          fuelOptions: unique(
+            sortedRows.map((row) => firstMeaningful(row.fuel, row.fuel_type)),
+          ),
+          transmissionOptions: unique(
+            sortedRows.map((row) => row.transmission),
+          ),
+          bodyType: firstMeaningful(
+            cheapest.bodyType,
+            cheapest.body_type_bucket,
+            cheapest.segment,
+          ),
+          variants: sortedRows.slice(0, 5),
+          variantRows: sortedRows.slice(0, 5),
+          bestVariant: cheapest,
+          cheapestVariant: cheapest,
+        };
+      })
+      .filter(Boolean);
+
+    if (modelSummaries.length >= 2) {
+      const comparisonRows = [
+        {
+          category: "Price",
+          label: "Starting on-road price",
+          values: modelSummaries.map((item) => item.startingPrice),
+        },
+        {
+          category: "Variants",
+          label: "Active variants",
+          values: modelSummaries.map((item) => item.activeVariantCount),
+        },
+      ];
+
+      return {
+        widgets: [
+          widget("vehicle_model_comparison", "Compare models", {
+            title: `Compare ${models.slice(0, 3).join(" vs ")}`,
+            subtitle:
+              "Quick model comparison using nearest priced active variants.",
+            city,
+            models: modelSummaries,
+            rows: modelSummaries,
+            records: modelSummaries,
+            comparisonRows,
+            variantRows: modelSummaries
+              .flatMap((item) => item.variantRows || [])
+              .slice(0, 50),
+            variants: modelSummaries.map((item) => item.bestVariant).filter(Boolean),
+            data: {
+              city,
+              models: modelSummaries,
+              rows: modelSummaries,
+              records: modelSummaries,
+              comparisonRows,
+              variantRows: modelSummaries
+                .flatMap((item) => item.variantRows || [])
+                .slice(0, 50),
+            },
+            notices: [
+              "Quick compare mode is used for fast response. Open variant-wise compare for deeper trim-level analysis.",
+            ],
+          }),
+        ],
+        followUpSuggestions: [
+          `Show feature differences`,
+          `Calculate EMI for ${modelSummaries[0]?.model || models[0]}`,
+          `Get quotation for best fit`,
+        ],
+      };
+    }
+  }
+
   const groups = await variantGroupsForModels(models, trace, city);
+  const primaryModel =
+    parsed.entities?.model ||
+    parsed.entities?.models?.[0] ||
+    models[0] ||
+    "";
+  const modelLabel = primaryModel || "this model";
 
   const modelSummaries = groups.map((group) => {
     const variants = activeVariantRows(group.variants || []).length
@@ -4240,10 +5957,11 @@ export const vehicleComparison = async (parsed, access, trace) => {
     ],
 
     followUpSuggestions: [
-      "Compare top variants",
-      "Show features",
-      "Show price breakup",
-      "Calculate EMI",
+      `Show only feature differences`,
+      `Calculate EMI for ${modelLabel}`,
+      `Show price breakup of ${modelLabel}`,
+      `Get quotation for ${modelLabel}`,
+      `Add another car to comparison`,
     ],
   };
 };
@@ -4401,9 +6119,11 @@ export const vehicleVariantRecommendation = async (parsed, access, trace) => {
       ),
     ],
     followUpSuggestions: [
-      "Compare top two variants",
-      "Show price breakup",
-      "Calculate EMI",
+      `Show only feature differences`,
+      `Calculate EMI for ${model}`,
+      `Show price breakup of ${model}`,
+      `Get quotation for ${model}`,
+      `Add another car to comparison`,
     ],
   };
 };
@@ -4796,6 +6516,12 @@ export const vehicleVariantDifference = async (parsed, access, trace) => {
     compareRow.exShowroomPrice,
   );
   const priceDifference = compareOnRoad - baseOnRoad;
+  const upgradeSummary = scoreVariantUpgrade(
+    buildFeatureProfile(baseFeatureDoc || { model, variant: baseRow.variant }),
+    buildFeatureProfile(compareFeatureDoc || { model, variant: compareRow.variant }),
+    baseOnRoad,
+    compareOnRoad,
+  );
 
   const recommendation =
     priceDifference > 0 && addedFeatures.length
@@ -4840,6 +6566,7 @@ export const vehicleVariantDifference = async (parsed, access, trace) => {
             removedCount: removedFeatures.length,
             changedCount: changedFeatures.length,
             recommendation,
+            upgradeSummary,
           },
 
           rows: [
@@ -4876,9 +6603,11 @@ export const vehicleVariantDifference = async (parsed, access, trace) => {
       ),
     ],
     followUpSuggestions: [
-      "Calculate EMI",
-      "Show price breakup",
-      "Compare with other variant",
+      `Show only feature differences`,
+      `Calculate EMI for ${model}`,
+      `Show price breakup of ${model}`,
+      `Get quotation for ${model}`,
+      `Add another car to comparison`,
     ],
   };
 };
@@ -4904,8 +6633,8 @@ export const vehiclePriceHistory = async (parsed, access, trace) => {
   const query = clauses.length ? { $and: clauses } : {};
   const rows = await collection
     .find(query)
-    .sort({ date: -1, createdAt: -1 })
-    .limit(120)
+    .sort({ date: 1, createdAt: 1 })
+    .limit(240)
     .maxTimeMS(3500)
     .toArray();
   pushModuleTrace(trace, map.module, rows.length);
@@ -4920,36 +6649,71 @@ export const vehiclePriceHistory = async (parsed, access, trace) => {
       ],
     };
   }
-  const normalized = rows.map((row, index) => {
-    const price = firstNumber(
-      row.price,
-      row.onRoadPrice,
-      row.exShowroom,
-      row.ex_showroom,
-    );
-    const previous = firstNumber(
-      rows[index + 1]?.price,
-      rows[index + 1]?.onRoadPrice,
-      rows[index + 1]?.exShowroom,
-      rows[index + 1]?.ex_showroom,
-    );
-    const changeAmount = previous ? price - previous : null;
-    return {
-      date: formatDateValue(
-        firstMeaningful(row.date, row.createdAt, row.updatedAt),
-      ),
+  const normalized = rows
+    .map((row) => ({
+      date: formatDateValue(firstMeaningful(row.date, row.createdAt, row.updatedAt)),
       brand: row.brand,
       model: row.model,
       variant: row.variant,
       city: row.city,
-      price,
+      price: firstNumber(row.price, row.onRoadPrice, row.exShowroom, row.ex_showroom),
+    }))
+    .filter((row) => row.price > 0);
+  const enriched = normalized.map((row, index) => {
+    const previousPrice = index > 0 ? normalized[index - 1].price : null;
+    const changeAmount = previousPrice ? row.price - previousPrice : null;
+    const changePercent =
+      previousPrice && changeAmount !== null
+        ? (changeAmount / previousPrice) * 100
+        : null;
+    return {
+      ...row,
+      previousPrice,
       changeAmount,
-      changePercent:
-        previous && changeAmount !== null
-          ? (changeAmount / previous) * 100
-          : null,
+      changePercent,
+      direction:
+        changeAmount === null
+          ? "same"
+          : changeAmount > 0
+            ? "increased"
+            : changeAmount < 0
+              ? "decreased"
+              : "same",
     };
   });
+  const latest = enriched[enriched.length - 1] || null;
+  const previous = enriched[enriched.length - 2] || null;
+  const totalChangeAmount =
+    latest && enriched[0] ? latest.price - enriched[0].price : 0;
+  const totalChangePercent =
+    latest && enriched[0]?.price
+      ? (totalChangeAmount / enriched[0].price) * 100
+      : 0;
+  const trendDirection =
+    totalChangeAmount > 0 ? "increased" : totalChangeAmount < 0 ? "decreased" : "same";
+
+  let currentPriceWarning = "";
+  if (parsed.entities.model) {
+    const currentRows = await findLean(
+      Vehicle,
+      {
+        $and: [
+          vehicleModelClause(parsed.entities.model, parsed.entities.make),
+          cityClause(parsed.entities.city || "new-delhi"),
+        ].filter(Boolean),
+      },
+      { limit: 20, maxTimeMS: 3000 },
+    );
+    const currentPrice = firstNumber(
+      vehicleRow(currentRows[0] || {}).canonicalOnRoadPrice,
+      vehicleRow(currentRows[0] || {}).onRoadPrice,
+    );
+    if (latest?.price && currentPrice && Math.abs(currentPrice - latest.price) > 1) {
+      currentPriceWarning =
+        "Current pricelist price differs from latest price history snapshot.";
+    }
+  }
+
   return {
     widgets: [
       widget("vehicle_price_history", "Vehicle price history", {
@@ -4957,15 +6721,24 @@ export const vehiclePriceHistory = async (parsed, access, trace) => {
         model: parsed.entities.model,
         variant: parsed.entities.variant,
         city: parsed.entities.city,
-        rows: normalized,
+        rows: enriched,
+        records: enriched,
         summary: {
-          latestDate: normalized[0]?.date,
-          latestPrice: normalized[0]?.price,
-          previousPrice: normalized[1]?.price,
-          changeAmount: normalized[0]?.changeAmount,
-          changePercent: normalized[0]?.changePercent,
-          totalEntries: normalized.length,
+          latestDate: latest?.date,
+          latestPrice: latest?.price,
+          previousPrice: previous?.price,
+          changeAmount: latest?.changeAmount,
+          changePercent: latest?.changePercent,
+          totalEntries: enriched.length,
+          totalChangeAmount,
+          totalChangePercent,
+          trendDirection,
+          dateRange: {
+            from: enriched[0]?.date || null,
+            to: latest?.date || null,
+          },
         },
+        notices: currentPriceWarning ? [currentPriceWarning] : [],
       }),
     ],
   };
@@ -5052,7 +6825,9 @@ export const priceHistoryReport = async (parsed, access, trace) => {
     followUpSuggestions: [
       "Open full pricelist",
       "Show top variants",
-      "Compare with City and Slavia",
+      parsed.entities?.model
+        ? `Compare ${parsed.entities.model} with similar cars`
+        : "Compare top updated models",
     ],
   };
 };

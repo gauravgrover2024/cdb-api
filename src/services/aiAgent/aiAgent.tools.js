@@ -19,7 +19,7 @@ import {
 } from "./aiAgent.newCarQuestionMap.js";
 
 export const LIMIT = 50;
-export const QUERY_TIMEOUT_MS = 3500;
+export const QUERY_TIMEOUT_MS = 3000;
 
 export const safeId = (doc) => String(doc?._id || doc?.id || "");
 
@@ -169,6 +169,11 @@ export const assembleResponse = ({
   filters,
   conversationSuggestions = [],
   contextSnapshot = null,
+  salesNudges = [],
+  closingActions = [],
+  conversationMode = "",
+  conversationStage = "",
+  userProfile = null,
 }) => {
   const primaryWidget = widgets?.[0] || {};
   const canonicalIntent = mapIntentAlias(parsed.intent);
@@ -206,7 +211,7 @@ export const assembleResponse = ({
       model_ambiguity: null,
       variant_ambiguity: null,
       unavailable_notice: null,
-    }[type] || null);
+    })[type] || null;
 
   const inferInlineTypeFromWidget = (type = "") =>
     ({
@@ -214,7 +219,13 @@ export const assembleResponse = ({
       model_ambiguity: "model_ambiguity_card",
       variant_ambiguity: "variant_ambiguity_card",
       unavailable_notice: "fallback_card",
-    }[type] || null);
+    })[type] || null;
+
+  const slugValue = (value = "") =>
+    String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
 
   const displayMode =
     questionConfig?.displayMode ||
@@ -237,6 +248,7 @@ export const assembleResponse = ({
     inferInlineTypeFromWidget(primaryWidget.type);
 
   const normalizeAction = (item = {}) => ({
+    id: item.id || "",
     label: item.label || item.text || item.title || "",
     type: item.type || item.action || item.kind || "ask",
     query: item.query || item.message || item.followUpQuery || "",
@@ -270,7 +282,13 @@ export const assembleResponse = ({
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
-      });
+      })
+      .map((item, index) => ({
+        ...item,
+        id:
+          item.id ||
+          `act-${slugValue(item.intent || resolvedIntent || "next")}-${slugValue(item.label || item.query || item.type || "action")}-${index + 1}`,
+      }));
   };
 
   const normalizedConversationSuggestions = (conversationSuggestions || [])
@@ -285,6 +303,7 @@ export const assembleResponse = ({
   const finalActions = dedupeActions(
     normalizedConversationSuggestions.length
       ? normalizedConversationSuggestions.map((item) => ({
+          id: item.id,
           label: item.title,
           type: item.type || "ask",
           query: item.query || "",
@@ -309,14 +328,27 @@ export const assembleResponse = ({
   const actionsWithFallback = finalActions.length
     ? finalActions
     : dedupeActions([
-        { label: "Show price", type: "open_canvas", canvasType: "pricelist_canvas" },
-        { label: "Calculate EMI", type: "open_canvas", canvasType: "emi_calculator_canvas" },
-        { label: "Get quotation", type: "open_canvas", canvasType: "aci_quotation_canvas" },
+        {
+          label: "Show price",
+          type: "open_canvas",
+          canvasType: "pricelist_canvas",
+        },
+        {
+          label: "Calculate EMI",
+          type: "open_canvas",
+          canvasType: "emi_calculator_canvas",
+        },
+        {
+          label: "Get quotation",
+          type: "open_canvas",
+          canvasType: "aci_quotation_canvas",
+        },
       ]);
 
-  const normalizeLeadingQuestion = (item) => {
+  const normalizeLeadingQuestion = (item, index = 0) => {
     if (typeof item === "string") {
       return {
+        id: `lead-q-${slugValue(resolvedIntent || "next")}-${slugValue(item || "question")}-${index + 1}`,
         label: item,
         query: item,
         intent: resolvedIntent,
@@ -325,18 +357,28 @@ export const assembleResponse = ({
           (questionConfig?.canvasType ? "canvas" : "inline"),
         canvasType: questionConfig?.canvasType || undefined,
         inlineType: questionConfig?.inlineType || undefined,
+        entities: {},
+        contextPatch: {},
       };
     }
+    const label = item?.label || item?.query || "";
+    const query = item?.query || item?.label || "";
+    const intent = item?.intent || resolvedIntent;
     return {
-      label: item?.label || item?.query || "",
-      query: item?.query || item?.label || "",
-      intent: item?.intent || resolvedIntent,
+      id:
+        item?.id ||
+        `lead-q-${slugValue(intent || "next")}-${slugValue(label || query || "question")}-${index + 1}`,
+      label,
+      query,
+      intent,
       displayMode:
         item?.displayMode ||
         questionConfig?.displayMode ||
         (questionConfig?.canvasType ? "canvas" : "inline"),
       canvasType: item?.canvasType || questionConfig?.canvasType || undefined,
       inlineType: item?.inlineType || questionConfig?.inlineType || undefined,
+      entities: item?.entities || {},
+      contextPatch: item?.contextPatch || item?.context || {},
     };
   };
 
@@ -346,20 +388,23 @@ export const assembleResponse = ({
           .filter((item) =>
             ["question", "clarification"].includes(item.kind || ""),
           )
-          .map((item) =>
+          .map((item, index) =>
             normalizeLeadingQuestion({
+              id: item.id,
               label: item.title,
               query: item.query,
               intent: item.intent || resolvedIntent,
               displayMode: item.displayMode || undefined,
               canvasType: item.canvasType || undefined,
               inlineType: item.inlineType || undefined,
-            }),
+              entities: item.entities || {},
+              contextPatch: item.contextPatch || {},
+            }, index),
           )
       : [
           ...(leadingQuestions || []),
           ...(questionConfig?.leadingQuestions || []),
-        ].map(normalizeLeadingQuestion)
+        ].map((item, index) => normalizeLeadingQuestion(item, index))
   )
     .filter((item) => item.label && item.query)
     .slice(0, 10);
@@ -382,6 +427,8 @@ export const assembleResponse = ({
         canvasType: item.canvasType || null,
         inlineType: item.inlineType || null,
         leadType: item.leadType || item.contextPatch?.leadType || "",
+        priority: item.priority,
+        adaptiveScore: item.adaptiveScore,
         context: {
           ...(item.contextPatch || {}),
           actionContext: item,
@@ -407,9 +454,25 @@ export const assembleResponse = ({
       mode: contextSnapshot?.mode || "",
       stage: contextSnapshot?.stage || "",
       buyingSignals: contextSnapshot?.buyingSignals || [],
-      model: contextSnapshot?.anchorModel || contextSnapshot?.model || "",
-      variant: contextSnapshot?.anchorVariant || contextSnapshot?.variant || "",
-      city: contextSnapshot?.city || contextSnapshot?.requestedCity || "",
+      intent: resolvedIntent || parsed.intent,
+      lastIntent: resolvedIntent || parsed.intent,
+      previousIntent: parsed.intent,
+      entities: parsed.entities || {},
+      model:
+        contextSnapshot?.anchorModel ||
+        contextSnapshot?.model ||
+        parsed.entities?.model ||
+        "",
+      variant:
+        contextSnapshot?.anchorVariant ||
+        contextSnapshot?.variant ||
+        parsed.entities?.variant ||
+        "",
+      city:
+        contextSnapshot?.city ||
+        contextSnapshot?.requestedCity ||
+        parsed.entities?.city ||
+        "",
     },
     confidence: parsed.confidence,
     filters: filters || buildFilters(parsed),

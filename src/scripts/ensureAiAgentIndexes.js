@@ -10,6 +10,7 @@ import UsedCarLead from "../models/UsedCarLead.js";
 import Receivable from "../models/Receivable.js";
 import Payment from "../models/Payment.js";
 import Customer from "../models/Customer.js";
+import AciLead from "../models/AciLead.js";
 
 dotenv.config();
 
@@ -131,6 +132,16 @@ const run = async () => {
           [{ primaryMobile: 1, updatedAt: -1 }, { name: "ai_customer_mobile_updated" }],
         ],
       ],
+      [
+        "aci_leads",
+        AciLead.collection,
+        [
+          [{ leadId: 1 }, { name: "ai_lead_id_unique", unique: true }],
+          [{ leadType: 1, status: 1, priority: 1, createdAt: -1 }, { name: "ai_lead_type_status_priority" }],
+          [{ "customer.mobile": 1, createdAt: -1 }, { name: "ai_lead_customer_mobile" }],
+          [{ "vehicle.model": 1, createdAt: -1 }, { name: "ai_lead_vehicle_model" }],
+        ],
+      ],
     ];
 
     for (const [label, collection, specs] of plan) {
@@ -167,6 +178,27 @@ const run = async () => {
       console.log(`service_centers: ${created.join(", ")}`);
     } else {
       console.log("service_centers: collection not present, skipped optional indexes");
+    }
+
+    const priceHistoryCollection = await optionalCollection("price_history");
+    if (priceHistoryCollection) {
+      const created = await ensure(priceHistoryCollection, [
+        [{ brand: 1, model: 1, variant: 1, city: 1, date: 1 }, { name: "ai_price_history_lookup" }],
+      ]);
+      console.log(`price_history: ${created.join(", ")}`);
+    } else {
+      console.log("price_history: collection not present, skipped optional indexes");
+    }
+
+    const bankDirectoriesCollection = await optionalCollection("bankdirectories");
+    if (bankDirectoriesCollection) {
+      const created = await ensure(bankDirectoriesCollection, [
+        [{ ifsc: 1 }, { name: "ai_bank_ifsc_lookup" }],
+        [{ bankName: 1, branch: 1, active: 1 }, { name: "ai_bank_name_branch_active" }],
+      ]);
+      console.log(`bankdirectories: ${created.join(", ")}`);
+    } else {
+      console.log("bankdirectories: collection not present, skipped optional indexes");
     }
   } catch (error) {
     console.error("Failed to ensure AI Agent indexes:", error);

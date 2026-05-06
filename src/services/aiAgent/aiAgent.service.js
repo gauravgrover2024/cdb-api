@@ -17,6 +17,7 @@ import {
   getNewCarQuestionConfig,
   mapIntentAlias,
 } from "./aiAgent.newCarQuestionMap.js";
+import { logInteraction } from "./aiAgent.learningEngine.js";
 
 const fallbackHandler = async () => {
   return {
@@ -67,6 +68,29 @@ const countWidgetRows = (widget = {}) => {
     return widget.data.groupedByModel.length;
 
   return 0;
+};
+
+const getUserId = (user = {}, context = {}) =>
+  String(
+    context?.userId ||
+      context?.profile?.userId ||
+      user?._id ||
+      user?.id ||
+      user?.userId ||
+      "",
+  );
+
+const buildServiceContext = ({ context = {}, user = {} } = {}) => {
+  const userId = getUserId(user, context);
+
+  return {
+    ...context,
+    userId,
+    profile: {
+      ...(context?.profile || {}),
+      userId,
+    },
+  };
 };
 
 const buildAssistantMessage = (parsed, result, contextSnapshot = null) => {
@@ -125,7 +149,7 @@ const buildAssistantMessage = (parsed, result, contextSnapshot = null) => {
   }
 
   if (primary.type === "vehicle_colors") {
-    return `Here are the available colors for ${model || "this model"}. I can also map color-by-variant, show pricing, calculate EMI, or proceed to quotation.`;
+    return `Here are the available colors for ${model || "this model"}. Color data is model-level in the current dataset, and I can include your preferred color in quotation, then show pricing or EMI.`;
   }
 
   if (primary.type === "vehicle_model_comparison") {
@@ -173,6 +197,7 @@ const buildAssistantMessage = (parsed, result, contextSnapshot = null) => {
 };
 
 const actionFromConversationSuggestion = (item = {}) => ({
+  id: item.id,
   label: item.title,
   type: item.type || "ask",
   query: item.query,
@@ -187,6 +212,22 @@ const actionFromConversationSuggestion = (item = {}) => ({
   tone: item.tone,
 });
 
+const logSuggestionImpressions = ({ userId, suggestions = [] } = {}) => {
+  if (!suggestions.length) return;
+
+  Promise.allSettled(
+    suggestions.map((item) =>
+      logInteraction({
+        userId,
+        intent: item.intent,
+        suggestionId: item.id,
+        actionTaken: false,
+        countImpression: true,
+      }),
+    ),
+  ).catch(() => {});
+};
+
 export const chatWithAgent = async ({
   message,
   sessionId,
@@ -196,7 +237,15 @@ export const chatWithAgent = async ({
   debug = false,
   user,
 } = {}) => {
-  const parsed = parseAgentMessage(message, context, selectedEntity, filters);
+  const serviceContext = buildServiceContext({ context, user });
+
+  const parsed = parseAgentMessage(
+    message,
+    serviceContext,
+    selectedEntity,
+    filters,
+  );
+
   parsed.wantsDebug = Boolean(parsed.wantsDebug || debug);
 
   const access = buildAccessContext(user);
@@ -208,13 +257,19 @@ export const chatWithAgent = async ({
     : await fallbackHandler(parsed, access, trace);
 
   const canonicalIntent = mapIntentAlias(parsed.intent);
-  const isStructuredNewCar = Boolean(getNewCarQuestionConfig(canonicalIntent));
   const primaryWidget = result.widgets?.[0] || {};
   const widgetIntent = getIntentForWidgetType(primaryWidget.type || "");
-  const resolvedConversationIntent =
-    ["model_ambiguity", "variant_ambiguity"].includes(primaryWidget.type)
-      ? widgetIntent || canonicalIntent
-      : canonicalIntent;
+
+  const isStructuredNewCar = Boolean(
+    getNewCarQuestionConfig(canonicalIntent) ||
+    getNewCarQuestionConfig(widgetIntent),
+  );
+  const resolvedConversationIntent = [
+    "model_ambiguity",
+    "variant_ambiguity",
+  ].includes(primaryWidget.type)
+    ? widgetIntent || canonicalIntent
+    : canonicalIntent;
   const parsedForConversation = {
     ...parsed,
     intent: resolvedConversationIntent,
@@ -238,7 +293,7 @@ export const chatWithAgent = async ({
       primaryWidget,
       selectedEntity,
       filters,
-      context,
+      context: serviceContext,
     });
     conversationSuggestions = await buildConversationSuggestions({
       parsed: parsedForConversation,
@@ -246,18 +301,28 @@ export const chatWithAgent = async ({
       contextSnapshot,
       primaryWidget,
     });
+
+    logSuggestionImpressions({
+      userId: contextSnapshot?.userId,
+      suggestions: conversationSuggestions,
+    });
+
     derivedLeadingQuestions = buildLeadingQuestions({
       parsed: parsedForConversation,
       result: conversationContextResult,
       contextSnapshot,
     });
     derivedFollowUps = buildFollowUpSuggestions({ conversationSuggestions });
-    derivedActions = conversationSuggestions.map(actionFromConversationSuggestion);
+    derivedActions = conversationSuggestions.map(
+      actionFromConversationSuggestion,
+    );
   }
 
   // Preserve module transparency for multi-intent chat questions where
   // primary intent is different from supporting feature/color intents.
-  const moduleNames = new Set(trace.map((item) => String(item.module || "").toLowerCase()));
+  const moduleNames = new Set(
+    trace.map((item) => String(item.module || "").toLowerCase()),
+  );
   const secondaryIntents = parsed.secondaryIntents || [];
   if (
     secondaryIntents.some((intent) =>
@@ -332,6 +397,11 @@ export const chatWithAgent = async ({
     leadingQuestions: derivedLeadingQuestions,
     followUpSuggestions: derivedFollowUps,
     conversationSuggestions,
+    salesNudges: contextSnapshot?.salesNudges || [],
+    closingActions: contextSnapshot?.closingActions || [],
+    conversationMode: contextSnapshot?.mode || "",
+    conversationStage: contextSnapshot?.stage || "",
+    userProfile: contextSnapshot?.profile || null,
     contextSnapshot,
     ambiguity: result.ambiguity,
     access,

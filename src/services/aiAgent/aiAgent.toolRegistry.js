@@ -35,6 +35,10 @@ import {
   vehiclePriceHistory,
   vehiclePricelist,
   vehicleRecommendationSearch,
+  vehicleOffersUnavailable,
+  vehicleServiceDataUnavailable,
+  vehicleFinanceFaqUnavailable,
+  buildLeadPayloadFromParsed,
   vehicleVariantDifference,
   vehicleVariantRecommendation,
 } from "./aiAgent.vehicleTools.js";
@@ -83,6 +87,102 @@ const newCarUnavailableRun = (intent) => async () => {
   };
 };
 
+const conversionLeadRun =
+  (intent, leadType) =>
+  async (parsed = {}, access = null, trace = []) => {
+    if (
+      leadType === "finance_callback" &&
+      /\bbank\b.*\b(best|offer|scheme|rate)\b/i.test(parsed?.lower || "")
+    ) {
+      return vehicleFinanceFaqUnavailable(parsed, access, trace);
+    }
+    void access;
+    const model =
+      parsed?.entities?.model || parsed?.entities?.models?.[0] || "";
+    const variant = parsed?.entities?.variant || "";
+    const city = parsed?.entities?.city || "new-delhi";
+    const modelLabel = [model, variant].filter(Boolean).join(" ");
+    const leadMeta = await buildLeadPayloadFromParsed(parsed, trace, leadType);
+
+    const titleByLeadType = {
+      quotation: "ACI quotation request",
+      test_drive: "Test drive request",
+      callback: "Callback request",
+      finance_callback: "Finance callback request",
+    };
+
+    const messageByLeadType = {
+      quotation: modelLabel
+        ? `I can prepare an ACI quotation for ${modelLabel}.`
+        : "I can prepare an ACI quotation once you choose the model and variant.",
+      test_drive: modelLabel
+        ? `I can help book a test drive for ${modelLabel}.`
+        : "I can help book a test drive once you choose the model.",
+      callback: modelLabel
+        ? `I can arrange a callback for ${modelLabel}.`
+        : "I can arrange a callback from an advisor.",
+      finance_callback: modelLabel
+        ? `I can arrange a finance callback for ${modelLabel}.`
+        : "I can arrange a finance callback from an advisor.",
+    };
+
+    return {
+      widgets: [
+        {
+          type: "lead_capture",
+          title: titleByLeadType[leadType] || "Lead request",
+          data: {
+            leadType,
+            intent,
+            model,
+            variant,
+            city,
+            modelLabel,
+            leadPayload: leadMeta.leadPayload,
+            leadCaptureRequired: leadMeta.leadCaptureRequired,
+            fieldsRequired: leadMeta.fieldsRequired,
+            message: messageByLeadType[leadType] || "I can help you proceed.",
+            requiredFields: leadMeta.fieldsRequired?.length
+              ? leadMeta.fieldsRequired
+              : ["customerName", "mobile"],
+            optionalFields: [
+              "city",
+              "preferredTime",
+              "exchangeCar",
+              "financeRequired",
+            ],
+          },
+          canvasType: "aci_quotation_canvas",
+        },
+      ],
+      actions: [
+        {
+          label: "Continue",
+          type: "lead",
+          leadType,
+          intent,
+          canvasType: "aci_quotation_canvas",
+          query: modelLabel
+            ? `Continue ${leadType} for ${modelLabel}`
+            : "Continue",
+          contextPatch: {
+            leadType,
+            leadPayload: leadMeta.leadPayload,
+            leadCaptureRequired: leadMeta.leadCaptureRequired,
+            fieldsRequired: leadMeta.fieldsRequired,
+          },
+        },
+      ],
+      followUpSuggestions: [
+        modelLabel ? `Calculate EMI for ${modelLabel}` : "Calculate EMI",
+        modelLabel
+          ? `Show price breakup for ${modelLabel}`
+          : "Show price breakup",
+        modelLabel ? `Book test drive for ${modelLabel}` : "Book test drive",
+      ],
+    };
+  };
+
 const handlerByIntent = {
   latest_insurance: latestInsurance,
   insurance_expiry_report: insuranceExpiryReport,
@@ -124,6 +224,22 @@ const handlerByIntent = {
   vehicle_launch_status: latestCatalogueUpdates,
   vehicle_best_variant_recommendation: vehicleVariantRecommendation,
   vehicle_variant_difference: vehicleVariantDifference,
+  aci_new_car_quotation: conversionLeadRun(
+    "aci_new_car_quotation",
+    "quotation",
+  ),
+  vehicle_test_drive_request: conversionLeadRun(
+    "vehicle_test_drive_request",
+    "test_drive",
+  ),
+  vehicle_callback_request: conversionLeadRun(
+    "vehicle_callback_request",
+    "callback",
+  ),
+  new_car_loan_enquiry: conversionLeadRun(
+    "new_car_loan_enquiry",
+    "finance_callback",
+  ),
   price_history_report: priceHistoryReport,
   active_loan_expired_insurance_report: activeLoanExpiredInsuranceReport,
   operations_digest: operationsDigest,
@@ -158,7 +274,7 @@ const canonicalIntentHandlers = {
   vehicle_spec_lookup: vehicleFeatureAvailability,
   vehicle_model_features_explorer: vehicleFeatures,
   vehicle_feature_discovery: vehicleFeatureDiscovery,
-  vehicle_must_have_feature_builder: vehicleFeatureDiscovery,
+  vehicle_must_have_feature_builder: vehicleRecommendationSearch,
   vehicle_safety_search: vehicleRecommendationSearch,
   vehicle_safety_answer: vehicleFeatureAvailability,
   vehicle_safety_comparison: vehicleComparison,
@@ -178,22 +294,36 @@ const canonicalIntentHandlers = {
   vehicle_emi_calculator: vehicleEmiCalculator,
   vehicle_emi_options: vehicleEmiBudgetSearch,
   vehicle_monthly_budget_planner: vehicleEmiBudgetSearch,
-  new_car_finance_faq: null,
-  new_car_loan_enquiry: null,
-  vehicle_offers: null,
-  vehicle_offer_lookup: null,
-  aci_new_car_quotation: null,
-  vehicle_availability: null,
-  vehicle_waiting_period: null,
-  new_car_service_center_search: null,
-  new_car_ownership_guide: null,
-  new_car_service_cost: null,
-  new_car_warranty: null,
-  vehicle_tco_analysis: null,
-  vehicle_resale_value_analysis: null,
-  vehicle_lifestyle_fit_score: null,
-  vehicle_senior_friendly_recommendation: null,
-  vehicle_space_practicality_advisor: null,
+  new_car_finance_faq: vehicleFinanceFaqUnavailable,
+  new_car_loan_enquiry: conversionLeadRun(
+    "new_car_loan_enquiry",
+    "finance_callback",
+  ),
+  vehicle_offers: vehicleOffersUnavailable,
+  vehicle_offer_lookup: vehicleOffersUnavailable,
+  aci_new_car_quotation: conversionLeadRun(
+    "aci_new_car_quotation",
+    "quotation",
+  ),
+  vehicle_test_drive_request: conversionLeadRun(
+    "vehicle_test_drive_request",
+    "test_drive",
+  ),
+  vehicle_callback_request: conversionLeadRun(
+    "vehicle_callback_request",
+    "callback",
+  ),
+  vehicle_availability: vehicleServiceDataUnavailable,
+  vehicle_waiting_period: vehicleServiceDataUnavailable,
+  new_car_service_center_search: vehicleServiceDataUnavailable,
+  new_car_ownership_guide: vehicleServiceDataUnavailable,
+  new_car_service_cost: vehicleServiceDataUnavailable,
+  new_car_warranty: vehicleServiceDataUnavailable,
+  vehicle_tco_analysis: vehicleRecommendationSearch,
+  vehicle_resale_value_analysis: vehicleRecommendationSearch,
+  vehicle_lifestyle_fit_score: vehicleRecommendationSearch,
+  vehicle_senior_friendly_recommendation: vehicleRecommendationSearch,
+  vehicle_space_practicality_advisor: vehicleRecommendationSearch,
   vehicle_performance_advisor: vehicleRecommendationSearch,
   vehicle_spec_ranking: vehicleRecommendationSearch,
   vehicle_bad_roads_advisor: vehicleRecommendationSearch,

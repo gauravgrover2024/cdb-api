@@ -1,49 +1,51 @@
 #!/usr/bin/env python3
 """
-offers_scraper.py
------------------
-Replacement monthly offer scraper for CDrive / ACI Assist.
+offers_scrapper.py
+---------------------------
+Production monthly offer scraper for CDrive.
 
-Primary source:
-  - V3Cars model offer pages because they expose month-wise offer breakup.
+Scope:
+  - Default brands: Hyundai + Honda
+  - Writes to Mongo offers collection unless --dry-run is passed
+  - V3Cars is primary because it gives breakup rows
+  - CarWale is fallback only when V3Cars has no usable current/previous offer
+  - Controlled Hyundai N Line inheritance:
+      * Creta N Line inherits from highest valid V3Cars Creta row because live V3Cars May 2026 Creta table includes N-Line in that high-benefit row
+      * i20 N Line inherits i20 offer with corporate/rural forced to 0
+        because V3Cars i20 row note says corporate/rural is Rs. 0 for N Line
+      * Venue N Line is NOT inherited automatically
+  - Outputs full breakup rows to console + CSV + JSON
 
-Validation source:
-  - Autocar India discount/news articles discovered from Autocar news sitemap/RSS.
+Run:
+  cd /Users/gauravgrover/cdb-api/scripts/vehicle-scrapers/
 
-Important behaviour:
-  - Uses existing NCR vehicle universe from vehicles collection.
-  - Does NOT discover vehicles independently.
-  - Scrapes variant/group-wise offers where available.
-  - Stores offer period, breakup, source signals and confidence.
-  - If current month is not published, falls back to latest previous month.
-  - Previous month fallback is clearly marked and never saved as confirmed current offer.
-  - Adds detailed progress and diagnostics so a bad run does not silently end with 0 data.
+  python3 offers_v3_carwale_dryrun.py --debug
+  python3 offers_v3_carwale_dryrun.py --brands Hyundai,Honda --debug
+  python3 offers_v3_carwale_dryrun.py --brand Hyundai --model i20 --debug --debug-dir ./offer_debug_i20
 
-Run examples:
-  python offers_scraper.py --brand Hyundai --model i20 --dry-run --debug
-  python offers_scraper.py --workers 2 --limit-models 20 --dry-run --debug
-  python offers_scraper.py --workers 2
+Output:
+  offer_dryrun.csv
+  offer_dryrun.json
 
-Mongo collection:
-  offers_collection = db["offers"]
+Important:
+  Uses safety guards: zero-offer runs skip Mongo writes.
 """
 
 import argparse
+import csv
 import html
 import json
 import random
 import re
 import time
-import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import requests
-from pymongo import UpdateOne
 from tqdm import tqdm
+from pymongo import UpdateOne
 
 from mongo_connection import offers_collection
 from ncr_universe_utils_v2 import (
@@ -51,1399 +53,1237 @@ from ncr_universe_utils_v2 import (
     normalize_key,
     normalize_spaces,
     normalize_variant_key,
-    slugify,
+    strip_variant_prefix,
 )
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
+TODAY = date.today()
+MONTH_NAMES = [
+    "",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
 
 BASE_V3 = "https://www.v3cars.com"
-BASE_AUTOCAR = "https://www.autocarindia.com"
-AUTOCAR_NEWS_SITEMAP = f"{BASE_AUTOCAR}/news-sitemap.xml"
-AUTOCAR_RSS_NEWS = f"{BASE_AUTOCAR}/rss/news"
+BASE_CARWALE = "https://www.carwale.com"
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/123.0.0.0 Safari/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-IN,en;q=0.9",
-    "Connection": "keep-alive",
 }
 
-TODAY = date.today()
-DEFAULT_MONTH = TODAY.month
-DEFAULT_YEAR = TODAY.year
+NO_OFFER_RE = re.compile(
+    r"(offers and discounts are not available right now|not available right now|no offers are available|no offer available|currently no offers)",
+    re.I,
+)
 
-MONTHS = {
-    "january": 1,
-    "february": 2,
-    "march": 3,
-    "april": 4,
-    "may": 5,
-    "june": 6,
-    "july": 7,
-    "august": 8,
-    "september": 9,
-    "october": 10,
-    "november": 11,
-    "december": 12,
-}
-MONTH_NAMES = {v: k.title() for k, v in MONTHS.items()}
-
-OFFER_TYPE_MAP = {
-    "cash": "cash_discount",
-    "cash discount": "cash_discount",
-    "consumer": "cash_discount",
-    "consumer offer": "cash_discount",
-    "exchange": "exchange_bonus",
-    "exchange bonus": "exchange_bonus",
-    "scrappage": "scrappage_bonus",
-    "scrappage bonus": "scrappage_bonus",
-    "upgrade": "upgrade_bonus",
-    "upgrade bonus": "upgrade_bonus",
-    "corporate": "corporate_discount",
-    "corporate/rural": "corporate_discount",
-    "corporate rural": "corporate_discount",
-    "rural": "rural_offer",
-    "additional": "additional_discount",
-    "additional discount": "additional_discount",
-    "loyalty": "loyalty_bonus",
-    "loyalty bonus": "loyalty_bonus",
-    "finance": "finance_offer",
-    "finance offer": "finance_offer",
-    "accessories": "accessories_offer",
-    "accessory": "accessories_offer",
-    "warranty": "warranty_offer",
-    "insurance": "insurance_offer",
-    "amc": "amc_offer",
-}
-
-NUMERIC_BREAKUP_FIELDS = [
-    "cash_discount",
-    "exchange_bonus",
-    "scrappage_bonus",
-    "upgrade_bonus",
-    "corporate_discount",
-    "rural_offer",
-    "additional_discount",
-    "loyalty_bonus",
-    "accessories_offer",
-    "insurance_offer",
-    "warranty_offer",
-    "amc_offer",
+DISCOUNT_FIELD_MAP = [
+    ("cash_discount", re.compile(r"^(cash(?:\s+discount|\s+benefit|\s+offer)?|consumer\s+offer|consumer\s+benefit)\b", re.I)),
+    ("exchange_bonus", re.compile(r"^(exchange(?:\s+bonus|\s+benefit|\s+offer)?)\b", re.I)),
+    ("scrappage_bonus", re.compile(r"^(scrappage(?:\s+bonus|\s+benefit|\s+offer)?|scrap(?:\s+bonus|\s+benefit|\s+offer)?)\b", re.I)),
+    ("upgrade_bonus", re.compile(r"^(upgrade(?:\s+bonus|\s+benefit|\s+offer)?)\b", re.I)),
+    ("corporate_rural", re.compile(r"^(corporate\s*/\s*rural|corporate|rural)(?:\s+discount|\s+benefit|\s+offer)?\b", re.I)),
+    ("additional_discount", re.compile(r"^(additional\s+discount|additional\s+benefit|gov(?:ernment)?\s+customer)\b", re.I)),
+    ("finance_offer", re.compile(r"^(finance(?:\s+offer|\s+benefit)?|interest|emi)\b", re.I)),
+    ("warranty_offer", re.compile(r"^(warranty|extended\s+warranty)\b", re.I)),
+    ("accessories_offer", re.compile(r"^(accessor(?:y|ies)|free\s+accessor(?:y|ies))\b", re.I)),
+    ("total", re.compile(r"^(total|maximum|max)\b", re.I)),
 ]
 
-SKIP_SCOPE_LINES = {
-    "discount type discount notes (if applicable)",
-    "discount type",
-    "notes (if applicable)",
-    "you can only choose one",
-    "max discounts",
-    "max possible discounts",
-}
-
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
 
 @dataclass
-class FetchResult:
-    ok: bool
-    status_code: Optional[int]
-    url: str
-    text: str = ""
-    error: str = ""
+class OfferRow:
+    brand: str
+    model: str
+    brand_slug: str
+    model_slug: str
+    source: str
+    source_url: str
+
+    target_month: int
+    target_year: int
+    target_month_label: str
+
+    offer_month: int
+    offer_year: int
+    offer_month_label: str
+    period_type: str  # current / previous / unknown
+
+    source_variant_label: str
+    variant_scope: str
+    matched_canonical_variants: str
+    match_count: int
+
+    cash_discount: int
+    exchange_bonus: int
+    scrappage_bonus: int
+    upgrade_bonus: int
+    corporate_discount: int
+    rural_offer: int
+    additional_discount: int
+    finance_offer: str
+    warranty_offer: str
+    accessories_offer: str
+
+    # Important: total is the source's max benefit. Do not blindly sum all rows.
+    max_benefit: int
+    computed_possible_max: int
+    breakup_available: bool
+    total_matches_computed: bool
+
+    notes: str
+    confidence: str
+    dealer_confirmation_required: bool
+    raw_block: str
 
 
-@dataclass
-class AutocarArticle:
-    title: str
-    url: str
-    text: str
-
-
-# ---------------------------------------------------------------------------
-# Generic helpers
-# ---------------------------------------------------------------------------
-
-
-def clamp_workers(workers: int) -> int:
-    return max(1, min(int(workers or 1), 3))
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Dry-run offer scraper: V3Cars primary + CarWale fallback")
+    parser.add_argument("--brands", type=str, default="Hyundai,Honda", help="Comma-separated brand filter. Default: Hyundai,Honda")
+    parser.add_argument("--brand", type=str, default="", help="Optional single brand filter, overrides --brands")
+    parser.add_argument("--model", type=str, default="", help="Optional model filter, e.g. i20, venue, city")
+    parser.add_argument("--target-month", type=int, default=TODAY.month)
+    parser.add_argument("--target-year", type=int, default=TODAY.year)
+    parser.add_argument("--output-csv", type=str, default="offer_dryrun.csv")
+    parser.add_argument("--output-json", type=str, default="offer_dryrun.json")
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--debug-dir", type=str, default="")
+    parser.add_argument("--include-discontinued", action="store_true")
+    parser.add_argument("--limit-models", type=int, default=0)
+    parser.add_argument("--no-inherit-nline", action="store_true", help="Disable controlled Hyundai N Line inheritance")
+    parser.add_argument("--dry-run", action="store_true", help="Do not write to Mongo")
+    parser.add_argument("--write-empty", action="store_true", help="Write empty no-offer docs; normally keep disabled")
+    parser.add_argument("--min-offer-docs", type=int, default=1, help="Safety guard: skip Mongo write if fewer than this many offer docs are built")
+    return parser.parse_args()
 
 
 def month_label(month: int, year: int) -> str:
-    return f"{MONTH_NAMES.get(month, str(month))} {year}"
+    return f"{MONTH_NAMES[month]} {year}"
 
 
 def previous_month(month: int, year: int) -> Tuple[int, int]:
-    if month <= 1:
-        return 12, year - 1
-    return month - 1, year
-
-
-def period_sort_key(month: int, year: int) -> int:
-    return year * 100 + month
-
-
-def compact_url(url: str, max_len: int = 110) -> str:
-    url = str(url or "")
-    if len(url) <= max_len:
-        return url
-    return url[: max_len - 3] + "..."
-
-
-def inr(value: Optional[int]) -> str:
-    if value is None:
-        return "-"
-    try:
-        return f"₹{int(value):,}"
-    except Exception:
-        return str(value)
+    return (12, year - 1) if month == 1 else (month - 1, year)
 
 
 def build_session() -> requests.Session:
-    s = requests.Session()
-    s.headers.update(HEADERS)
-    return s
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    return session
 
 
-def fetch_text(session: requests.Session, url: str, retries: int = 4) -> FetchResult:
+def fetch_text(session: requests.Session, url: str, retries: int = 3) -> Tuple[bool, int, str, str]:
     last_error = ""
-    status_code = None
     for attempt in range(retries):
         try:
-            resp = session.get(url, timeout=(10, 30), allow_redirects=True)
-            status_code = resp.status_code
+            resp = session.get(url, timeout=(10, 35), allow_redirects=True)
             if resp.status_code == 200 and resp.text:
-                return FetchResult(True, resp.status_code, resp.url or url, resp.text)
-            last_error = f"HTTP {resp.status_code}"
+                return True, resp.status_code, resp.text, ""
+            last_error = f"status={resp.status_code}"
         except Exception as exc:
             last_error = str(exc)
-        time.sleep((2**attempt) + random.uniform(0.08, 0.25))
-    return FetchResult(False, status_code, url, "", last_error)
+        time.sleep((2 ** attempt) + random.uniform(0.05, 0.18))
+    return False, 0, "", last_error
 
 
-def html_to_text(raw_html: str) -> str:
-    if not raw_html:
-        return ""
-    text = raw_html.replace("\\/", "/")
-    text = re.sub(r"<script\b[^>]*>.*?</script>", "\n", text, flags=re.I | re.S)
-    text = re.sub(r"<style\b[^>]*>.*?</style>", "\n", text, flags=re.I | re.S)
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
-    text = re.sub(r"</(?:p|div|li|tr|td|th|h1|h2|h3|h4|h5|section|article)>", "\n", text, flags=re.I)
-    text = re.sub(r"<[^>]+>", " ", text)
+def clean_text(raw_html: str) -> str:
+    text = raw_html or ""
+    text = text.replace("\\/", "/")
     text = html.unescape(text)
-    text = text.replace("\u00a0", " ")
-    text = text.replace("–", "-").replace("—", "-")
-    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", text)
+    text = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", text)
+    text = re.sub(r"(?is)<noscript[^>]*>.*?</noscript>", " ", text)
+    text = re.sub(r"(?i)</?(h1|h2|h3|h4|table|thead|tbody|tr|td|th|li|p|div|br|section|article)[^>]*>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = text.replace("\xa0", " ")
+    text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n+", "\n", text)
     return text.strip()
 
 
-def text_lines(raw: str) -> List[str]:
-    lines = []
-    for line in (raw or "").splitlines():
-        clean = normalize_spaces(line)
-        if clean:
-            lines.append(clean)
-    return lines
-
-
-def extract_amount(text: str) -> Optional[int]:
-    """Extract INR amount. Handles Rs 65,000, ₹65,000 and Rs 1.05 lakh."""
-    if not text:
+def money_to_int(raw: str) -> Optional[int]:
+    if raw is None:
         return None
-    cleaned = str(text).replace("₹", "Rs ").replace(",", " ")
-    cleaned = re.sub(r"\s+", " ", cleaned)
-
-    # Rs 1.05 lakh / INR 1.10 lakh / 1 lakh
-    m = re.search(r"(?:rs\.?|inr)?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:lakh|lac)\b", cleaned, flags=re.I)
+    text = str(raw).replace(",", "").replace("₹", "Rs ")
+    m = re.search(r"(?:rs\.?|inr)?\s*([\d]+(?:\.\d+)?)\s*(?:lakh|lac|lakhs)", text, re.I)
     if m:
         try:
-            return int(round(float(m.group(1)) * 100000))
-        except Exception:
-            pass
-
-    # Rs 65 000 or Rs. 65000
-    m = re.search(r"(?:rs\.?|inr)\s*([0-9][0-9\s]{0,12})", cleaned, flags=re.I)
-    if m:
-        digits = re.sub(r"\D", "", m.group(1))
-        if digits:
-            try:
-                return int(digits)
-            except Exception:
-                pass
-
-    # fallback for direct amount followed by off/discount/benefit
-    m = re.search(r"\b([0-9]{4,7})\b\s*(?:off|discount|benefit|benefits|bonus)?", cleaned, flags=re.I)
-    if m:
-        try:
-            return int(m.group(1))
+            val = int(round(float(m.group(1)) * 100000))
+            return val if val >= 0 else None
         except Exception:
             return None
-
+    m = re.search(r"(?:rs\.?|inr)\s*([\d]+)", text, re.I)
+    if m:
+        try:
+            val = int(m.group(1))
+            return val if val >= 0 else None
+        except Exception:
+            return None
     return None
 
 
-def clean_note_from_line(line: str) -> str:
-    if not line:
-        return ""
-    # Remove first money expression but keep any secondary notes like Rs. 0 for N Line.
-    note = re.sub(r"^(Cash Discount|Cash|Exchange Bonus|Exchange|Scrappage Bonus|Scrappage|Upgrade|Corporate/Rural|Corporate|Rural|Additional discount|Additional|Total)\s*", "", line, flags=re.I)
-    note = re.sub(r"(?:Rs\.?|INR|₹)\s*[0-9,.]+\s*(?:lakh|lac)?\s*-?", "", note, count=1, flags=re.I)
-    note = normalize_spaces(note.strip(" -"))
-    return note
-
-
-def classify_offer_line(line: str) -> Optional[Tuple[str, str]]:
-    """Return (field_key, raw_label) if line starts with a known offer component."""
-    if not line:
-        return None
-    low = normalize_key(line)
-
-    candidates = [
-        ("cash discount", "cash_discount"),
-        ("cash", "cash_discount"),
-        ("exchange bonus", "exchange_bonus"),
-        ("exchange", "exchange_bonus"),
-        ("scrappage bonus", "scrappage_bonus"),
-        ("scrappage", "scrappage_bonus"),
-        ("upgrade bonus", "upgrade_bonus"),
-        ("upgrade", "upgrade_bonus"),
-        ("corporate rural", "corporate_discount"),
-        ("corporate", "corporate_discount"),
-        ("rural", "rural_offer"),
-        ("additional discount", "additional_discount"),
-        ("additional", "additional_discount"),
-        ("loyalty bonus", "loyalty_bonus"),
-        ("loyalty", "loyalty_bonus"),
-        ("finance offer", "finance_offer"),
-        ("finance", "finance_offer"),
-        ("accessories", "accessories_offer"),
-        ("insurance", "insurance_offer"),
-        ("warranty", "warranty_offer"),
-        ("amc", "amc_offer"),
+def first_money(text: str) -> Optional[int]:
+    if "Rs. 0" in text or "Rs 0" in text or "₹0" in text:
+        return 0
+    money_patterns = [
+        r"(?:₹|rs\.?|inr)\s*[\d,]+(?:\.\d+)?\s*(?:lakh|lac|lakhs)?",
+        r"[\d]+(?:\.\d+)?\s*(?:lakh|lac|lakhs)",
     ]
-    for prefix, key in candidates:
-        if low.startswith(prefix):
-            return key, prefix
+    for pat in money_patterns:
+        m = re.search(pat, text, flags=re.I)
+        if m:
+            return money_to_int(m.group(0))
     return None
 
 
-def is_total_line(line: str) -> bool:
-    return bool(re.match(r"^\s*Total\b", line or "", flags=re.I))
+def amount_and_note_after_field(line: str, field_regex: re.Pattern) -> Tuple[int, str]:
+    rest = field_regex.sub("", line, count=1).strip()
+    amt = first_money(rest)
+    if amt is None:
+        amt = 0
+    note = re.sub(r"(?:₹|rs\.?|inr)\s*[\d,]+(?:\.\d+)?\s*(?:lakh|lac|lakhs)?", " ", rest, count=1, flags=re.I)
+    note = note.replace("-", " ")
+    note = normalize_spaces(note)
+    return int(amt), note
 
 
-def compute_breakup_total(breakup: Dict[str, Optional[int]]) -> int:
+def normalize_corporate_rural(value: int, note: str) -> Tuple[int, int, str]:
     """
-    Compute realistic max total. Exchange and scrappage are usually alternatives,
-    so use the higher of the two instead of blindly adding both.
+    V3Cars sometimes uses one row:
+      Corporate/Rural Rs. 5,000 Only 3000 for Corporate/Gov Customers
+    We keep rural_offer = row amount and corporate_discount if note says lower corporate amount.
     """
-    cash = int(breakup.get("cash_discount") or 0)
-    exchange = int(breakup.get("exchange_bonus") or 0)
-    scrappage = int(breakup.get("scrappage_bonus") or 0)
-    upgrade = int(breakup.get("upgrade_bonus") or 0)
-    corporate = int(breakup.get("corporate_discount") or 0)
-    rural = int(breakup.get("rural_offer") or 0)
-    additional = int(breakup.get("additional_discount") or 0)
-    loyalty = int(breakup.get("loyalty_bonus") or 0)
-    accessories = int(breakup.get("accessories_offer") or 0)
-    insurance = int(breakup.get("insurance_offer") or 0)
-    warranty = int(breakup.get("warranty_offer") or 0)
-    amc = int(breakup.get("amc_offer") or 0)
-
-    # Corporate/rural often comes as one line. If both are separately present, take max.
-    corp_or_rural = max(corporate, rural)
-    exchange_or_scrappage = max(exchange, scrappage)
-
-    return cash + exchange_or_scrappage + upgrade + corp_or_rural + additional + loyalty + accessories + insurance + warranty + amc
+    corporate = 0
+    rural = value or 0
+    note_text = note or ""
+    corp_match = re.search(r"(?:only\s*)?(?:rs\.?|₹)?\s*([\d,]+)\s*(?:for\s*)?(?:corporate|gov|government)", note_text, re.I)
+    if corp_match:
+        try:
+            corporate = int(corp_match.group(1).replace(",", ""))
+        except Exception:
+            corporate = 0
+    else:
+        corporate = value or 0
+    return corporate, rural, note_text
 
 
-def normalize_scope_label(label: str) -> str:
-    label = normalize_spaces(label)
-    label = re.sub(r"^(HYUNDAI|MARUTI SUZUKI|MARUTI|TATA|MAHINDRA|KIA|HONDA|TOYOTA|SKODA|VOLKSWAGEN|RENAULT|NISSAN|MG|MORRIS GARAGES)\s+", "", label, flags=re.I)
-    return label.strip(" -")
+def split_v3_period_sections(text: str) -> Dict[str, str]:
+    if not text:
+        return {}
+    month_re = r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2}"
+    matches = list(re.finditer(month_re, text, flags=re.I))
+    sections: Dict[str, str] = {}
+
+    for i, m in enumerate(matches):
+        label = normalize_spaces(m.group(0)).title()
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else min(len(text), start + 12000)
+        chunk = text[start:end]
+        sections[label] = normalize_spaces((sections.get(label, "") + "\n" + chunk).strip())
+
+    return sections
 
 
-def infer_variant_scope(scope_label: str) -> str:
-    low = normalize_key(scope_label)
-    if not low:
-        return "model_level"
-    if "all variants" in low:
-        return "all_variants"
-    if "all other variants" in low or "other variants" in low:
-        return "variant_group"
-    if any(token in low for token in ["petrol", "diesel", "cng", "manual", "auto", "ivt", "dct", "amt", "mt"]):
-        return "variant_group"
-    if any(token in low for token in ["variant", "variants", "trim", "trims", "edition", "line"]):
-        return "variant_group"
-    return "model_level"
-
-
-def meaningful_scope_tokens(scope_label: str, brand: str, model: str) -> List[str]:
-    low = normalize_key(scope_label)
-    for remove in [brand, model, f"{brand} {model}"]:
-        rk = normalize_key(remove)
-        if rk:
-            low = normalize_spaces(low.replace(rk, " "))
-    stop = {
-        "all", "other", "variants", "variant", "petrol", "diesel", "cng", "manual", "auto",
-        "automatic", "mt", "at", "ivt", "dct", "amt", "normal", "new", "old", "my25", "my26",
-        "deals", "offers", "discount", "discounts", "edition", "model", "models",
-    }
-    return [token for token in low.split() if token and token not in stop and len(token) > 1]
-
-
-def match_canonical_variants(scope_label: str, variant_list: List[str], brand: str, model: str) -> Tuple[str, List[str]]:
-    """Best-effort group mapping back to canonical variants from vehicles collection."""
-    if not variant_list:
-        return "model_only", []
-
-    scope = infer_variant_scope(scope_label)
-    low = normalize_key(scope_label)
-
-    if "all variants" in low:
-        return "all_variants", variant_list
-
-    tokens = meaningful_scope_tokens(scope_label, brand, model)
-    if not tokens:
-        return scope, []
-
-    matched = []
-    for variant in variant_list:
-        vkey = normalize_variant_key(variant, brand, model)
-        if all(token in vkey for token in tokens):
-            matched.append(variant)
-            continue
-        # softer token matching for groups like Sportz / Asta / N Line
-        hit_count = sum(1 for token in tokens if token in vkey)
-        if hit_count >= max(1, min(2, len(tokens))):
-            matched.append(variant)
-
-    status = "exact_variant" if len(matched) == 1 else ("variant_group" if matched else scope)
-    return status, matched[:60]
-
-
-def save_debug(debug_dir: Optional[Path], name: str, text: str) -> None:
-    if not debug_dir:
-        return
+def source_label_from_period(label: str) -> Tuple[int, int]:
+    parts = label.split()
+    if len(parts) != 2:
+        return (0, 0)
+    month = MONTH_NAMES.index(parts[0]) if parts[0] in MONTH_NAMES else 0
     try:
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", name).strip("-")[:140]
-        (debug_dir / safe_name).write_text(text or "", encoding="utf-8")
+        year = int(parts[1])
     except Exception:
-        pass
+        year = 0
+    return month, year
 
 
-# ---------------------------------------------------------------------------
-# V3Cars parser
-# ---------------------------------------------------------------------------
+def classify_discount_line(line: str) -> Optional[Tuple[str, re.Pattern]]:
+    cleaned = normalize_spaces(line)
+    for key, rx in DISCOUNT_FIELD_MAP:
+        if rx.search(cleaned):
+            return key, rx
+    return None
 
 
-def v3cars_offer_url(brand_slug: str, model_slug: str) -> str:
-    return f"{BASE_V3}/{brand_slug}-cars/{model_slug}/offers-discounts"
-
-
-def extract_month_year(line: str) -> Optional[Tuple[int, int]]:
-    if not line:
-        return None
-    pattern = r"\b(" + "|".join(MONTHS.keys()) + r")\s+(20\d{2})\b"
-    m = re.search(pattern, line, flags=re.I)
-    if not m:
-        return None
-    return MONTHS[m.group(1).lower()], int(m.group(2))
-
-
-def line_is_month_section_start(line: str) -> bool:
-    if not line:
+def is_probable_variant_label(line: str, model_display: str, brand_display: str) -> bool:
+    line_clean = normalize_spaces(line)
+    if not line_clean:
         return False
-    low = line.lower()
-    if not extract_month_year(line):
+
+    # If a table header is attached to the variant label, test only the prefix.
+    candidate = clean_source_variant_label(line_clean, brand_display, model_display)
+    low = candidate.lower()
+    if not candidate:
         return False
-    return any(token in low for token in ["discount offers", "deals", "offers"])
+
+    bad = [
+        "notes", "applicable", "you can only choose",
+        "max possible", "offers", "deals", "details about", "request button", "login", "sign up",
+    ]
+    if any(b in low for b in bad):
+        return False
+    if classify_discount_line(candidate):
+        return False
+
+    model_key = normalize_key(model_display)
+    brand_key = normalize_key(brand_display)
+    line_key = normalize_key(candidate)
+    useful_words = [
+        "variant", "variants", "petrol", "diesel", "manual", "auto", "automatic",
+        "ivt", "dct", "cng", "electric", "hybrid", "all other", "all"
+    ]
+    return model_key in line_key or brand_key in line_key or any(w in low for w in useful_words)
 
 
-def parse_v3cars_sections(page_text: str) -> List[Dict]:
-    lines = text_lines(page_text)
-    sections: List[Dict] = []
-    current: Optional[Dict] = None
+def parse_v3_offer_blocks(
+    section_text: str,
+    model_entry: Dict,
+    target_month: int,
+    target_year: int,
+    period_label: str,
+    period_type: str,
+    source_url: str,
+) -> List[OfferRow]:
+    brand = model_entry["brand_display"]
+    model = model_entry["model_display"]
+    brand_slug = model_entry["brand_slug"]
+    model_slug = model_entry["model_slug"]
+    variant_list = model_entry.get("variant_list") or []
+
+    if not section_text or NO_OFFER_RE.search(section_text):
+        return []
+
+    forced = section_text
+    field_names = [
+        "Cash Discount", "Cash", "Exchange Bonus", "Exchange", "Scrappage Bonus", "Scrappage",
+        "Upgrade", "Corporate/Rural", "Corporate", "Rural", "Additional discount", "Total"
+    ]
+    for name in field_names:
+        forced = re.sub(rf"\s+({re.escape(name)}\b)", r"\n\1", forced, flags=re.I)
+
+    forced = re.sub(rf"\s+({re.escape(brand)}\s+[A-Z0-9])", r"\n\1", forced, flags=re.I)
+    forced = re.sub(r"\s+([A-Z0-9][A-Za-z0-9\s\-–,/()]+(?:Variant|Variants|Petrol|Diesel|CNG|Hybrid|Electric|Manual|Auto|Automatic|iVT|DCT))\s+(Discount Type|Cash|Exchange|Scrappage|Total)", r"\n\1\n\2", forced, flags=re.I)
+
+    lines = [normalize_spaces(x) for x in forced.splitlines()]
+    lines = [x for x in lines if x]
+
+    rows: List[OfferRow] = []
+    current_label = ""
+    current: Dict = {}
+    row_notes: List[str] = []
+    raw_lines: List[str] = []
+
+    def flush_current():
+        nonlocal current_label, current, row_notes, raw_lines
+        if not current:
+            current_label = ""
+            row_notes = []
+            raw_lines = []
+            return
+
+        max_benefit = int(current.get("total", 0) or 0)
+        computed = (
+            int(current.get("cash_discount", 0) or 0)
+            + max(int(current.get("exchange_bonus", 0) or 0), int(current.get("scrappage_bonus", 0) or 0))
+            + int(current.get("upgrade_bonus", 0) or 0)
+            + max(int(current.get("corporate_discount", 0) or 0), int(current.get("rural_offer", 0) or 0))
+            + int(current.get("additional_discount", 0) or 0)
+        )
+        if max_benefit <= 0:
+            max_benefit = computed
+
+        if max_benefit <= 0:
+            current_label = ""
+            current = {}
+            row_notes = []
+            raw_lines = []
+            return
+
+        offer_month, offer_year = source_label_from_period(period_label)
+        match = match_variant_label_to_canonical(current_label or "All variants", variant_list, brand, model)
+
+        rows.append(
+            OfferRow(
+                brand=brand,
+                model=model,
+                brand_slug=brand_slug,
+                model_slug=model_slug,
+                source="v3cars",
+                source_url=source_url,
+
+                target_month=target_month,
+                target_year=target_year,
+                target_month_label=month_label(target_month, target_year),
+
+                offer_month=offer_month,
+                offer_year=offer_year,
+                offer_month_label=period_label,
+                period_type=period_type,
+
+                source_variant_label=current_label or "All variants",
+                variant_scope=match["variant_scope"],
+                matched_canonical_variants=" | ".join(match["matched_variants"]),
+                match_count=len(match["matched_variants"]),
+
+                cash_discount=int(current.get("cash_discount", 0) or 0),
+                exchange_bonus=int(current.get("exchange_bonus", 0) or 0),
+                scrappage_bonus=int(current.get("scrappage_bonus", 0) or 0),
+                upgrade_bonus=int(current.get("upgrade_bonus", 0) or 0),
+                corporate_discount=int(current.get("corporate_discount", 0) or 0),
+                rural_offer=int(current.get("rural_offer", 0) or 0),
+                additional_discount=int(current.get("additional_discount", 0) or 0),
+                finance_offer=str(current.get("finance_offer", "") or ""),
+                warranty_offer=str(current.get("warranty_offer", "") or ""),
+                accessories_offer=str(current.get("accessories_offer", "") or ""),
+
+                max_benefit=max_benefit,
+                computed_possible_max=computed,
+                breakup_available=True,
+                total_matches_computed=(max_benefit == computed),
+
+                notes=" | ".join([n for n in row_notes if n]),
+                confidence="high",
+                dealer_confirmation_required=True,
+                raw_block=" | ".join(raw_lines)[:2000],
+            )
+        )
+
+        current_label = ""
+        current = {}
+        row_notes = []
+        raw_lines = []
 
     for line in lines:
-        if line_is_month_section_start(line):
-            found = extract_month_year(line)
-            if found:
-                mth, yr = found
-                # V3 often has two consecutive heading lines for the same month.
-                if current and current["month"] == mth and current["year"] == yr and len(current["lines"]) <= 3:
-                    current["lines"].append(line)
-                    continue
-                if current:
-                    sections.append(current)
-                current = {
-                    "month": mth,
-                    "year": yr,
-                    "month_label": month_label(mth, yr),
-                    "heading": line,
-                    "lines": [line],
-                }
+        line_low = line.lower()
+
+        # Classify first. Lines like "Exchange Rs. 20,000 You can only choose one"
+        # must still populate exchange_bonus; the old parser skipped them entirely.
+        classified = classify_discount_line(line)
+        if classified:
+            key, rx = classified
+            raw_lines.append(line)
+
+            if not current_label:
+                current_label = "All variants"
+
+            if key == "total":
+                amt, note = amount_and_note_after_field(line, rx)
+                current["total"] = amt
+
+                # If next variant heading is glued into the total note, preserve it for the next block.
+                next_label = extract_next_variant_label_from_total_note(note, brand, model)
+                clean_note = note
+                if next_label:
+                    clean_note = re.sub(r"(?i)max\s+discounts.*$", "", clean_note).strip()
+
+                if clean_note:
+                    row_notes.append(f"Total: {clean_note}")
+                flush_current()
+
+                if next_label:
+                    current_label = next_label
+                    raw_lines = [next_label]
+                    row_notes = []
                 continue
 
-        if current:
-            current["lines"].append(line)
+            if key == "corporate_rural":
+                amt, note = amount_and_note_after_field(line, rx)
+                corp, rural, split_note = normalize_corporate_rural(amt, note)
+                current["corporate_discount"] = corp
+                current["rural_offer"] = rural
+                if split_note:
+                    row_notes.append(f"Corporate/Rural: {split_note}")
+                continue
+
+            if key in {"finance_offer", "warranty_offer", "accessories_offer"}:
+                amt, note = amount_and_note_after_field(line, rx)
+                current[key] = line
+                if note:
+                    row_notes.append(f"{key}: {note}")
+                continue
+
+            amt, note = amount_and_note_after_field(line, rx)
+            current[key] = amt
+            if note:
+                row_notes.append(f"{key}: {note}")
+            continue
+
+        if "you can only choose one" in line_low:
+            row_notes.append(line)
+            raw_lines.append(line)
+            continue
+
+        if is_probable_variant_label(line, model, brand):
+            if current:
+                flush_current()
+            current_label = clean_source_variant_label(line, brand, model)
+            raw_lines = [current_label]
+            row_notes = []
+            continue
 
     if current:
-        sections.append(current)
+        flush_current()
 
-    # Deduplicate duplicate sections if page repeats content.
-    deduped: List[Dict] = []
-    seen = set()
-    for section in sections:
-        key = (section["month"], section["year"], section["heading"][:80])
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(section)
-    return deduped
-
-
-def choose_v3_section(sections: List[Dict], target_month: int, target_year: int) -> Tuple[Optional[Dict], bool]:
-    if not sections:
-        return None, False
-
-    target_key = period_sort_key(target_month, target_year)
-    exact = [s for s in sections if s["month"] == target_month and s["year"] == target_year]
-    if exact:
-        return exact[0], False
-
-    previous = [s for s in sections if period_sort_key(s["month"], s["year"]) < target_key]
-    previous.sort(key=lambda s: period_sort_key(s["month"], s["year"]), reverse=True)
-    return (previous[0], True) if previous else (None, False)
-
-
-def is_scope_candidate(line: str) -> bool:
-    if not line:
-        return False
-    low = normalize_key(line)
-    if low in SKIP_SCOPE_LINES:
-        return False
-    if line_is_month_section_start(line):
-        return False
-    if classify_offer_line(line) or is_total_line(line):
-        return False
-    if len(line) <= 2:
-        return False
-    if re.search(r"\bRs\.?\s*[0-9]", line, flags=re.I):
-        return False
-    # A good scope usually has car/variant words or variant descriptors.
-    if any(token in low for token in ["variant", "variants", "petrol", "diesel", "manual", "auto", "cng", "edition", "line", "mt", "ivt", "dct"]):
-        return True
-    # Or all caps model group lines.
-    if line.upper() == line and len(line.split()) >= 2:
-        return True
-    return False
-
-
-def blank_breakup() -> Dict[str, Optional[int]]:
-    return {field: None for field in NUMERIC_BREAKUP_FIELDS}
-
-
-def finalize_offer_row(
-    row: Optional[Dict],
-    brand: str,
-    model: str,
-    variant_list: List[str],
-    source_url: str,
-) -> Optional[Dict]:
-    if not row:
-        return None
-    max_benefit = row.get("max_benefit")
-    breakup = row.get("breakup") or blank_breakup()
-    computed_total = compute_breakup_total(breakup)
-
-    # If total is absent but breakup exists, use computed total.
-    if not max_benefit and computed_total > 0:
-        max_benefit = computed_total
-
-    if not max_benefit or max_benefit <= 0:
-        return None
-
-    diff = abs(int(max_benefit or 0) - int(computed_total or 0))
-    breakup_has_amount = any((breakup.get(k) or 0) > 0 for k in NUMERIC_BREAKUP_FIELDS)
-    matches_total = bool(breakup_has_amount and computed_total > 0 and diff <= 1000)
-
-    scope_label = normalize_scope_label(row.get("variant_group") or "All variants")
-    match_status, matched_variants = match_canonical_variants(scope_label, variant_list, brand, model)
-
-    return {
-        "variant_scope": infer_variant_scope(scope_label),
-        "variant_group": scope_label,
-        "variant": matched_variants[0] if len(matched_variants) == 1 else None,
-        "variant_slug": slugify(matched_variants[0]) if len(matched_variants) == 1 else None,
-        "fuel": None,
-        "transmission": None,
-        "canonical_match_status": match_status,
-        "matched_canonical_variants": matched_variants,
-        "max_benefit": int(max_benefit),
-        "breakup": breakup,
-        "breakup_total": int(computed_total or 0),
-        "breakup_matches_total": matches_total,
-        "use_breakup_as_truth": matches_total,
-        "source_signals": [
-            {
-                "source": "v3cars",
-                "source_url": source_url,
-                "max_benefit": int(max_benefit),
-                "has_breakup": breakup_has_amount,
-                "breakup_total": int(computed_total or 0),
-                "breakup_matches_total": matches_total,
-                "confidence": "high" if matches_total else "medium",
-                "raw_scope": scope_label,
-            }
-        ],
-        "confidence": "high" if matches_total else "medium",
-        "dealer_confirmation_required": True,
-        "note": "Breakup matched total benefit." if matches_total else "Total and breakup need dealer confirmation.",
-        "raw_lines": row.get("raw_lines", [])[:30],
-    }
-
-
-def parse_v3cars_offer_rows(
-    section: Dict,
-    brand: str,
-    model: str,
-    variant_list: List[str],
-    source_url: str,
-) -> List[Dict]:
-    rows: List[Dict] = []
-    current: Optional[Dict] = None
-
-    def flush_current() -> None:
-        nonlocal current
-        final = finalize_offer_row(current, brand, model, variant_list, source_url)
-        if final:
-            rows.append(final)
-        current = None
-
-    for line in section.get("lines") or []:
-        if line_is_month_section_start(line):
-            continue
-
-        if is_scope_candidate(line):
-            # Avoid making the generic "HYUNDAI i20 OFFERS" line a variant group.
-            low = normalize_key(line)
-            if any(token in low for token in ["offers", "deals"]) and extract_month_year(line):
-                continue
-            if current and (current.get("max_benefit") or any((current.get("breakup") or {}).values())):
-                flush_current()
-            current = {
-                "variant_group": line,
-                "breakup": blank_breakup(),
-                "max_benefit": None,
-                "raw_lines": [line],
-            }
-            continue
-
-        if not current:
-            # Some pages start directly with Cash/Exchange rows. Create model-level group.
-            if classify_offer_line(line) or is_total_line(line):
-                current = {
-                    "variant_group": "All variants",
-                    "breakup": blank_breakup(),
-                    "max_benefit": None,
-                    "raw_lines": [],
-                }
-            else:
-                continue
-
-        current.setdefault("raw_lines", []).append(line)
-
-        if is_total_line(line):
-            amount = extract_amount(line)
-            if amount is not None:
-                current["max_benefit"] = amount
-            flush_current()
-            continue
-
-        classified = classify_offer_line(line)
-        if classified:
-            field, _label = classified
-            amount = extract_amount(line)
-            if amount is not None:
-                current.setdefault("breakup", blank_breakup())[field] = amount
-            note = clean_note_from_line(line)
-            if note:
-                current.setdefault("breakup_notes", {})[field] = note
-
-    flush_current()
-
-    # Deduplicate rows with same scope and max benefit.
-    deduped: List[Dict] = []
+    deduped = []
     seen = set()
     for row in rows:
-        key = (normalize_key(row.get("variant_group")), row.get("max_benefit"))
+        key = (normalize_key(row.source_variant_label), row.max_benefit, row.offer_month_label)
         if key in seen:
             continue
         seen.add(key)
         deduped.append(row)
+
     return deduped
 
 
-def scrape_v3cars_model(
+def clean_source_variant_label(label: str, brand: str, model: str) -> str:
+    text = normalize_spaces(label)
+    # V3Cars table text can collapse like:
+    # "Petrol–Manual,Auto (All Variants) Discount Type Discount Notes (If applicable)"
+    # Keep only the actual variant/fuel label before table headers/noise.
+    text = re.split(r"(?i)\bdiscount\s+type\b|\bdiscount\s+notes\b|\bmax\s+discounts\b", text, maxsplit=1)[0]
+    text = normalize_spaces(text)
+    cleaned = strip_variant_prefix(text, brand, model)
+    return cleaned or text
+
+
+def extract_next_variant_label_from_total_note(note: str, brand: str, model: str) -> str:
+    """
+    V3Cars sometimes collapses the next variant heading into the Total line, e.g.
+    "Total Rs. 75,000 Max discounts Diesel–Manual,Auto (All Variants) Discount Type...".
+    This extracts "Diesel–Manual,Auto (All Variants)" so the next offer row is not saved as generic All variants.
+    """
+    raw = normalize_spaces(note or "")
+    if not raw:
+        return ""
+
+    # Prefer text after "Max discounts" because that is where the next heading begins.
+    m = re.search(r"(?i)max\s+discounts\s+(.+)$", raw)
+    candidate = m.group(1) if m else raw
+    candidate = clean_source_variant_label(candidate, brand, model)
+
+    if not candidate:
+        return ""
+
+    key = normalize_key(candidate)
+    useful = ["petrol", "diesel", "cng", "hybrid", "electric", "manual", "auto", "automatic", "ivt", "dct", "variant", "variants", "all"]
+    if any(x in key for x in useful) or normalize_key(model) in key:
+        return candidate
+    return ""
+
+
+def match_variant_label_to_canonical(label: str, variant_list: List[str], brand: str, model: str) -> Dict:
+    if not variant_list:
+        return {"variant_scope": "model_level", "matched_variants": []}
+
+    label_raw = normalize_spaces(label or "")
+    label_key = normalize_key(label_raw)
+    all_variants = list(variant_list)
+
+    def is_diesel_variant(v: str) -> bool:
+        return "diesel" in normalize_key(v)
+
+    def is_cng_variant(v: str) -> bool:
+        return "cng" in normalize_key(v)
+
+    def is_electric_variant(v: str) -> bool:
+        vk = normalize_key(v)
+        return "electric" in vk or " ev " in f" {vk} "
+
+    def is_hybrid_variant(v: str) -> bool:
+        return "hybrid" in normalize_key(v)
+
+    def is_petrol_variant(v: str) -> bool:
+        # In our canonical vehicle names petrol is often implicit, while diesel/CNG/electric/hybrid are explicit.
+        return not (is_diesel_variant(v) or is_cng_variant(v) or is_electric_variant(v) or is_hybrid_variant(v))
+
+    fuel_filtered: List[str] = []
+    fuel_scope = ""
+
+    if "diesel" in label_key:
+        fuel_filtered = [v for v in all_variants if is_diesel_variant(v)]
+        fuel_scope = "diesel_group"
+    elif "cng" in label_key:
+        fuel_filtered = [v for v in all_variants if is_cng_variant(v)]
+        fuel_scope = "cng_group"
+    elif "electric" in label_key or " ev " in f" {label_key} ":
+        fuel_filtered = [v for v in all_variants if is_electric_variant(v)]
+        fuel_scope = "electric_group"
+    elif "hybrid" in label_key:
+        fuel_filtered = [v for v in all_variants if is_hybrid_variant(v)]
+        fuel_scope = "hybrid_group"
+    elif "petrol" in label_key:
+        fuel_filtered = [v for v in all_variants if is_petrol_variant(v)]
+        fuel_scope = "petrol_group"
+
+    # If the source says "Petrol/Diesel (All Variants)", do NOT return all variants;
+    # return only the matching fuel group.
+    if fuel_filtered and ("all variant" in label_key or "all other variant" in label_key or "variant" in label_key):
+        return {"variant_scope": fuel_scope, "matched_variants": fuel_filtered}
+
+    if not label_key or "all variant" in label_key or "all other variant" in label_key or label_key == "all":
+        return {"variant_scope": "all_variants", "matched_variants": all_variants}
+
+    matched = []
+    for v in all_variants:
+        clean_v = normalize_variant_key(v, brand, model)
+        clean_v_tokens = set(clean_v.split())
+        label_tokens = set(label_key.split())
+
+        if clean_v and (clean_v in label_key or label_key in clean_v):
+            matched.append(v)
+            continue
+
+        important = [
+            t for t in clean_v_tokens
+            if len(t) >= 2 and t not in {
+                "petrol", "diesel", "cng", "hybrid", "manual", "automatic", "mt", "at",
+                "honda", "hyundai", "variant", "variants", "all", "other", "new"
+            }
+        ]
+        if important and any(t in label_tokens for t in important):
+            matched.append(v)
+            continue
+
+    if matched:
+        scope = "exact_variant" if len(matched) == 1 else "variant_group"
+        return {"variant_scope": scope, "matched_variants": matched}
+
+    if fuel_filtered:
+        return {"variant_scope": fuel_scope, "matched_variants": fuel_filtered}
+
+    return {"variant_scope": "variant_group_unmatched", "matched_variants": []}
+
+def v3_url(brand_slug: str, model_slug: str) -> str:
+    return f"{BASE_V3}/{brand_slug}-cars/{model_slug}/offers-discounts"
+
+
+def carwale_url(brand_slug: str, model_slug: str) -> str:
+    brand_aliases = {
+        "maruti": "maruti-suzuki",
+        "maruti-suzuki": "maruti-suzuki",
+        "kia": "kia",
+        "honda": "honda",
+        "hyundai": "hyundai",
+    }
+    b = brand_aliases.get(brand_slug, brand_slug)
+    return f"{BASE_CARWALE}/{b}-cars/{model_slug}/offers/"
+
+
+def scrape_v3(
     session: requests.Session,
     model_entry: Dict,
     target_month: int,
     target_year: int,
     debug_dir: Optional[Path] = None,
-) -> Dict:
-    brand_slug = model_entry["brand_slug"]
-    model_slug = model_entry["model_slug"]
-    brand = model_entry["brand_display"]
-    model = model_entry["model_display"]
-    variant_list = list(model_entry.get("variant_list") or [])
-    url = v3cars_offer_url(brand_slug, model_slug)
+) -> Tuple[List[OfferRow], str]:
+    url = v3_url(model_entry["brand_slug"], model_entry["model_slug"])
+    ok, status, raw_html, err = fetch_text(session, url)
+    if not ok:
+        return [], f"V3 fetch failed: {err}"
 
-    fetched = fetch_text(session, url)
-    out = {
-        "source": "v3cars",
-        "source_url": url,
-        "fetch_ok": fetched.ok,
-        "status_code": fetched.status_code,
-        "fetch_error": fetched.error,
-        "sections_found": 0,
-        "selected_period": None,
-        "fallback_used": False,
-        "offers": [],
-    }
+    text = clean_text(raw_html)
+    if debug_dir:
+        (debug_dir / f"v3_{model_entry['brand_slug']}_{model_entry['model_slug']}.txt").write_text(text, encoding="utf-8")
 
-    if not fetched.ok:
-        return out
+    sections = split_v3_period_sections(text)
+    target_label = month_label(target_month, target_year)
+    prev_month, prev_year = previous_month(target_month, target_year)
+    prev_label = month_label(prev_month, prev_year)
 
-    page_text = html_to_text(fetched.text)
-    save_debug(debug_dir, f"v3cars-{brand_slug}-{model_slug}.txt", page_text)
-
-    sections = parse_v3cars_sections(page_text)
-    out["sections_found"] = len(sections)
-    if not sections:
-        return out
-
-    target_key = period_sort_key(target_month, target_year)
-    exact_sections = [
-        s for s in sections
-        if s.get("month") == target_month and s.get("year") == target_year
-    ]
-    previous_sections = [
-        s for s in sections
-        if period_sort_key(int(s.get("month") or 0), int(s.get("year") or 0)) < target_key
-    ]
-    previous_sections.sort(
-        key=lambda s: period_sort_key(int(s.get("month") or 0), int(s.get("year") or 0)),
-        reverse=True,
-    )
-
-    # Important: V3Cars often publishes a current-month section that only says
-    # "details are not available right now". In that case, do NOT stop at the
-    # empty current month. Actively try the previous published month and mark it
-    # as fallback_previous_month if it has real offer rows.
-    candidate_sections = []
-    for section in exact_sections + previous_sections:
-        key = (section.get("month"), section.get("year"), section.get("heading"))
-        if key not in {(s.get("month"), s.get("year"), s.get("heading")) for s in candidate_sections}:
-            candidate_sections.append(section)
-
-    tried_periods = []
-    first_selected = candidate_sections[0] if candidate_sections else None
-    selected = None
-    fallback_used = False
-    offers: List[Dict] = []
-
-    for section in candidate_sections:
-        section_offers = parse_v3cars_offer_rows(section, brand, model, variant_list, fetched.url or url)
-        is_fallback = not (section.get("month") == target_month and section.get("year") == target_year)
-        tried_periods.append({
-            "month": section.get("month"),
-            "year": section.get("year"),
-            "month_label": section.get("month_label"),
-            "rows_found": len(section_offers),
-            "fallback_candidate": is_fallback,
-            "heading": section.get("heading"),
-            "preview": " | ".join((section.get("lines") or [])[:4])[:700],
-        })
-        if section_offers:
-            selected = section
-            fallback_used = is_fallback
-            offers = section_offers
-            break
-
-    # If no offer rows are found anywhere, keep the current month as the
-    # selected diagnostic period when available, but do not create an offer.
-    if not selected:
-        selected = first_selected
-        fallback_used = False
-
-    if not selected:
-        return out
-
-    out.update(
-        {
-            "source_url": fetched.url or url,
-            "selected_period": {
-                "month": selected["month"],
-                "year": selected["year"],
-                "month_label": selected["month_label"],
-            },
-            "fallback_used": fallback_used,
-            "offers": offers,
-            "tried_periods": tried_periods,
-        }
-    )
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Autocar validation
-# ---------------------------------------------------------------------------
-
-
-def article_candidate_title(title: str, target_month: int, target_year: int) -> bool:
-    low = (title or "").lower()
-    if not any(w in low for w in ["discount", "discounts", "offer", "offers", "benefit", "benefits"]):
-        return False
-    # Prefer current/previous month, but keep generic discount pages too.
-    target_name = MONTH_NAMES[target_month].lower()
-    pm, py = previous_month(target_month, target_year)
-    prev_name = MONTH_NAMES[pm].lower()
-    return (
-        str(target_year) in low
-        or str(py) in low
-        or target_name in low
-        or prev_name in low
-        or "this month" in low
-    )
-
-
-def parse_autocar_news_sitemap(session: requests.Session, target_month: int, target_year: int, max_articles: int) -> List[Tuple[str, str]]:
-    fetched = fetch_text(session, AUTOCAR_NEWS_SITEMAP, retries=3)
-    if not fetched.ok:
-        return []
-
-    candidates: List[Tuple[str, str]] = []
-    try:
-        root = ET.fromstring(fetched.text)
-        ns = {
-            "sm": "http://www.sitemaps.org/schemas/sitemap/0.9",
-            "news": "http://www.google.com/schemas/sitemap-news/0.9",
-        }
-        for url_node in root.findall("sm:url", ns):
-            loc_node = url_node.find("sm:loc", ns)
-            title_node = url_node.find("news:news/news:title", ns)
-            loc = normalize_spaces(loc_node.text if loc_node is not None else "")
-            title = normalize_spaces(title_node.text if title_node is not None else "")
-            if loc and title and article_candidate_title(title, target_month, target_year):
-                candidates.append((title, loc))
-    except Exception:
-        return []
-
-    # Prioritize stronger discount titles.
-    candidates.sort(key=lambda x: ("discount" not in x[0].lower(), "offer" not in x[0].lower(), x[0]))
-    return candidates[:max_articles]
-
-
-def parse_autocar_rss(session: requests.Session, target_month: int, target_year: int, max_articles: int) -> List[Tuple[str, str]]:
-    fetched = fetch_text(session, AUTOCAR_RSS_NEWS, retries=3)
-    if not fetched.ok:
-        return []
-    pairs: List[Tuple[str, str]] = []
-    try:
-        root = ET.fromstring(fetched.text)
-        for item in root.findall(".//item"):
-            title_node = item.find("title")
-            link_node = item.find("link")
-            title = normalize_spaces(title_node.text if title_node is not None else "")
-            link = normalize_spaces(link_node.text if link_node is not None else "")
-            if title and link and article_candidate_title(title, target_month, target_year):
-                pairs.append((title, link))
-    except Exception:
-        return []
-    return pairs[:max_articles]
-
-
-def discover_autocar_articles(
-    target_month: int,
-    target_year: int,
-    max_articles: int = 30,
-    debug: bool = False,
-) -> List[AutocarArticle]:
-    session = build_session()
-    pairs = parse_autocar_news_sitemap(session, target_month, target_year, max_articles=max_articles)
-    if len(pairs) < 5:
-        pairs.extend(parse_autocar_rss(session, target_month, target_year, max_articles=max_articles))
-
-    # Deduplicate by URL.
-    seen = set()
-    deduped = []
-    for title, url in pairs:
-        if url in seen:
-            continue
-        seen.add(url)
-        deduped.append((title, url))
-
-    articles: List[AutocarArticle] = []
-    for title, url in deduped[:max_articles]:
-        fetched = fetch_text(session, url, retries=3)
-        if not fetched.ok:
-            if debug:
-                tqdm.write(f"[Autocar] fetch failed {compact_url(url)}: {fetched.error or fetched.status_code}")
-            continue
-        txt = html_to_text(fetched.text)
-        if len(txt) < 500:
-            continue
-        articles.append(AutocarArticle(title=title, url=fetched.url or url, text=txt))
-
-    return articles
-
-
-def extract_autocar_model_block(article_text: str, brand: str, model: str, target_month: int, target_year: int) -> str:
-    lines = text_lines(article_text)
-    model_key = normalize_key(model)
-    brand_key = normalize_key(brand)
-    target_month_name = MONTH_NAMES[target_month].lower()
-
-    blocks = []
-    for idx, line in enumerate(lines):
-        low = normalize_key(line)
-        raw_low = line.lower()
-        is_heading_like = any(w in raw_low for w in ["discount", "discounts", "offer", "offers", "benefit", "benefits"])
-        model_hit = model_key and model_key in low
-        brand_model_hit = brand_key and model_key and f"{brand_key} {model_key}" in low
-        month_hit = target_month_name in raw_low or str(target_year) in raw_low
-
-        if is_heading_like and (model_hit or brand_model_hit) and month_hit:
-            block = lines[idx : idx + 12]
-            blocks.append("\n".join(block))
-        elif is_heading_like and (model_hit or brand_model_hit):
-            block = lines[idx : idx + 12]
-            blocks.append("\n".join(block))
-
-    # Fallback: find model mention near an "up to" amount.
-    if not blocks:
-        for idx, line in enumerate(lines):
-            low = normalize_key(line)
-            if model_key and model_key in low:
-                nearby = lines[max(0, idx - 3) : idx + 10]
-                joined = "\n".join(nearby)
-                if re.search(r"up to\s+(?:Rs\.?|₹|INR)\s*[0-9]", joined, flags=re.I):
-                    blocks.append(joined)
-                    break
-
-    return "\n---\n".join(blocks[:2])
-
-
-def parse_autocar_signal_from_block(block: str, article: AutocarArticle) -> Optional[Dict]:
-    if not block:
-        return None
-
-    # Prefer amount in "Up to Rs ... off" line.
-    amount = None
-    m = re.search(r"up to\s+(?:Rs\.?|₹|INR)?\s*([0-9.,]+\s*(?:lakh|lac)?)", block, flags=re.I)
-    if m:
-        amount = extract_amount("Rs " + m.group(1))
-    if amount is None:
-        amount = extract_amount(block)
-    if not amount:
-        return None
-
-    breakup = blank_breakup()
-    lower = block.lower()
-
-    component_patterns = {
-        "cash_discount": r"(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?\s+cash discount|cash discount[^.\n]{0,80}(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?",
-        "exchange_bonus": r"exchange (?:bonus|benefit|offer)[^.\n]{0,80}(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?|(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?\s+exchange",
-        "scrappage_bonus": r"scrappage (?:bonus|benefit|offer)[^.\n]{0,80}(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?|(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?\s+scrappage",
-        "upgrade_bonus": r"upgrade (?:bonus|benefit|offer)[^.\n]{0,80}(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?|(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?\s+upgrade",
-        "corporate_discount": r"corporate (?:discount|benefit|offer)[^.\n]{0,80}(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?|(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?\s+corporate",
-        "additional_discount": r"additional (?:discount|offer|benefit)[^.\n]{0,80}(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?|(?:rs\.?|₹|inr)\s*[0-9,.]+\s*(?:lakh|lac)?\s+additional",
-    }
-
-    for field, pattern in component_patterns.items():
-        found = re.search(pattern, lower, flags=re.I)
-        if found:
-            breakup[field] = extract_amount(found.group(0))
-
-    return {
-        "source": "autocar_india",
-        "source_url": article.url,
-        "article_title": article.title,
-        "max_benefit": int(amount),
-        "has_breakup": any((breakup.get(k) or 0) > 0 for k in NUMERIC_BREAKUP_FIELDS),
-        "breakup": breakup,
-        "confidence": "medium",
-        "raw_text": normalize_spaces(block)[:900],
-    }
-
-
-def find_autocar_signal(
-    articles: List[AutocarArticle],
-    brand: str,
-    model: str,
-    target_month: int,
-    target_year: int,
-) -> Optional[Dict]:
-    for article in articles:
-        # Cheap skip before parsing block.
-        hay = normalize_key(f"{article.title} {article.text[:3000]}")
-        if normalize_key(model) not in hay:
-            continue
-        block = extract_autocar_model_block(article.text, brand, model, target_month, target_year)
-        signal = parse_autocar_signal_from_block(block, article)
-        if signal:
-            return signal
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Merge / document builder
-# ---------------------------------------------------------------------------
-
-
-def build_customer_safe_display(doc: Dict) -> str:
-    model_name = f"{doc.get('brand')} {doc.get('model')}".strip()
-    amount = doc.get("total_potential_benefit") or 0
-    selected = doc.get("fallback_offer_period") if doc.get("fallback_used") else doc.get("offer_period")
-    selected_label = (selected or {}).get("month_label") or doc.get("month_label")
-
-    if amount <= 0:
-        return f"No public offer found for {model_name} for {doc.get('month_label')}. Dealer confirmation required."
-
-    if doc.get("fallback_used"):
-        return (
-            f"{doc.get('month_label')} offer is not published yet. Last published {selected_label} offer for "
-            f"{model_name} was up to {inr(amount)}, subject to variant, eligibility, stock and dealer confirmation."
+    if target_label in sections:
+        rows = parse_v3_offer_blocks(
+            sections[target_label],
+            model_entry,
+            target_month,
+            target_year,
+            target_label,
+            "current",
+            url,
         )
+        if rows:
+            return rows, "v3_current"
 
-    return (
-        f"{model_name} {selected_label} public offer is up to {inr(amount)}, subject to variant, "
-        "eligibility, stock and dealer confirmation."
+    if prev_label in sections:
+        rows = parse_v3_offer_blocks(
+            sections[prev_label],
+            model_entry,
+            target_month,
+            target_year,
+            prev_label,
+            "previous",
+            url,
+        )
+        if rows:
+            return rows, "v3_previous"
+
+    return [], "v3_no_usable_current_or_previous_offer"
+
+
+def parse_carwale_fallback(
+    session: requests.Session,
+    model_entry: Dict,
+    target_month: int,
+    target_year: int,
+    debug_dir: Optional[Path] = None,
+) -> Tuple[List[OfferRow], str]:
+    url = carwale_url(model_entry["brand_slug"], model_entry["model_slug"])
+    ok, status, raw_html, err = fetch_text(session, url)
+    if not ok:
+        return [], f"CarWale fetch failed: {err}"
+
+    text = clean_text(raw_html)
+    if debug_dir:
+        (debug_dir / f"carwale_{model_entry['brand_slug']}_{model_entry['model_slug']}.txt").write_text(text, encoding="utf-8")
+
+    target_label = month_label(target_month, target_year)
+    target_month_name = MONTH_NAMES[target_month]
+
+    benefit_re = re.compile(
+        rf"{re.escape(model_entry['model_display'])}.*?{target_month_name}\s+Offers.*?Get\s+Benefits\s+up\s+to\s+(Rs\.?\s*[\d,]+(?:\.\d+)?(?:\s*lakh)?)",
+        re.I | re.S,
+    )
+    m = benefit_re.search(text)
+    if not m:
+        m = re.search(r"Get\s+Benefits\s+up\s+to\s+(Rs\.?\s*[\d,]+(?:\.\d+)?(?:\s*lakh)?)", text, re.I)
+
+    if not m:
+        return [], "carwale_no_benefit_phrase"
+
+    amount = money_to_int(m.group(1))
+    if not amount or amount < 1000:
+        return [], "carwale_bad_amount"
+
+    valid_till = ""
+    vt = re.search(r"Offer\s+Valid\s+Till\s*:\s*([^\n]+)", text, re.I)
+    if vt:
+        valid_till = normalize_spaces(vt.group(1))
+
+    row = OfferRow(
+        brand=model_entry["brand_display"],
+        model=model_entry["model_display"],
+        brand_slug=model_entry["brand_slug"],
+        model_slug=model_entry["model_slug"],
+        source="carwale",
+        source_url=url,
+
+        target_month=target_month,
+        target_year=target_year,
+        target_month_label=target_label,
+
+        offer_month=target_month,
+        offer_year=target_year,
+        offer_month_label=target_label,
+        period_type="current",
+
+        source_variant_label="Model-level CarWale offer",
+        variant_scope="model_level",
+        matched_canonical_variants="",
+        match_count=0,
+
+        cash_discount=0,
+        exchange_bonus=0,
+        scrappage_bonus=0,
+        upgrade_bonus=0,
+        corporate_discount=0,
+        rural_offer=0,
+        additional_discount=0,
+        finance_offer="",
+        warranty_offer="",
+        accessories_offer="",
+
+        max_benefit=int(amount),
+        computed_possible_max=0,
+        breakup_available=False,
+        total_matches_computed=False,
+
+        notes=f"CarWale total-only fallback. Valid till: {valid_till}".strip(),
+        confidence="medium",
+        dealer_confirmation_required=True,
+        raw_block=normalize_spaces(m.group(0))[:1000],
+    )
+    return [row], "carwale_current_total_only"
+
+
+def clone_row_for_model(
+    source_row: OfferRow,
+    target_model_entry: Dict,
+    source_label: str,
+    confidence: str,
+    notes_suffix: str,
+    force_corporate_zero: bool = False,
+) -> OfferRow:
+    variants = target_model_entry.get("variant_list") or []
+    cash = source_row.cash_discount
+    exchange = source_row.exchange_bonus
+    scrappage = source_row.scrappage_bonus
+    upgrade = source_row.upgrade_bonus
+    corporate = 0 if force_corporate_zero else source_row.corporate_discount
+    rural = 0 if force_corporate_zero else source_row.rural_offer
+    additional = source_row.additional_discount
+
+    computed = cash + max(exchange, scrappage) + upgrade + max(corporate, rural) + additional
+    max_benefit = source_row.max_benefit
+    if force_corporate_zero and computed > 0 and computed < max_benefit:
+        # i20 N Line has corporate/rural 0; reduce max to the recalculated possible max.
+        max_benefit = computed
+
+    return OfferRow(
+        brand=target_model_entry["brand_display"],
+        model=target_model_entry["model_display"],
+        brand_slug=target_model_entry["brand_slug"],
+        model_slug=target_model_entry["model_slug"],
+        source="v3cars_inherited",
+        source_url=source_row.source_url,
+
+        target_month=source_row.target_month,
+        target_year=source_row.target_year,
+        target_month_label=source_row.target_month_label,
+
+        offer_month=source_row.offer_month,
+        offer_year=source_row.offer_year,
+        offer_month_label=source_row.offer_month_label,
+        period_type=source_row.period_type,
+
+        source_variant_label=source_label,
+        variant_scope="inherited_model",
+        matched_canonical_variants=" | ".join(variants),
+        match_count=len(variants),
+
+        cash_discount=cash,
+        exchange_bonus=exchange,
+        scrappage_bonus=scrappage,
+        upgrade_bonus=upgrade,
+        corporate_discount=corporate,
+        rural_offer=rural,
+        additional_discount=additional,
+        finance_offer=source_row.finance_offer,
+        warranty_offer=source_row.warranty_offer,
+        accessories_offer=source_row.accessories_offer,
+
+        max_benefit=max_benefit,
+        computed_possible_max=computed,
+        breakup_available=True,
+        total_matches_computed=(max_benefit == computed),
+
+        notes=normalize_spaces(f"{source_row.notes} | {notes_suffix}"),
+        confidence=confidence,
+        dealer_confirmation_required=True,
+        raw_block=source_row.raw_block,
     )
 
 
-def merge_autocar_into_offers(offers: List[Dict], signal: Optional[Dict]) -> List[Dict]:
-    if not signal:
-        return offers
-    if not offers:
-        return []
+def apply_hyundai_nline_inheritance(all_rows: List[OfferRow], model_map: Dict[Tuple[str, str], Dict]) -> List[OfferRow]:
+    additions: List[OfferRow] = []
+    existing_models = {(normalize_key(r.brand), normalize_key(r.model)) for r in all_rows}
 
-    signal_amount = int(signal.get("max_benefit") or 0)
-    for offer in offers:
-        offer.setdefault("source_signals", [])
-        offer_amount = int(offer.get("max_benefit") or 0)
-        # Attach Autocar to every close match, or to the highest row if one source gives model-level amount.
-        if signal_amount and abs(offer_amount - signal_amount) <= 5000:
-            offer["source_signals"].append(signal)
-            offer["confidence"] = "high" if offer.get("breakup_matches_total") else "medium"
-    return offers
+    def get_model(model_name: str) -> Optional[Dict]:
+        return model_map.get(("hyundai", normalize_key(model_name)))
+
+    # Creta N Line:
+    # Live V3Cars May 2026 Creta table includes N-Line in the high-benefit petrol/all-variants row.
+    # The parser can sometimes attach "N Line" text to the wrong raw block, so do NOT pick the first
+    # row whose raw_block contains N Line. Use the highest valid structured Creta V3Cars row.
+    creta_n = get_model("Creta N Line")
+    if creta_n and ("hyundai", "creta n line") not in existing_models:
+        creta_rows = [
+            r for r in all_rows
+            if normalize_key(r.brand) == "hyundai"
+            and normalize_key(r.model) == "creta"
+            and r.source == "v3cars"
+            and r.max_benefit > 0
+        ]
+        if creta_rows:
+            best = max(creta_rows, key=lambda r: r.max_benefit)
+            additions.append(clone_row_for_model(
+                best,
+                creta_n,
+                "Inherited from Creta highest V3Cars petrol/all-variants row",
+                "high_inherited",
+                "Inherited because live V3Cars May 2026 Creta table includes N-Line in the high-benefit petrol/all-variants row. Dealer confirmation required.",
+                force_corporate_zero=False,
+            ))
+
+    # i20 N Line: user-approved assumption: inherit i20 all-other/N Line referenced row, corporate/rural = 0.
+    i20_n = get_model("I20 N Line")
+    if i20_n and ("hyundai", "i20 n line") not in existing_models:
+        i20_rows = [r for r in all_rows if normalize_key(r.brand) == "hyundai" and normalize_key(r.model) == "i20" and r.source == "v3cars"]
+        # Prefer row mentioning N Line in notes/raw; otherwise highest i20 row.
+        preferred = [
+            r for r in i20_rows
+            if "n line" in normalize_key(r.source_variant_label + " " + r.notes + " " + r.raw_block)
+            and r.max_benefit > 0
+        ]
+        if not preferred:
+            preferred = [r for r in i20_rows if r.max_benefit > 0]
+        if preferred:
+            best = max(preferred, key=lambda r: r.max_benefit)
+            additions.append(clone_row_for_model(
+                best,
+                i20_n,
+                "Inherited from i20 row; corporate/rural forced to 0 for N Line",
+                "medium_inherited",
+                "Inherited because i20 V3Cars row references N Line corporate/rural as Rs. 0. Corporate and rural benefits forced to 0. Dealer confirmation required.",
+                force_corporate_zero=True,
+            ))
+
+    return additions
 
 
-def build_model_doc(
-    model_entry: Dict,
-    v3_result: Dict,
-    autocar_signal: Optional[Dict],
-    target_month: int,
-    target_year: int,
-) -> Dict:
-    brand = model_entry["brand_display"]
-    model = model_entry["model_display"]
-    brand_slug = model_entry["brand_slug"]
-    model_slug = model_entry["model_slug"]
 
-    offers = list(v3_result.get("offers") or [])
-    offers = merge_autocar_into_offers(offers, autocar_signal)
 
-    # Autocar is intentionally validation-only. It must not create model-level
-    # offer rows by itself because generic article amounts can otherwise get
-    # applied to unrelated models. If V3Cars has no structured row, we leave the
-    # model as not_found or fallback_previous_month only.
+def row_to_offer_dict(row: OfferRow) -> Dict:
+    return {
+        "source": row.source,
+        "source_url": row.source_url,
+        "offer_month": row.offer_month,
+        "offer_year": row.offer_year,
+        "offer_month_label": row.offer_month_label,
+        "period_type": row.period_type,
+        "variant_scope": row.variant_scope,
+        "source_variant_label": row.source_variant_label,
+        "matched_canonical_variants": [x for x in str(row.matched_canonical_variants or "").split(" | ") if x],
+        "match_count": row.match_count,
+        "max_benefit": row.max_benefit,
+        "breakup": {
+            "cash_discount": row.cash_discount,
+            "exchange_bonus": row.exchange_bonus,
+            "scrappage_bonus": row.scrappage_bonus,
+            "upgrade_bonus": row.upgrade_bonus,
+            "corporate_discount": row.corporate_discount,
+            "rural_offer": row.rural_offer,
+            "additional_discount": row.additional_discount,
+            "finance_offer": row.finance_offer,
+            "warranty_offer": row.warranty_offer,
+            "accessories_offer": row.accessories_offer,
+        },
+        "computed_possible_max": row.computed_possible_max,
+        "breakup_available": row.breakup_available,
+        "total_matches_computed": row.total_matches_computed,
+        "confidence": row.confidence,
+        "dealer_confirmation_required": row.dealer_confirmation_required,
+        "notes": row.notes,
+        "raw_block": row.raw_block,
+    }
 
-    selected_period = v3_result.get("selected_period") or None
-    fallback_used = bool(v3_result.get("fallback_used"))
-    current_month_published = bool(selected_period and not fallback_used and selected_period.get("month") == target_month and selected_period.get("year") == target_year)
 
-    if not selected_period and autocar_signal:
-        selected_period = {
+def build_model_offer_docs(rows: List[OfferRow], no_offer: List[Tuple[str, str, str]], models: List[Dict], target_month: int, target_year: int, write_empty: bool = False) -> List[Dict]:
+    grouped: Dict[Tuple[str, str], List[OfferRow]] = {}
+    for row in rows:
+        grouped.setdefault((normalize_key(row.brand), normalize_key(row.model)), []).append(row)
+
+    model_lookup = {(normalize_key(m["brand_display"]), normalize_key(m["model_display"])): m for m in models}
+    no_offer_map = {(normalize_key(b), normalize_key(m)): reason for b, m, reason in no_offer}
+    docs: List[Dict] = []
+
+    def make_doc(model_entry: Dict, group_rows: List[OfferRow]) -> Dict:
+        brand_display = model_entry.get("brand_display") or group_rows[0].brand
+        model_display = model_entry.get("model_display") or group_rows[0].model
+        brand_slug = model_entry.get("brand_slug") or group_rows[0].brand_slug
+        model_slug = model_entry.get("model_slug") or group_rows[0].model_slug
+        variant_list = model_entry.get("variant_list") or []
+
+        current_rows = [r for r in group_rows if r.period_type == "current"]
+        previous_rows = [r for r in group_rows if r.period_type == "previous"]
+        current_month_published = bool(current_rows)
+        fallback_used = (not current_month_published) and bool(previous_rows)
+        data_status = "current_month" if current_month_published else ("fallback_previous_month" if fallback_used else "no_offer_found")
+        source_names = sorted(set(r.source for r in group_rows))
+        source_priority = {"v3cars": 4, "v3cars_inherited": 3, "carwale": 2}
+        primary = sorted(group_rows, key=lambda r: (source_priority.get(r.source, 0), r.max_benefit), reverse=True)[0]
+        max_benefit = max(int(r.max_benefit or 0) for r in group_rows)
+        fallback_offer_period = None
+        if fallback_used:
+            fb = previous_rows[0]
+            fallback_offer_period = {"month": fb.offer_month, "year": fb.offer_year, "month_label": fb.offer_month_label, "is_expired": True}
+
+        if current_month_published:
+            customer_safe_display = f"{brand_display} {model_display} current offer is up to {format_inr(max_benefit)}. Exact benefit depends on variant, stock, eligibility and dealer confirmation."
+        else:
+            customer_safe_display = f"{brand_display} {model_display} current month offer is not published in trusted sources. Last published {fallback_offer_period['month_label']} offer was up to {format_inr(max_benefit)}. Dealer confirmation required."
+
+        return {
             "month": target_month,
             "year": target_year,
             "month_label": month_label(target_month, target_year),
+            "brand": brand_display,
+            "model": model_display,
+            "brand_slug": brand_slug,
+            "model_slug": model_slug,
+            "source": "+".join(source_names),
+            "source_summary": {"primary_source": primary.source, "source_count": len(source_names), "sources": source_names},
+            "current_month_published": current_month_published,
+            "data_status": data_status,
+            "fallback_used": fallback_used,
+            "offer_period": {"month": target_month, "year": target_year, "month_label": month_label(target_month, target_year), "is_current_month": True},
+            "fallback_offer_period": fallback_offer_period,
+            "variant_wise_available": any(r.variant_scope != "model_level" for r in group_rows),
+            "canonical_variant_count": len(variant_list),
+            "has_cash_discount": any((r.cash_discount or 0) > 0 for r in group_rows),
+            "has_exchange_bonus": any((r.exchange_bonus or 0) > 0 for r in group_rows),
+            "has_scrappage_bonus": any((r.scrappage_bonus or 0) > 0 for r in group_rows),
+            "has_corporate_discount": any((r.corporate_discount or 0) > 0 for r in group_rows),
+            "has_rural_offer": any((r.rural_offer or 0) > 0 for r in group_rows),
+            "has_finance_offer": any(bool(r.finance_offer) for r in group_rows),
+            "total_potential_benefit": max_benefit,
+            "customer_safe_display": customer_safe_display,
+            "offer_count": len(group_rows),
+            "offers": [row_to_offer_dict(r) for r in sorted(group_rows, key=lambda r: r.max_benefit, reverse=True)],
+            "dealer_confirmation_required": True,
+            "last_updated": TODAY.isoformat(),
+            "scraped_at": datetime.now().isoformat(),
         }
-        current_month_published = True
-        fallback_used = False
 
-    target_period = {
-        "month": target_month,
-        "year": target_year,
-        "month_label": month_label(target_month, target_year),
-        "valid_from": f"{target_year}-{target_month:02d}-01",
-        "valid_till": None,
-        "is_current_month": True,
-    }
+    for key, group_rows in grouped.items():
+        model_entry = model_lookup.get(key) or {"brand_display": group_rows[0].brand, "model_display": group_rows[0].model, "brand_slug": group_rows[0].brand_slug, "model_slug": group_rows[0].model_slug, "variant_list": []}
+        docs.append(make_doc(model_entry, group_rows))
 
-    fallback_period = None
-    if fallback_used and selected_period:
-        sm = int(selected_period["month"])
-        sy = int(selected_period["year"])
-        fallback_period = {
-            "month": sm,
-            "year": sy,
-            "month_label": selected_period["month_label"],
-            "valid_from": f"{sy}-{sm:02d}-01",
-            "valid_till": None,
-            "is_expired": True,
-        }
-
-    total_potential_benefit = max([int(o.get("max_benefit") or 0) for o in offers] or [0])
-
-    all_breakups = [o.get("breakup") or {} for o in offers]
-    has = lambda key: any((b.get(key) or 0) > 0 for b in all_breakups)
-
-    source_signals_flat = []
-    for offer in offers:
-        for sig in offer.get("source_signals") or []:
-            source_signals_flat.append(sig)
-
-    source_names = sorted(set(sig.get("source") for sig in source_signals_flat if sig.get("source")))
-    if v3_result.get("fetch_ok") and "v3cars" not in source_names:
-        source_names.insert(0, "v3cars")
-
-    doc = {
-        "month": target_month,
-        "year": target_year,
-        "month_label": month_label(target_month, target_year),
-        "brand": brand,
-        "model": model,
-        "brand_slug": brand_slug,
-        "model_slug": model_slug,
-        "source": "+".join(source_names) if source_names else "v3cars+autocar_india",
-        "current_month_published": current_month_published,
-        "data_status": "current_month" if current_month_published else ("fallback_previous_month" if fallback_used else "not_found"),
-        "fallback_used": fallback_used,
-        "offer_period": target_period,
-        "fallback_offer_period": fallback_period,
-        "has_cash_discount": has("cash_discount"),
-        "has_exchange_bonus": has("exchange_bonus"),
-        "has_scrappage_bonus": has("scrappage_bonus"),
-        "has_corporate_discount": has("corporate_discount"),
-        "has_finance_offer": has("finance_offer"),
-        "has_accessories_offer": has("accessories_offer"),
-        "variant_wise_available": any(o.get("variant_scope") in {"exact_variant", "variant_group", "all_variants"} for o in offers),
-        "offer_count": len(offers),
-        "offers": offers,
-        "total_potential_benefit": total_potential_benefit,
-        "source_summary": {
-            "primary_source": "v3cars" if v3_result.get("offers") else None,
-            "validation_sources": ["autocar_india"] if autocar_signal else [],
-            "source_count": len(source_names),
-            "conflicting_sources": [],
-            "v3cars": {
-                "url": v3_result.get("source_url"),
-                "fetch_ok": v3_result.get("fetch_ok"),
-                "status_code": v3_result.get("status_code"),
-                "sections_found": v3_result.get("sections_found"),
-                "selected_period": selected_period,
-                "fallback_used": fallback_used,
-                "tried_periods": v3_result.get("tried_periods"),
-                "fetch_error": v3_result.get("fetch_error"),
-            },
-            "autocar_india": {
-                "matched": bool(autocar_signal),
-                "url": autocar_signal.get("source_url") if autocar_signal else None,
-                "max_benefit": autocar_signal.get("max_benefit") if autocar_signal else None,
-            },
-        },
-        "confidence": "high" if any(o.get("confidence") == "high" for o in offers) else ("medium" if offers else "low"),
-        "dealer_confirmation_required": True,
-        "scraped_at": datetime.now().isoformat(),
-        "last_updated": TODAY.isoformat(),
-    }
-    doc["customer_safe_display"] = build_customer_safe_display(doc)
-    return doc
+    if write_empty:
+        for m in models:
+            key = (normalize_key(m["brand_display"]), normalize_key(m["model_display"]))
+            if key in grouped:
+                continue
+            reason = no_offer_map.get(key, "no_usable_offer")
+            docs.append({
+                "month": target_month,
+                "year": target_year,
+                "month_label": month_label(target_month, target_year),
+                "brand": m["brand_display"],
+                "model": m["model_display"],
+                "brand_slug": m["brand_slug"],
+                "model_slug": m["model_slug"],
+                "source": "v3cars+carwale",
+                "current_month_published": False,
+                "data_status": "no_offer_found",
+                "fallback_used": False,
+                "offer_period": {"month": target_month, "year": target_year, "month_label": month_label(target_month, target_year), "is_current_month": True},
+                "fallback_offer_period": None,
+                "variant_wise_available": False,
+                "canonical_variant_count": len(m.get("variant_list") or []),
+                "has_cash_discount": False,
+                "has_exchange_bonus": False,
+                "has_scrappage_bonus": False,
+                "has_corporate_discount": False,
+                "has_rural_offer": False,
+                "has_finance_offer": False,
+                "total_potential_benefit": 0,
+                "customer_safe_display": f"{m['brand_display']} {m['model_display']} offer not found in trusted sources. Dealer confirmation required.",
+                "offer_count": 0,
+                "offers": [],
+                "no_offer_reason": reason,
+                "dealer_confirmation_required": True,
+                "last_updated": TODAY.isoformat(),
+                "scraped_at": datetime.now().isoformat(),
+            })
+    return docs
 
 
-# ---------------------------------------------------------------------------
-# Main per-model task
-# ---------------------------------------------------------------------------
+def write_offer_docs_to_mongo(docs: List[Dict]) -> Tuple[int, int, int, int]:
+    operations = [UpdateOne({"brand": d["brand"], "model": d["model"], "month": d["month"], "year": d["year"]}, {"$set": d}, upsert=True) for d in docs]
+    if not operations:
+        return (0, 0, 0, 0)
+    result = offers_collection.bulk_write(operations, ordered=False)
+    return (result.matched_count, result.modified_count, result.upserted_count, len(operations))
+
+def format_inr(value: int) -> str:
+    try:
+        return f"₹{int(value):,}"
+    except Exception:
+        return "₹0"
 
 
-def scrape_model_offers(
-    model_entry: Dict,
-    target_month: int,
-    target_year: int,
-    autocar_articles: List[AutocarArticle],
-    debug_dir: Optional[Path] = None,
-) -> Dict:
-    session = build_session()
-    brand = model_entry["brand_display"]
-    model = model_entry["model_display"]
+def print_model_rows(model_entry: Dict, rows: List[OfferRow], reason: str) -> None:
+    brand_model = f"{model_entry['brand_display']} {model_entry['model_display']}"
+    if not rows:
+        print(f"— {brand_model}: no usable offer ({reason})")
+        return
 
-    v3_result = scrape_v3cars_model(session, model_entry, target_month, target_year, debug_dir=debug_dir)
-    autocar_signal = find_autocar_signal(autocar_articles, brand, model, target_month, target_year)
-    doc = build_model_doc(model_entry, v3_result, autocar_signal, target_month, target_year)
+    max_amt = max(r.max_benefit for r in rows)
+    source = rows[0].source
+    period = rows[0].offer_month_label
+    fallback = " fallback" if rows[0].period_type == "previous" else ""
+    print(f"\n✅ {brand_model}: {len(rows)} row(s), max {format_inr(max_amt)}, {source}, {period}{fallback}")
 
-    return {
-        "doc": doc,
-        "progress": {
-            "brand": brand,
-            "model": model,
-            "offer_count": doc.get("offer_count", 0),
-            "max_benefit": doc.get("total_potential_benefit", 0),
-            "data_status": doc.get("data_status"),
-            "v3_fetch_ok": v3_result.get("fetch_ok"),
-            "v3_status_code": v3_result.get("status_code"),
-            "v3_sections_found": v3_result.get("sections_found"),
-            "v3_selected_period": v3_result.get("selected_period"),
-            "fallback_used": doc.get("fallback_used"),
-            "autocar_matched": bool(autocar_signal),
-            "v3_url": v3_result.get("source_url"),
-            "error": v3_result.get("fetch_error"),
-        },
-    }
-
-
-# ---------------------------------------------------------------------------
-# CLI / main
-# ---------------------------------------------------------------------------
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="NCR monthly car offers scraper using V3Cars + Autocar India")
-    parser.add_argument("--workers", type=int, default=2, help="Max worker threads, hard-capped at 3")
-    parser.add_argument("--limit-models", type=int, default=0, help="Limit models for test runs")
-    parser.add_argument("--brand", type=str, default="", help="Filter by brand display/slug, e.g. Hyundai")
-    parser.add_argument("--model", type=str, default="", help="Filter by model display/slug, e.g. i20")
-    parser.add_argument("--month", type=int, default=DEFAULT_MONTH, help="Target month number, default=current month")
-    parser.add_argument("--year", type=int, default=DEFAULT_YEAR, help="Target year, default=current year")
-    parser.add_argument("--dry-run", action="store_true", help="Do not write to Mongo")
-    parser.add_argument("--include-discontinued", action="store_true", help="Include discontinued variants from vehicle universe")
-    parser.add_argument("--debug", action="store_true", help="Print per-model progress lines")
-    parser.add_argument("--debug-dir", type=str, default="", help="Optional folder to save fetched text pages")
-    parser.add_argument("--progress-every", type=int, default=20, help="Print summary every N completed models")
-    parser.add_argument("--max-autocar-articles", type=int, default=40, help="Max Autocar discount articles to fetch for validation")
-    parser.add_argument("--write-empty", action="store_true", help="Also write empty/no-offer docs. Default writes only docs with offers.")
-    parser.add_argument("--force-write-zero-run", action="store_true", help="Allow DB write even when 0 models have offers. Unsafe; for debugging only.")
-    return parser.parse_args()
-
-
-def filter_models(models: List[Dict], brand_filter: str, model_filter: str) -> List[Dict]:
-    bq = normalize_key(brand_filter)
-    mq = normalize_key(model_filter)
-    out = []
-    for item in models:
-        brand_blob = normalize_key(f"{item.get('brand_display')} {item.get('brand_slug')}")
-        model_blob = normalize_key(f"{item.get('model_display')} {item.get('model_slug')}")
-        if bq and bq not in brand_blob:
-            continue
-        if mq and mq not in model_blob:
-            continue
-        out.append(item)
-    return out
-
-
-def print_progress_line(progress: Dict) -> None:
-    brand = progress["brand"]
-    model = progress["model"]
-    offers = progress["offer_count"]
-    amount = progress["max_benefit"]
-    status = progress["data_status"]
-    selected = progress.get("v3_selected_period") or {}
-    selected_label = selected.get("month_label") or "no period"
-
-    if offers > 0:
-        icon = "✅" if status == "current_month" else "🟡"
-        fallback = " fallback" if progress.get("fallback_used") else ""
-        autocar = " + Autocar" if progress.get("autocar_matched") else ""
-        tqdm.write(f"{icon} {brand} {model}: {offers} row(s), max {inr(amount)}, {selected_label}{fallback}{autocar}")
-    else:
-        fetch_state = "ok" if progress.get("v3_fetch_ok") else f"fail {progress.get('v3_status_code') or ''}"
-        tqdm.write(
-            f"❌ {brand} {model}: no offers | V3 {fetch_state}, sections={progress.get('v3_sections_found')}, "
-            f"Autocar={progress.get('autocar_matched')} | {compact_url(progress.get('v3_url'))}"
-        )
+    for idx, r in enumerate(rows, 1):
+        print(f"  {idx}. {r.source_variant_label} [{r.variant_scope}]")
+        print(f"     Total/Max: {format_inr(r.max_benefit)} | computed: {format_inr(r.computed_possible_max)} | breakup={r.breakup_available} | confidence={r.confidence}")
+        if r.breakup_available:
+            print(
+                "     Breakup: "
+                f"Cash {format_inr(r.cash_discount)}, "
+                f"Exchange {format_inr(r.exchange_bonus)}, "
+                f"Scrappage {format_inr(r.scrappage_bonus)}, "
+                f"Upgrade {format_inr(r.upgrade_bonus)}, "
+                f"Corporate {format_inr(r.corporate_discount)}, "
+                f"Rural {format_inr(r.rural_offer)}, "
+                f"Additional {format_inr(r.additional_discount)}"
+            )
+        if r.match_count:
+            sample = r.matched_canonical_variants.split(" | ")[:5]
+            more = f" +{r.match_count - len(sample)} more" if r.match_count > len(sample) else ""
+            print(f"     Matched variants ({r.match_count}): {', '.join(sample)}{more}")
+        if r.notes:
+            print(f"     Notes: {r.notes}")
 
 
 def main() -> None:
     args = parse_args()
-    workers = clamp_workers(args.workers)
-    debug_dir = Path(args.debug_dir).expanduser() if args.debug_dir else None
-    start = time.time()
+
+    debug_dir = Path(args.debug_dir) if args.debug_dir else None
+    if debug_dir:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+
+    target_brands = [normalize_key(x) for x in (args.brand or args.brands).split(",") if normalize_spaces(x)]
+    if args.brand:
+        target_brands = [normalize_key(args.brand)]
 
     print("\n===== CDRIVE MONTHLY OFFERS SCRAPER =====")
-    print(f"Target period: {month_label(args.month, args.year)}")
-    print(f"Sources: V3Cars primary + Autocar India validation")
-    print(f"Workers: {workers} | dry_run: {args.dry_run} | write_empty: {args.write_empty}")
+    print("Source priority: V3Cars breakup primary → CarWale total-only fallback")
+    print(f"Mongo writes: {'DISABLED (--dry-run)' if args.dry_run else 'ENABLED'}")
+    print(f"Brands: {', '.join(target_brands)}")
+    print(f"Target period: {month_label(args.target_month, args.target_year)}")
 
-    print("\n[1/4] Building NCR vehicle universe from vehicles collection...")
+    print("\n[1/3] Building canonical NCR universe...")
     universe = build_ncr_variant_universe(active_only=not args.include_discontinued)
     models = sorted(universe.values(), key=lambda x: (x["brand_slug"], x["model_slug"]))
 
-    models = filter_models(models, args.brand, args.model)
-    if args.limit_models and args.limit_models > 0:
+    models = [m for m in models if normalize_key(m["brand_display"]) in target_brands]
+
+    if args.model:
+        mkey = normalize_key(args.model)
+        models = [
+            m for m in models
+            if normalize_key(m["model_display"]) == mkey
+            or mkey in normalize_key(m["model_display"])
+            or normalize_key(m["model_slug"]) == mkey
+        ]
+
+    if args.limit_models:
         models = models[: args.limit_models]
 
+    model_map = {
+        (normalize_key(m["brand_display"]), normalize_key(m["model_display"])): m
+        for m in models
+    }
+
     print(f"Models in scope: {len(models)}")
-    if args.brand or args.model:
-        print(f"Filters: brand={args.brand or '-'} | model={args.model or '-'}")
 
-    if not models:
-        print("No models found from universe. Check vehicles collection / filters.")
-        return
+    session = build_session()
+    all_rows: List[OfferRow] = []
+    no_offer = []
+    v3_models = 0
+    carwale_models = 0
+    previous_fallback_models = 0
 
-    print("\n[2/4] Discovering Autocar India validation articles...")
-    autocar_articles = discover_autocar_articles(
-        args.month,
-        args.year,
-        max_articles=args.max_autocar_articles,
-        debug=args.debug,
-    )
-    print(f"Autocar candidate articles fetched: {len(autocar_articles)}")
-    if args.debug and autocar_articles:
-        for article in autocar_articles[:8]:
-            print(f"  - {article.title} | {compact_url(article.url)}")
+    print("\n[2/3] Scraping models...")
+    per_model_rows: Dict[Tuple[str, str], List[OfferRow]] = {}
 
-    print("\n[3/4] Scraping model offer pages...")
-    all_docs: List[Dict] = []
-    progress_rows: List[Dict] = []
-    errors: List[str] = []
+    for model_entry in tqdm(models, desc="Offers", unit="model"):
+        rows, reason = scrape_v3(session, model_entry, args.target_month, args.target_year, debug_dir)
+        if rows:
+            v3_models += 1
+            if any(r.period_type == "previous" for r in rows):
+                previous_fallback_models += 1
+        else:
+            rows, reason = parse_carwale_fallback(session, model_entry, args.target_month, args.target_year, debug_dir)
+            if rows:
+                carwale_models += 1
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(
-                scrape_model_offers,
-                model_entry,
-                args.month,
-                args.year,
-                autocar_articles,
-                debug_dir,
-            ): model_entry
-            for model_entry in models
-        }
+        key = (normalize_key(model_entry["brand_display"]), normalize_key(model_entry["model_display"]))
+        per_model_rows[key] = rows
 
-        completed = 0
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Offers", unit="model"):
-            completed += 1
-            model_entry = futures[future]
-            try:
-                result = future.result()
-                doc = result["doc"]
-                progress = result["progress"]
-                all_docs.append(doc)
-                progress_rows.append(progress)
+        if rows:
+            all_rows.extend(rows)
+        else:
+            no_offer.append((model_entry["brand_display"], model_entry["model_display"], reason))
 
-                if args.debug or doc.get("offer_count", 0) > 0:
-                    print_progress_line(progress)
+        if args.debug:
+            print_model_rows(model_entry, rows, reason)
 
-            except Exception as exc:
-                label = f"{model_entry.get('brand_display')} {model_entry.get('model_display')}"
-                msg = f"{label}: {exc}"
-                errors.append(msg)
-                tqdm.write(f"💥 ERROR {msg}")
+        time.sleep(0.08 + random.uniform(0.02, 0.1))
 
-            if args.progress_every and completed % args.progress_every == 0:
-                with_offers_so_far = sum(1 for d in all_docs if d.get("offer_count", 0) > 0)
-                fallback_so_far = sum(1 for d in all_docs if d.get("fallback_used"))
-                tqdm.write(
-                    f"Progress checkpoint: {completed}/{len(models)} done | with offers {with_offers_so_far} | fallback {fallback_so_far} | errors {len(errors)}"
-                )
+    inherited_rows: List[OfferRow] = []
+    if not args.no_inherit_nline:
+        inherited_rows = apply_hyundai_nline_inheritance(all_rows, model_map)
+        if inherited_rows:
+            print("\n[Inheritance] Added controlled Hyundai N Line inherited rows:")
+            for row in inherited_rows:
+                all_rows.append(row)
+                # Remove from no_offer if present.
+                no_offer = [
+                    item for item in no_offer
+                    if not (normalize_key(item[0]) == normalize_key(row.brand) and normalize_key(item[1]) == normalize_key(row.model))
+                ]
+                print(f"  - {row.brand} {row.model}: {format_inr(row.max_benefit)} ({row.confidence})")
+                if args.debug:
+                    fake_entry = model_map.get((normalize_key(row.brand), normalize_key(row.model)), {
+                        "brand_display": row.brand, "model_display": row.model
+                    })
+                    print_model_rows(fake_entry, [row], "inherited")
 
-    print("\n[4/4] Summary and Mongo write decision...")
+    print("\n[3/3] Writing output files and Mongo decision...")
+    fieldnames = list(OfferRow.__dataclass_fields__.keys())
 
-    total = len(all_docs)
-    with_offers = sum(1 for d in all_docs if d.get("offer_count", 0) > 0)
-    current_count = sum(1 for d in all_docs if d.get("data_status") == "current_month")
-    fallback_count = sum(1 for d in all_docs if d.get("fallback_used"))
-    not_found = sum(1 for d in all_docs if d.get("offer_count", 0) == 0)
-    autocar_matches = sum(1 for p in progress_rows if p.get("autocar_matched"))
-    v3_fetch_failures = sum(1 for p in progress_rows if not p.get("v3_fetch_ok"))
-    v3_no_sections = sum(1 for p in progress_rows if p.get("v3_fetch_ok") and not p.get("v3_sections_found"))
+    with open(args.output_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in all_rows:
+            writer.writerow(asdict(row))
 
-    print("\n===== RUN SUMMARY =====")
-    print(f"Target period: {month_label(args.month, args.year)}")
-    print(f"Models attempted: {len(models)}")
-    print(f"Docs built: {total}")
-    print(f"Models with offers: {with_offers}")
-    print(f"Current-month published: {current_count}")
-    print(f"Fallback previous-month used: {fallback_count}")
-    print(f"No-offer docs: {not_found}")
-    print(f"Autocar validation matches: {autocar_matches}")
-    print(f"V3 fetch failures: {v3_fetch_failures}")
-    print(f"V3 pages with no month sections: {v3_no_sections}")
-    print(f"Errors: {len(errors)}")
+    with open(args.output_json, "w", encoding="utf-8") as f:
+        json.dump([asdict(r) for r in all_rows], f, indent=2, ensure_ascii=False)
 
-    top_docs = sorted([d for d in all_docs if d.get("total_potential_benefit", 0) > 0], key=lambda d: d.get("total_potential_benefit", 0), reverse=True)[:10]
-    if top_docs:
-        print("\nTop offers found:")
-        for d in top_docs:
-            status = "fallback" if d.get("fallback_used") else "current"
-            print(f"  - {d['brand']} {d['model']}: {inr(d.get('total_potential_benefit'))} | {status} | rows={d.get('offer_count')}")
+    docs = build_model_offer_docs(all_rows, no_offer, models, args.target_month, args.target_year, write_empty=args.write_empty)
+    docs_with_offers = [d for d in docs if int(d.get("offer_count") or 0) > 0]
 
-    if not_found:
-        print("\nFirst no-offer diagnostics:")
-        for p in [p for p in progress_rows if p.get("offer_count", 0) == 0][:12]:
-            print(
-                f"  - {p['brand']} {p['model']} | V3 ok={p.get('v3_fetch_ok')} "
-                f"status={p.get('v3_status_code')} sections={p.get('v3_sections_found')} "
-                f"Autocar={p.get('autocar_matched')} | {compact_url(p.get('v3_url'))}"
-            )
+    print("\n===== OFFER SCRAPER SUMMARY =====")
+    print(f"Models checked: {len(models)}")
+    print(f"Offer rows found: {len(all_rows)}")
+    print(f"Offer docs built: {len(docs)}")
+    print(f"Offer docs with offers: {len(docs_with_offers)}")
+    print(f"Models covered by V3Cars: {v3_models}")
+    print(f"Models covered by CarWale fallback: {carwale_models}")
+    print(f"Controlled inherited rows added: {len(inherited_rows)}")
+    print(f"Previous-month fallback models: {previous_fallback_models}")
+    print(f"Models with no usable offer: {len(no_offer)}")
 
-    if errors:
-        print("\nFirst errors:")
-        for err in errors[:10]:
-            print(f"  - {err}")
+    if all_rows:
+        print("\nTop model max benefits:")
+        by_model: Dict[str, int] = {}
+        by_source: Dict[str, str] = {}
+        for r in all_rows:
+            key = f"{r.brand} {r.model}"
+            if key not in by_model or r.max_benefit > by_model[key]:
+                by_model[key] = r.max_benefit
+                by_source[key] = r.source
+        for key, amt in sorted(by_model.items(), key=lambda kv: kv[1], reverse=True):
+            print(f"  - {key}: {format_inr(amt)} ({by_source[key]})")
 
-    write_docs = all_docs if args.write_empty else [d for d in all_docs if d.get("offer_count", 0) > 0]
+    if no_offer:
+        print("\nNo usable offer models:")
+        for brand, model, reason in no_offer:
+            print(f"  - {brand} {model}: {reason}")
 
-    # Safety guard: prevent wiping/overwriting every model as 0 offers on a bad website run.
-    if with_offers == 0 and not args.force_write_zero_run:
-        print("\n❌ ZERO OFFER RUN DETECTED. Mongo write skipped.")
-        print("Reason: no model produced any offer rows. This usually means page structure changed, source blocked requests, or filters are wrong.")
-        print("Try: python offers_scraper.py --brand Hyundai --model i20 --dry-run --debug --debug-dir ./offer_debug")
-        return
+    print(f"\nCSV written: {args.output_csv}")
+    print(f"JSON written: {args.output_json}")
 
     if args.dry_run:
-        print("\nDRY RUN: Mongo write skipped.")
-        sample = next((d for d in all_docs if d.get("offer_count", 0) > 0), all_docs[0] if all_docs else {})
-        print("\nSample document:")
-        print(json.dumps(sample, indent=2, default=str)[:12000])
-        print(f"\nRuntime: {round(time.time() - start, 2)}s")
+        print("\nDry run only. No Mongo writes were performed.")
         return
 
-    if not write_docs:
-        print("No docs selected for write. Use --write-empty if you intentionally want to upsert empty offer docs.")
+    if len(docs_with_offers) < args.min_offer_docs:
+        print("\n❌ SAFETY STOP: too few offer docs built. Mongo write skipped.")
+        print(f"Docs with offers: {len(docs_with_offers)} | min required: {args.min_offer_docs}")
         return
 
-    operations: List[UpdateOne] = []
-    for doc in write_docs:
-        operations.append(
-            UpdateOne(
-                {
-                    "brand": doc["brand"],
-                    "model": doc["model"],
-                    "month": doc["month"],
-                    "year": doc["year"],
-                },
-                {"$set": doc},
-                upsert=True,
-            )
-        )
-
-    result = offers_collection.bulk_write(operations, ordered=False)
-    print("\nMongo write completed.")
-    print(f"Matched: {result.matched_count}")
-    print(f"Modified: {result.modified_count}")
-    print(f"Upserted: {result.upserted_count}")
-    print(f"Docs submitted: {len(operations)}")
-    print(f"Runtime: {round(time.time() - start, 2)}s")
+    print("\nWriting to Mongo offers collection...")
+    matched, modified, upserted, submitted = write_offer_docs_to_mongo(docs)
+    print("Mongo write completed.")
+    print(f"Matched: {matched}")
+    print(f"Modified: {modified}")
+    print(f"Upserted: {upserted}")
+    print(f"Docs submitted: {submitted}")
 
 
 if __name__ == "__main__":

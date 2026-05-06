@@ -12,8 +12,11 @@ import {
 } from "./aiAgent.salesBrain.js";
 import { generateClosingActions } from "./aiAgent.closingEngine.js";
 import { updateUserProfile } from "./aiAgent.userProfile.js";
+import { getSuggestionScore } from "./aiAgent.learningEngine.js";
 
-const asArray = (value) => (Array.isArray(value) ? value : value ? [value] : []);
+const asArray = (value) =>
+  Array.isArray(value) ? value : value ? [value] : [];
+const TEN_MINUTES_MS = 10 * 60 * 1000;
 
 const firstMeaningful = (...values) =>
   values.find((value) => value !== undefined && value !== null && value !== "");
@@ -37,7 +40,36 @@ const parsePrice = (...values) => {
   return 0;
 };
 
+const formatBudgetForQuery = (value, fallbackLakh = 20) => {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num) || num <= 0) return `${fallbackLakh} lakh`;
+  if (num > 1000) {
+    const lakh = num / 100000;
+    return `${Number.isInteger(lakh) ? lakh : lakh.toFixed(1)} lakh`;
+  }
+  return `${num} lakh`;
+};
+
 const unique = (items = []) => [...new Set(items.filter(Boolean))];
+
+const isRecent = (entry) => {
+  if (!entry) return false;
+  if (typeof entry === "boolean") return entry;
+  if (typeof entry !== "object") return false;
+  return (
+    Boolean(entry.value) && Date.now() - Number(entry.ts || 0) < TEN_MINUTES_MS
+  );
+};
+
+const withHistoryEntry = (previous, shouldSet, now) => {
+  if (shouldSet) return { value: true, ts: now };
+  if (!previous) return { value: false, ts: now };
+  if (typeof previous === "boolean") return { value: previous, ts: now };
+  return {
+    value: Boolean(previous.value),
+    ts: Number(previous.ts || now),
+  };
+};
 
 const slug = (value = "") =>
   String(value || "")
@@ -62,6 +94,11 @@ const rowsFromWidget = (widget = {}) =>
       widget.data?.options ||
       widget.data?.colors,
   ).filter((item) => item && typeof item === "object");
+
+const captureModelsFromRows = (rows = []) =>
+  unique(
+    rows.map((row) => displayModel(row)).map((item) => normalizeText(item)),
+  );
 
 const displayModel = (row = {}) =>
   firstMeaningful(
@@ -91,7 +128,7 @@ const pickAnchorModel = ({
   primaryWidget,
   selectedModels = [],
   selectedEntity,
-  }) =>
+}) =>
   normalizeText(
     firstMeaningful(
       parsed?.entities?.model,
@@ -124,7 +161,9 @@ export const resolveConversationMode = (context = {}) => {
   const { intent, history = {} } = context;
 
   if (
-    ["vehicle_budget_search", "vehicle_recommendation_discovery"].includes(intent)
+    ["vehicle_budget_search", "vehicle_recommendation_discovery"].includes(
+      intent,
+    )
   ) {
     return "explore";
   }
@@ -132,8 +171,8 @@ export const resolveConversationMode = (context = {}) => {
   if (["vehicle_emi_calculator", "aci_new_car_quotation"].includes(intent))
     return "buy";
 
-  if (history.compared) return "compare";
-  if (history.viewedPrice) return "consider";
+  if (isRecent(history.compared)) return "compare";
+  if (isRecent(history.viewedPrice)) return "consider";
 
   return "explore";
 };
@@ -184,24 +223,58 @@ export const findRelevantRivals = async ({
   brand,
   city,
 }) => {
+  const MAX_QUERY_MS = 3000;
   const modelNeedle = toWords(model);
   if (!modelNeedle) return [];
 
-  let resolvedBodyType = toWords(bodyType);
-  if (!resolvedBodyType) {
-    const bodyDoc = await VehicleFeature.findOne({
-      model: { $regex: new RegExp(modelNeedle.replace(/\s+/g, ".*"), "i") },
-    })
-      .select({ body_type_bucket: 1 })
-      .lean();
-    resolvedBodyType = toWords(bodyDoc?.body_type_bucket || "");
-  }
-
-  const query = {
-    city: { $regex: new RegExp(`^${toWords(city || "new delhi").replace(/\s+/g, "[- ]?")}$`, "i") },
+  const bodyCategory = (value = "") => {
+    const text = toWords(value);
+    if (!text) return "unknown";
+    if (/\bmpv|muv|van\b/.test(text)) return "mpv";
+    if (/\bhatchback\b/.test(text)) return "hatchback";
+    if (/\bsedan\b/.test(text)) return "sedan";
+    if (/\bcompact suv|mid suv|suv|crossover\b/.test(text)) return "suv";
+    return "unknown";
   };
 
-  const rows = await Vehicle.find(query)
+  const isRowInactive = (row = {}) =>
+    Boolean(
+      row.is_discontinued ||
+        /discontinued|inactive/i.test(
+          `${row.status || ""} ${row.model_status || ""}`,
+        ),
+    );
+
+  const cityPattern = (inputCity = "new delhi") => {
+    const normalized = toWords(inputCity || "new delhi") || "new delhi";
+    return new RegExp(`^${normalized.replace(/\s+/g, "[- ]?")}$`, "i");
+  };
+
+  const extractEffectivePrice = (row = {}) =>
+    parsePrice(
+      row.on_road_price,
+      row.onRoadPrice,
+      row.total_on_road_with_accessories,
+      row.on_road_price_cardekho,
+      row.orp_without_accessories,
+      row.ex_showroom,
+      row.exShowroom,
+    );
+
+  const anchorCityRegex = cityPattern(city || "new delhi");
+
+  const anchorModelRegex = new RegExp(modelNeedle.replace(/\s+/g, ".*"), "i");
+  const anchorModelNormalized = normalizeText(model).toLowerCase().trim();
+  const anchorModelSlug = anchorModelNormalized.replace(/\s+/g, "-");
+
+  const anchorRows = await Vehicle.find({
+    city: { $regex: anchorCityRegex },
+    $or: [
+      { model_normalized: anchorModelNormalized },
+      { model_slug: anchorModelSlug },
+      { model: { $regex: anchorModelRegex } },
+    ],
+  })
     .select({
       brand: 1,
       make: 1,
@@ -210,86 +283,228 @@ export const findRelevantRivals = async ({
       exShowroom: 1,
       on_road_price: 1,
       onRoadPrice: 1,
+      total_on_road_with_accessories: 1,
+      on_road_price_cardekho: 1,
+      orp_without_accessories: 1,
       status: 1,
       model_status: 1,
       is_discontinued: 1,
+      city: 1,
     })
-    .limit(500)
+    .limit(220)
+    .maxTimeMS(MAX_QUERY_MS)
     .lean();
 
-  const uniqueModels = new Map();
-  for (const row of rows) {
-    const modelName = normalizeText(row.model);
-    const normalized = toWords(modelName);
-    if (!normalized || normalized === modelNeedle) continue;
+  const activeAnchorRows = anchorRows.filter((row) => !isRowInactive(row));
+  const anchorPrices = activeAnchorRows
+    .map(extractEffectivePrice)
+    .filter((value) => Number.isFinite(value) && value > 0);
 
-    const isDiscontinued = Boolean(
-      row.is_discontinued ||
-        /discontinued|inactive/i.test(
-          `${row.status || ""} ${row.model_status || ""}`,
-        ),
+  const anchorMin = Number(priceMin) || (anchorPrices.length ? Math.min(...anchorPrices) : 0);
+  const anchorMax = Number(priceMax) || (anchorPrices.length ? Math.max(...anchorPrices) : 0);
+  const anchorMid = anchorMin && anchorMax ? (anchorMin + anchorMax) / 2 : anchorMin || anchorMax || 0;
+
+  let resolvedBodyType = toWords(bodyType);
+  if (!resolvedBodyType) {
+    const anchorBodyDoc = await VehicleFeature.findOne({
+      $or: [
+        { model_normalized: anchorModelNormalized },
+        { model_slug: anchorModelSlug },
+        { model: { $regex: anchorModelRegex } },
+      ],
+    })
+      .select({ body_type_bucket: 1, bodyType: 1, segment: 1, category: 1 })
+      .maxTimeMS(MAX_QUERY_MS)
+      .lean();
+    resolvedBodyType = toWords(
+      firstMeaningful(
+        anchorBodyDoc?.body_type_bucket,
+        anchorBodyDoc?.bodyType,
+        anchorBodyDoc?.segment,
+        anchorBodyDoc?.category,
+      ) || "",
     );
-    if (isDiscontinued) continue;
+  }
+  const anchorCategory = bodyCategory(resolvedBodyType);
+
+  const candidateRowsRaw = await Vehicle.find({
+    city: { $regex: anchorCityRegex },
+  })
+    .select({
+      brand: 1,
+      make: 1,
+      model: 1,
+      ex_showroom: 1,
+      exShowroom: 1,
+      on_road_price: 1,
+      onRoadPrice: 1,
+      total_on_road_with_accessories: 1,
+      on_road_price_cardekho: 1,
+      orp_without_accessories: 1,
+      status: 1,
+      model_status: 1,
+      is_discontinued: 1,
+      city: 1,
+    })
+    .limit(500)
+    .maxTimeMS(MAX_QUERY_MS)
+    .lean();
+
+  const deduped = new Map();
+  for (const row of candidateRowsRaw) {
+    if (isRowInactive(row)) continue;
+    const candidateModel = normalizeText(row.model);
+    const candidateModelNeedle = toWords(candidateModel);
+    if (!candidateModelNeedle || candidateModelNeedle === modelNeedle) continue;
+    if (
+      candidateModelNeedle.includes(modelNeedle) ||
+      modelNeedle.includes(candidateModelNeedle)
+    ) {
+      continue;
+    }
 
     const candidateBrand = normalizeText(firstMeaningful(row.brand, row.make));
-    const exPrice = parsePrice(row.ex_showroom, row.exShowroom);
-    const onRoad = parsePrice(row.on_road_price, row.onRoadPrice);
-    const effectivePrice = parsePrice(exPrice, onRoad);
+    const key = `${toWords(candidateBrand)}|${candidateModelNeedle}`;
+    const price = extractEffectivePrice(row);
 
-    if (priceMin && effectivePrice && effectivePrice < priceMin * 0.8) continue;
-    if (priceMax && effectivePrice && effectivePrice > priceMax * 1.25) continue;
+    if (!deduped.has(key)) {
+      deduped.set(key, { brand: candidateBrand, model: candidateModel, price });
+      continue;
+    }
 
-    const key = `${toWords(candidateBrand)}|${normalized}`;
-    if (!uniqueModels.has(key)) {
-      uniqueModels.set(key, {
-        brand: candidateBrand,
-        model: modelName,
-        price: effectivePrice,
-      });
+    const prev = deduped.get(key);
+    if ((!prev.price && price) || (prev.price && price && price < prev.price)) {
+      deduped.set(key, { brand: candidateBrand, model: candidateModel, price });
     }
   }
 
-  let candidates = [...uniqueModels.values()];
+  const candidates = [...deduped.values()];
+  if (!candidates.length) return [];
 
-  if (resolvedBodyType) {
-    const modelNames = candidates.map((item) => item.model);
-    if (modelNames.length) {
-      const bodyRows = await VehicleFeature.find({
-        model: { $in: modelNames },
-      })
-        .select({ model: 1, body_type_bucket: 1 })
-        .limit(500)
-        .lean();
-      const bodyByModel = new Map(
-        bodyRows.map((row) => [toWords(row.model), toWords(row.body_type_bucket)]),
-      );
-      candidates = candidates.filter((item) => {
-        const candidateBody = bodyByModel.get(toWords(item.model)) || "";
-        if (!candidateBody) return true;
-        if (resolvedBodyType.includes("suv")) return candidateBody.includes("suv");
-        return candidateBody.includes(resolvedBodyType);
-      });
-    }
-  }
-
-  const anchorMid =
-    priceMin && priceMax
-      ? (priceMin + priceMax) / 2
-      : priceMin || priceMax || 0;
-
-  candidates.sort((a, b) => {
-    if (anchorMid && a.price && b.price) {
-      return Math.abs(a.price - anchorMid) - Math.abs(b.price - anchorMid);
-    }
-    if (a.price && b.price) return a.price - b.price;
-    return a.model.localeCompare(b.model);
-  });
-
-  const filtered = candidates.filter((item) => toWords(item.brand) !== toWords(brand)).concat(
-    candidates.filter((item) => toWords(item.brand) === toWords(brand)),
+  const candidateNames = candidates.map((item) => item.model).slice(0, 60);
+  const candidateNormalizedNames = candidateNames
+    .map((name) => toWords(name))
+    .filter(Boolean);
+  const candidateModelSlugs = candidateNormalizedNames.map((name) =>
+    name.replace(/\s+/g, "-"),
   );
+  const bodyRows = candidateNames.length
+    ? await VehicleFeature.find({
+        $or: [
+          { model_normalized: { $in: candidateNormalizedNames } },
+          { model_slug: { $in: candidateModelSlugs } },
+          ...candidateNames.slice(0, 60).map((name) => ({
+            model: {
+              $regex: new RegExp(toWords(name).replace(/\s+/g, ".*"), "i"),
+            },
+          })),
+        ],
+      })
+        .select({ model: 1, body_type_bucket: 1, bodyType: 1, segment: 1, category: 1 })
+        .limit(300)
+        .maxTimeMS(MAX_QUERY_MS)
+        .lean()
+    : [];
 
-  return unique(filtered.map((item) => normalizeText(item.model))).slice(0, 3);
+  const bodyByModel = new Map();
+  for (const row of bodyRows) {
+    const modelKey = toWords(row.model);
+    const bodyValue = toWords(
+      firstMeaningful(
+        row.body_type_bucket,
+        row.bodyType,
+        row.segment,
+        row.category,
+      ) || "",
+    );
+    if (!modelKey || !bodyValue) continue;
+    if (!bodyByModel.has(modelKey)) bodyByModel.set(modelKey, bodyValue);
+  }
+
+  const sedanBoost = /\bcity|slavia|virtus|ciaz|verna\b/i;
+  const suvBoost =
+    /\bcreta|seltos|elevate|grand vitara|hyryder|taigun|kushaq|venue|sonet|brezza|nexon|3xo|xuv\b/i;
+  const normalizedAnchorBrand = toWords(brand);
+
+  const scored = candidates
+    .map((item) => {
+      const modelKey = toWords(item.model);
+      const directBody = bodyByModel.get(modelKey) || "";
+      const fuzzyBody =
+        directBody ||
+        [...bodyByModel.entries()].find(([key]) =>
+          key.includes(modelKey) || modelKey.includes(key),
+        )?.[1] ||
+        "";
+      const candidateBodyCategory = bodyCategory(fuzzyBody);
+
+      let score = 0;
+      let compatible = true;
+
+      if (anchorCategory === "sedan") {
+        if (candidateBodyCategory === "sedan") score += 50;
+        else if (candidateBodyCategory === "unknown") score -= 40;
+        else compatible = false;
+      } else if (anchorCategory === "suv") {
+        if (candidateBodyCategory === "suv") score += 50;
+        else if (candidateBodyCategory === "unknown") score -= 40;
+        else compatible = false;
+      } else if (anchorCategory === "hatchback") {
+        if (candidateBodyCategory === "hatchback") score += 50;
+        else if (candidateBodyCategory === "unknown") score -= 40;
+        else compatible = false;
+      } else if (anchorCategory === "mpv") {
+        if (candidateBodyCategory === "mpv") score += 50;
+        else if (candidateBodyCategory === "unknown") score -= 40;
+        else compatible = false;
+      }
+
+      // Hard guard: never map MPV/MUV as rivals for sedan/SUV/hatchback anchors.
+      if (
+        ["sedan", "suv", "hatchback"].includes(anchorCategory) &&
+        candidateBodyCategory === "mpv"
+      ) {
+        compatible = false;
+      }
+
+      if (!compatible) return null;
+
+      if (anchorMin && anchorMax && item.price) {
+        const minFactor = anchorCategory === "sedan" ? 0.8 : 0.75;
+        const maxFactor = anchorCategory === "sedan" ? 1.25 : 1.35;
+        if (item.price < anchorMin * minFactor || item.price > anchorMax * maxFactor) {
+          return null;
+        }
+        if (anchorMid) {
+          const diffRatio = Math.abs(item.price - anchorMid) / Math.max(anchorMid, 1);
+          score += Math.max(0, 30 - diffRatio * 30);
+        }
+      } else if (!item.price) {
+        score -= 25;
+      }
+
+      if (!normalizedAnchorBrand || toWords(item.brand) !== normalizedAnchorBrand) {
+        score += 3;
+      }
+
+      if (anchorCategory === "sedan" && sedanBoost.test(item.model)) score += 8;
+      if (anchorCategory === "suv" && suvBoost.test(item.model)) score += 8;
+
+      return {
+        ...item,
+        score,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (anchorMid && a.price && b.price) {
+        return Math.abs(a.price - anchorMid) - Math.abs(b.price - anchorMid);
+      }
+      return a.model.localeCompare(b.model);
+    });
+
+  return unique(scored.map((item) => normalizeText(item.model))).slice(0, 3);
 };
 
 export const buildContextSnapshot = ({
@@ -303,17 +518,22 @@ export const buildContextSnapshot = ({
   const canonicalIntent = mapIntentAlias(parsed?.intent || "");
   const questionConfig = getNewCarQuestionConfig(canonicalIntent);
   const rows = rowsFromWidget(primaryWidget);
-  const selectedModels = unique([
-    parsed?.entities?.model,
-    ...(parsed?.entities?.models || []),
-    primaryWidget?.model,
-  ].map((item) => normalizeText(item)));
+  const resultModels = captureModelsFromRows(rows);
+  const selectedModels = unique(
+    [
+      parsed?.entities?.model,
+      ...(parsed?.entities?.models || []),
+      primaryWidget?.model,
+    ].map((item) => normalizeText(item)),
+  );
 
-  const selectedVariants = unique([
-    parsed?.entities?.variant,
-    ...(parsed?.entities?.variants || []),
-    primaryWidget?.variant,
-  ].map((item) => normalizeText(item)));
+  const selectedVariants = unique(
+    [
+      parsed?.entities?.variant,
+      ...(parsed?.entities?.variants || []),
+      primaryWidget?.variant,
+    ].map((item) => normalizeText(item)),
+  );
 
   const priceValues = rows
     .map((row) =>
@@ -349,38 +569,58 @@ export const buildContextSnapshot = ({
   ]);
 
   const priorHistory = context?.history || {};
+  const now = Date.now();
   const history = {
     ...priorHistory,
-    viewedPrice:
-      Boolean(priorHistory.viewedPrice) ||
-      ["vehicle_pricelist", "vehicle_city_price", "vehicle_variant_price"].includes(
-        canonicalIntent,
-      ),
-    viewedFeatures:
-      Boolean(priorHistory.viewedFeatures) ||
+    viewedPrice: withHistoryEntry(
+      priorHistory.viewedPrice,
+      [
+        "vehicle_pricelist",
+        "vehicle_city_price",
+        "vehicle_variant_price",
+      ].includes(canonicalIntent),
+      now,
+    ),
+    viewedFeatures: withHistoryEntry(
+      priorHistory.viewedFeatures,
       [
         "vehicle_model_features_explorer",
         "vehicle_feature_discovery",
         "vehicle_feature_answer",
       ].includes(canonicalIntent),
-    compared:
-      Boolean(priorHistory.compared) ||
-      ["vehicle_comparison", "vehicle_model_comparison", "vehicle_variant_comparison"].includes(
+      now,
+    ),
+    compared: withHistoryEntry(
+      priorHistory.compared,
+      [
+        "vehicle_comparison",
+        "vehicle_model_comparison",
+        "vehicle_variant_comparison",
+      ].includes(canonicalIntent) || selectedModels.length > 1,
+      now,
+    ),
+    checkedEmi: withHistoryEntry(
+      priorHistory.checkedEmi,
+      ["vehicle_emi_calculator", "vehicle_emi_options"].includes(
         canonicalIntent,
-      ) ||
-      selectedModels.length > 1,
-    checkedEmi:
-      Boolean(priorHistory.checkedEmi) ||
-      ["vehicle_emi_calculator", "vehicle_emi_options"].includes(canonicalIntent),
-    viewedOffers:
-      Boolean(priorHistory.viewedOffers) ||
+      ),
+      now,
+    ),
+    viewedOffers: withHistoryEntry(
+      priorHistory.viewedOffers,
       ["vehicle_offers", "vehicle_offer_lookup"].includes(canonicalIntent),
-    requestedQuotation:
-      Boolean(priorHistory.requestedQuotation) ||
+      now,
+    ),
+    requestedQuotation: withHistoryEntry(
+      priorHistory.requestedQuotation,
       canonicalIntent === "aci_new_car_quotation",
-    requestedTestDrive:
-      Boolean(priorHistory.requestedTestDrive) ||
+      now,
+    ),
+    requestedTestDrive: withHistoryEntry(
+      priorHistory.requestedTestDrive,
       canonicalIntent === "vehicle_test_drive_request",
+      now,
+    ),
   };
 
   const userProfile = updateUserProfile(context, parsed);
@@ -388,10 +628,8 @@ export const buildContextSnapshot = ({
   const snapshot = {
     domain: "new_car",
     intent: canonicalIntent,
-    canvasType:
-      primaryWidget?.canvasType || questionConfig?.canvasType || null,
-    inlineType:
-      primaryWidget?.inlineType || questionConfig?.inlineType || null,
+    canvasType: primaryWidget?.canvasType || questionConfig?.canvasType || null,
+    inlineType: primaryWidget?.inlineType || questionConfig?.inlineType || null,
     make: normalizeText(
       firstMeaningful(
         parsed?.entities?.make,
@@ -430,6 +668,7 @@ export const buildContextSnapshot = ({
         primaryWidget?.data?.cityFallbackUsed,
       ),
     ),
+    resultModels,
     bodyType: normalizeText(
       firstMeaningful(
         parsed?.entities?.bodyType,
@@ -470,14 +709,21 @@ export const buildContextSnapshot = ({
         primaryWidget?.data?.total,
         primaryWidget?.total,
       ) || rows.length,
-    primaryResultIds: unique(rows.map((row) => String(firstMeaningful(row.id, row._id) || ""))).slice(
-      0,
-      12,
-    ),
+    primaryResultIds: unique(
+      rows.map((row) => String(firstMeaningful(row.id, row._id) || "")),
+    ).slice(0, 12),
     sourceCollections,
     filters: filters || {},
     history,
     profile: userProfile,
+    userId: String(
+      firstMeaningful(
+        context?.userId,
+        context?.profile?.userId,
+        context?.sessionUserId,
+        context?.customerId,
+      ) || "",
+    ),
   };
 
   snapshot.mode = resolveConversationMode(snapshot);
@@ -515,21 +761,33 @@ const suggestionForModel = (contextSnapshot, query, partial = {}) => ({
 const addCompareSuggestion = async (suggestions, contextSnapshot) => {
   const anchor = contextSnapshot.anchorModel;
   if (!anchor) return;
-  const rivals = await findRelevantRivals({
-    model: anchor,
-    bodyType: contextSnapshot.bodyType,
-    priceMin: contextSnapshot.priceMin || contextSnapshot.budgetMin || 0,
-    priceMax: contextSnapshot.priceMax || contextSnapshot.budgetMax || 0,
-    brand: contextSnapshot.brand,
-    city: contextSnapshot.city || contextSnapshot.requestedCity || "new delhi",
-  });
+  let rivals = [];
+  try {
+    rivals =
+      (await Promise.race([
+        findRelevantRivals({
+          model: anchor,
+          bodyType: contextSnapshot.bodyType,
+          priceMin: contextSnapshot.priceMin || contextSnapshot.budgetMin || 0,
+          priceMax: contextSnapshot.priceMax || contextSnapshot.budgetMax || 0,
+          brand: contextSnapshot.brand,
+          city:
+            contextSnapshot.city || contextSnapshot.requestedCity || "new delhi",
+        }),
+        new Promise((resolve) => setTimeout(() => resolve([]), 1800)),
+      ])) || [];
+  } catch (error) {
+    void error;
+    rivals = [];
+  }
 
   if (!rivals.length) {
     suggestions.push(
       createSuggestion(
         {
           title: `Which cars should I compare ${anchor} with?`,
-          subtitle: "Tell me your preferred rivals and I’ll compare them side-by-side.",
+          subtitle:
+            "Tell me your preferred rivals and I’ll compare them side-by-side.",
           kind: "clarification",
           type: "ask",
           intent: "vehicle_comparison",
@@ -588,13 +846,49 @@ const suggestionKindFromType = (type = "") => {
   return "action";
 };
 
-export const normalizeConversationSuggestion = (suggestion, contextSnapshot) => {
+
+const stableSuggestionId = (suggestion = {}, intent = "") => {
+  const base = [
+    mapIntentAlias(intent || suggestion.intent || ""),
+    suggestion.type || "ask",
+    suggestion.leadType || suggestion.contextPatch?.leadType || "",
+    suggestion.canvasType || "",
+    suggestion.inlineType || "",
+    suggestion.query ||
+      suggestion.message ||
+      suggestion.title ||
+      suggestion.label ||
+      "",
+    suggestion.entities?.model || "",
+    suggestion.entities?.variant || "",
+    asArray(suggestion.entities?.models).join("-"),
+  ]
+    .map((item) => slug(item))
+    .filter(Boolean)
+    .join("-");
+
+  return base || `suggestion-${slug(intent || "next")}`;
+};
+
+export const normalizeConversationSuggestion = (
+  suggestion,
+  contextSnapshot,
+) => {
   const type = suggestion.type || "ask";
-  const intent = mapIntentAlias(suggestion.intent || contextSnapshot.intent || "");
-  const title = normalizeText(
-    firstMeaningful(suggestion.title, suggestion.label, suggestion.query, "Next"),
+  const intent = mapIntentAlias(
+    suggestion.intent || contextSnapshot.intent || "",
   );
-  const query = normalizeText(firstMeaningful(suggestion.query, suggestion.message, title));
+  const title = normalizeText(
+    firstMeaningful(
+      suggestion.title,
+      suggestion.label,
+      suggestion.query,
+      "Next",
+    ),
+  );
+  const query = normalizeText(
+    firstMeaningful(suggestion.query, suggestion.message, title),
+  );
   const entities = {
     ...(suggestion.entities || {}),
   };
@@ -606,7 +900,7 @@ export const normalizeConversationSuggestion = (suggestion, contextSnapshot) => 
     },
   };
   return {
-    id: suggestion.id || `${slug(intent)}-${slug(title)}-${Math.random().toString(16).slice(2, 7)}`,
+    id: suggestion.id || stableSuggestionId(suggestion, intent),
     title,
     subtitle: normalizeText(suggestion.subtitle || ""),
     kind: suggestion.kind || suggestionKindFromType(type),
@@ -626,7 +920,10 @@ export const normalizeConversationSuggestion = (suggestion, contextSnapshot) => 
   };
 };
 
-export const validateConversationSuggestions = (suggestions, contextSnapshot) => {
+export const validateConversationSuggestions = (
+  suggestions,
+  contextSnapshot,
+) => {
   const anchorModel = toWords(contextSnapshot.anchorModel);
   const anchorVariant = toWords(contextSnapshot.anchorVariant);
   const variantScopedIntents = new Set([
@@ -639,7 +936,10 @@ export const validateConversationSuggestions = (suggestions, contextSnapshot) =>
     const suggestion = normalizeConversationSuggestion(item, contextSnapshot);
 
     if (suggestion.type === "ask" && !suggestion.query) return false;
-    if (suggestion.kind === "lead" && !firstMeaningful(suggestion.leadType, suggestion.contextPatch?.leadType)) {
+    if (
+      suggestion.kind === "lead" &&
+      !firstMeaningful(suggestion.leadType, suggestion.contextPatch?.leadType)
+    ) {
       return false;
     }
 
@@ -651,8 +951,9 @@ export const validateConversationSuggestions = (suggestions, contextSnapshot) =>
       const hasAnchor =
         queryWords.includes(anchorModel) ||
         entityModel.includes(anchorModel) ||
-        (asArray(suggestion.entities?.models).map(toWords).includes(anchorModel));
-      if (!hasAnchor && suggestion.intent !== "vehicle_comparison") return false;
+        asArray(suggestion.entities?.models).map(toWords).includes(anchorModel);
+      if (!hasAnchor && suggestion.intent !== "vehicle_comparison")
+        return false;
     }
 
     if (suggestion.intent === "vehicle_comparison" && anchorModel) {
@@ -669,17 +970,77 @@ export const validateConversationSuggestions = (suggestions, contextSnapshot) =>
       variantScopedIntents.has(suggestion.intent) &&
       /variant|emi|quote|price|feature|zx|sx|vx|htx|gtx/.test(queryWords)
     ) {
-      const hasVariant = queryWords.includes(anchorVariant) || entityVariant.includes(anchorVariant);
-      if (!hasVariant && suggestion.intent !== "vehicle_comparison") return false;
+      const hasVariant =
+        queryWords.includes(anchorVariant) ||
+        entityVariant.includes(anchorVariant);
+      if (!hasVariant && suggestion.intent !== "vehicle_comparison")
+        return false;
     }
 
     return true;
   });
 };
 
-export const rankSuggestions = (suggestions, context) => {
-  void context;
-  return suggestions.sort((a, b) => b.priority - a.priority);
+const suggestionKey = (suggestion = {}) =>
+  [
+    mapIntentAlias(suggestion.intent || ""),
+    toWords(suggestion.query || suggestion.title || ""),
+    toWords(suggestion.entities?.model || ""),
+    toWords(suggestion.entities?.variant || ""),
+    toWords(asArray(suggestion.entities?.models).join("|")),
+  ].join("::");
+
+const dedupeSuggestions = (suggestions = []) => {
+  const seen = new Map();
+
+  for (const suggestion of suggestions) {
+    const key = suggestionKey(suggestion);
+    const existing = seen.get(key);
+
+    if (
+      !existing ||
+      Number(suggestion.priority || 0) > Number(existing.priority || 0)
+    ) {
+      seen.set(key, suggestion);
+    }
+  }
+
+  return [...seen.values()];
+};
+
+export const rankSuggestions = async (suggestions, context = {}) => {
+  const ranked = await Promise.all(
+    suggestions.map(async (suggestion) => {
+      let adaptiveFromLearning = 0;
+      try {
+        adaptiveFromLearning =
+          (await Promise.race([
+            getSuggestionScore(
+              context.userId || "",
+              context.intent || "",
+              suggestion.id,
+            ),
+            new Promise((resolve) => setTimeout(() => resolve(0), 250)),
+          ])) || 0;
+      } catch (error) {
+        adaptiveFromLearning = 0;
+      }
+
+      const affinityBoost =
+        Number(context?.profile?.intentAffinity?.[suggestion.intent] || 0) * 5;
+      const adaptiveScore =
+        Number(suggestion.priority || 0) +
+        adaptiveFromLearning * 100 +
+        affinityBoost;
+
+      return {
+        ...suggestion,
+        adaptiveScore,
+      };
+    }),
+  );
+
+  return ranked.sort((a, b) => b.adaptiveScore - a.adaptiveScore);
 };
 
 const buildChainedSuggestion = (intent, contextSnapshot) => {
@@ -862,16 +1223,20 @@ const addContextAwarePrompts = (suggestions, contextSnapshot) => {
   if (missingContext.budget) {
     suggestions.push(
       createSuggestion(
-        suggestionForModel(contextSnapshot, `My budget for ${model} is under 20 lakh`, {
-          title: "Share your budget",
-          subtitle: "I will tailor variant and EMI recommendations",
-          kind: "question",
-          type: "ask",
-          intent: "vehicle_budget_search",
-          canvasType: "recommendation_results_canvas",
-          priority: 66,
-          icon: "calculator",
-        }),
+        suggestionForModel(
+          contextSnapshot,
+          `My budget for ${model} is under 20 lakh`,
+          {
+            title: "Share your budget",
+            subtitle: "I will tailor variant and EMI recommendations",
+            kind: "question",
+            type: "ask",
+            intent: "vehicle_budget_search",
+            canvasType: "recommendation_results_canvas",
+            priority: 66,
+            icon: "calculator",
+          },
+        ),
         contextSnapshot,
       ),
     );
@@ -901,16 +1266,21 @@ export const buildConversationSuggestions = async ({
   const variant = contextSnapshot.anchorVariant;
   const city = contextSnapshot.city || contextSnapshot.requestedCity;
 
-  const add = (entry) => suggestions.push(createSuggestion(entry, contextSnapshot));
+  const add = (entry) =>
+    suggestions.push(createSuggestion(entry, contextSnapshot));
 
   if (!isStructuredNewCarIntent(intent)) {
     return [];
   }
 
   if (intent === "vehicle_model_ambiguity") {
-    const options = asArray(primaryWidget?.options || primaryWidget?.data?.options).slice(0, 4);
+    const options = asArray(
+      primaryWidget?.options || primaryWidget?.data?.options,
+    ).slice(0, 4);
     for (const option of options) {
-      const optionModel = normalizeText(firstMeaningful(option.model, option.displayName));
+      const optionModel = normalizeText(
+        firstMeaningful(option.model, option.displayName),
+      );
       add({
         title: option.displayName || optionModel,
         subtitle: "Use this model",
@@ -925,14 +1295,24 @@ export const buildConversationSuggestions = async ({
         contextPatch: {
           selectedModels: [optionModel],
           selectedEntity: option,
+          forceModelSelection: true,
+          entities: {
+            model: optionModel,
+            models: [optionModel],
+            ...(option.brand ? { make: normalizeText(option.brand) } : {}),
+          },
         },
         priority: 98,
         icon: "car",
       });
     }
     if (options.length >= 2) {
-      const a = normalizeText(firstMeaningful(options[0]?.model, options[0]?.displayName));
-      const b = normalizeText(firstMeaningful(options[1]?.model, options[1]?.displayName));
+      const a = normalizeText(
+        firstMeaningful(options[0]?.model, options[0]?.displayName),
+      );
+      const b = normalizeText(
+        firstMeaningful(options[1]?.model, options[1]?.displayName),
+      );
       add({
         title: `Compare ${a} and ${b}`,
         subtitle: "Quick side-by-side",
@@ -947,7 +1327,9 @@ export const buildConversationSuggestions = async ({
         icon: "scale",
       });
     }
-    const brand = normalizeText(firstMeaningful(options[0]?.brand, contextSnapshot.brand));
+    const brand = normalizeText(
+      firstMeaningful(options[0]?.brand, contextSnapshot.brand),
+    );
     if (brand) {
       add({
         title: `Show all ${brand} compact SUVs`,
@@ -964,9 +1346,13 @@ export const buildConversationSuggestions = async ({
       });
     }
   } else if (intent === "vehicle_variant_ambiguity") {
-    const options = asArray(primaryWidget?.options || primaryWidget?.data?.options).slice(0, 5);
+    const options = asArray(
+      primaryWidget?.options || primaryWidget?.data?.options,
+    ).slice(0, 5);
     for (const option of options.slice(0, 3)) {
-      const pickedVariant = normalizeText(firstMeaningful(option.variant, option.label, option.displayName));
+      const pickedVariant = normalizeText(
+        firstMeaningful(option.variant, option.label, option.displayName),
+      );
       add({
         title: pickedVariant,
         subtitle: "Use this variant",
@@ -1007,7 +1393,13 @@ export const buildConversationSuggestions = async ({
       priority: 80,
       icon: "list",
     });
-  } else if (["vehicle_pricelist", "vehicle_city_price", "vehicle_variant_price"].includes(intent)) {
+  } else if (
+    [
+      "vehicle_pricelist",
+      "vehicle_city_price",
+      "vehicle_variant_price",
+    ].includes(intent)
+  ) {
     add(
       suggestionForModel(contextSnapshot, `Show colors of ${model}`, {
         title: `Show ${model} colors`,
@@ -1053,22 +1445,32 @@ export const buildConversationSuggestions = async ({
     );
     await addCompareSuggestion(suggestions, contextSnapshot);
     add(
-      suggestionForModel(contextSnapshot, `Get quotation for ${model}${variant ? ` ${variant}` : ""}`, {
-        title: `Get quotation for ${model}${variant ? ` ${variant}` : ""}`,
-        subtitle: "Prepare ACI quote",
-        kind: "lead",
-        type: "lead",
-        leadType: "quotation",
-        intent: "aci_new_car_quotation",
-        displayMode: "canvas",
-        canvasType: "aci_quotation_canvas",
-        priority: 89,
-        icon: "file-text",
-        contextPatch: { leadType: "quotation" },
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Get quotation for ${model}${variant ? ` ${variant}` : ""}`,
+        {
+          title: `Get quotation for ${model}${variant ? ` ${variant}` : ""}`,
+          subtitle: "Prepare ACI quote",
+          kind: "lead",
+          type: "lead",
+          leadType: "quotation",
+          intent: "aci_new_car_quotation",
+          displayMode: "canvas",
+          canvasType: "aci_quotation_canvas",
+          priority: 89,
+          icon: "file-text",
+          contextPatch: { leadType: "quotation" },
+        },
+      ),
     );
   } else if (["vehicle_colors", "vehicle_color_gallery"].includes(intent)) {
-    const chosenColor = normalizeText(firstMeaningful(primaryWidget?.color, primaryWidget?.data?.color, primaryWidget?.rows?.[0]?.colorName));
+    const chosenColor = normalizeText(
+      firstMeaningful(
+        primaryWidget?.color,
+        primaryWidget?.data?.color,
+        primaryWidget?.rows?.[0]?.colorName,
+      ),
+    );
     add(
       suggestionForModel(contextSnapshot, `Show ${model} pricelist`, {
         title: `Show ${model} pricelist`,
@@ -1084,16 +1486,22 @@ export const buildConversationSuggestions = async ({
     add(
       suggestionForModel(
         contextSnapshot,
-        `Which ${model} variants get ${chosenColor || "this"} color?`,
+        `Confirm ${chosenColor || "preferred"} color for ${model} quotation`,
         {
-          title: `Check ${model} color by variant`,
-          subtitle: chosenColor || "Variant-wise availability",
-          kind: "question",
-          type: "ask",
-          intent: "vehicle_feature_discovery",
-          canvasType: "feature_explorer_canvas",
+          title: `Confirm color in quotation`,
+          subtitle: "Variant-wise color availability needs confirmation",
+          kind: "lead",
+          type: "lead",
+          leadType: "quotation",
+          intent: "aci_new_car_quotation",
+          canvasType: "aci_quotation_canvas",
           priority: 93,
-          icon: "list",
+          icon: "check-circle",
+          contextPatch: {
+            leadType: "quotation",
+            preferredColor: chosenColor || undefined,
+            colorConfirmationRequired: true,
+          },
         },
       ),
     );
@@ -1110,18 +1518,27 @@ export const buildConversationSuggestions = async ({
       }),
     );
     add(
-      suggestionForModel(contextSnapshot, `Get quotation for ${model}${chosenColor ? ` in ${chosenColor}` : ""}`, {
-        title: `Get quotation for ${model}`,
-        subtitle: chosenColor ? `Include ${chosenColor} color` : "Include preferred color",
-        kind: "lead",
-        type: "lead",
-        leadType: "quotation",
-        intent: "aci_new_car_quotation",
-        canvasType: "aci_quotation_canvas",
-        priority: 88,
-        icon: "file-text",
-        contextPatch: { leadType: "quotation", preferredColor: chosenColor || undefined },
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Get quotation for ${model}${chosenColor ? ` in ${chosenColor}` : ""}`,
+        {
+          title: `Get quotation for ${model}`,
+          subtitle: chosenColor
+            ? `Include ${chosenColor} color`
+            : "Include preferred color",
+          kind: "lead",
+          type: "lead",
+          leadType: "quotation",
+          intent: "aci_new_car_quotation",
+          canvasType: "aci_quotation_canvas",
+          priority: 88,
+          icon: "file-text",
+          contextPatch: {
+            leadType: "quotation",
+            preferredColor: chosenColor || undefined,
+          },
+        },
+      ),
     );
     add(
       suggestionForModel(contextSnapshot, `Book test drive for ${model}`, {
@@ -1136,7 +1553,9 @@ export const buildConversationSuggestions = async ({
         contextPatch: { leadType: "test_drive" },
       }),
     );
-  } else if (["vehicle_feature_answer", "vehicle_spec_lookup"].includes(intent)) {
+  } else if (
+    ["vehicle_feature_answer", "vehicle_spec_lookup"].includes(intent)
+  ) {
     add(
       suggestionForModel(contextSnapshot, `Show features of ${model}`, {
         title: `Open ${model} features`,
@@ -1167,16 +1586,20 @@ export const buildConversationSuggestions = async ({
     );
     if (variant) {
       add(
-        suggestionForModel(contextSnapshot, `Compare ${model} ${variant} variants`, {
-          title: `Compare ${model} ${variant} variants`,
-          subtitle: "Find better value",
-          kind: "action",
-          type: "ask",
-          intent: "vehicle_variant_upgrade_value",
-          canvasType: "variant_upgrade_value_canvas",
-          priority: 90,
-          icon: "scale",
-        }),
+        suggestionForModel(
+          contextSnapshot,
+          `Compare ${model} ${variant} variants`,
+          {
+            title: `Compare ${model} ${variant} variants`,
+            subtitle: "Find better value",
+            kind: "action",
+            type: "ask",
+            intent: "vehicle_variant_upgrade_value",
+            canvasType: "variant_upgrade_value_canvas",
+            priority: 90,
+            icon: "scale",
+          },
+        ),
       );
     }
     add(
@@ -1196,27 +1619,37 @@ export const buildConversationSuggestions = async ({
       ),
     );
     add(
-      suggestionForModel(contextSnapshot, `Get quotation for ${model}${variant ? ` ${variant}` : ""}`, {
-        title: `Get quotation for ${model}${variant ? ` ${variant}` : ""}`,
-        subtitle: "Proceed with quote",
-        kind: "lead",
-        type: "lead",
-        leadType: "quotation",
-        intent: "aci_new_car_quotation",
-        canvasType: "aci_quotation_canvas",
-        priority: 86,
-        icon: "file-text",
-        contextPatch: { leadType: "quotation" },
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Get quotation for ${model}${variant ? ` ${variant}` : ""}`,
+        {
+          title: `Get quotation for ${model}${variant ? ` ${variant}` : ""}`,
+          subtitle: "Proceed with quote",
+          kind: "lead",
+          type: "lead",
+          leadType: "quotation",
+          intent: "aci_new_car_quotation",
+          canvasType: "aci_quotation_canvas",
+          priority: 86,
+          icon: "file-text",
+          contextPatch: { leadType: "quotation" },
+        },
+      ),
     );
-  } else if ([
-    "vehicle_recommendation_discovery",
-    "vehicle_budget_search",
-    "vehicle_body_type_search",
-    "vehicle_use_case_search",
-    "vehicle_safety_search",
-  ].includes(intent)) {
-    const models = contextSnapshot.selectedModels.slice(0, 3);
+  } else if (
+    [
+      "vehicle_recommendation_discovery",
+      "vehicle_budget_search",
+      "vehicle_brand_search",
+      "vehicle_body_type_search",
+      "vehicle_use_case_search",
+      "vehicle_safety_search",
+    ].includes(intent)
+  ) {
+    const models = unique([
+      ...(contextSnapshot.resultModels || []),
+      ...(contextSnapshot.selectedModels || []),
+    ]).slice(0, 3);
     const anchor = normalizeText(firstMeaningful(models[0], model));
     if (models.length >= 2) {
       add({
@@ -1241,7 +1674,7 @@ export const buildConversationSuggestions = async ({
       kind: "question",
       type: "ask",
       intent: "vehicle_safety_search",
-      query: `Show safest SUVs under ${contextSnapshot.budgetMax || 20} lakh`,
+      query: `Show safest SUVs under ${formatBudgetForQuery(contextSnapshot.budgetMax, 20)}`,
       entities: {
         budgetMax: contextSnapshot.budgetMax || undefined,
         bodyType: "suv",
@@ -1285,7 +1718,7 @@ export const buildConversationSuggestions = async ({
       kind: "question",
       type: "ask",
       intent: "vehicle_budget_search",
-      query: `Show automatic SUVs${contextSnapshot.budgetMax ? ` under ${contextSnapshot.budgetMax} lakh` : ""}`,
+      query: `Show automatic SUVs${contextSnapshot.budgetMax ? ` under ${formatBudgetForQuery(contextSnapshot.budgetMax, 20)}` : ""}`,
       entities: {
         budgetMax: contextSnapshot.budgetMax || undefined,
         bodyType: "suv",
@@ -1296,12 +1729,14 @@ export const buildConversationSuggestions = async ({
       priority: 82,
       icon: "filter",
     });
-  } else if ([
-    "vehicle_comparison",
-    "vehicle_model_comparison",
-    "vehicle_variant_comparison",
-    "vehicle_safety_comparison",
-  ].includes(intent)) {
+  } else if (
+    [
+      "vehicle_comparison",
+      "vehicle_model_comparison",
+      "vehicle_variant_comparison",
+      "vehicle_safety_comparison",
+    ].includes(intent)
+  ) {
     const models = unique(contextSnapshot.selectedModels).slice(0, 3);
     const first = models[0];
     const second = models[1];
@@ -1348,15 +1783,27 @@ export const buildConversationSuggestions = async ({
       });
     }
     const compareAnchor = normalizeText(firstMeaningful(model, first));
-    const rivals = await findRelevantRivals({
-      model: compareAnchor,
-      bodyType: contextSnapshot.bodyType,
-      priceMin: contextSnapshot.priceMin || contextSnapshot.budgetMin || 0,
-      priceMax: contextSnapshot.priceMax || contextSnapshot.budgetMax || 0,
-      brand: contextSnapshot.brand,
-      city,
-    });
-    const addModel = rivals.find((item) => !models.map(toWords).includes(toWords(item)));
+    let rivals = [];
+    try {
+      rivals =
+        (await Promise.race([
+          findRelevantRivals({
+            model: compareAnchor,
+            bodyType: contextSnapshot.bodyType,
+            priceMin: contextSnapshot.priceMin || contextSnapshot.budgetMin || 0,
+            priceMax: contextSnapshot.priceMax || contextSnapshot.budgetMax || 0,
+            brand: contextSnapshot.brand,
+            city,
+          }),
+          new Promise((resolve) => setTimeout(() => resolve([]), 1800)),
+        ])) || [];
+    } catch (error) {
+      void error;
+      rivals = [];
+    }
+    const addModel = rivals.find(
+      (item) => !models.map(toWords).includes(toWords(item)),
+    );
     if (addModel && models.length >= 2) {
       add({
         title: `Add ${addModel} to comparison`,
@@ -1365,7 +1812,11 @@ export const buildConversationSuggestions = async ({
         type: "ask",
         intent: "vehicle_comparison",
         query: `Compare ${models[0]}, ${models[1]} and ${addModel}`,
-        entities: { model: models[0], models: [models[0], models[1], addModel], city },
+        entities: {
+          model: models[0],
+          models: [models[0], models[1], addModel],
+          city,
+        },
         canvasType: "comparison_canvas",
         priority: 86,
         icon: "plus",
@@ -1387,34 +1838,46 @@ export const buildConversationSuggestions = async ({
         contextPatch: { leadType: "quotation" },
       });
     }
-  } else if ([
-    "vehicle_emi_calculator",
-    "vehicle_emi_options",
-    "vehicle_monthly_budget_planner",
-  ].includes(intent)) {
+  } else if (
+    [
+      "vehicle_emi_calculator",
+      "vehicle_emi_options",
+      "vehicle_monthly_budget_planner",
+    ].includes(intent)
+  ) {
     add(
-      suggestionForModel(contextSnapshot, "Change down payment and recalculate EMI", {
-        title: "Change down payment",
-        subtitle: "Recalculate monthly EMI",
-        kind: "question",
-        type: "ask",
-        intent: "vehicle_emi_calculator",
-        canvasType: "emi_calculator_canvas",
-        priority: 96,
-        icon: "sliders",
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        model
+          ? `Change down payment and recalculate EMI for ${model}`
+          : "Change down payment and recalculate EMI",
+        {
+          title: "Change down payment",
+          subtitle: "Recalculate monthly EMI",
+          kind: "question",
+          type: "ask",
+          intent: "vehicle_emi_calculator",
+          canvasType: "emi_calculator_canvas",
+          priority: 96,
+          icon: "sliders",
+        },
+      ),
     );
     add(
-      suggestionForModel(contextSnapshot, `Compare EMI across ${model} variants`, {
-        title: `Compare EMI across ${model} variants`,
-        subtitle: "Find affordable variant",
-        kind: "action",
-        type: "ask",
-        intent: "vehicle_emi_options",
-        canvasType: "emi_calculator_canvas",
-        priority: 92,
-        icon: "scale",
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Compare EMI across ${model} variants`,
+        {
+          title: `Compare EMI across ${model} variants`,
+          subtitle: "Find affordable variant",
+          kind: "action",
+          type: "ask",
+          intent: "vehicle_emi_options",
+          canvasType: "emi_calculator_canvas",
+          priority: 92,
+          icon: "scale",
+        },
+      ),
     );
     add(
       suggestionForModel(contextSnapshot, `Show ${model} price breakup`, {
@@ -1429,18 +1892,22 @@ export const buildConversationSuggestions = async ({
       }),
     );
     add(
-      suggestionForModel(contextSnapshot, `Get quotation for ${model} with finance`, {
-        title: `Get quotation with finance`,
-        subtitle: `For ${model}`,
-        kind: "lead",
-        type: "lead",
-        leadType: "quotation",
-        intent: "aci_new_car_quotation",
-        canvasType: "aci_quotation_canvas",
-        priority: 85,
-        icon: "file-text",
-        contextPatch: { leadType: "quotation", finance: true },
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Get quotation for ${model} with finance`,
+        {
+          title: `Get quotation with finance`,
+          subtitle: `For ${model}`,
+          kind: "lead",
+          type: "lead",
+          leadType: "quotation",
+          intent: "aci_new_car_quotation",
+          canvasType: "aci_quotation_canvas",
+          priority: 85,
+          icon: "file-text",
+          contextPatch: { leadType: "quotation", finance: true },
+        },
+      ),
     );
     add(
       suggestionForModel(contextSnapshot, "Request finance callback", {
@@ -1472,28 +1939,36 @@ export const buildConversationSuggestions = async ({
       }),
     );
     add(
-      suggestionForModel(contextSnapshot, `Calculate EMI for ${model} after offers`, {
-        title: "Calculate EMI after offers",
-        subtitle: model,
-        kind: "action",
-        type: "ask",
-        intent: "vehicle_emi_calculator",
-        canvasType: "emi_calculator_canvas",
-        priority: 91,
-        icon: "calculator",
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Calculate EMI for ${model} after offers`,
+        {
+          title: "Calculate EMI after offers",
+          subtitle: model,
+          kind: "action",
+          type: "ask",
+          intent: "vehicle_emi_calculator",
+          canvasType: "emi_calculator_canvas",
+          priority: 91,
+          icon: "calculator",
+        },
+      ),
     );
     add(
-      suggestionForModel(contextSnapshot, `Check exchange benefit for ${model}`, {
-        title: "Check exchange benefit",
-        subtitle: model,
-        kind: "question",
-        type: "ask",
-        intent: "vehicle_offers",
-        canvasType: "offers_canvas",
-        priority: 87,
-        icon: "refresh",
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Show offers on ${model} and exchange benefit`,
+        {
+          title: "Check exchange benefit",
+          subtitle: model,
+          kind: "question",
+          type: "ask",
+          intent: "vehicle_offers",
+          canvasType: "offers_canvas",
+          priority: 87,
+          icon: "refresh",
+        },
+      ),
     );
     add(
       suggestionForModel(contextSnapshot, `Book test drive for ${model}`, {
@@ -1510,42 +1985,54 @@ export const buildConversationSuggestions = async ({
     );
   } else if (intent === "aci_new_car_quotation") {
     add(
-      suggestionForModel(contextSnapshot, `Continue quotation for ${model}${variant ? ` ${variant}` : ""}`, {
-        title: "Continue with quote",
-        subtitle: `${model}${variant ? ` • ${variant}` : ""}`,
-        kind: "lead",
-        type: "lead",
-        leadType: "quotation",
-        intent: "aci_new_car_quotation",
-        canvasType: "aci_quotation_canvas",
-        priority: 97,
-        icon: "file-text",
-        contextPatch: { leadType: "quotation" },
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Continue quotation for ${model}${variant ? ` ${variant}` : ""}`,
+        {
+          title: "Continue with quote",
+          subtitle: `${model}${variant ? ` • ${variant}` : ""}`,
+          kind: "lead",
+          type: "lead",
+          leadType: "quotation",
+          intent: "aci_new_car_quotation",
+          canvasType: "aci_quotation_canvas",
+          priority: 97,
+          icon: "file-text",
+          contextPatch: { leadType: "quotation" },
+        },
+      ),
     );
     add(
-      suggestionForModel(contextSnapshot, `Add exchange car in ${model} quote`, {
-        title: "Add exchange car",
-        subtitle: "Increase quote savings",
-        kind: "question",
-        type: "ask",
-        intent: "aci_new_car_quotation",
-        canvasType: "aci_quotation_canvas",
-        priority: 90,
-        icon: "refresh",
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Add exchange car in ${model} quote`,
+        {
+          title: "Add exchange car",
+          subtitle: "Increase quote savings",
+          kind: "question",
+          type: "ask",
+          intent: "aci_new_car_quotation",
+          canvasType: "aci_quotation_canvas",
+          priority: 90,
+          icon: "refresh",
+        },
+      ),
     );
     add(
-      suggestionForModel(contextSnapshot, `Include finance in ${model} quotation`, {
-        title: "Include finance",
-        subtitle: "Add EMI plan in quote",
-        kind: "question",
-        type: "ask",
-        intent: "vehicle_emi_calculator",
-        canvasType: "emi_calculator_canvas",
-        priority: 87,
-        icon: "calculator",
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Include finance in ${model} quotation`,
+        {
+          title: "Include finance",
+          subtitle: "Add EMI plan in quote",
+          kind: "question",
+          type: "ask",
+          intent: "vehicle_emi_calculator",
+          canvasType: "emi_calculator_canvas",
+          priority: 87,
+          icon: "calculator",
+        },
+      ),
     );
     add(
       suggestionForModel(contextSnapshot, `Book test drive for ${model}`, {
@@ -1560,15 +2047,71 @@ export const buildConversationSuggestions = async ({
         contextPatch: { leadType: "test_drive" },
       }),
     );
+  } else if (intent === "vehicle_test_drive_request") {
+    add(
+      suggestionForModel(contextSnapshot, `Book test drive for ${model}`, {
+        title: `Confirm test drive for ${model}`,
+        subtitle: "Reserve your preferred slot",
+        kind: "lead",
+        type: "lead",
+        leadType: "test_drive",
+        intent: "vehicle_test_drive_request",
+        priority: 96,
+        icon: "car",
+        contextPatch: { leadType: "test_drive" },
+      }),
+    );
+    add(
+      suggestionForModel(contextSnapshot, `Get quotation for ${model}`, {
+        title: `Get quotation for ${model}`,
+        subtitle: "Carry latest deal for test drive",
+        kind: "lead",
+        type: "lead",
+        leadType: "quotation",
+        intent: "aci_new_car_quotation",
+        canvasType: "aci_quotation_canvas",
+        priority: 90,
+        icon: "file-text",
+        contextPatch: { leadType: "quotation" },
+      }),
+    );
+  } else if (intent === "vehicle_callback_request") {
+    add(
+      suggestionForModel(contextSnapshot, `Request callback for ${model}`, {
+        title: "Request callback",
+        subtitle: `Talk to advisor for ${model}`,
+        kind: "lead",
+        type: "lead",
+        leadType: "callback",
+        intent: "vehicle_callback_request",
+        priority: 96,
+        icon: "phone",
+        contextPatch: { leadType: "callback" },
+      }),
+    );
+    add(
+      suggestionForModel(contextSnapshot, `Get quotation for ${model}`, {
+        title: `Get quotation for ${model}`,
+        subtitle: "Share details on callback",
+        kind: "lead",
+        type: "lead",
+        leadType: "quotation",
+        intent: "aci_new_car_quotation",
+        canvasType: "aci_quotation_canvas",
+        priority: 90,
+        icon: "file-text",
+        contextPatch: { leadType: "quotation" },
+      }),
+    );
   }
 
   addContextAwarePrompts(suggestions, contextSnapshot);
   addIntentChainSuggestions(suggestions, contextSnapshot);
 
   if (
-    contextSnapshot.history?.viewedPrice &&
-    contextSnapshot.history?.compared &&
-    contextSnapshot.history?.checkedEmi &&
+    isRecent(contextSnapshot.history?.viewedPrice) &&
+    isRecent(contextSnapshot.history?.compared) &&
+    isRecent(contextSnapshot.history?.checkedEmi) &&
     model
   ) {
     add(
@@ -1592,8 +2135,18 @@ export const buildConversationSuggestions = async ({
     );
   }
 
-  for (const action of asArray(contextSnapshot.closingActions)) {
-    add(action);
+  const hasQuotationLeadAlready = suggestions.some(
+    (item) =>
+      item.kind === "lead" &&
+      (item.leadType === "quotation" ||
+        item.contextPatch?.leadType === "quotation" ||
+        item.intent === "aci_new_car_quotation"),
+  );
+
+  if (!hasQuotationLeadAlready) {
+    for (const action of asArray(contextSnapshot.closingActions)) {
+      add(action);
+    }
   }
 
   if (!suggestions.length && model) {
@@ -1608,14 +2161,18 @@ export const buildConversationSuggestions = async ({
       }),
     );
     add(
-      suggestionForModel(contextSnapshot, `Compare ${model} with similar cars`, {
-        title: `Compare ${model}`,
-        kind: "action",
-        type: "ask",
-        intent: "vehicle_comparison",
-        canvasType: "comparison_canvas",
-        priority: 78,
-      }),
+      suggestionForModel(
+        contextSnapshot,
+        `Compare ${model} with similar cars`,
+        {
+          title: `Compare ${model}`,
+          kind: "action",
+          type: "ask",
+          intent: "vehicle_comparison",
+          canvasType: "comparison_canvas",
+          priority: 78,
+        },
+      ),
     );
     add(
       suggestionForModel(contextSnapshot, `Calculate EMI for ${model}`, {
@@ -1629,8 +2186,13 @@ export const buildConversationSuggestions = async ({
     );
   }
 
-  const validated = validateConversationSuggestions(suggestions, contextSnapshot);
-  return rankSuggestions(validated, contextSnapshot).slice(0, 5);
+  const validated = validateConversationSuggestions(
+    suggestions,
+    contextSnapshot,
+  );
+  const deduped = dedupeSuggestions(validated);
+  const ranked = await rankSuggestions(deduped, contextSnapshot);
+  return ranked.slice(0, 5);
 };
 
 export const buildLeadingQuestions = ({ contextSnapshot, parsed }) => {
@@ -1657,9 +2219,11 @@ export const buildLeadingQuestions = ({ contextSnapshot, parsed }) => {
     });
   }
   if (
-    ["vehicle_pricelist", "vehicle_city_price", "vehicle_variant_price"].includes(
-      contextSnapshot.intent,
-    )
+    [
+      "vehicle_pricelist",
+      "vehicle_city_price",
+      "vehicle_variant_price",
+    ].includes(contextSnapshot.intent)
   ) {
     leading.push({
       label: "Would you like EMI for this model?",
@@ -1672,7 +2236,9 @@ export const buildLeadingQuestions = ({ contextSnapshot, parsed }) => {
       const config = getNewCarQuestionConfig(intent);
       if (!config) continue;
       leading.push({
-        label: config.exampleQuestions?.[0] || `Explore ${intent.replace(/_/g, " ")}`,
+        label:
+          config.exampleQuestions?.[0] ||
+          `Explore ${intent.replace(/_/g, " ")}`,
         query: config.exampleQuestions?.[0] || "",
         intent,
       });
@@ -1710,6 +2276,7 @@ export const buildFollowUpSuggestions = ({ conversationSuggestions = [] }) =>
     priority: item.priority,
     leadType: item.leadType,
     route: item.route,
+    adaptiveScore: item.adaptiveScore,
     context: {
       ...(item.contextPatch || {}),
       actionContext: item,

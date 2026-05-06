@@ -333,12 +333,29 @@ const runOperationalInsights = async (queryText, parsed) => {
 
   if (hasAny(lower, ["disbursed", "disbursal"])) {
     const disbursedCount = await Loan.countDocuments({
-      $or: [
-        { status: /disbursed/i },
-        { disbursementStatus: /disbursed/i },
-        { disburse_status: /disbursed/i },
+      $and: [
+        {
+          $or: [
+            { status: /disbursed/i },
+            { loanStatus: /disbursed/i },
+            { currentStage: /disbursed/i },
+            { disbursementStatus: /disbursed/i },
+            { disburse_status: /disbursed/i },
+            { disburse_amount: { $gt: 0 } },
+            { approval_loanAmountDisbursed: { $gt: 0 } },
+            { postfile_loanAmountDisbursed: { $gt: 0 } },
+          ],
+        },
+        {
+          $or: [
+            { disbursedDate: { $gte: monthStart, $lte: monthEnd } },
+            { disbursementDate: { $gte: monthStart, $lte: monthEnd } },
+            { disbursement_date: { $gte: monthStart, $lte: monthEnd } },
+            { approval_disbursedDate: { $gte: monthStart, $lte: monthEnd } },
+            { disburse_date: { $gte: monthStart, $lte: monthEnd } },
+          ],
+        },
       ],
-      updatedAt: { $gte: monthStart, $lte: monthEnd },
     });
     answers.push(
       buildOpsAnswer(
@@ -565,10 +582,12 @@ const runOperationalInsights = async (queryText, parsed) => {
     const quoteMatch = regexes?.length
       ? {
           $or: regexes.flatMap((regex) => [
-            { "vehicle.make": regex },
-            { "vehicle.model": regex },
-            { "vehicle.variant": regex },
-            { "customer.customerName": regex },
+            { vehicleBrand: regex },
+            { vehicleModel: regex },
+            { vehicleVariant: regex },
+            { customerName: regex },
+            { customerMobile: regex },
+            { city: regex },
           ]),
         }
       : {};

@@ -1,7 +1,24 @@
 import { compactObject } from "./aiAgent.normalizers.js";
 
 export const action = (type, label, options = {}) =>
-  compactObject({ type, label, ...options });
+  compactObject({
+    id: options.id,
+    type,
+    label,
+    query: options.query,
+    intent: options.intent,
+    canvasType: options.canvasType,
+    inlineType: options.inlineType,
+    leadType: options.leadType,
+    route: options.route,
+    entities: options.entities,
+    contextPatch: options.contextPatch,
+    disabled: options.disabled,
+    reason: options.reason,
+    icon: options.icon,
+    tone: options.tone,
+    ...options,
+  });
 
 export const disabledAction = (type, label, reason = "Action not available yet") =>
   action(type, label, { disabled: true, reason });

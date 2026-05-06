@@ -1,10 +1,30 @@
 export const generateClosingActions = (context = {}) => {
+  const isRecent = (entry) => {
+    if (!entry) return false;
+    if (typeof entry === "boolean") return entry;
+    if (typeof entry !== "object") return false;
+    return Boolean(entry.value) && Date.now() - Number(entry.ts || 0) < 10 * 60 * 1000;
+  };
+
   const stage = context.stage || "";
   const model = context.anchorModel || context.model || "";
   const variant = context.anchorVariant || context.variant || "";
   const modelLabel = `${model}${variant ? ` ${variant}` : ""}`.trim();
 
-  if (stage !== "closing") return [];
+  const buyingSignals = Array.isArray(context.buyingSignals)
+    ? context.buyingSignals
+    : [];
+  const history = context.history || {};
+  const historyViewedPrice = isRecent(history.viewedPrice);
+  const historyCompared = isRecent(history.compared);
+  const historyCheckedEmi = isRecent(history.checkedEmi);
+
+  const shouldClose =
+    stage === "closing" ||
+    buyingSignals.includes("ready_to_buy") ||
+    (historyViewedPrice && historyCompared && historyCheckedEmi);
+
+  if (!shouldClose) return [];
 
   return [
     {

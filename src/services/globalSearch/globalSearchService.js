@@ -61,6 +61,10 @@ const buildAdapterFilter = (adapter, parsed) => {
     ...(fields.status || []),
   ];
 
+  if (parsed.rawQuery && parsed.rawQuery.length >= 3) {
+    addExactConditions(clauses, idFields, parsed.rawQuery);
+  }
+
   if (parsed.compactQuery && parsed.compactQuery.length >= 3) {
     addExactConditions(clauses, idFields, parsed.compactQuery);
   }

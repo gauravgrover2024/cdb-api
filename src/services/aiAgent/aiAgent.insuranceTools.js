@@ -23,6 +23,7 @@ import {
   makeAmbiguity,
   pushModuleTrace,
   rowBase,
+  objectIdOrNull,
   safeId,
 } from "./aiAgent.tools.js";
 import { noteRestriction } from "./aiAgent.accessControl.js";
@@ -49,6 +50,22 @@ export const findInsuranceCases = async (parsed, access, trace, limit = LIMIT) =
   if (!access.canAccess("insurance")) {
     noteRestriction(access, "Insurance", "No insurance access");
     return [];
+  }
+  const selectedId =
+    parsed.selectedEntity?.entityType === "insurance_case"
+      ? objectIdOrNull(parsed.selectedEntity?.id)
+      : null;
+
+  if (selectedId) {
+    const record = await InsuranceCase.findOne({ _id: selectedId })
+      .maxTimeMS(2500)
+      .lean();
+
+    pushModuleTrace(trace, "Insurance", record ? 1 : 0, {
+      selectedEntity: true,
+    });
+
+    return record ? [record] : [];
   }
   const query = insuranceQuery(parsed.entities);
   if (!Object.keys(query).length) return [];

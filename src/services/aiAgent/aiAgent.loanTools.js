@@ -136,7 +136,15 @@ const closureBreakdown = (loan, access) => {
   const lastPaidRow = paidMonths > 0 ? schedule[paidMonths - 1] : null;
   const today = new Date();
   const lastDate = lastPaidRow?.date ? new Date(lastPaidRow.date) : null;
-  const diffMs = lastDate ? today.setHours(0, 0, 0, 0) - lastDate.setHours(0, 0, 0, 0) : 0;
+  const todayStart = new Date(today);
+  todayStart.setHours(0, 0, 0, 0);
+
+  const lastDateStart = lastDate ? new Date(lastDate) : null;
+  if (lastDateStart) lastDateStart.setHours(0, 0, 0, 0);
+
+  const diffMs = lastDateStart
+    ? todayStart.getTime() - lastDateStart.getTime()
+    : 0;
   const daysAfterLastPaidEmi = Number.isNaN(diffMs) || diffMs <= 0 ? 0 : Math.floor(diffMs / 86400000);
   const perDayInterest = outstandingPrincipal ? (outstandingPrincipal * interestRate) / 100 / 365 : 0;
   const missingFields = [];

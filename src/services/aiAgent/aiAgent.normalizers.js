@@ -48,11 +48,28 @@ export const normalizeName = (value) =>
     .trim();
 
 export const normalizeCitySlug = (value) => {
-  const clean = normalizeText(value).toLowerCase().replace(/_/g, "-");
+  const clean = normalizeText(value)
+    .toLowerCase()
+    .replace(/_/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+
   if (!clean) return "";
-  if (["new delhi", "new-delhi", "delhi"].includes(clean)) return "new-delhi";
-  if (["gurgaon", "gurugram"].includes(clean)) return "gurgaon";
-  if (clean === "bangalore") return "bengaluru";
+
+  const compact = clean.replace(/[^a-z0-9]/g, "");
+
+  if (["newdelhi", "delhi", "ncr", "delhincr"].includes(compact)) {
+    return "new-delhi";
+  }
+
+  if (["gurgaon", "gurugram"].includes(compact)) {
+    return "gurgaon";
+  }
+
+  if (["bangalore", "bengaluru"].includes(compact)) {
+    return "bengaluru";
+  }
+
   return clean.replace(/\s+/g, "-");
 };
 
@@ -61,6 +78,45 @@ export const isMissingValue = (value) => {
   const text = normalizeText(value).toLowerCase();
   if (MISSING_TEXT_VALUES.has(text)) return true;
   return false;
+};
+
+export const formatInr = (value) => {
+  const amount = firstNumber(value);
+  if (!amount) return "";
+
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amount);
+};
+
+export const parseBooleanLike = (value) => {
+  if (value === true || value === false) return value;
+
+  const text = normalizeText(value).toLowerCase();
+
+  if (
+    ["yes", "y", "true", "1", "available", "present", "included"].includes(text)
+  ) {
+    return true;
+  }
+
+  if (
+    [
+      "no",
+      "n",
+      "false",
+      "0",
+      "not available",
+      "unavailable",
+      "absent",
+    ].includes(text)
+  ) {
+    return false;
+  }
+
+  return null;
 };
 
 export const firstMeaningful = (...values) =>

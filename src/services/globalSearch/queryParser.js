@@ -94,7 +94,27 @@ const INTENT_KEYWORDS = {
     "policycopy",
   ],
   inspection: ["inspection", "inspect", "evaluator", "nogo", "refurb"],
-  vehicle: ["vehicle", "car", "bike", "variant", "model", "make", "color"],
+  vehicle: [
+    "vehicle",
+    "car",
+    "bike",
+    "variant",
+    "model",
+    "make",
+    "color",
+    "pricelist",
+    "ex showroom",
+    "ex-showroom",
+    "on road",
+    "on-road",
+    "quotation",
+    "quote",
+    "test drive",
+    "colors",
+    "colours",
+    "features",
+    "compare",
+  ],
   latest: ["latest", "new", "recent", "current"],
 };
 
@@ -140,12 +160,12 @@ const isRegistrationLike = (value = "") => {
 };
 
 const extractVehicleLast4 = (query = "", tokens = []) => {
+  const regCompact = normalizeRegistration(query);
+  const match = regCompact.match(/([A-Z]{1,3}\d{1,2}[A-Z]{0,3}\d{4})$/);
+  if (match) return match[1].slice(-4);
+
   const directFour = tokens.find((token) => /^\d{4}$/.test(token));
   if (directFour) return directFour;
-
-  const regCompact = normalizeRegistration(query);
-  const match = regCompact.match(/(\d{4})$/);
-  if (match) return match[1];
 
   return "";
 };
@@ -154,26 +174,24 @@ const inferIntents = (tokens = [], normalizedQuery = "") => {
   const intents = new Set();
   const compact = normalizeAlphaNum(normalizedQuery);
   for (const [intent, keywords] of Object.entries(INTENT_KEYWORDS)) {
-    const matched = keywords.some(
-      (keyword) => {
-        const normalizedKeyword = normalizeText(keyword);
-        const compactKeyword = normalizeAlphaNum(keyword);
-        const tokenMatch = tokens.includes(normalizedKeyword);
-        if (tokenMatch) return true;
+    const matched = keywords.some((keyword) => {
+      const normalizedKeyword = normalizeText(keyword);
+      const compactKeyword = normalizeAlphaNum(keyword);
+      const tokenMatch = tokens.includes(normalizedKeyword);
+      if (tokenMatch) return true;
 
-        const wordBoundaryMatch = new RegExp(
-          `(^|\\s)${escapeRegex(normalizedKeyword)}(\\s|$)`,
-          "i",
-        ).test(normalizedQuery);
-        if (wordBoundaryMatch) return true;
+      const wordBoundaryMatch = new RegExp(
+        `(^|\\s)${escapeRegex(normalizedKeyword)}(\\s|$)`,
+        "i",
+      ).test(normalizedQuery);
+      if (wordBoundaryMatch) return true;
 
-        // Compact-match only for meaningful keywords (avoid tiny noise like "tp")
-        if (compactKeyword.length >= 3) {
-          return compact.includes(compactKeyword);
-        }
-        return false;
-      },
-    );
+      // Compact-match only for meaningful keywords (avoid tiny noise like "tp")
+      if (compactKeyword.length >= 3) {
+        return compact.includes(compactKeyword);
+      }
+      return false;
+    });
     if (matched) intents.add(intent);
   }
   return Array.from(intents);
@@ -194,7 +212,9 @@ export const parseGlobalSearchQuery = (query = "") => {
   const numberTokens = tokensRaw.filter((token) => /\d/.test(token));
   const alphaTokens = tokensRaw.filter((token) => /[a-z]/.test(token));
 
-  const phoneToken = numberTokens.find((token) => digitsOnly(token).length >= 7);
+  const phoneToken = numberTokens.find(
+    (token) => digitsOnly(token).length >= 7,
+  );
   const vehicleLast4 = extractVehicleLast4(rawQuery, tokensRaw);
   const intents = inferIntents(tokensRaw, normalizedQuery);
   const registrationCandidates = new Set();

@@ -5,6 +5,7 @@ const STAFF_MODULES = new Set([
   "vehicles",
   "usedCars",
   "payments",
+  "deliveryOrders",
 ]);
 
 const ADMIN_MODULES = new Set([
@@ -18,7 +19,11 @@ export const buildAccessContext = (user = {}) => {
   const role = String(user?.role || "user").toLowerCase();
   const isAdmin = role === "admin" || role === "superadmin";
   const isStaff = isAdmin || role === "staff";
-  const modules = isAdmin ? ADMIN_MODULES : isStaff ? STAFF_MODULES : new Set(["vehicles"]);
+  const modules = isAdmin
+    ? ADMIN_MODULES
+    : isStaff
+      ? STAFF_MODULES
+      : new Set(["vehicles"]);
 
   return {
     role,
