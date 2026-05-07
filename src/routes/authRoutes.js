@@ -5,6 +5,7 @@ import {
   googleLogin,
   updateUserRole,
   getAllUsers,
+  getAssignableUsers,
   getUserById,
   approveUser,
   deactivateUser,
@@ -24,6 +25,7 @@ router.post('/google-login', googleLogin);
 // Current user (any authenticated user)
 router.get('/me', protect, getMe);
 router.put('/change-password', protect, changePassword);
+router.get('/assignable-users', protect, getAssignableUsers);
 
 // Superadmin: user management
 router.get('/users', protect, superadmin, getAllUsers);

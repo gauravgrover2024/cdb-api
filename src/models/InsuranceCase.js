@@ -133,11 +133,14 @@ const insuranceCaseSchema = new mongoose.Schema(
     usedCarFlowType: { type: String, default: "Renewal" },
     policyJourneyClassification: { type: String, default: "" },
     dealerChannelName: { type: String, default: "" },
+    channelDealerNo: { type: String, default: "" },
     dealerChannelAddress: { type: String, default: "" },
     payoutApplicable: { type: String, default: "No" },
     payoutPercent: { type: Number, default: 0 },
     sourceOrigin: { type: String, default: "" },
     employeeName: { type: String, default: "" },
+    employeeUserId: { type: String, default: "" },
+    assignedTo: { type: String, default: "" },
 
     customerName: { type: String, default: "" },
     companyName: { type: String, default: "" },
@@ -274,6 +277,19 @@ const insuranceCaseSchema = new mongoose.Schema(
     renewalFollowUpNotes: { type: String, default: "" },
     renewalLastContactedAt: { type: Date },
     renewalNextFollowUpDate: { type: Date },
+    renewalAssignedToId: { type: String, default: "" },
+    renewalAssignedToName: { type: String, default: "" },
+    renewalAssignedAt: { type: Date, default: null },
+    renewalAssignedBy: { type: String, default: "" },
+    renewalLeadStatus: {
+      type: String,
+      enum: ["New", "Follow Up", "Quotes Shared", "Payment Pending", "Closed"],
+      default: "New",
+    },
+    renewalFollowUpDate: { type: String, default: "" },
+    renewalComment: { type: String, default: "" },
+    renewalClosedReason: { type: String, default: "" },
+    renewalTimeline: { type: [mongoose.Schema.Types.Mixed], default: [] },
 
     // Audit
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -297,6 +313,8 @@ insuranceCaseSchema.index({ renewedFromCaseId: 1, updatedAt: -1 });
 insuranceCaseSchema.index({ customerName: 1, updatedAt: -1 });
 insuranceCaseSchema.index({ companyName: 1, updatedAt: -1 });
 insuranceCaseSchema.index({ mobile: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ email: 1, updatedAt: -1 });
+insuranceCaseSchema.index({ assignedTo: 1, updatedAt: -1 });
 insuranceCaseSchema.index({ registrationNumber: 1, updatedAt: -1 });
 insuranceCaseSchema.index({ newPolicyNumber: 1, updatedAt: -1 });
 insuranceCaseSchema.index({ previousPolicyNumber: 1, updatedAt: -1 });

@@ -13,9 +13,26 @@ import {
   syncInsuranceReceivable,
   getInsurancePayoutRate,
   upsertInsurancePayoutRate,
+  getInsuranceRenewalCases,
+  getInsuranceRenewalSummary,
+  assignInsuranceRenewalCases,
+  updateInsuranceRenewalLead,
 } from "../controllers/insuranceController.js";
+import { protect, staff } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
+const RENEWAL_MANAGER_ROLES = [
+  "admin",
+  "superadmin",
+  "team_lead",
+  "insurance_team_lead",
+];
+const renewalManagerOnly = (req, res, next) => {
+  const role = String(req.user?.role || "").toLowerCase();
+  if (RENEWAL_MANAGER_ROLES.includes(role)) return next();
+  res.status(403);
+  throw new Error("Only admin/team lead can assign renewal cases");
+};
 
 router.route("/").get(getInsuranceCases).post(createInsuranceCase);
 router
@@ -28,6 +45,12 @@ router
   .post(resolveVehicleCubicCapacity);
 router.route("/vehicle-match/potential").post(findPotentialVehicleMatch);
 router.route("/vehicle-match/merge").post(mergeVehicleMatch);
+router.route("/renewals/cases").get(protect, staff, getInsuranceRenewalCases);
+router.route("/renewals/summary").get(protect, staff, getInsuranceRenewalSummary);
+router
+  .route("/renewals/assign")
+  .post(protect, staff, renewalManagerOnly, assignInsuranceRenewalCases);
+router.route("/renewals/:id/lead").patch(protect, staff, updateInsuranceRenewalLead);
 
 router
   .route("/:id")

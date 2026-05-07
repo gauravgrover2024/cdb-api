@@ -67,7 +67,16 @@ const admin = (req, res, next) => {
 };
 
 const staff = (req, res, next) => {
-  if (req.user && ["staff", "admin", "superadmin"].includes(req.user.role)) {
+  if (
+    req.user &&
+    [
+      "staff",
+      "admin",
+      "superadmin",
+      "team_lead",
+      "insurance_team_lead",
+    ].includes(req.user.role)
+  ) {
     next();
   } else {
     res.status(403);
