@@ -104,33 +104,75 @@ const buildCustomerSnapshot = (customer) => {
   };
 };
 
-const normalizeStep1Payload = (payload = {}) => {
+const normalizeStep1Payload = (payload = {}, options = {}) => {
+  const { applyDefaults = true } = options || {};
+  const hasSource =
+    hasOwn(payload, "source") ||
+    hasOwn(payload, "sourceOrigin") ||
+    hasOwn(payload, "recordSource");
   const sourceNormalized = safeString(
-    payload.source || payload.sourceOrigin || payload.recordSource || "Direct",
+    payload.source ||
+      payload.sourceOrigin ||
+      payload.recordSource ||
+      (applyDefaults ? "Direct" : ""),
   ).trim();
+  const hasPayout =
+    hasOwn(payload, "payoutPercent") || hasOwn(payload, "payoutPercentage");
   const payoutPercentRaw = Number(
-    payload.payoutPercent ?? payload.payoutPercentage ?? 0,
+    payload.payoutPercent ??
+      payload.payoutPercentage ??
+      (applyDefaults ? 0 : undefined),
   );
   const payoutPercent = Number.isFinite(payoutPercentRaw)
     ? payoutPercentRaw
-    : 0;
+    : applyDefaults
+      ? 0
+      : undefined;
 
-  return {
-    ...payload,
-    policyCategory: safeString(
-      payload.policyCategory || payload.policyTypeSelector || "Insurance Policy",
-    ).trim(),
-    policyTypeSelector: safeString(
-      payload.policyTypeSelector || payload.policyCategory || "Insurance Policy",
-    ).trim(),
-    source: sourceNormalized || "Direct",
-    sourceOrigin: sourceNormalized || "Direct",
-    usedCarFlowType: safeString(payload.usedCarFlowType || "Renewal").trim() || "Renewal",
-    policyJourneyClassification: safeString(
+  const normalized = { ...payload };
+
+  if (
+    hasOwn(payload, "policyCategory") ||
+    hasOwn(payload, "policyTypeSelector") ||
+    applyDefaults
+  ) {
+    normalized.policyCategory = safeString(
+      payload.policyCategory ||
+        payload.policyTypeSelector ||
+        (applyDefaults ? "Insurance Policy" : ""),
+    ).trim();
+    normalized.policyTypeSelector = safeString(
+      payload.policyTypeSelector ||
+        payload.policyCategory ||
+        (applyDefaults ? "Insurance Policy" : ""),
+    ).trim();
+  }
+  if (hasSource || applyDefaults) {
+    normalized.source = sourceNormalized || "Direct";
+    normalized.sourceOrigin = sourceNormalized || "Direct";
+  }
+  if (hasOwn(payload, "usedCarFlowType") || applyDefaults) {
+    normalized.usedCarFlowType =
+      safeString(payload.usedCarFlowType || (applyDefaults ? "Renewal" : ""))
+        .trim() || (applyDefaults ? "Renewal" : "");
+  }
+  if (hasOwn(payload, "policyJourneyClassification") || applyDefaults) {
+    normalized.policyJourneyClassification = safeString(
       payload.policyJourneyClassification || "",
-    ).trim(),
-    payoutPercent,
-  };
+    ).trim();
+  }
+  if (hasPayout || applyDefaults) {
+    normalized.payoutPercent = Number.isFinite(payoutPercent) ? payoutPercent : 0;
+    normalized.payoutPercentage = normalized.payoutPercent;
+  }
+
+  if (hasOwn(payload, "employeeUserId")) {
+    normalized.assignedTo = safeString(payload.employeeUserId).trim();
+  } else if (hasOwn(payload, "assignedTo")) {
+    normalized.assignedTo = safeString(payload.assignedTo).trim();
+  }
+
+  return normalized;
 };
 
 const normalizeInsuranceStatus = (value, fallback = "draft") => {
@@ -146,6 +188,141 @@ const normalizeInsuranceCurrentStep = (value, fallback = 1) => {
   // Legacy step 5 (Premium Breakup) has been retired; route to step 6.
   if (base === 5) return 6;
   return Math.max(1, Math.round(base));
+};
+
+const REQUIRED_DOCS_BY_SCENARIO = {
+  "new-car-insurance": ["Invoice"],
+  "used-car-insurance": ["RC Copy", "Form 29", "Form 30 page 1", "Form 30 page 2"],
+  "used-car-renewal": ["RC Copy", "Previous Year Policy"],
+  "policy-already-expired": ["RC Copy", "Previous Year Policy"],
+};
+
+const getDocScenario = (row = {}) => {
+  const vehicleType = safeString(row.vehicleType).trim().toLowerCase();
+  const usedFlow = safeString(row.usedCarFlowType || "Renewal").trim().toLowerCase();
+  if (vehicleType === "new car") return "new-car-insurance";
+  if (usedFlow.includes("expired")) return "policy-already-expired";
+  if (usedFlow.includes("renew") || usedFlow.includes("rollover")) return "used-car-renewal";
+  return "used-car-insurance";
+};
+
+const isInsuranceCaseReadyForSubmit = (payload = {}) => {
+  const errors = [];
+  const isCompany = safeString(payload.buyerType).trim() === "Company";
+  const mobile = safeString(payload.mobile).trim();
+  if (!mobile || !/^\d{10}$/.test(mobile)) errors.push("Valid mobile is required");
+  if (isCompany) {
+    if (!safeString(payload.companyName).trim())
+      errors.push("Company name is required");
+    if (!safeString(payload.contactPersonName).trim())
+      errors.push("Contact person name is required");
+  } else if (!safeString(payload.customerName).trim()) {
+    errors.push("Customer name is required");
+  }
+  if (!safeString(payload.employeeName).trim())
+    errors.push("Assigned employee is required");
+  if (!safeString(payload.policyCategory).trim())
+    errors.push("Policy category is required");
+  if (!safeString(payload.registrationNumber).trim())
+    errors.push("Registration number is required");
+  if (!safeString(payload.vehicleMake).trim() || !safeString(payload.vehicleModel).trim()) {
+    errors.push("Vehicle make/model is required");
+  }
+  if (!safeString(payload.manufactureMonth).trim() || !safeString(payload.manufactureYear).trim()) {
+    errors.push("Vehicle manufacture month/year is required");
+  }
+  const usedFlow = safeString(payload.usedCarFlowType).trim().toLowerCase();
+  const needsPreviousPolicy =
+    safeString(payload.vehicleType).trim().toLowerCase() === "used car" &&
+    (usedFlow.includes("renew") || usedFlow.includes("rollover") || usedFlow.includes("expired"));
+  if (needsPreviousPolicy) {
+    if (!safeString(payload.previousInsuranceCompany).trim())
+      errors.push("Previous insurance company is required");
+    if (!safeString(payload.previousPolicyNumber).trim())
+      errors.push("Previous policy number is required");
+    if (!safeString(payload.previousPolicyType).trim())
+      errors.push("Previous policy type is required");
+    if (!safeString(payload.claimTakenLastYear).trim())
+      errors.push("Claim taken last year is required");
+  }
+  if (!safeString(payload.acceptedQuoteId).trim())
+    errors.push("Accepted quote is required");
+  if (!safeString(payload.newInsuranceCompany).trim())
+    errors.push("New insurance company is required");
+  if (!safeString(payload.newPolicyType).trim())
+    errors.push("New policy type is required");
+  if (!safeString(payload.newPolicyNumber).trim())
+    errors.push("New policy number is required");
+  if (!safeString(payload.newIssueDate).trim())
+    errors.push("New policy issue date is required");
+  if (!safeString(payload.newPolicyStartDate).trim())
+    errors.push("New policy start date is required");
+  if (!safeString(payload.residenceAddress).trim() || !safeString(payload.city).trim() || !safeString(payload.pincode).trim()) {
+    errors.push("Residence address, city and pincode are required");
+  }
+  if (!safeString(payload.nomineeName).trim() || !safeString(payload.nomineeRelationship).trim()) {
+    errors.push("Nominee name and relationship are required");
+  }
+  if (!safeString(payload.referenceName).trim() || !/^\d{10}$/.test(safeString(payload.referencePhone).trim())) {
+    errors.push("Reference name and valid 10-digit reference phone are required");
+  }
+  const requiredDocTags = REQUIRED_DOCS_BY_SCENARIO[getDocScenario(payload)] || [];
+  const taggedDocs = new Set(
+    (Array.isArray(payload.documents) ? payload.documents : [])
+      .map((d) => safeString(d?.tag).trim()),
+  );
+  requiredDocTags.forEach((tag) => {
+    if (!taggedDocs.has(tag)) errors.push(`Missing required document: ${tag}`);
+  });
+  return { ok: errors.length === 0, errors };
+};
+
+const getRenewalExpiryDate = (doc = {}) =>
+  safeString(
+    doc.newOdExpiryDate ||
+      doc.previousOdExpiryDate ||
+      doc.newTpExpiryDate ||
+      doc.policyExpiry ||
+      "",
+  ).trim();
+
+const isPendingRenewalWithinWindow = (doc = {}, futureDays = 30, pastDays = 45) => {
+  const raw = getRenewalExpiryDate(doc);
+  if (!raw) return false;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return false;
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const expiry = new Date(parsed);
+  expiry.setHours(0, 0, 0, 0);
+  const days = Math.round((expiry.getTime() - startOfToday.getTime()) / 86400000);
+  return days <= futureDays && days >= -pastDays;
+};
+
+const RENEWAL_LEAD_STATUSES = [
+  "new",
+  "follow up",
+  "quotes shared",
+  "payment pending",
+  "closed",
+];
+
+const normalizeRenewalLeadStatus = (value) => {
+  const raw = safeString(value || "New").trim().toLowerCase();
+  if (!raw) return "New";
+  const mapped =
+    raw === "followup"
+      ? "follow up"
+      : raw === "quotesshared"
+        ? "quotes shared"
+        : raw === "paymentpending"
+          ? "payment pending"
+          : raw;
+  if (!RENEWAL_LEAD_STATUSES.includes(mapped)) return "New";
+  return mapped
+    .split(" ")
+    .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
+    .join(" ");
 };
 
 const getNextInsuranceCaseId = async () => {
@@ -811,6 +988,225 @@ export const getInsuranceCases = asyncHandler(async (req, res) => {
   res.json({ success: true, count, data: rows });
 });
 
+// @desc    Get pending renewal insurance cases
+// @route   GET /api/insurance/renewals/cases
+// @access  Public
+export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
+  const includeAssignedOnly = String(req.query.assignedOnly || "").trim() === "1";
+  const assignedToId = safeString(req.query.assignedToId).trim();
+  const futureDays = Math.max(1, Math.min(90, Number(req.query.futureDays || 30)));
+  const pastDays = Math.max(1, Math.min(120, Number(req.query.pastDays || 45)));
+  const odAmountRange = safeString(req.query.odAmountRange).trim().toLowerCase();
+  const role = safeString(req.user?.role).trim().toLowerCase();
+  const meId = safeString(req.user?._id).trim();
+  const isAdminLike = [
+    "admin",
+    "superadmin",
+    "team_lead",
+    "insurance_team_lead",
+  ].includes(role);
+
+  const baseRows = await InsuranceCase.find({})
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .lean();
+
+  let rows = baseRows.filter((doc) =>
+    isPendingRenewalWithinWindow(doc, futureDays, pastDays),
+  );
+
+  if (includeAssignedOnly && assignedToId) {
+    rows = rows.filter(
+      (doc) => safeString(doc?.renewalAssignedToId).trim() === assignedToId,
+    );
+  }
+  if (!isAdminLike && meId) {
+    rows = rows.filter((doc) => safeString(doc?.renewalAssignedToId).trim() === meId);
+  }
+  rows = rows.filter((doc) => !doc?.renewedToCaseId);
+  if (odAmountRange) {
+    rows = rows.filter((doc) => {
+      const value = Number(doc?.previousOwnDamageAmount || doc?.odAmount || 0);
+      if (!Number.isFinite(value) || value < 0) return false;
+      if (odAmountRange === "lt10k") return value < 10000;
+      if (odAmountRange === "10k-20k") return value >= 10000 && value <= 20000;
+      if (odAmountRange === "gt20k") return value > 20000;
+      return true;
+    });
+  }
+
+  res.json({
+    success: true,
+    count: rows.length,
+    data: rows,
+  });
+});
+
+// @desc    Bulk assign renewal cases
+// @route   POST /api/insurance/renewals/assign
+// @access  Public
+export const assignInsuranceRenewalCases = asyncHandler(async (req, res) => {
+  const caseIds = Array.isArray(req.body?.caseIds) ? req.body.caseIds : [];
+  const assigneeId = safeString(req.body?.assigneeId).trim();
+  const assigneeName = safeString(req.body?.assigneeName).trim();
+  const assignedBy = safeString(req.body?.assignedBy).trim();
+
+  const validCaseObjectIds = caseIds
+    .map((id) => safeString(id).trim())
+    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => new mongoose.Types.ObjectId(id));
+
+  if (!validCaseObjectIds.length) {
+    res.status(400);
+    throw new Error("caseIds are required");
+  }
+  if (!assigneeId) {
+    res.status(400);
+    throw new Error("assigneeId is required");
+  }
+
+  const update = {
+    renewalAssignedToId: assigneeId,
+    renewalAssignedToName: assigneeName,
+    renewalAssignedAt: new Date(),
+    renewalAssignedBy: assignedBy || "System",
+  };
+  const timelineEntry = {
+    at: new Date().toISOString(),
+    by: assignedBy || safeString(req.user?.name).trim() || "System",
+    event: "ASSIGNED",
+    status: "New",
+    comment: `Assigned to ${assigneeName || assigneeId}`,
+  };
+
+  const result = await InsuranceCase.updateMany(
+    { _id: { $in: validCaseObjectIds } },
+    { $set: update, $push: { renewalTimeline: timelineEntry } },
+  );
+
+  res.json({
+    success: true,
+    matchedCount: Number(result?.matchedCount || 0),
+    modifiedCount: Number(result?.modifiedCount || 0),
+  });
+});
+
+// @desc    Update renewal lead details for one case
+// @route   PATCH /api/insurance/renewals/:id/lead
+// @access  Public
+export const updateInsuranceRenewalLead = asyncHandler(async (req, res) => {
+  const raw = safeString(req.params.id).trim();
+  const doc =
+    (mongoose.Types.ObjectId.isValid(raw)
+      ? await InsuranceCase.findById(raw)
+      : null) || (await InsuranceCase.findOne({ caseId: raw }));
+
+  if (!doc) {
+    res.status(404);
+    throw new Error("Insurance case not found");
+  }
+  const role = safeString(req.user?.role).trim().toLowerCase();
+  const meId = safeString(req.user?._id).trim();
+  const isAdminLike = [
+    "admin",
+    "superadmin",
+    "team_lead",
+    "insurance_team_lead",
+  ].includes(role);
+  if (!isAdminLike && safeString(doc.renewalAssignedToId).trim() !== meId) {
+    res.status(403);
+    throw new Error("You can update only your assigned renewal cases");
+  }
+
+  let renewalLeadStatus = normalizeRenewalLeadStatus(
+    req.body?.renewalLeadStatus || "New",
+  );
+  const renewalFollowUpDate = safeString(req.body?.renewalFollowUpDate).trim();
+  const renewalComment = safeString(req.body?.renewalComment).trim();
+  const renewalClosedReason = safeString(req.body?.renewalClosedReason).trim();
+  const action = safeString(req.body?.action).trim().toUpperCase();
+  const updatedBy =
+    safeString(req.body?.updatedBy).trim() ||
+    safeString(req.user?.name).trim() ||
+    "User";
+  if (action === "SHARE_QUOTES") renewalLeadStatus = "Quotes Shared";
+  if (action === "MARK_PAYMENT_PENDING") renewalLeadStatus = "Payment Pending";
+  if (renewalLeadStatus.toLowerCase() === "closed" && !renewalClosedReason) {
+    res.status(400);
+    throw new Error("Closed reason is required when lead status is Closed");
+  }
+
+  doc.renewalLeadStatus = renewalLeadStatus || "New";
+  doc.renewalFollowUpDate = renewalFollowUpDate || "";
+  doc.renewalComment = renewalComment || "";
+  if (renewalLeadStatus.toLowerCase() === "closed") {
+    doc.renewalClosedReason = renewalClosedReason || "";
+  }
+  doc.renewalLastContactedAt = new Date();
+  doc.renewalNextFollowUpDate =
+    renewalFollowUpDate && !Number.isNaN(new Date(renewalFollowUpDate).getTime())
+      ? new Date(renewalFollowUpDate)
+      : undefined;
+
+  const existingTimeline = Array.isArray(doc.renewalTimeline)
+    ? doc.renewalTimeline
+    : [];
+  doc.renewalTimeline = [
+    ...existingTimeline,
+    {
+      at: new Date().toISOString(),
+      by: updatedBy,
+      event: action || "STATUS_UPDATE",
+      status: doc.renewalLeadStatus,
+      followUpDate: doc.renewalFollowUpDate,
+      comment: doc.renewalComment,
+      closedReason: doc.renewalClosedReason || "",
+    },
+  ];
+
+  await doc.save();
+  res.json({ success: true, data: doc });
+});
+
+// @desc    Renewal dashboard summary
+// @route   GET /api/insurance/renewals/summary
+// @access  Private
+export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
+  const role = safeString(req.user?.role).trim().toLowerCase();
+  const meId = safeString(req.user?._id).trim();
+  const isAdminLike = [
+    "admin",
+    "superadmin",
+    "team_lead",
+    "insurance_team_lead",
+  ].includes(role);
+  const rows = await InsuranceCase.find({})
+    .sort({ updatedAt: -1 })
+    .lean();
+  let pendingRows = rows.filter((doc) => isPendingRenewalWithinWindow(doc, 30, 45));
+  pendingRows = pendingRows.filter((doc) => !doc?.renewedToCaseId);
+  const scopedRows = isAdminLike
+    ? pendingRows
+    : pendingRows.filter((doc) => safeString(doc?.renewalAssignedToId).trim() === meId);
+  const activeCases = scopedRows.filter(
+    (row) => normalizeRenewalLeadStatus(row?.renewalLeadStatus) !== "Closed",
+  ).length;
+  const policiesPending = scopedRows.filter((row) => !safeString(row?.newPolicyNumber).trim()).length;
+  const paymentPending = scopedRows.filter(
+    (row) => normalizeRenewalLeadStatus(row?.renewalLeadStatus) === "Payment Pending",
+  ).length;
+  res.json({
+    success: true,
+    data: {
+      activeCases,
+      policiesPending,
+      paymentPending,
+      pendingRenewals: scopedRows.length,
+      nonAssigned: pendingRows.filter((row) => !safeString(row?.renewalAssignedToId).trim()).length,
+      assignedToMe: pendingRows.filter((row) => safeString(row?.renewalAssignedToId).trim() === meId).length,
+    },
+  });
+});
+
 // @desc    Get insurance case by id (supports _id or caseId)
 // @route   GET /api/insurance/:id
 // @access  Public
@@ -834,7 +1230,7 @@ export const getInsuranceCaseById = asyncHandler(async (req, res) => {
 // @access  Public
 export const createInsuranceCase = asyncHandler(async (req, res) => {
   const payload = stripImmutableInsuranceFields(
-    normalizeStep1Payload(req.body || {}),
+    normalizeStep1Payload(req.body || {}, { applyDefaults: true }),
   );
   if (hasOwn(payload, "paymentHistory") || hasOwn(payload, "payment_history")) {
     const normalizedPaymentHistory = normalizePaymentHistoryPayload(
@@ -843,11 +1239,16 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
         : payload.payment_history,
     );
     payload.paymentHistory = normalizedPaymentHistory;
-    payload.payment_history = normalizedPaymentHistory;
+    delete payload.payment_history;
   }
 
   const caseId = await getNextInsuranceCaseId();
-  const customerId = toObjectIdOrNull(payload.customerId);
+  const customerIdRaw = safeString(payload.customerId).trim();
+  const customerId = toObjectIdOrNull(customerIdRaw);
+  if (customerIdRaw && !customerId) {
+    res.status(400);
+    throw new Error("Invalid customerId");
+  }
 
   let customerSnapshot = payload.customerSnapshot || {};
   if (customerId) {
@@ -855,12 +1256,21 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
     if (customer) customerSnapshot = buildCustomerSnapshot(customer);
   }
 
+  const normalizedStatus = normalizeInsuranceStatus(payload.status, "draft");
+  if (normalizedStatus === "submitted") {
+    const submitValidation = isInsuranceCaseReadyForSubmit(payload);
+    if (!submitValidation.ok) {
+      res.status(400);
+      throw new Error(submitValidation.errors.join(" | "));
+    }
+  }
+
   const doc = await InsuranceCase.create({
     ...payload,
     caseId,
     customerId: customerId || undefined,
     customerSnapshot,
-    status: normalizeInsuranceStatus(payload.status, "draft"),
+    status: normalizedStatus,
     currentStep: normalizeInsuranceCurrentStep(payload.currentStep, 1),
   });
 
@@ -881,7 +1291,7 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
 export const updateInsuranceCase = asyncHandler(async (req, res) => {
   const raw = safeString(req.params.id).trim();
   const payload = stripImmutableInsuranceFields(
-    normalizeStep1Payload(req.body || {}),
+    normalizeStep1Payload(req.body || {}, { applyDefaults: false }),
   );
   if (hasOwn(payload, "paymentHistory") || hasOwn(payload, "payment_history")) {
     const normalizedPaymentHistory = normalizePaymentHistoryPayload(
@@ -890,7 +1300,7 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
         : payload.payment_history,
     );
     payload.paymentHistory = normalizedPaymentHistory;
-    payload.payment_history = normalizedPaymentHistory;
+    delete payload.payment_history;
   }
 
   const existingDoc =
@@ -903,10 +1313,21 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
     throw new Error("Insurance case not found");
   }
 
-  const customerId =
-    toObjectIdOrNull(payload.customerId) || existingDoc.customerId || null;
+  const customerIdRaw = safeString(payload.customerId).trim();
+  const parsedCustomerId = toObjectIdOrNull(customerIdRaw);
+  if (customerIdRaw && !parsedCustomerId) {
+    res.status(400);
+    throw new Error("Invalid customerId");
+  }
+  const customerId = parsedCustomerId || existingDoc.customerId || null;
   let customerSnapshot =
-    payload.customerSnapshot || existingDoc.customerSnapshot || {};
+    existingDoc.customerSnapshot || {};
+  if (payload.customerSnapshot && typeof payload.customerSnapshot === "object") {
+    customerSnapshot = {
+      ...customerSnapshot,
+      ...payload.customerSnapshot,
+    };
+  }
   if (
     customerId &&
     (!payload.customerSnapshot ||
@@ -916,19 +1337,34 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
     if (customer) customerSnapshot = buildCustomerSnapshot(customer);
   }
 
+  const normalizedStatus = normalizeInsuranceStatus(
+    payload.status,
+    normalizeInsuranceStatus(existingDoc.status, "draft"),
+  );
   const updatePatch = {
     ...payload,
     customerId: customerId || undefined,
     customerSnapshot,
+    assignedTo:
+      safeString(payload.assignedTo || payload.employeeUserId).trim() ||
+      safeString(existingDoc.assignedTo).trim() ||
+      "",
     currentStep: normalizeInsuranceCurrentStep(
       payload.currentStep,
       existingDoc.currentStep || 1,
     ),
-    status: normalizeInsuranceStatus(
-      payload.status,
-      normalizeInsuranceStatus(existingDoc.status, "draft"),
-    ),
+    status: normalizedStatus,
   };
+  if (normalizedStatus === "submitted") {
+    const submitValidation = isInsuranceCaseReadyForSubmit({
+      ...existingDoc.toObject(),
+      ...updatePatch,
+    });
+    if (!submitValidation.ok) {
+      res.status(400);
+      throw new Error(submitValidation.errors.join(" | "));
+    }
+  }
 
   const saved = await InsuranceCase.findByIdAndUpdate(
     existingDoc._id,
@@ -966,15 +1402,11 @@ export const deleteInsuranceCase = asyncHandler(async (req, res) => {
       : null) || (await InsuranceCase.findOne({ caseId: raw }));
 
   if (!doc) {
-    console.warn(`[Insurance Delete] Case not found: ${raw}`);
     res.status(404);
     throw new Error("Insurance case not found");
   }
 
   await InsuranceCase.deleteOne({ _id: doc._id });
-  console.log(
-    `[Insurance Delete] Successfully deleted case: ${doc.caseId} (ID: ${doc._id})`,
-  );
 
   res.json({
     success: true,

@@ -14,6 +14,19 @@ const getAllUsers = asyncHandler(async (req, res) => {
   res.json({ success: true, data: users });
 });
 
+// @desc    Get assignable users for ops workflows
+// @route   GET /api/auth/assignable-users
+// @access  Private/Staff+
+const getAssignableUsers = asyncHandler(async (req, res) => {
+  const users = await User.find(
+    { status: "active", role: { $in: ["staff", "admin", "superadmin", "team_lead", "insurance_team_lead"] } },
+    "_id name email role status",
+  )
+    .sort({ name: 1 })
+    .lean();
+  res.json({ success: true, data: users });
+});
+
 // @desc    Get single user by ID (superadmin only)
 // @route   GET /api/auth/user/:id
 // @access  Private/Superadmin
@@ -400,4 +413,17 @@ const changePassword = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Password changed successfully' });
 });
 
-export { authUser, registerUser, googleLogin, updateUserRole, getAllUsers, getUserById, approveUser, deactivateUser, deleteUser, getMe, changePassword };
+export {
+  authUser,
+  registerUser,
+  googleLogin,
+  updateUserRole,
+  getAllUsers,
+  getAssignableUsers,
+  getUserById,
+  approveUser,
+  deactivateUser,
+  deleteUser,
+  getMe,
+  changePassword,
+};
