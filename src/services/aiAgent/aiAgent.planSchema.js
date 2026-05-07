@@ -12,7 +12,7 @@ import { z } from "zod";
  * - The AI may suggest next conversation steps, but backend must sanitize them before display.
  *
  * Runtime:
- * user message -> AI plan -> validate/sanitize -> deterministic backend tool executor
+ * user message -> semantic compiler -> AI plan -> validate/sanitize -> deterministic backend tool executor
  */
 
 /* -------------------------------------------------------------------------- */
@@ -63,7 +63,7 @@ export const CUSTOMER_STAGES = [
 ];
 
 /**
- * Keep this list capability-based.
+ * Keep tools capability-based.
  * Do NOT add one tool per question.
  */
 export const PLANNER_TOOLS = [
@@ -139,11 +139,67 @@ export const GROUP_BY_VALUES = ["model", "variant", "none"];
 
 export const LEAD_TYPES = [
   "quotation",
-  "test_drive",
   "callback",
   "finance_callback",
   "offer_enquiry",
+  "exchange_valuation",
+  "insurance_quote",
+  "service_booking",
+  "brochure_download",
 ];
+
+export const NEXT_STEP_DISPLAY_STYLES = [
+  "pill",
+  "row_card",
+  "primary_cta",
+  "secondary_cta",
+  "quick_reply",
+];
+
+export const NEXT_STEP_ICONS = [
+  "car",
+  "tag",
+  "calculator",
+  "compare",
+  "shield",
+  "sparkles",
+  "file-text",
+  "phone",
+  "calendar",
+  "map-pin",
+  "paintbrush",
+  "fuel",
+  "wallet",
+  "upload",
+  "bell",
+  "help",
+];
+
+export const AMBIGUITY_LEVELS = [
+  "none",
+  "soft_default",
+  "ask_user",
+  "cannot_resolve",
+];
+
+export const AMBIGUITY_TYPES = [
+  "none",
+  "model",
+  "variant",
+  "city",
+  "feature",
+  "comparison_variant",
+  "lead_detail",
+];
+
+export const VARIANT_SELECTION_MODES = [
+  "exact",
+  "representative_default",
+  "needs_user_selection",
+  "not_required",
+];
+
+export const COMPARISON_LEVELS = ["model", "variant"];
 
 export const CANVAS_TYPES = [
   "pricelist_canvas",
@@ -159,6 +215,18 @@ export const CANVAS_TYPES = [
   "explainer_canvas",
   "unavailable_notice_canvas",
   "text_notice_canvas",
+
+  // Future/detail canvases
+  "offer_details_canvas",
+  "quotation_summary_canvas",
+  "quotation_confirmation_canvas",
+  "finance_preapproval_canvas",
+  "emi_breakup_canvas",
+  "exchange_valuation_canvas",
+  "insurance_quote_canvas",
+  "request_tracking_canvas",
+  "saved_cars_canvas",
+  "price_alerts_canvas",
 ];
 
 export const INLINE_TYPES = [
@@ -204,7 +272,6 @@ export const EXPLAINER_TOPICS = [
   "resale",
   "price_history",
   "quotation",
-  "test_drive",
   "general_car_buying",
 ];
 
@@ -231,6 +298,10 @@ export const ALLOWED_ENTITY_KEYS = [
   "models",
   "variant",
   "variants",
+  "primaryModel",
+  "primaryVariant",
+  "comparisonModels",
+  "comparisonVariants",
   "city",
   "color",
   "fuelType",
@@ -241,6 +312,17 @@ export const ALLOWED_ENTITY_KEYS = [
   "topic",
   "topics",
   "leadType",
+  "unavailableReason",
+  "selectedServices",
+  "buyingTimeline",
+  "registrationCity",
+  "registrationType",
+  "purchaseType",
+  "callbackTime",
+  "preferredDate",
+  "preferredTime",
+  "usage",
+  "priority",
   "customerName",
   "mobile",
   "email",
@@ -270,11 +352,22 @@ export const ALLOWED_FILTER_KEYS = [
   "compareFeatures",
   "color",
   "monthlyEmiBudget",
+  "downPaymentPercent",
   "downPayment",
   "loanAmount",
+  "loanPercent",
   "tenureMonths",
   "roi",
   "leadType",
+  "selectedServices",
+  "callbackTime",
+  "preferredDate",
+  "preferredTime",
+  "usage",
+  "priority",
+  "familySize",
+  "monthlyRunningKm",
+  "cityHighwaySplit",
 ];
 
 export const DATA_AVAILABILITY = {
@@ -458,11 +551,132 @@ export const normalizeStringArray = (value) =>
 export const slug = (value = "") =>
   normalizeSearchKey(value).replace(/\s+/g, "-");
 
+const optionalString = (description) =>
+  z.string().optional().describe(description);
+
+const optionalStringArray = (description) =>
+  z.array(z.string()).optional().describe(description);
+
 /* -------------------------------------------------------------------------- */
 /*  Zod Schemas                                                               */
 /* -------------------------------------------------------------------------- */
 
 const LooseRecordSchema = z.record(z.any()).default({});
+
+export const PlannerEntitiesSchema = z
+  .object({
+    brand: optionalString("Car brand/make, e.g. Hyundai, Honda, Kia"),
+    make: optionalString("Same as brand/make if the user says make"),
+    model: optionalString("Single car model, e.g. Verna, Elevate, Creta"),
+    models: optionalStringArray(
+      "Multiple car models for comparison/search, e.g. Verna and City",
+    ),
+    variant: optionalString("Single variant/trim, e.g. SX IVT, ZX CVT, HTX"),
+    variants: optionalStringArray(
+      "Multiple variants if the user compares variants",
+    ),
+    primaryModel: optionalString(
+      "Primary/anchor model for multi-intent planning",
+    ),
+    primaryVariant: optionalString(
+      "Primary/anchor variant for multi-intent planning",
+    ),
+    comparisonModels: optionalStringArray("Models used for comparison"),
+    comparisonVariants: optionalStringArray("Variants used for comparison"),
+    city: optionalString("City for price/availability, default new-delhi"),
+    color: optionalString("Exterior color name mentioned by the user"),
+    fuelType: optionalString("Petrol, diesel, CNG, electric, hybrid"),
+    transmission: optionalString("automatic, manual, AMT, CVT, DCT, IVT"),
+    bodyType: optionalString("SUV, sedan, hatchback, MPV, compact SUV"),
+    feature: optionalString("Single feature asked by user, e.g. sunroof"),
+    features: optionalStringArray(
+      "Features asked by user, e.g. sunroof, ADAS, 6 airbags",
+    ),
+    topic: optionalString(
+      "Explainer topic like IVT, ADAS, ex-showroom vs on-road",
+    ),
+    topics: optionalStringArray("Multiple explainer topics"),
+    leadType: z.enum(LEAD_TYPES).optional(),
+    unavailableReason: z.enum(UNAVAILABLE_REASONS).optional(),
+    selectedServices: optionalStringArray(
+      "Services user wants, e.g. quotation, finance, exchange",
+    ),
+    callbackTime: optionalString("Preferred callback time"),
+    preferredDate: optionalString("Preferred date for callback"),
+    preferredTime: optionalString("Preferred time for callback"),
+    usage: optionalString("Use case, e.g. city, highway, mixed, family"),
+    priority: optionalString(
+      "Customer priority, e.g. mileage, safety, features, value",
+    ),
+    customerName: optionalString("Customer name if shared"),
+    mobile: optionalString("Customer mobile if shared"),
+    email: optionalString("Customer email if shared"),
+    pincode: optionalString("Customer/city pincode if shared"),
+    registrationNumber: optionalString("Vehicle registration number if shared"),
+    loanId: optionalString("Internal loan ID if internal context"),
+    customerId: optionalString("Internal customer ID if internal context"),
+  })
+  .default({});
+
+export const PlannerFiltersSchema = z
+  .object({
+    brand: optionalString("Car brand/make filter"),
+    make: optionalString("Car make filter"),
+    model: optionalString("Single model filter"),
+    models: optionalStringArray("Multiple model filters"),
+    variant: optionalString("Single variant filter"),
+    variants: optionalStringArray("Multiple variant filters"),
+    city: optionalString("Default new-delhi"),
+    budgetMin: z.number().optional().describe("Minimum budget in rupees"),
+    budgetMax: z
+      .number()
+      .optional()
+      .describe("Maximum budget in rupees. 20 lakh = 2000000"),
+    priceBasis: z
+      .enum(PRICE_BASIS_VALUES)
+      .optional()
+      .describe("Default on_road"),
+    bodyType: optionalString("SUV, sedan, hatchback, MPV, compact SUV"),
+    fuelType: optionalString("Petrol, diesel, CNG, electric, hybrid"),
+    transmission: optionalString("automatic/manual/AMT/CVT/DCT/IVT"),
+    activeOnly: z.boolean().optional().describe("Default true"),
+    includeDiscontinued: z.boolean().optional().describe("Default false"),
+    mustHaveFeatures: optionalStringArray("Required features user asked for"),
+    compareFeatures: optionalStringArray(
+      "Features specifically requested for comparison",
+    ),
+    color: optionalString("Color filter"),
+    monthlyEmiBudget: z
+      .number()
+      .optional()
+      .describe("Monthly EMI budget in rupees"),
+    downPayment: z
+      .number()
+      .optional()
+      .describe("Down payment in rupees. 2 lakh = 200000"),
+    loanAmount: z.number().optional().describe("Loan amount in rupees"),
+    loanPercent: z
+      .number()
+      .optional()
+      .describe("Loan percent, e.g. 90 for 90% loan"),
+    tenureMonths: z.number().optional().describe("Loan tenure in months"),
+    roi: z.number().optional().describe("Rate of interest percentage"),
+    leadType: z.enum(LEAD_TYPES).optional(),
+    selectedServices: optionalStringArray(
+      "Services user wants, e.g. quotation, finance, exchange",
+    ),
+    callbackTime: optionalString("Preferred callback time"),
+    preferredDate: optionalString("Preferred date"),
+    preferredTime: optionalString("Preferred time"),
+    usage: optionalString("city/highway/mixed/family/parents etc."),
+    priority: optionalString(
+      "mileage/safety/features/value/comfort/low EMI etc.",
+    ),
+    familySize: z.union([z.string(), z.number()]).optional(),
+    monthlyRunningKm: z.number().optional(),
+    cityHighwaySplit: optionalString("City/highway split if shared"),
+  })
+  .default({});
 
 export const PlannerOutputSchema = z
   .object({
@@ -473,12 +687,75 @@ export const PlannerOutputSchema = z
   })
   .default({});
 
+export const PlannerAmbiguityOptionSchema = z.object({
+  id: z.string().optional().default(""),
+  label: z.string().optional().default(""),
+  value: z.any().optional().default(null),
+  entity: z.record(z.any()).optional().default({}),
+  query: z.string().optional().default(""),
+});
+
+export const PlannerAmbiguitySchema = z
+  .object({
+    level: z.enum(AMBIGUITY_LEVELS).default("none"),
+    type: z.enum(AMBIGUITY_TYPES).default("none"),
+    message: z.string().optional().default(""),
+    options: z.array(PlannerAmbiguityOptionSchema).optional().default([]),
+    selectedDefault: z.any().nullable().optional().default(null),
+  })
+  .default({});
+
+export const PlannerResolutionSchema = z
+  .object({
+    comparisonLevel: z
+      .enum(COMPARISON_LEVELS)
+      .nullable()
+      .optional()
+      .default(null),
+    variantSelectionMode: z
+      .enum(VARIANT_SELECTION_MODES)
+      .nullable()
+      .optional()
+      .default(null),
+    selectedVariants: z.array(z.record(z.any())).optional().default([]),
+    selectedModels: z.array(z.record(z.any())).optional().default([]),
+    changeAllowed: z.boolean().optional().default(true),
+    note: z.string().optional().default(""),
+  })
+  .default({});
+
+export const PlannerContextPatchSchema = z
+  .object({
+    anchorBrand: z.string().optional().default(""),
+    anchorModel: z.string().optional().default(""),
+    anchorVariant: z.string().optional().default(""),
+    anchorCity: z.string().optional().default(""),
+    anchorColor: z.string().optional().default(""),
+    selectedVehicle: z.record(z.any()).optional().default({}),
+    selectedComparisonSet: z.record(z.any()).optional().default({}),
+    userPreferences: z.record(z.any()).optional().default({}),
+    leadContext: z.record(z.any()).optional().default({}),
+    customerStage: z.enum(CUSTOMER_STAGES).optional(),
+    conversationMode: z.enum(CONVERSATION_MODES).optional(),
+  })
+  .default({});
+
 export const PlannerToolSchema = z.object({
-  tool: z.enum(PLANNER_TOOLS),
-  entities: LooseRecordSchema,
-  filters: LooseRecordSchema,
-  ranking: z.enum(PLANNER_RANKINGS).nullable().optional().default(null),
+  tool: z
+    .enum(PLANNER_TOOLS)
+    .describe("Backend capability to execute this request"),
+  entities: PlannerEntitiesSchema,
+  filters: PlannerFiltersSchema,
+  ranking: z
+    .enum(PLANNER_RANKINGS)
+    .nullable()
+    .optional()
+    .default(null)
+    .describe(
+      "For analytical vehicle_recommend questions, choose a ranking mode",
+    ),
   output: PlannerOutputSchema,
+  resolution: PlannerResolutionSchema.optional().default({}),
 });
 
 export const PlannerNextStepSchema = z.object({
@@ -486,12 +763,16 @@ export const PlannerNextStepSchema = z.object({
   label: z.string().min(1).max(80),
   query: z.string().min(1).max(180),
   tool: z.enum(PLANNER_TOOLS).nullable().optional().default(null),
-  entities: LooseRecordSchema.optional().default({}),
-  filters: LooseRecordSchema.optional().default({}),
+  entities: PlannerEntitiesSchema.optional().default({}),
+  filters: PlannerFiltersSchema.optional().default({}),
   ranking: z.enum(PLANNER_RANKINGS).nullable().optional().default(null),
   reason: z.string().max(240).optional().default(""),
   priority: z.number().min(0).max(100).optional().default(50),
   output: PlannerOutputSchema.optional().default({}),
+  displayStyle: z.enum(NEXT_STEP_DISPLAY_STYLES).optional().default("pill"),
+  icon: z.enum(NEXT_STEP_ICONS).nullable().optional().default(null),
+  sendOnClick: z.boolean().optional().default(false),
+  requiresSelection: z.boolean().optional().default(false),
 });
 
 export const AciPlannerSchema = z.object({
@@ -501,6 +782,8 @@ export const AciPlannerSchema = z.object({
   customerStage: z.enum(CUSTOMER_STAGES).default("unknown"),
   tools: z.array(PlannerToolSchema).default([]),
   nextSteps: z.array(PlannerNextStepSchema).max(6).default([]),
+  ambiguity: PlannerAmbiguitySchema.optional().default({}),
+  contextPatch: PlannerContextPatchSchema.optional().default({}),
   clarification: z.string().nullable().optional().default(null),
   confidence: z.number().min(0).max(1).default(0.5),
   reasoningSummary: z.string().max(500).optional().default(""),
@@ -522,6 +805,8 @@ export const LooseAciPlannerSchema = z.object({
   customerStage: z.string().optional(),
   tools: z.array(z.record(z.any())).optional(),
   nextSteps: z.array(z.record(z.any())).optional(),
+  ambiguity: z.any().optional(),
+  contextPatch: z.any().optional(),
   clarification: z.any().optional(),
   confidence: z.any().optional(),
   reasoningSummary: z.any().optional(),
@@ -594,7 +879,6 @@ export const looksLikeNewCarQuery = (message = "") => {
     /\bemi\b/,
     /\bquotation\b/,
     /\bquote\b/,
-    /\btest drive\b/,
     /\bcar\b/,
     /\bcars\b/,
     /\bverna\b/,
@@ -617,15 +901,17 @@ export const looksLikeNewCarQuery = (message = "") => {
 export const normalizePlannerEntities = (entities = {}) => {
   const clean = stripUnknownKeys(entities, ALLOWED_ENTITY_KEYS);
 
-  const normalized = {
-    ...clean,
-  };
+  const normalized = { ...clean };
 
   if (normalized.brand) normalized.brand = normalizeText(normalized.brand);
   if (normalized.make) normalized.make = normalizeText(normalized.make);
   if (normalized.model) normalized.model = normalizeText(normalized.model);
   if (normalized.variant)
     normalized.variant = normalizeText(normalized.variant);
+  if (normalized.primaryModel)
+    normalized.primaryModel = normalizeText(normalized.primaryModel);
+  if (normalized.primaryVariant)
+    normalized.primaryVariant = normalizeText(normalized.primaryVariant);
   if (normalized.city) normalized.city = normalizeCity(normalized.city);
   if (normalized.color) normalized.color = normalizeText(normalized.color);
   if (normalized.fuelType)
@@ -641,20 +927,50 @@ export const normalizePlannerEntities = (entities = {}) => {
   if (normalized.feature)
     normalized.feature = normalizeText(normalized.feature);
   if (normalized.topic) normalized.topic = normalizeText(normalized.topic);
+  if (normalized.callbackTime)
+    normalized.callbackTime = normalizeText(normalized.callbackTime);
+  if (normalized.preferredDate)
+    normalized.preferredDate = normalizeText(normalized.preferredDate);
+  if (normalized.preferredTime)
+    normalized.preferredTime = normalizeText(normalized.preferredTime);
+  if (normalized.usage)
+    normalized.usage = normalizeText(normalized.usage).toLowerCase();
+  if (normalized.priority)
+    normalized.priority = normalizeText(normalized.priority).toLowerCase();
 
   if (normalized.models)
     normalized.models = normalizeStringArray(normalized.models);
-  if (normalized.variants) {
+  if (normalized.variants)
     normalized.variants = normalizeStringArray(normalized.variants);
+  if (normalized.comparisonModels) {
+    normalized.comparisonModels = normalizeStringArray(
+      normalized.comparisonModels,
+    );
   }
-  if (normalized.features) {
+  if (normalized.comparisonVariants) {
+    normalized.comparisonVariants = normalizeStringArray(
+      normalized.comparisonVariants,
+    );
+  }
+  if (normalized.features)
     normalized.features = normalizeStringArray(normalized.features);
-  }
   if (normalized.topics)
     normalized.topics = normalizeStringArray(normalized.topics);
+  if (normalized.selectedServices) {
+    normalized.selectedServices = normalizeStringArray(
+      normalized.selectedServices,
+    );
+  }
 
   if (normalized.leadType && !LEAD_TYPES.includes(normalized.leadType)) {
     delete normalized.leadType;
+  }
+
+  if (
+    normalized.unavailableReason &&
+    !UNAVAILABLE_REASONS.includes(normalized.unavailableReason)
+  ) {
+    delete normalized.unavailableReason;
   }
 
   return Object.fromEntries(
@@ -671,9 +987,7 @@ export const normalizePlannerFilters = (
 ) => {
   const clean = stripUnknownKeys(filters, ALLOWED_FILTER_KEYS);
 
-  const normalized = {
-    ...clean,
-  };
+  const normalized = { ...clean };
 
   if (normalized.brand) normalized.brand = normalizeText(normalized.brand);
   if (normalized.make) normalized.make = normalizeText(normalized.make);
@@ -681,9 +995,8 @@ export const normalizePlannerFilters = (
   if (normalized.variant)
     normalized.variant = normalizeText(normalized.variant);
   if (normalized.city) normalized.city = normalizeCity(normalized.city);
-  if (normalized.bodyType) {
+  if (normalized.bodyType)
     normalized.bodyType = normalizeText(normalized.bodyType).toLowerCase();
-  }
   if (normalized.fuelType)
     normalized.fuelType = normalizeText(normalized.fuelType);
   if (normalized.transmission) {
@@ -692,12 +1005,26 @@ export const normalizePlannerFilters = (
     ).toLowerCase();
   }
   if (normalized.color) normalized.color = normalizeText(normalized.color);
+  if (normalized.callbackTime)
+    normalized.callbackTime = normalizeText(normalized.callbackTime);
+  if (normalized.preferredDate)
+    normalized.preferredDate = normalizeText(normalized.preferredDate);
+  if (normalized.preferredTime)
+    normalized.preferredTime = normalizeText(normalized.preferredTime);
+  if (normalized.usage)
+    normalized.usage = normalizeText(normalized.usage).toLowerCase();
+  if (normalized.priority)
+    normalized.priority = normalizeText(normalized.priority).toLowerCase();
+  if (normalized.cityHighwaySplit) {
+    normalized.cityHighwaySplit = normalizeText(
+      normalized.cityHighwaySplit,
+    ).toLowerCase();
+  }
 
   if (normalized.models)
     normalized.models = normalizeStringArray(normalized.models);
-  if (normalized.variants) {
+  if (normalized.variants)
     normalized.variants = normalizeStringArray(normalized.variants);
-  }
   if (normalized.mustHaveFeatures) {
     normalized.mustHaveFeatures = normalizeStringArray(
       normalized.mustHaveFeatures,
@@ -706,6 +1033,11 @@ export const normalizePlannerFilters = (
   if (normalized.compareFeatures) {
     normalized.compareFeatures = normalizeStringArray(
       normalized.compareFeatures,
+    );
+  }
+  if (normalized.selectedServices) {
+    normalized.selectedServices = normalizeStringArray(
+      normalized.selectedServices,
     );
   }
 
@@ -727,6 +1059,22 @@ export const normalizePlannerFilters = (
     }
   }
 
+  if (normalized.loanPercent !== undefined) {
+    const loanPercent = normalizePercent(normalized.loanPercent);
+    if (loanPercent !== undefined && loanPercent > 0)
+      normalized.loanPercent = loanPercent;
+    else delete normalized.loanPercent;
+  }
+
+  if (normalized.monthlyRunningKm !== undefined) {
+    const monthlyRunningKm = numberFromValue(normalized.monthlyRunningKm);
+    if (monthlyRunningKm && monthlyRunningKm > 0) {
+      normalized.monthlyRunningKm = Math.round(monthlyRunningKm);
+    } else {
+      delete normalized.monthlyRunningKm;
+    }
+  }
+
   if (normalized.tenureMonths !== undefined) {
     const tenure = numberFromValue(normalized.tenureMonths);
     if (tenure && tenure > 0 && tenure <= 120) {
@@ -740,6 +1088,12 @@ export const normalizePlannerFilters = (
     const roi = normalizePercent(normalized.roi);
     if (roi !== undefined) normalized.roi = roi;
     else delete normalized.roi;
+  }
+
+  if (normalized.familySize !== undefined) {
+    const familySizeNum = numberFromValue(normalized.familySize);
+    normalized.familySize =
+      familySizeNum || normalizeText(normalized.familySize);
   }
 
   if (normalized.activeOnly !== undefined) {
@@ -797,20 +1151,16 @@ export const normalizePlannerOutput = (output = {}, tool = "") => {
       normalized.canvasType = "pricelist_canvas";
     if (tool === "vehicle_colors")
       normalized.canvasType = "color_studio_canvas";
-    if (tool === "vehicle_feature_lookup") {
+    if (tool === "vehicle_feature_lookup")
       normalized.inlineType = "feature_answer_card";
-    }
     if (tool === "vehicle_compare") normalized.canvasType = "comparison_canvas";
-    if (tool === "vehicle_recommend") {
+    if (tool === "vehicle_recommend")
       normalized.canvasType = "recommendation_results_canvas";
-    }
-    if (tool === "vehicle_price_breakup") {
+    if (tool === "vehicle_price_breakup")
       normalized.canvasType = "price_breakup_canvas";
-    }
     if (tool === "vehicle_emi") normalized.canvasType = "emi_calculator_canvas";
-    if (tool === "vehicle_price_history") {
+    if (tool === "vehicle_price_history")
       normalized.canvasType = "price_history_canvas";
-    }
     if (tool === "vehicle_explainer") normalized.inlineType = "explainer_card";
     if (tool === "aci_lead_capture")
       normalized.canvasType = "lead_capture_canvas";
@@ -826,6 +1176,28 @@ export const normalizePlannerOutput = (output = {}, tool = "") => {
   return normalized;
 };
 
+export const normalizePlannerResolution = (resolution = {}) => ({
+  comparisonLevel: COMPARISON_LEVELS.includes(resolution.comparisonLevel)
+    ? resolution.comparisonLevel
+    : null,
+  variantSelectionMode: VARIANT_SELECTION_MODES.includes(
+    resolution.variantSelectionMode,
+  )
+    ? resolution.variantSelectionMode
+    : null,
+  selectedVariants: Array.isArray(resolution.selectedVariants)
+    ? resolution.selectedVariants.slice(0, 5)
+    : [],
+  selectedModels: Array.isArray(resolution.selectedModels)
+    ? resolution.selectedModels.slice(0, 5)
+    : [],
+  changeAllowed:
+    typeof resolution.changeAllowed === "boolean"
+      ? resolution.changeAllowed
+      : true,
+  note: normalizeText(resolution.note || "").slice(0, 240),
+});
+
 export const normalizePlannerTool = (toolPlan = {}, { message = "" } = {}) => {
   const tool = String(toolPlan?.tool || "").trim();
 
@@ -838,6 +1210,7 @@ export const normalizePlannerTool = (toolPlan = {}, { message = "" } = {}) => {
   if (ranking && !PLANNER_RANKINGS.includes(ranking)) ranking = null;
 
   const output = normalizePlannerOutput(toolPlan.output || {}, tool);
+  const resolution = normalizePlannerResolution(toolPlan.resolution || {});
 
   if (isNewCarPlannerTool(tool)) {
     if (!filters.city && !entities.city) filters.city = "new-delhi";
@@ -875,6 +1248,7 @@ export const normalizePlannerTool = (toolPlan = {}, { message = "" } = {}) => {
     filters,
     ranking,
     output,
+    resolution,
   };
 };
 
@@ -906,6 +1280,12 @@ export const normalizePlannerNextStep = (
 
   const fallbackId = `next-${slug(tool || "step")}-${slug(label)}-${index + 1}`;
 
+  const displayStyle = NEXT_STEP_DISPLAY_STYLES.includes(nextStep.displayStyle)
+    ? nextStep.displayStyle
+    : "pill";
+
+  const icon = NEXT_STEP_ICONS.includes(nextStep.icon) ? nextStep.icon : null;
+
   return {
     id: normalizeText(nextStep.id) || fallbackId,
     label: label.slice(0, 80),
@@ -917,6 +1297,10 @@ export const normalizePlannerNextStep = (
     reason: normalizeText(nextStep.reason || "").slice(0, 240),
     priority: clamp(nextStep.priority ?? 50, 0, 100),
     output,
+    displayStyle,
+    icon,
+    sendOnClick: Boolean(nextStep.sendOnClick),
+    requiresSelection: Boolean(nextStep.requiresSelection),
   };
 };
 
@@ -936,13 +1320,11 @@ export const formatBudgetForQuery = (value, fallbackLakh = 20) => {
 export const sanitizeNextStepQuery = (step = {}) => {
   let query = normalizeText(step.query || "");
 
-  // Fix "2000000 lakh" style generated queries.
   query = query.replace(/\b(\d{6,})\s*lakh\b/gi, (_, rawAmount) => {
     const label = formatBudgetForQuery(Number(rawAmount), 20);
     return label;
   });
 
-  // Avoid factual variant-wise color claims.
   if (
     /\b(which|does|do)\b/i.test(query) &&
     /\bvariant|variants|sx|zx|vx|zxi|vxi|htx|gtx\b/i.test(query) &&
@@ -995,8 +1377,10 @@ export const buildFallbackNextSteps = ({ tools = [], message = "" } = {}) => {
   const model =
     entities.model ||
     filters.model ||
+    entities.primaryModel ||
     asArray(entities.models)[0] ||
     asArray(filters.models)[0] ||
+    asArray(entities.comparisonModels)[0] ||
     "";
 
   const modelLabel = model || "this car";
@@ -1018,6 +1402,10 @@ export const buildFallbackNextSteps = ({ tools = [], message = "" } = {}) => {
         reason: "Narrow recommendations by automatic transmission.",
         priority: 82,
         output: normalizePlannerOutput({}, "vehicle_recommend"),
+        displayStyle: "row_card",
+        icon: "calculator",
+        sendOnClick: false,
+        requiresSelection: false,
       },
       {
         id: "next-safest-options",
@@ -1030,6 +1418,10 @@ export const buildFallbackNextSteps = ({ tools = [], message = "" } = {}) => {
         reason: "Safety is a common next filter.",
         priority: 78,
         output: normalizePlannerOutput({}, "vehicle_recommend"),
+        displayStyle: "row_card",
+        icon: "shield",
+        sendOnClick: false,
+        requiresSelection: false,
       },
     ];
   }
@@ -1048,6 +1440,10 @@ export const buildFallbackNextSteps = ({ tools = [], message = "" } = {}) => {
           "Color selection is a common next step after pricing or features.",
         priority: 90,
         output: normalizePlannerOutput({}, "vehicle_colors"),
+        displayStyle: "pill",
+        icon: "paintbrush",
+        sendOnClick: false,
+        requiresSelection: false,
       },
       {
         id: `next-features-${slug(modelLabel)}`,
@@ -1059,10 +1455,11 @@ export const buildFallbackNextSteps = ({ tools = [], message = "" } = {}) => {
         ranking: null,
         reason: "Feature details help the customer evaluate the car.",
         priority: 85,
-        output: normalizePlannerOutput(
-          { canvasType: "recommendation_results_canvas" },
-          "vehicle_feature_lookup",
-        ),
+        output: normalizePlannerOutput({}, "vehicle_feature_lookup"),
+        displayStyle: "pill",
+        icon: "sparkles",
+        sendOnClick: false,
+        requiresSelection: false,
       },
       {
         id: `next-emi-${slug(modelLabel)}`,
@@ -1075,6 +1472,10 @@ export const buildFallbackNextSteps = ({ tools = [], message = "" } = {}) => {
         reason: "EMI is a natural next step after price.",
         priority: 80,
         output: normalizePlannerOutput({}, "vehicle_emi"),
+        displayStyle: "pill",
+        icon: "calculator",
+        sendOnClick: false,
+        requiresSelection: false,
       },
       {
         id: `next-quote-${slug(modelLabel)}`,
@@ -1087,6 +1488,10 @@ export const buildFallbackNextSteps = ({ tools = [], message = "" } = {}) => {
         reason: "Quotation moves the customer toward conversion.",
         priority: 76,
         output: normalizePlannerOutput({}, "aci_lead_capture"),
+        displayStyle: "primary_cta",
+        icon: "file-text",
+        sendOnClick: false,
+        requiresSelection: false,
       },
       {
         id: `next-compare-${slug(modelLabel)}`,
@@ -1099,6 +1504,10 @@ export const buildFallbackNextSteps = ({ tools = [], message = "" } = {}) => {
         reason: "Comparison helps evaluate alternatives.",
         priority: 72,
         output: normalizePlannerOutput({}, "vehicle_compare"),
+        displayStyle: "pill",
+        icon: "compare",
+        sendOnClick: false,
+        requiresSelection: false,
       },
     ];
   }
@@ -1193,6 +1602,25 @@ export const detectUnavailableReason = ({
   return null;
 };
 
+export const isMultiIntentUnavailableContext = (message = "", reason = "") => {
+  const text = normalizeSearchKey(message);
+
+  if (!["offers_not_available", "schemes_not_available"].includes(reason)) {
+    return false;
+  }
+
+  const concreteIntentCount = [
+    /\b(price|pricelist|on road|onroad|ex showroom|ex-showroom)\b/.test(text),
+    /\b(compare|vs|versus|better than)\b/.test(text),
+    /\bemi|loan\b/.test(text),
+    /\b(colors?|colours?)\b/.test(text),
+    /\b(features?|sunroof|adas|airbags?|camera)\b/.test(text),
+    /\b(recommend|suggest|best|safest|under)\b/.test(text),
+  ].filter(Boolean).length;
+
+  return concreteIntentCount >= 1;
+};
+
 export const applyUnavailableDataGuard = (toolPlan, { message = "" } = {}) => {
   if (!toolPlan) return null;
 
@@ -1200,9 +1628,31 @@ export const applyUnavailableDataGuard = (toolPlan, { message = "" } = {}) => {
 
   if (!reason) return toolPlan;
 
+  const isOfferOrScheme = [
+    "offers_not_available",
+    "schemes_not_available",
+  ].includes(reason);
+
+  // Important:
+  // In multi-intent messages like:
+  // "Show Verna price, compare with City, EMI for 5 years and check offers"
+  // the word "offers" should not convert price/compare/EMI tools into lead tools.
+  // Only the offer-specific lead/unavailable tool should carry the unavailable reason.
   if (
-    ["offers_not_available", "schemes_not_available"].includes(reason) &&
-    (toolPlan.entities?.model || toolPlan.filters?.model)
+    isOfferOrScheme &&
+    isMultiIntentUnavailableContext(message, reason) &&
+    !["aci_lead_capture", "unavailable", "general_response"].includes(
+      toolPlan.tool,
+    )
+  ) {
+    return toolPlan;
+  }
+
+  if (
+    isOfferOrScheme &&
+    (toolPlan.entities?.model ||
+      toolPlan.filters?.model ||
+      toolPlan.entities?.primaryModel)
   ) {
     return {
       tool: "aci_lead_capture",
@@ -1217,13 +1667,16 @@ export const applyUnavailableDataGuard = (toolPlan, { message = "" } = {}) => {
       },
       ranking: null,
       output: normalizePlannerOutput({}, "aci_lead_capture"),
+      resolution: normalizePlannerResolution(toolPlan.resolution || {}),
       unavailableReason: reason,
     };
   }
 
   if (
     reason === "bank_finance_schemes_not_available" &&
-    (toolPlan.entities?.model || toolPlan.filters?.model)
+    (toolPlan.entities?.model ||
+      toolPlan.filters?.model ||
+      toolPlan.entities?.primaryModel)
   ) {
     return {
       tool: "aci_lead_capture",
@@ -1238,6 +1691,7 @@ export const applyUnavailableDataGuard = (toolPlan, { message = "" } = {}) => {
       },
       ranking: null,
       output: normalizePlannerOutput({}, "aci_lead_capture"),
+      resolution: normalizePlannerResolution(toolPlan.resolution || {}),
       unavailableReason: reason,
     };
   }
@@ -1251,7 +1705,71 @@ export const applyUnavailableDataGuard = (toolPlan, { message = "" } = {}) => {
     },
     ranking: null,
     output: normalizePlannerOutput({}, "unavailable"),
+    resolution: normalizePlannerResolution(toolPlan.resolution || {}),
     unavailableReason: reason,
+  };
+};
+
+
+/* -------------------------------------------------------------------------- */
+/*  Ambiguity / Context Normalization                                          */
+/* -------------------------------------------------------------------------- */
+
+export const normalizePlannerAmbiguity = (ambiguity = {}) => {
+  const level = AMBIGUITY_LEVELS.includes(ambiguity.level)
+    ? ambiguity.level
+    : "none";
+
+  const type = AMBIGUITY_TYPES.includes(ambiguity.type)
+    ? ambiguity.type
+    : "none";
+
+  return {
+    level,
+    type,
+    message: normalizeText(ambiguity.message || "").slice(0, 240),
+    options: Array.isArray(ambiguity.options)
+      ? ambiguity.options.slice(0, 8).map((option, index) => ({
+          id: normalizeText(option.id || `ambiguity-${index + 1}`),
+          label: normalizeText(option.label || ""),
+          value: option.value ?? null,
+          entity: isPlainObject(option.entity) ? option.entity : {},
+          query: normalizeText(option.query || ""),
+        }))
+      : [],
+    selectedDefault: ambiguity.selectedDefault ?? null,
+  };
+};
+
+export const normalizePlannerContextPatch = (contextPatch = {}) => {
+  if (!isPlainObject(contextPatch)) return {};
+
+  return {
+    anchorBrand: normalizeText(contextPatch.anchorBrand || ""),
+    anchorModel: normalizeText(contextPatch.anchorModel || ""),
+    anchorVariant: normalizeText(contextPatch.anchorVariant || ""),
+    anchorCity: contextPatch.anchorCity
+      ? normalizeCity(contextPatch.anchorCity)
+      : "",
+    anchorColor: normalizeText(contextPatch.anchorColor || ""),
+    selectedVehicle: isPlainObject(contextPatch.selectedVehicle)
+      ? contextPatch.selectedVehicle
+      : {},
+    selectedComparisonSet: isPlainObject(contextPatch.selectedComparisonSet)
+      ? contextPatch.selectedComparisonSet
+      : {},
+    userPreferences: isPlainObject(contextPatch.userPreferences)
+      ? contextPatch.userPreferences
+      : {},
+    leadContext: isPlainObject(contextPatch.leadContext)
+      ? contextPatch.leadContext
+      : {},
+    customerStage: CUSTOMER_STAGES.includes(contextPatch.customerStage)
+      ? contextPatch.customerStage
+      : undefined,
+    conversationMode: CONVERSATION_MODES.includes(contextPatch.conversationMode)
+      ? contextPatch.conversationMode
+      : undefined,
   };
 };
 
@@ -1353,9 +1871,12 @@ export const makeUnavailablePlan = ({
       },
       ranking: null,
       output: normalizePlannerOutput({}, "unavailable"),
+      resolution: normalizePlannerResolution({}),
     },
   ],
   nextSteps: [],
+  ambiguity: normalizePlannerAmbiguity({}),
+  contextPatch: normalizePlannerContextPatch({}),
   clarification: null,
   confidence,
   reasoningSummary:
@@ -1380,9 +1901,16 @@ export const makeClarificationPlan = ({
       filters: {},
       ranking: null,
       output: normalizePlannerOutput({}, "clarification"),
+      resolution: normalizePlannerResolution({}),
     },
   ],
   nextSteps: [],
+  ambiguity: normalizePlannerAmbiguity({
+    level: "ask_user",
+    type: "lead_detail",
+    message: question,
+  }),
+  contextPatch: normalizePlannerContextPatch({}),
   clarification: question,
   confidence,
   reasoningSummary: "The user request is ambiguous and needs clarification.",
@@ -1410,9 +1938,12 @@ export const makeInternalPassthroughPlan = ({
         groupBy: null,
         preferredWidgetType: null,
       },
+      resolution: normalizePlannerResolution({}),
     },
   ],
   nextSteps: [],
+  ambiguity: normalizePlannerAmbiguity({}),
+  contextPatch: normalizePlannerContextPatch({}),
   clarification: null,
   confidence,
   reasoningSummary: summary,
@@ -1465,6 +1996,7 @@ export const sanitizePlannerPlan = (rawPlan, { message = "" } = {}) => {
         filters: {},
         ranking: null,
         output: normalizePlannerOutput({}, "general_response"),
+        resolution: normalizePlannerResolution({}),
       },
     ];
   }
@@ -1528,6 +2060,8 @@ export const sanitizePlannerPlan = (rawPlan, { message = "" } = {}) => {
     customerStage,
     tools,
     nextSteps: [],
+    ambiguity: normalizePlannerAmbiguity(input.ambiguity || {}),
+    contextPatch: normalizePlannerContextPatch(input.contextPatch || {}),
     clarification: normalizeText(input.clarification) || null,
     confidence: clamp(input.confidence ?? 0.5, 0, 1),
     reasoningSummary: normalizeText(input.reasoningSummary).slice(0, 500),
@@ -1605,6 +2139,15 @@ export const validatePlannerPlan = (plan, { message = "" } = {}) => {
         "vehicle_explainer should explain concepts, not invent live data",
       );
     }
+
+    if (
+      toolPlan.tool === "vehicle_compare" &&
+      toolPlan.resolution?.variantSelectionMode === "representative_default"
+    ) {
+      warnings.push(
+        "comparison will use representative variants unless the user changes them",
+      );
+    }
   }
 
   return {
@@ -1635,6 +2178,12 @@ export const plannerSchemaForPrompt = () => ({
   inlineTypes: INLINE_TYPES,
   explainerTopics: EXPLAINER_TOPICS,
   unavailableReasons: UNAVAILABLE_REASONS,
+  nextStepDisplayStyles: NEXT_STEP_DISPLAY_STYLES,
+  nextStepIcons: NEXT_STEP_ICONS,
+  ambiguityLevels: AMBIGUITY_LEVELS,
+  ambiguityTypes: AMBIGUITY_TYPES,
+  variantSelectionModes: VARIANT_SELECTION_MODES,
+  comparisonLevels: COMPARISON_LEVELS,
   dataAvailability: DATA_AVAILABILITY,
 });
 
@@ -1647,7 +2196,7 @@ You do not answer the user directly.
 You do not query the database.
 You do not calculate final prices.
 You do not invent offers, service centers, service costs, bank schemes, resale values, waiting periods, or dealer inventory.
-You only choose allowed tools, entities, filters, ranking, output, and nextSteps.
+You only choose allowed tools, entities, filters, ranking, output, resolution, ambiguity, contextPatch, and nextSteps.
 
 Available data:
 - vehicle/pricelist data
@@ -1677,12 +2226,43 @@ Default rules:
 - 20 lakh / 20L means 2000000.
 - 2 lakh down payment means 200000.
 - 30k EMI means 30000 monthly EMI budget.
+- 90% loan means filters.loanPercent = 90.
+- 5 years loan tenure means filters.tenureMonths = 60.
 - If data is unavailable, choose unavailable or aci_lead_capture, never invent values.
 - Internal CDrive operations should use internal_passthrough, not new-car tools.
 - Conceptual car-buying questions should use vehicle_explainer.
 - nextSteps should be useful, safe, and executable using allowed tools.
 - Do not ask variant-wise color factual questions because only model-level color data is available.
 - Do not generate queries like "2000000 lakh"; use "20 lakh".
+
+Mandatory extraction rules:
+- If user mentions a car model, always extract it.
+- For direct single-model requests, put it in entities.model.
+- For comparisons, put all models in entities.models or entities.comparisonModels.
+- If user mentions a variant like SX, SX(O), ZX, HTX, put it in entities.variant.
+- If user asks about a feature, put it in entities.features.
+- If user says "with sunroof and 6 airbags", put those in filters.mustHaveFeatures.
+- If user says automatic/manual, put filters.transmission.
+- If user says SUV/sedan/hatchback/MPV, put filters.bodyType.
+- If user asks EMI with down payment, extract downPayment in rupees.
+- If user asks safest, ranking must be safety.
+- If user asks best automatic, ranking should be automatic_value or feature_match.
+
+Ambiguity and comparison rules:
+- For model-only comparison like "Compare Verna and City", do not block the user.
+- Plan vehicle_compare with models, and set resolution.variantSelectionMode = "representative_default".
+- Set ambiguity.level = "soft_default" and ambiguity.type = "comparison_variant".
+- Message should say that popular/comparable variants will be used and user can change variants.
+- For exact variant comparison, use variantSelectionMode = "exact".
+- For direct variant price where multiple variants may match, use ambiguity.level = "ask_user".
+- For broad recommendations, do not ask for all preferences first. Answer first, then suggest one useful refinement nextStep.
+- nextSteps should include displayStyle and icon when useful.
+- Primary conversion actions should use displayStyle "primary_cta".
+
+Context memory rules:
+- Preserve the selected model/variant/city/color in contextPatch.
+- If user follow-up says "EMI", "quote", "breakup", "compare with City", use current selectedVehicle/anchor vehicle unless user explicitly changes it.
+- Do not overwrite selected model/variant unless user explicitly selects a new one.
 `.trim();
 
 export default AciPlannerSchema;

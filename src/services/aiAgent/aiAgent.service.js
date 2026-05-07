@@ -18,6 +18,7 @@ import {
   mapIntentAlias,
 } from "./aiAgent.newCarQuestionMap.js";
 import { logInteraction } from "./aiAgent.learningEngine.js";
+import { sanitizeAiAgentResponse } from "./aiAgent.responseSanitizer.js";
 
 const fallbackHandler = async () => {
   return {
@@ -228,7 +229,7 @@ const logSuggestionImpressions = ({ userId, suggestions = [] } = {}) => {
   ).catch(() => {});
 };
 
-export const chatWithAgent = async ({
+const __chatWithAgentCore = async ({
   message,
   sessionId,
   context = {},
@@ -412,3 +413,30 @@ export const chatWithAgent = async ({
     ),
   });
 };
+
+/* ACI_RESPONSE_SANITIZER_WRAPPER_START */
+export const chatWithAgent = async (...args) => {
+  const result = await __chatWithAgentCore(...args);
+
+  const firstArg = args[0];
+  const secondArg = args[1];
+
+  const message =
+    typeof firstArg === "string"
+      ? firstArg
+      : firstArg?.message || firstArg?.query || "";
+
+  const context =
+    firstArg && typeof firstArg === "object" && firstArg.context
+      ? firstArg.context
+      : secondArg && typeof secondArg === "object"
+        ? secondArg
+        : {};
+
+  return sanitizeAiAgentResponse(result, {
+    message,
+    context,
+  });
+};
+/* ACI_RESPONSE_SANITIZER_WRAPPER_END */
+

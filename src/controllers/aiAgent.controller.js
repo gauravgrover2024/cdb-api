@@ -1,6 +1,7 @@
 import asyncHandler from "express-async-handler";
 import { chatWithAgent } from "../services/aiAgent/aiAgent.service.js";
 import { logInteraction } from "../services/aiAgent/aiAgent.learningEngine.js";
+import { getAiAutocompleteSuggestions } from "../services/aiAgent/aiAgent.autocomplete.js";
 
 export const chatWithAiAgent = asyncHandler(async (req, res) => {
   const { message, sessionId, context, selectedEntity, filters, debug } =
@@ -44,4 +45,18 @@ export const logAiSuggestionInteraction = asyncHandler(async (req, res) => {
     success: true,
     result,
   });
+});
+
+export const autocompleteAiAgent = asyncHandler(async (req, res) => {
+  const { q = "", limit = 8 } = req.query || {};
+
+  const context = req.body?.context || {};
+
+  const response = await getAiAutocompleteSuggestions({
+    q,
+    context,
+    limit: Number(limit) || 8,
+  });
+
+  res.json(response);
 });
