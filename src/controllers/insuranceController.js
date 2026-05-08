@@ -307,6 +307,14 @@ const RENEWAL_LEAD_STATUSES = [
   "closed",
 ];
 
+const RENEWAL_OUTCOMES = [
+  "NONE",
+  "ALREADY_RENEWED",
+  "CAR_SOLD",
+  "CAR_EXPIRED",
+  "POLICY_FROM_ELSEWHERE",
+];
+
 const normalizeRenewalLeadStatus = (value) => {
   const raw = safeString(value || "New").trim().toLowerCase();
   if (!raw) return "New";
@@ -323,6 +331,11 @@ const normalizeRenewalLeadStatus = (value) => {
     .split(" ")
     .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
     .join(" ");
+};
+
+const normalizeRenewalOutcome = (value) => {
+  const raw = safeString(value).trim().toUpperCase();
+  return RENEWAL_OUTCOMES.includes(raw) ? raw : "NONE";
 };
 
 const getNextInsuranceCaseId = async () => {
@@ -994,8 +1007,8 @@ export const getInsuranceCases = asyncHandler(async (req, res) => {
 export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
   const includeAssignedOnly = String(req.query.assignedOnly || "").trim() === "1";
   const assignedToId = safeString(req.query.assignedToId).trim();
-  const futureDays = Math.max(1, Math.min(90, Number(req.query.futureDays || 30)));
-  const pastDays = Math.max(1, Math.min(120, Number(req.query.pastDays || 45)));
+  const futureDays = Math.max(1, Math.min(365, Number(req.query.futureDays || 365)));
+  const pastDays = Math.max(1, Math.min(365, Number(req.query.pastDays || 365)));
   const odAmountRange = safeString(req.query.odAmountRange).trim().toLowerCase();
   const role = safeString(req.user?.role).trim().toLowerCase();
   const meId = safeString(req.user?._id).trim();
@@ -1005,6 +1018,7 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
     "team_lead",
     "insurance_team_lead",
   ].includes(role);
+  const view = safeString(req.query.view || "renewal").trim().toLowerCase();
 
   const baseRows = await InsuranceCase.find({})
     .sort({ updatedAt: -1, createdAt: -1 })
@@ -1019,10 +1033,39 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
       (doc) => safeString(doc?.renewalAssignedToId).trim() === assignedToId,
     );
   }
-  if (!isAdminLike && meId) {
-    rows = rows.filter((doc) => safeString(doc?.renewalAssignedToId).trim() === meId);
+  // Do not hard-scope non-admin users to assigned-only by default.
+  // Assignment scoping should happen only when explicitly requested via query params.
+  const mappedRows = rows.map((doc) => ({
+    ...doc,
+    renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
+  }));
+
+  const getForRenewalTab = (list) =>
+    list.filter((doc) => {
+      const outcome = normalizeRenewalOutcome(doc?.renewalOutcome);
+      if (outcome === "CAR_SOLD" || outcome === "CAR_EXPIRED") return false;
+      if (outcome === "ALREADY_RENEWED") return false;
+      if (doc?.renewedToCaseId) return false;
+      return true;
+    });
+  const getForRenewedTab = (list) =>
+    list.filter(
+      (doc) =>
+        normalizeRenewalOutcome(doc?.renewalOutcome) === "ALREADY_RENEWED" ||
+        Boolean(doc?.renewedToCaseId),
+    );
+  const getForExternalTab = (list) =>
+    list.filter(
+      (doc) => normalizeRenewalOutcome(doc?.renewalOutcome) === "POLICY_FROM_ELSEWHERE",
+    );
+
+  if (view === "renewed") {
+    rows = getForRenewedTab(mappedRows);
+  } else if (view === "external") {
+    rows = getForExternalTab(mappedRows);
+  } else {
+    rows = getForRenewalTab(mappedRows);
   }
-  rows = rows.filter((doc) => !doc?.renewedToCaseId);
   if (odAmountRange) {
     rows = rows.filter((doc) => {
       const value = Number(doc?.previousOwnDamageAmount || doc?.odAmount || 0);
@@ -1124,22 +1167,59 @@ export const updateInsuranceRenewalLead = asyncHandler(async (req, res) => {
   const renewalComment = safeString(req.body?.renewalComment).trim();
   const renewalClosedReason = safeString(req.body?.renewalClosedReason).trim();
   const action = safeString(req.body?.action).trim().toUpperCase();
+  const requestedOutcome = normalizeRenewalOutcome(req.body?.renewalOutcome);
   const updatedBy =
     safeString(req.body?.updatedBy).trim() ||
     safeString(req.user?.name).trim() ||
     "User";
   if (action === "SHARE_QUOTES") renewalLeadStatus = "Quotes Shared";
   if (action === "MARK_PAYMENT_PENDING") renewalLeadStatus = "Payment Pending";
-  if (renewalLeadStatus.toLowerCase() === "closed" && !renewalClosedReason) {
+  if (action === "ALREADY_RENEWED") renewalLeadStatus = "Closed";
+  if (action === "CAR_SOLD") renewalLeadStatus = "Closed";
+  if (action === "CAR_EXPIRED") renewalLeadStatus = "Closed";
+  if (action === "POLICY_FROM_ELSEWHERE") renewalLeadStatus = "Closed";
+
+  let renewalOutcome = requestedOutcome;
+  if (action === "ALREADY_RENEWED") renewalOutcome = "ALREADY_RENEWED";
+  if (action === "CAR_SOLD") renewalOutcome = "CAR_SOLD";
+  if (action === "CAR_EXPIRED") renewalOutcome = "CAR_EXPIRED";
+  if (action === "POLICY_FROM_ELSEWHERE") renewalOutcome = "POLICY_FROM_ELSEWHERE";
+  const hasAutoClosedReason = [
+    "ALREADY_RENEWED",
+    "CAR_SOLD",
+    "CAR_EXPIRED",
+    "POLICY_FROM_ELSEWHERE",
+  ].includes(action);
+  if (
+    renewalLeadStatus.toLowerCase() === "closed" &&
+    !renewalClosedReason &&
+    !hasAutoClosedReason
+  ) {
     res.status(400);
     throw new Error("Closed reason is required when lead status is Closed");
   }
 
   doc.renewalLeadStatus = renewalLeadStatus || "New";
+  doc.renewalOutcome = renewalOutcome || "NONE";
   doc.renewalFollowUpDate = renewalFollowUpDate || "";
   doc.renewalComment = renewalComment || "";
   if (renewalLeadStatus.toLowerCase() === "closed") {
     doc.renewalClosedReason = renewalClosedReason || "";
+  }
+  if (
+    action === "ALREADY_RENEWED" &&
+    !doc.renewalClosedReason
+  ) {
+    doc.renewalClosedReason = "Already Renewed";
+  }
+  if (action === "CAR_SOLD" && !doc.renewalClosedReason) {
+    doc.renewalClosedReason = "Car Sold";
+  }
+  if (action === "CAR_EXPIRED" && !doc.renewalClosedReason) {
+    doc.renewalClosedReason = "Car Expired";
+  }
+  if (action === "POLICY_FROM_ELSEWHERE" && !doc.renewalClosedReason) {
+    doc.renewalClosedReason = "Policy from Elsewhere";
   }
   doc.renewalLastContactedAt = new Date();
   doc.renewalNextFollowUpDate =
@@ -1157,6 +1237,7 @@ export const updateInsuranceRenewalLead = asyncHandler(async (req, res) => {
       by: updatedBy,
       event: action || "STATUS_UPDATE",
       status: doc.renewalLeadStatus,
+      outcome: doc.renewalOutcome || "NONE",
       followUpDate: doc.renewalFollowUpDate,
       comment: doc.renewalComment,
       closedReason: doc.renewalClosedReason || "",
@@ -1182,11 +1263,27 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
   const rows = await InsuranceCase.find({})
     .sort({ updatedAt: -1 })
     .lean();
-  let pendingRows = rows.filter((doc) => isPendingRenewalWithinWindow(doc, 30, 45));
-  pendingRows = pendingRows.filter((doc) => !doc?.renewedToCaseId);
-  const scopedRows = isAdminLike
-    ? pendingRows
-    : pendingRows.filter((doc) => safeString(doc?.renewalAssignedToId).trim() === meId);
+  let pendingRows = rows.filter((doc) => isPendingRenewalWithinWindow(doc, 365, 365));
+  pendingRows = pendingRows.map((doc) => ({
+    ...doc,
+    renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
+  }));
+  const scopedRows = pendingRows;
+  const renewalRows = scopedRows.filter((doc) => {
+    const outcome = normalizeRenewalOutcome(doc?.renewalOutcome);
+    if (outcome === "CAR_SOLD" || outcome === "CAR_EXPIRED") return false;
+    if (outcome === "ALREADY_RENEWED") return false;
+    if (doc?.renewedToCaseId) return false;
+    return true;
+  });
+  const renewedRows = scopedRows.filter(
+    (doc) =>
+      normalizeRenewalOutcome(doc?.renewalOutcome) === "ALREADY_RENEWED" ||
+      Boolean(doc?.renewedToCaseId),
+  );
+  const externalRows = scopedRows.filter(
+    (doc) => normalizeRenewalOutcome(doc?.renewalOutcome) === "POLICY_FROM_ELSEWHERE",
+  );
   const activeCases = scopedRows.filter(
     (row) => normalizeRenewalLeadStatus(row?.renewalLeadStatus) !== "Closed",
   ).length;
@@ -1200,9 +1297,13 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
       activeCases,
       policiesPending,
       paymentPending,
-      pendingRenewals: scopedRows.length,
-      nonAssigned: pendingRows.filter((row) => !safeString(row?.renewalAssignedToId).trim()).length,
-      assignedToMe: pendingRows.filter((row) => safeString(row?.renewalAssignedToId).trim() === meId).length,
+      pendingRenewals: renewalRows.length,
+      renewed: renewedRows.length,
+      external: externalRows.length,
+      nonAssigned: renewalRows.filter((row) => !safeString(row?.renewalAssignedToId).trim()).length,
+      assignedToMe: meId
+        ? renewalRows.filter((row) => safeString(row?.renewalAssignedToId).trim() === meId).length
+        : 0,
     },
   });
 });

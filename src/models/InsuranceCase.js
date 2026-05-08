@@ -289,6 +289,17 @@ const insuranceCaseSchema = new mongoose.Schema(
     renewalFollowUpDate: { type: String, default: "" },
     renewalComment: { type: String, default: "" },
     renewalClosedReason: { type: String, default: "" },
+    renewalOutcome: {
+      type: String,
+      enum: [
+        "NONE",
+        "ALREADY_RENEWED",
+        "CAR_SOLD",
+        "CAR_EXPIRED",
+        "POLICY_FROM_ELSEWHERE",
+      ],
+      default: "NONE",
+    },
     renewalTimeline: { type: [mongoose.Schema.Types.Mixed], default: [] },
 
     // Audit
