@@ -166,15 +166,20 @@ const isInternalIntent = (response = {}) => {
       response.intent,
       response.canvasType,
       response.inlineType,
-      response.answer,
       response.title,
+      response.meta?.responseTool,
     ]
       .filter(Boolean)
       .join(" "),
   );
 
-  return /\bloan\b|\breceivable\b|\bpayment\b|\bcustomer 360\b|\bdelivery order\b|\binternal\b/.test(
-    blob,
+  // Important:
+  // Do NOT treat generic "loan" / "EMI" wording as internal.
+  // New-car finance answers naturally contain loan words.
+  return (
+    response.intent === "internal_passthrough" ||
+    response.meta?.responseTool === "internal_passthrough" ||
+    /internal_passthrough|loan_closure_lookup|approved_not_disbursed|pending_approval|total_business|customer_360|delivery_order|receivable|payout|payment_dashboard/.test(blob)
   );
 };
 
