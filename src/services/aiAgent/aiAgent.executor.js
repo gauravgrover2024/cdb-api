@@ -66,6 +66,8 @@ export const DEFAULT_LIMITS = {
 };
 
 export const VEHICLE_COLLECTION_CANDIDATES = [
+  "vehicles",
+  "vehicle_master_records",
   "vehicle_prices",
   "vehicleprices",
   "vehicle_variants",
@@ -74,12 +76,11 @@ export const VEHICLE_COLLECTION_CANDIDATES = [
   "newcarvariants",
   "car_variants",
   "carvariants",
+  "cars",
+  "prices",
   "features",
   "vehicle_features",
   "vehiclefeatures",
-  "cars",
-  "vehicles",
-  "prices",
 ];
 
 export const COLOR_COLLECTION_CANDIDATES = [
@@ -252,17 +253,25 @@ export const findCollectionName = async (db, candidates = []) => {
 
   if (!names.length) return "";
 
-  const candidateKeys = candidates.map(searchKey);
+  const normalizedNames = names.map((name) => ({
+    name,
+    key: searchKey(name),
+  }));
 
-  const exact = names.find((name) => candidateKeys.includes(searchKey(name)));
-  if (exact) return exact;
+  for (const candidate of candidates) {
+    const candidateKey = searchKey(candidate);
+    if (!candidateKey) continue;
 
-  const contains = names.find((name) => {
-    const nameKey = searchKey(name);
-    return candidateKeys.some((candidate) => nameKey.includes(candidate));
-  });
+    const exact = normalizedNames.find((item) => item.key === candidateKey);
+    if (exact) return exact.name;
 
-  return contains || "";
+    const contains = normalizedNames.find(
+      (item) => item.key.includes(candidateKey) || candidateKey.includes(item.key),
+    );
+    if (contains) return contains.name;
+  }
+
+  return normalizedNames[0]?.name || "";
 };
 
 export const getCollection = async (candidates = []) => {
@@ -462,6 +471,7 @@ export const normalizeVehicleRow = (row = {}) => {
 
   const exShowroomPrice = firstNumber(
     row.exShowroomPrice,
+    row.ex_showroom_price_cardekho,
     row.ex_showroom_price,
     row.exShowroom,
     row.ex_showroom,
@@ -472,9 +482,12 @@ export const normalizeVehicleRow = (row = {}) => {
 
   const onRoadPrice = firstNumber(
     row.onRoadPrice,
+    row.on_road_price_cardekho,
     row.on_road_price,
     row.onRoad,
     row.on_road,
+    row.total_on_road_with_accessories,
+    row.orp_without_accessories,
     row.finalPrice,
     row.totalPrice,
   );
@@ -524,6 +537,14 @@ export const normalizeVehicleRow = (row = {}) => {
     modelNormalized: row.model_normalized || "",
     brandNormalized: row.brand_normalized || "",
     searchText: row.search_text || "",
+    imageUrl: firstMeaningful(
+      row.imageUrl,
+      row.image_url,
+      row.carImageUrl,
+      row.car_image_url,
+      row.photo,
+      row.photo_url,
+    ),
     discontinued,
     active: !discontinued,
     raw: row,
@@ -534,6 +555,8 @@ export const normalizeColors = (row = {}) => {
   const rawColors = firstMeaningful(
     row.colors,
     row.colours,
+    row.color_name,
+    row.colorName,
     row.availableColors,
     row.availableColours,
     row.colorOptions,
@@ -1028,12 +1051,69 @@ export const runtimeVehicleColors = async ({
   });
 
   const vehicleRows = rawRows.map(normalizeVehicleRow);
-  const colors = unique(
+
+  const directEntries = rawRows
+    .map((row) => {
+      const name = displayName(
+        firstMeaningful(
+          row.color_name,
+          row.colorName,
+          row.color,
+          row.colour,
+          row.name,
+          row.title,
+          row.variant,
+        ),
+      );
+      if (!name) return null;
+
+      return {
+        name,
+        slug: searchKey(name).replace(/\s+/g, "-"),
+        imageUrl: firstMeaningful(
+          row.image_url,
+          row.imageUrl,
+          row.car_image_url,
+          row.carImageUrl,
+          row.swatch_image,
+          row.swatchImage,
+        ),
+        hex: firstMeaningful(
+          row.hex,
+          row.hex_code,
+          row.hexCode,
+          row.color_hex,
+          row.colorHex,
+        ),
+      };
+    })
+    .filter(Boolean);
+
+  const normalizedNameEntries = unique(
     vehicleRows.flatMap((row) => asArray(row.colors)).filter(Boolean),
   ).map((name) => ({
     name,
     slug: searchKey(name).replace(/\s+/g, "-"),
+    imageUrl: "",
+    hex: "",
   }));
+
+  const colorsBySlug = new Map();
+  for (const item of [...directEntries, ...normalizedNameEntries]) {
+    if (!item?.slug) continue;
+    const existing = colorsBySlug.get(item.slug);
+    if (!existing) {
+      colorsBySlug.set(item.slug, item);
+      continue;
+    }
+    colorsBySlug.set(item.slug, {
+      ...existing,
+      imageUrl: existing.imageUrl || item.imageUrl || "",
+      hex: existing.hex || item.hex || "",
+    });
+  }
+
+  const colors = [...colorsBySlug.values()];
 
   return {
     rows: colors,
