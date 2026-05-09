@@ -26,38 +26,51 @@ dotenv.config();
 
 const app = express();
 
-// Parse JSON
-app.use(express.json());
+const isAllowedOrigin = (origin = "") => {
+  if (!origin) return true;
 
-/**
- * ✅ CORS for localhost + Vercel frontend
- */
-const allowedOrigins = [
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "https://cdb-frontend-six.vercel.app",
-  "https://cdb.acillp.com"
-];
+  if (
+    origin === "https://cdb.acillp.com" ||
+    origin === "https://www.cdb.acillp.com" ||
+    origin === "https://cdb-frontend-six.vercel.app"
+  ) {
+    return true;
+  }
+
+  return (
+    /^http:\/\/localhost:\d+$/.test(origin) ||
+    /^http:\/\/127\.0\.0\.1:\d+$/.test(origin)
+  );
+};
 
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
+  const origin = req.headers.origin || "";
+  const allowOrigin = isAllowedOrigin(origin);
 
-  if (!origin || allowedOrigins.includes(origin)) {
-    res.header("Access-Control-Allow-Origin", origin || "*");
+  if (allowOrigin && origin) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Vary", "Origin");
   }
 
-  res.header(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  );
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (allowOrigin) {
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
+    res.header(
+      "Access-Control-Allow-Headers",
+      req.headers["access-control-request-headers"] ||
+        "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+    );
+  }
 
   if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
+    return res.sendStatus(204);
   }
 
-  next();
+  return next();
 });
+
+// Parse JSON
+app.use(express.json());
 
 // Security + logging
 app.use(

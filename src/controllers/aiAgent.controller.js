@@ -25,6 +25,28 @@ export const chatWithAiAgent = asyncHandler(async (req, res) => {
   res.json(response);
 });
 
+export const chatWithAiAgentPublic = asyncHandler(async (req, res) => {
+  const { message, sessionId, context, selectedEntity, filters, debug } =
+    req.body || {};
+
+  if (!message || typeof message !== "string") {
+    res.status(400);
+    throw new Error("message is required");
+  }
+
+  const response = await chatWithAgent({
+    message,
+    sessionId,
+    context,
+    selectedEntity,
+    filters,
+    debug,
+    user: null,
+  });
+
+  res.json(response);
+});
+
 export const logAiSuggestionInteraction = asyncHandler(async (req, res) => {
   const { suggestionId, intent, actionTaken = true } = req.body || {};
 
