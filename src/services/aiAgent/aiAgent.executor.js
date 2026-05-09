@@ -1011,11 +1011,48 @@ export const runtimeVehiclePricelist = async ({
     VEHICLE_COLLECTION_CANDIDATES,
   );
 
-  const requestedVariant = getVariant(toolPlan, context);
+  const shouldIgnoreContextVariant = toolPlan.tool === "vehicle_pricelist";
+
+  const queryToolPlan = shouldIgnoreContextVariant
+    ? {
+        ...toolPlan,
+        entities: {
+          ...(toolPlan.entities || {}),
+          variant: "",
+          primaryVariant: "",
+        },
+        filters: {
+          ...(toolPlan.filters || {}),
+          variant: "",
+        },
+      }
+    : toolPlan;
+
+  const queryContext = shouldIgnoreContextVariant
+    ? {
+        ...(context || {}),
+        anchorVariant: "",
+        variant: "",
+        selectedVehicle: {
+          ...((context || {}).selectedVehicle || {}),
+          variant: "",
+        },
+      }
+    : context;
+
+  const requestedVariant = shouldIgnoreContextVariant
+    ? ""
+    : getVariant(toolPlan, context);
   const requestedVariantKey = searchKey(requestedVariant);
 
-  const fastQuery = buildFastVehiclesQuery({ toolPlan, context });
-  const fallbackRegexQuery = buildVehicleMongoQuery({ toolPlan, context });
+  const fastQuery = buildFastVehiclesQuery({
+    toolPlan: queryToolPlan,
+    context: queryContext,
+  });
+  const fallbackRegexQuery = buildVehicleMongoQuery({
+    toolPlan: queryToolPlan,
+    context: queryContext,
+  });
   let rawRows = await safeFind(collection, fastQuery, {
     limit: DEFAULT_LIMITS.pricelist,
   });
@@ -1030,12 +1067,12 @@ export const runtimeVehiclePricelist = async ({
   // nothing, fetch model rows and resolve variant in JS.
   if (requestedVariant && rawRows.length === 0) {
     const modelOnlyToolPlan = {
-      ...toolPlan,
+      ...queryToolPlan,
       entities: {
-        ...(toolPlan.entities || {}),
+        ...(queryToolPlan.entities || {}),
       },
       filters: {
-        ...(toolPlan.filters || {}),
+        ...(queryToolPlan.filters || {}),
       },
     };
 
@@ -1045,7 +1082,7 @@ export const runtimeVehiclePricelist = async ({
 
     const modelOnlyFastQuery = buildFastVehiclesQuery({
       toolPlan: modelOnlyToolPlan,
-      context,
+      context: queryContext,
     });
     rawRows = await safeFind(collection, modelOnlyFastQuery, {
       limit: DEFAULT_LIMITS.pricelist,
@@ -1053,7 +1090,7 @@ export const runtimeVehiclePricelist = async ({
     if (!rawRows.length) {
       rawRows = await safeFind(
         collection,
-        buildVehicleMongoQuery({ toolPlan: modelOnlyToolPlan, context }),
+        buildVehicleMongoQuery({ toolPlan: modelOnlyToolPlan, context: queryContext }),
         {
           limit: DEFAULT_LIMITS.pricelist,
         },
