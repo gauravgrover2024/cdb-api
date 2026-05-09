@@ -395,6 +395,88 @@ export const buildVehicleMongoQuery = ({
   return { $and: and };
 };
 
+const normalizeEntityToken = (value = "") =>
+  displayName(cleanText(String(value || "").replace(/-/g, " ")));
+
+const normalizeCitySlug = (value = "") =>
+  cleanText(String(value || ""))
+    .toLowerCase()
+    .replace(/\s+/g, "-");
+
+const fieldEqOrIn = (field, values = []) => {
+  const uniq = unique(values.filter(Boolean));
+  if (!uniq.length) return null;
+  if (uniq.length === 1) return { [field]: uniq[0] };
+  return { [field]: { $in: uniq } };
+};
+
+export const buildFastVehiclesQuery = ({
+  toolPlan = {},
+  context = {},
+  includeCity = false,
+} = {}) => {
+  const model = normalizeEntityToken(getModel(toolPlan, context));
+  const variant = normalizeEntityToken(getVariant(toolPlan, context));
+  const brand = normalizeEntityToken(
+    firstMeaningful(toolPlan.entities?.brand, toolPlan.entities?.make),
+  );
+  const cityRaw = getCity(toolPlan, context);
+  const citySlug = normalizeCitySlug(cityRaw);
+
+  const and = [
+    fieldEqOrIn("brand_normalized", [brand]),
+    fieldEqOrIn("model_normalized", [model]),
+    fieldEqOrIn("variant_normalized", [variant]),
+    includeCity
+      ? fieldEqOrIn("city", [
+          citySlug,
+          cleanText(cityRaw).toLowerCase(),
+          normalizeEntityToken(cityRaw),
+        ])
+      : null,
+  ].filter(Boolean);
+
+  if (!and.length) return {};
+  return { $and: and };
+};
+
+export const buildFastBrandModelQuery = ({
+  toolPlan = {},
+  context = {},
+  includeCity = false,
+} = {}) => {
+  const model = normalizeEntityToken(getModel(toolPlan, context));
+  const variant = normalizeEntityToken(getVariant(toolPlan, context));
+  const brand = normalizeEntityToken(
+    firstMeaningful(toolPlan.entities?.brand, toolPlan.entities?.make),
+  );
+  const cityRaw = getCity(toolPlan, context);
+  const citySlug = normalizeCitySlug(cityRaw);
+
+  const modelCandidates = unique(
+    [model, brand && model ? `${brand} ${model}` : ""].filter(Boolean),
+  );
+  const variantCandidates = unique(
+    [variant, model && variant ? `${model} ${variant}` : ""].filter(Boolean),
+  );
+
+  const and = [
+    fieldEqOrIn("brand", [brand]),
+    fieldEqOrIn("model", modelCandidates),
+    fieldEqOrIn("variant", variantCandidates),
+    includeCity
+      ? fieldEqOrIn("city", [
+          citySlug,
+          cleanText(cityRaw).toLowerCase(),
+          normalizeEntityToken(cityRaw),
+        ])
+      : null,
+  ].filter(Boolean);
+
+  if (!and.length) return {};
+  return { $and: and };
+};
+
 export const safeFind = async (
   collection,
   query = {},
@@ -932,10 +1014,16 @@ export const runtimeVehiclePricelist = async ({
   const requestedVariant = getVariant(toolPlan, context);
   const requestedVariantKey = searchKey(requestedVariant);
 
-  const query = buildVehicleMongoQuery({ toolPlan, context });
-  let rawRows = await safeFind(collection, query, {
+  const fastQuery = buildFastVehiclesQuery({ toolPlan, context });
+  const fallbackRegexQuery = buildVehicleMongoQuery({ toolPlan, context });
+  let rawRows = await safeFind(collection, fastQuery, {
     limit: DEFAULT_LIMITS.pricelist,
   });
+  if (!rawRows.length) {
+    rawRows = await safeFind(collection, fallbackRegexQuery, {
+      limit: DEFAULT_LIMITS.pricelist,
+    });
+  }
 
   // Exact variant query can be too strict because DB may store full names,
   // short names, normalized names, or old naming. If strict query returns
@@ -955,13 +1043,22 @@ export const runtimeVehiclePricelist = async ({
     delete modelOnlyToolPlan.entities.primaryVariant;
     delete modelOnlyToolPlan.filters.variant;
 
-    rawRows = await safeFind(
-      collection,
-      buildVehicleMongoQuery({ toolPlan: modelOnlyToolPlan, context }),
-      {
-        limit: DEFAULT_LIMITS.pricelist,
-      },
-    );
+    const modelOnlyFastQuery = buildFastVehiclesQuery({
+      toolPlan: modelOnlyToolPlan,
+      context,
+    });
+    rawRows = await safeFind(collection, modelOnlyFastQuery, {
+      limit: DEFAULT_LIMITS.pricelist,
+    });
+    if (!rawRows.length) {
+      rawRows = await safeFind(
+        collection,
+        buildVehicleMongoQuery({ toolPlan: modelOnlyToolPlan, context }),
+        {
+          limit: DEFAULT_LIMITS.pricelist,
+        },
+      );
+    }
   }
 
   let normalizedRows = rawRows.map(normalizeVehicleRow);
@@ -1045,10 +1142,16 @@ export const runtimeVehicleColors = async ({
     COLOR_COLLECTION_CANDIDATES,
   );
 
-  const query = buildVehicleMongoQuery({ toolPlan, context });
-  const rawRows = await safeFind(collection, query, {
+  const fastQuery = buildFastBrandModelQuery({ toolPlan, context });
+  const fallbackRegexQuery = buildVehicleMongoQuery({ toolPlan, context });
+  let rawRows = await safeFind(collection, fastQuery, {
     limit: DEFAULT_LIMITS.colors,
   });
+  if (!rawRows.length) {
+    rawRows = await safeFind(collection, fallbackRegexQuery, {
+      limit: DEFAULT_LIMITS.colors,
+    });
+  }
 
   const vehicleRows = rawRows.map(normalizeVehicleRow);
 
@@ -1136,10 +1239,16 @@ export const runtimeVehicleFeatureLookup = async ({
   );
 
   const feature = getFeature(toolPlan);
-  const query = buildVehicleMongoQuery({ toolPlan, context });
-  const rawRows = await safeFind(collection, query, {
+  const fastQuery = buildFastBrandModelQuery({ toolPlan, context });
+  const fallbackRegexQuery = buildVehicleMongoQuery({ toolPlan, context });
+  let rawRows = await safeFind(collection, fastQuery, {
     limit: DEFAULT_LIMITS.featureLookup,
   });
+  if (!rawRows.length) {
+    rawRows = await safeFind(collection, fallbackRegexQuery, {
+      limit: DEFAULT_LIMITS.featureLookup,
+    });
+  }
 
   const normalizedRows = rawRows.map(normalizeVehicleRow);
   const featureKey = searchKey(feature);
@@ -1355,11 +1464,26 @@ export const runtimeVehiclePriceHistory = async ({
     PRICE_HISTORY_COLLECTION_CANDIDATES,
   );
 
-  const query = buildVehicleMongoQuery({ toolPlan, context });
-  const rawRows = await safeFind(collection, query, {
+  const fastQuery = buildFastBrandModelQuery({
+    toolPlan,
+    context,
+    includeCity: true,
+  });
+  const fallbackRegexQuery = buildVehicleMongoQuery({
+    toolPlan,
+    context,
+    includeCity: true,
+  });
+  let rawRows = await safeFind(collection, fastQuery, {
     limit: DEFAULT_LIMITS.history,
     sort: { year: 1, date: 1, createdAt: 1 },
   });
+  if (!rawRows.length) {
+    rawRows = await safeFind(collection, fallbackRegexQuery, {
+      limit: DEFAULT_LIMITS.history,
+      sort: { year: 1, date: 1, createdAt: 1 },
+    });
+  }
 
   const rows = rawRows.map((row) => ({
     year: row.year || row.modelYear || row.priceYear || "",

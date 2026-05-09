@@ -73,6 +73,8 @@ const run = async () => {
         "vehicles",
         Vehicle.collection,
         [
+          [{ model_normalized: 1 }, { name: "ai_vehicle_model_normalized" }],
+          [{ model_normalized: 1, city: 1 }, { name: "ai_vehicle_model_normalized_city" }],
           [{ model: 1, variant: 1, city: 1 }, { name: "ai_vehicle_model_variant_city" }],
           [{ brand: 1, model: 1, variant: 1, city: 1 }, { name: "ai_vehicle_brand_model_variant_city" }],
           [{ model: 1, on_road_price_cardekho: 1, ex_showroom: 1 }, { name: "ai_vehicle_model_prices" }],
