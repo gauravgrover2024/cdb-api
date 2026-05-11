@@ -1,500 +1,548 @@
 #!/usr/bin/env python3
-"""Bulk normalize vehicle images and write normalized URL fields."""
+"""
+Bulk ACI Assist car image normalizer with MongoDB write-back.
+
+This script:
+  1. Finds image URLs in Mongo documents.
+  2. Calls normalize_car_image_rembg.process_single_image().
+  3. Writes stagedImageUrl / normalizedImageUrl back to the same document path.
+  4. Writes a JSONL manifest.
+  5. Skips duplicates by SHA1 source URL.
+  6. Safely cleans stale old cutout fields when new run uses stage-only mode.
+
+Important:
+  - original image_url / imageUrl is untouched
+  - sourceImageUrl is set for compatibility
+  - stagedImageUrl becomes primary
+  - normalizedImageUrl / normalizedImagePngUrl are only kept when cutout exists
+  - imageBackgroundRemoved becomes False in stage-only mode
+"""
 
 from __future__ import annotations
 
 import argparse
-import csv
-import hashlib
 import json
 import os
-import subprocess
-import sys
+import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Optional
+
+from normalize_car_image_rembg import process_single_image
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-NORMALIZER = SCRIPT_DIR / "normalize_car_image_rembg.py"
+SOURCE_IMAGE_KEYS = {
+    "image",
+    "imageUrl",
+    "imageURL",
+    "image_url",
+    "sourceImageUrl",
+    "originalImageUrl",
+    "thumbnail",
+    "thumbnailUrl",
+    "thumb",
+    "src",
+    "url",
+    "modelImage",
+    "heroImage",
+    "primaryImage",
+    "mainImage",
+    "exteriorImage",
+    "carImage",
+    "colorImage",
+}
+
+OUTPUT_IMAGE_KEYS = {
+    "stagedImageUrl",
+    "normalizedImageUrl",
+    "normalizedImagePngUrl",
+    "cleanImageUrl",
+    "cleanWebpUrl",
+    "cleanPngUrl",
+    "previewUrl",
+    "imageSourceKey",
+    "imageProcessingMethod",
+    "imageModeUsed",
+    "imageProcessedAt",
+    "imageQualityWarnings",
+    "isStudioBackground",
+    "imageBackgroundRemoved",
+}
+
+IMAGE_HOST_HINTS = [
+    "stimg.cardekho.com",
+    "imgd.cardekho.com",
+    "imgct.cardekho.com",
+    "imgd.aeplcdn.com",
+    "images.carandbike.com",
+    "static.autox.com",
+    "images.91wheels.com",
+    "img-zigwheels.com",
+]
 
 
-def sha1_text(value: str) -> str:
-    return hashlib.sha1(str(value).encode("utf-8")).hexdigest()
-
-
-def slugify(value: str) -> str:
-    import re
-
-    value = str(value or "").strip().lower()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
-    return value.strip("-") or "car-image"
+@dataclass
+class ImageEntry:
+    doc_id: Any
+    doc: dict[str, Any]
+    url: str
+    source_key: str
+    parent_path: list[Any]
+    source_field: str
+    parent_snapshot: dict[str, Any]
+    existing_staged: Optional[str]
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def read_manifest(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        raise FileNotFoundError(f"input manifest not found: {path}")
+def sha1_text(value: str) -> str:
+    import hashlib
 
-    if path.suffix.lower() == ".csv":
-        with path.open("r", encoding="utf-8", newline="") as handle:
-            return [dict(row) for row in csv.DictReader(handle)]
-
-    if path.suffix.lower() in {".json", ".jsonl"}:
-        text = path.read_text(encoding="utf-8").strip()
-        if not text:
-            return []
-
-        if path.suffix.lower() == ".jsonl":
-            rows = []
-            for line in text.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                rows.append(json.loads(line))
-            return rows
-
-        payload = json.loads(text)
-        if isinstance(payload, list):
-            return payload
-        if isinstance(payload, dict):
-            records = payload.get("records")
-            if isinstance(records, list):
-                return records
-        raise ValueError("JSON manifest must be array or object with records array")
-
-    raise ValueError("input manifest must be .csv, .json, or .jsonl")
+    return hashlib.sha1(str(value).encode("utf-8")).hexdigest()
 
 
-def first_url(record: dict[str, Any]) -> str:
-    keys = [
-        "sourceImageUrl",
-        "imageUrl",
-        "image_url",
-        "carImageUrl",
-        "car_image_url",
-        "originalImageUrl",
-    ]
-
-    for key in keys:
-        value = record.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
-    return ""
+def slugify(value: str) -> str:
+    value = str(value or "").strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "-", value)
+    return value.strip("-") or "car-image"
 
 
-@dataclass
-class ImageRef:
-    source_url: str
-    source_key: str
-    slug: str
-    doc_id: Any
-    collection: str
-    path: str
-    label: str
+def looks_like_remote_image_url(value: str) -> bool:
+    if not isinstance(value, str):
+        return False
+
+    url = value.strip()
+    if not url.startswith(("http://", "https://")):
+        return False
+
+    lower = url.lower()
+
+    if any(host in lower for host in IMAGE_HOST_HINTS):
+        return True
+
+    base = lower.split("?")[0]
+    return any(base.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".avif"])
 
 
-def build_slug(record: dict[str, Any], source_url: str) -> str:
+def safe_json_loads(value: str, fallback: Any) -> Any:
+    try:
+        return json.loads(value or "")
+    except Exception:
+        return fallback
+
+
+def mongo_path(path: list[Any], field: str) -> str:
+    return ".".join(str(p) for p in [*path, field])
+
+
+def iter_image_entries_in_node(
+    node: Any,
+    doc: dict[str, Any],
+    doc_id: Any,
+    path: Optional[list[Any]] = None,
+) -> Iterable[ImageEntry]:
+    path = path or []
+
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in OUTPUT_IMAGE_KEYS:
+                continue
+
+            if key in SOURCE_IMAGE_KEYS and isinstance(value, str) and looks_like_remote_image_url(value):
+                existing_staged = node.get("stagedImageUrl") or node.get("normalizedImageUrl")
+
+                yield ImageEntry(
+                    doc_id=doc_id,
+                    doc=doc,
+                    url=value,
+                    source_key=sha1_text(value),
+                    parent_path=path,
+                    source_field=key,
+                    parent_snapshot=node,
+                    existing_staged=existing_staged,
+                )
+
+            if isinstance(value, (dict, list)):
+                yield from iter_image_entries_in_node(value, doc, doc_id, [*path, key])
+
+    elif isinstance(node, list):
+        for index, item in enumerate(node):
+            if isinstance(item, (dict, list)):
+                yield from iter_image_entries_in_node(item, doc, doc_id, [*path, index])
+
+
+def build_slug(entry: ImageEntry) -> str:
+    doc = entry.doc or {}
+    parent = entry.parent_snapshot or {}
+
     parts = [
-        record.get("brand") or record.get("make"),
-        record.get("model"),
-        record.get("variant"),
-        record.get("color") or record.get("color_name"),
+        doc.get("brand"),
+        doc.get("make"),
+        doc.get("model"),
+        doc.get("modelName"),
+        parent.get("brand"),
+        parent.get("make"),
+        parent.get("model"),
+        parent.get("variant"),
+        parent.get("variantName"),
+        parent.get("name"),
+        parent.get("color"),
+        parent.get("color_name"),
+        parent.get("colorName"),
+        parent.get("title"),
+        entry.source_key[:10],
     ]
-    title = "-".join(str(part).strip() for part in parts if part)
-    base = slugify(title) if title else "car-image"
-    return f"{base}-{sha1_text(source_url)[:10]}"
+
+    return slugify(" ".join(str(p) for p in parts if p))
 
 
-def discover_image_refs(record: dict[str, Any], collection: str) -> list[ImageRef]:
-    refs: list[ImageRef] = []
-    doc_id = record.get("_id") or record.get("id")
+def build_update_ops(entry: ImageEntry, result: dict[str, Any]) -> dict[str, Any]:
+    parent_path = entry.parent_path
+    source_url = entry.url
 
-    def add(url: str, path: str, label: str) -> None:
-        if not url:
-            return
-        key = sha1_text(url)
-        refs.append(
-            ImageRef(
-                source_url=url,
-                source_key=key,
-                slug=build_slug(record, url),
-                doc_id=doc_id,
-                collection=collection,
-                path=path,
-                label=label,
-            )
-        )
+    set_ops: dict[str, Any] = {}
+    unset_ops: dict[str, Any] = {}
 
-    top_url = first_url(record)
-    add(top_url, "", "top-level")
+    staged = result.get("stagedImageUrl")
+    clean_webp = result.get("cleanWebpUrl")
+    clean_png = result.get("cleanPngUrl")
 
-    colors = record.get("colors")
-    if isinstance(colors, list):
-        for index, color in enumerate(colors):
-            if not isinstance(color, dict):
-                continue
-            url = first_url(color)
-            add(url, f"colors.{index}", f"color[{index}]")
+    if staged:
+        set_ops[mongo_path(parent_path, "stagedImageUrl")] = staged
 
-    variants = record.get("variants")
-    if isinstance(variants, list):
-        for index, variant in enumerate(variants):
-            if not isinstance(variant, dict):
-                continue
-            url = first_url(variant)
-            add(url, f"variants.{index}", f"variant[{index}]")
+    if clean_webp:
+        set_ops[mongo_path(parent_path, "normalizedImageUrl")] = clean_webp
+    else:
+        unset_ops[mongo_path(parent_path, "normalizedImageUrl")] = ""
 
-    return refs
+    if clean_png:
+        set_ops[mongo_path(parent_path, "normalizedImagePngUrl")] = clean_png
+    else:
+        unset_ops[mongo_path(parent_path, "normalizedImagePngUrl")] = ""
+
+    # Compatibility with the old write pattern.
+    set_ops[mongo_path(parent_path, "sourceImageUrl")] = source_url
+
+    set_ops[mongo_path(parent_path, "imageSourceKey")] = result.get("sourceKey") or entry.source_key
+    set_ops[mongo_path(parent_path, "imageProcessingMethod")] = result.get("method")
+    set_ops[mongo_path(parent_path, "imageModeUsed")] = result.get("modeUsed")
+    set_ops[mongo_path(parent_path, "imageProcessedAt")] = datetime.now(timezone.utc)
+    set_ops[mongo_path(parent_path, "imageQualityWarnings")] = result.get("qualityWarnings") or []
+    set_ops[mongo_path(parent_path, "isStudioBackground")] = result.get("isStudioBackground")
+
+    # Old field compatibility:
+    # True only if we actually generated transparent/clean cutout files.
+    background_removed = bool(clean_webp or clean_png)
+    set_ops[mongo_path(parent_path, "imageBackgroundRemoved")] = background_removed
+
+    update_ops: dict[str, Any] = {}
+
+    if set_ops:
+        update_ops["$set"] = set_ops
+
+    if unset_ops:
+        update_ops["$unset"] = unset_ops
+
+    return update_ops
 
 
-def call_normalizer(
-    ref: ImageRef,
-    out_dir: Path,
-    public_url_prefix: str,
-    model: str,
-    preview: bool,
-    keep_raw: bool,
-    force: bool,
+def write_manifest_line(manifest_path: Path, payload: dict[str, Any], lock: threading.Lock) -> None:
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(payload, ensure_ascii=False, default=str)
+
+    with lock:
+        with manifest_path.open("a", encoding="utf-8") as file:
+            file.write(line + "\n")
+
+
+def process_group(
+    *,
+    source_key: str,
+    entries: list[ImageEntry],
+    collection: Any,
+    args: argparse.Namespace,
+    manifest_path: Path,
+    manifest_lock: threading.Lock,
+    index: int,
+    total: int,
 ) -> dict[str, Any]:
-    command = [
-        sys.executable,
-        str(NORMALIZER),
-        "--input",
-        ref.source_url,
-        "--slug",
-        ref.slug,
-        "--out-dir",
-        str(out_dir),
-        "--public-url-prefix",
-        public_url_prefix,
-        "--model",
-        model,
-        "--json-only",
-    ]
+    first = entries[0]
+    slug = build_slug(first)
 
-    if preview:
-        command.append("--preview")
-    if keep_raw:
-        command.append("--keep-raw")
-    if force:
-        command.append("--force")
+    if args.skip_existing and not args.force and all(entry.existing_staged for entry in entries):
+        payload = {
+            "ok": True,
+            "status": "skipped",
+            "reason": "all_entries_already_have_staged_or_normalized_image",
+            "sourceKey": source_key,
+            "source": first.url,
+            "slug": slug,
+            "count": len(entries),
+            "processedAt": now_iso(),
+        }
+        print(f"[{index}/{total}] skipped existing - {slug}")
+        write_manifest_line(manifest_path, payload, manifest_lock)
+        return payload
 
-    process = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
+    if args.dry_run:
+        payload = {
+            "ok": True,
+            "status": "dry_run",
+            "sourceKey": source_key,
+            "source": first.url,
+            "slug": slug,
+            "count": len(entries),
+            "docIds": [str(entry.doc_id) for entry in entries],
+            "plannedUpdates": [
+                {
+                    "docId": str(entry.doc_id),
+                    "parentPath": ".".join(str(p) for p in entry.parent_path) or "<root>",
+                    "sourceField": entry.source_field,
+                }
+                for entry in entries
+            ],
+            "processedAt": now_iso(),
+        }
+        print(f"[{index}/{total}] dry-run - {slug}")
+        write_manifest_line(manifest_path, payload, manifest_lock)
+        return payload
+
+    result = process_single_image(
+        input_source=first.url,
+        slug=slug,
+        out_dir=Path(args.out_dir),
+        public_url_prefix=args.public_url_prefix,
+        mode=args.mode,
+        model=args.model,
+        max_width=args.max_width,
+        canvas_ratio=args.canvas_ratio,
+        force=args.force,
+        preview=args.preview,
+        keep_raw=args.keep_raw,
+        allow_fallback_cutout=args.allow_fallback_cutout,
     )
 
-    raw = (process.stdout or process.stderr or "").strip()
-
-    if process.returncode != 0:
-        return {
+    if not result.get("ok"):
+        payload = {
             "ok": False,
-            "error": raw or f"normalizer failed with code {process.returncode}",
+            "status": "failed",
+            "sourceKey": source_key,
+            "source": first.url,
+            "slug": slug,
+            "error": result.get("error"),
+            "result": result,
+            "processedAt": now_iso(),
         }
-
-    try:
-        payload = json.loads(raw)
-        if not isinstance(payload, dict):
-            raise ValueError("normalizer output is not JSON object")
+        print(f"[{index}/{total}] failed - {slug} - {result.get('error')}")
+        write_manifest_line(manifest_path, payload, manifest_lock)
         return payload
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error": f"failed to parse normalizer output: {exc}",
-            "raw": raw,
-        }
 
+    matched = 0
+    modified = 0
 
-def parse_query_json(query_json: str) -> dict[str, Any]:
-    if not query_json:
-        return {}
-    payload = json.loads(query_json)
-    if not isinstance(payload, dict):
-        raise ValueError("query-json must be a JSON object")
+    for entry in entries:
+        update_ops = build_update_ops(entry, result)
+
+        if update_ops:
+            response = collection.update_one(
+                {"_id": entry.doc_id},
+                update_ops,
+            )
+            matched += int(response.matched_count or 0)
+            modified += int(response.modified_count or 0)
+
+    payload = {
+        "ok": True,
+        "status": "processed",
+        "sourceKey": source_key,
+        "source": first.url,
+        "slug": slug,
+        "count": len(entries),
+        "matched": matched,
+        "modified": modified,
+        "modeUsed": result.get("modeUsed"),
+        "method": result.get("method"),
+        "stagedImageUrl": result.get("stagedImageUrl"),
+        "normalizedImageUrl": result.get("cleanWebpUrl"),
+        "processedAt": now_iso(),
+    }
+
+    print(f"[{index}/{total}] processed - {slug} - {result.get('method')} - updated {modified}")
+    write_manifest_line(manifest_path, payload, manifest_lock)
     return payload
 
 
-def load_db_records(args) -> list[dict[str, Any]]:
-    import certifi
-    from pymongo import MongoClient
+def build_mongo_client(mongo_uri: str):
+    """
+    Atlas TLS fix for Python/PyMongo on macOS/Python venvs.
 
-    if not args.mongo_uri:
-        raise ValueError("--mongo-uri is required when --input-manifest is not used")
+    Uses certifi CA bundle instead of disabling certificate verification.
+    """
+    try:
+        from pymongo import MongoClient
+    except Exception as exc:
+        raise SystemExit(
+            "pymongo is required. Install with: pip install pymongo\n"
+            f"Original error: {exc}"
+        )
 
-    client = MongoClient(
-        args.mongo_uri,
+    try:
+        import certifi
+    except Exception as exc:
+        raise SystemExit(
+            "certifi is required for MongoDB TLS verification.\n"
+            "Install with: pip install certifi\n"
+            f"Original error: {exc}"
+        )
+
+    return MongoClient(
+        mongo_uri,
         tls=True,
         tlsCAFile=certifi.where(),
         serverSelectionTimeoutMS=30000,
+        connectTimeoutMS=30000,
+        socketTimeoutMS=30000,
     )
-    db = client[args.db_name]
-    collection = db[args.collection]
-
-    query = parse_query_json(args.query_json)
-    cursor = collection.find(query)
-
-    if args.limit and args.limit > 0:
-        cursor = cursor.limit(args.limit)
-
-    records = list(cursor)
-    client.close()
-    return records
-
-
-def update_doc_image_fields(collection, doc_id, ref: ImageRef, normalize_result: dict[str, Any]) -> bool:
-    clean_webp = normalize_result.get("cleanWebpUrl") or ""
-    clean_png = normalize_result.get("cleanPngUrl") or ""
-    if not clean_webp and not clean_png:
-        return False
-
-    normalized_url = clean_webp or clean_png
-
-    if not ref.path:
-        update = {
-            "$set": {
-                "sourceImageUrl": ref.source_url,
-                "normalizedImageUrl": normalized_url,
-                "normalizedImagePngUrl": clean_png,
-                "imageBackgroundRemoved": True,
-                "imageProcessingMethod": "rembg",
-                "imageSourceKey": ref.source_key,
-                "imageProcessedAt": datetime.now(timezone.utc),
-            }
-        }
-        collection.update_one({"_id": doc_id}, update)
-        return True
-
-    if ref.path.startswith("colors."):
-        index = int(ref.path.split(".")[1])
-        doc = collection.find_one({"_id": doc_id}, {"colors": 1})
-        colors = list(doc.get("colors") or []) if doc else []
-        if index >= len(colors) or not isinstance(colors[index], dict):
-            return False
-        entry = dict(colors[index])
-        entry["sourceImageUrl"] = ref.source_url
-        entry["normalizedImageUrl"] = normalized_url
-        entry["normalizedImagePngUrl"] = clean_png
-        entry["imageBackgroundRemoved"] = True
-        entry["imageProcessingMethod"] = "rembg"
-        entry["imageSourceKey"] = ref.source_key
-        entry["imageProcessedAt"] = datetime.now(timezone.utc)
-        colors[index] = entry
-        collection.update_one({"_id": doc_id}, {"$set": {"colors": colors}})
-        return True
-
-    if ref.path.startswith("variants."):
-        index = int(ref.path.split(".")[1])
-        doc = collection.find_one({"_id": doc_id}, {"variants": 1})
-        variants = list(doc.get("variants") or []) if doc else []
-        if index >= len(variants) or not isinstance(variants[index], dict):
-            return False
-        entry = dict(variants[index])
-        entry["sourceImageUrl"] = ref.source_url
-        entry["normalizedImageUrl"] = normalized_url
-        entry["normalizedImagePngUrl"] = clean_png
-        entry["imageBackgroundRemoved"] = True
-        entry["imageProcessingMethod"] = "rembg"
-        entry["imageSourceKey"] = ref.source_key
-        entry["imageProcessedAt"] = datetime.now(timezone.utc)
-        variants[index] = entry
-        collection.update_one({"_id": doc_id}, {"$set": {"variants": variants}})
-        return True
-
-    return False
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Bulk normalize vehicle images")
-    parser.add_argument("--mongo-uri", default=os.getenv("MONGO_URI", ""))
-    parser.add_argument("--db-name", default=os.getenv("MONGO_DB_NAME", "cdrive"))
-    parser.add_argument("--collection", default="vehicles")
-    parser.add_argument("--query-json", default="{}")
-    parser.add_argument("--input-manifest", default="")
-    parser.add_argument("--out-dir", default="../../public/media/car-images/normalized")
-    parser.add_argument("--public-url-prefix", default="/media/car-images/normalized")
-    parser.add_argument("--limit", type=int, default=0)
-    parser.add_argument("--skip-existing", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    parser.add_argument("--model", default="u2netp", choices=["u2netp", "u2net", "isnet-general-use"])
-    parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--preview", action="store_true")
-    parser.add_argument("--keep-raw", action="store_true")
-    return parser
 
 
 def main() -> None:
-    parser = build_parser()
+    parser = argparse.ArgumentParser(description="Bulk normalize car images and write URLs back to MongoDB")
+
+    parser.add_argument("--mongo-uri", default=os.environ.get("MONGO_URI"), help="MongoDB URI")
+    parser.add_argument("--db-name", required=True, help="MongoDB database name")
+    parser.add_argument("--collection", default="vehicles", help="MongoDB collection name")
+    parser.add_argument("--query-json", default="{}", help="Mongo query JSON")
+    parser.add_argument("--limit", type=int, default=0, help="Limit image URL entries, 0 means no limit")
+    parser.add_argument("--dry-run", action="store_true", help="Discover planned updates but do not write files or DB")
+    parser.add_argument("--force", action="store_true", help="Reprocess existing images")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip entries that already have staged/normalized image")
+    parser.add_argument("--workers", type=int, default=1, help="Keep 1 by default; rembg is memory heavy")
+
+    parser.add_argument("--out-dir", default="../../public/media/car-images/normalized", help="Output directory")
+    parser.add_argument("--public-url-prefix", default="/media/car-images/normalized", help="Public URL prefix")
+    parser.add_argument("--mode", default="auto", choices=["auto", "stage-only", "cutout"])
+    parser.add_argument(
+        "--model",
+        default="isnet-general-use",
+        choices=["birefnet-general", "birefnet-general-lite", "isnet-general-use", "u2net", "u2netp"],
+    )
+    parser.add_argument("--max-width", type=int, default=2200)
+    parser.add_argument("--canvas-ratio", default="16:9")
+    parser.add_argument("--preview", action="store_true")
+    parser.add_argument("--keep-raw", action="store_true")
+    parser.add_argument("--allow-fallback-cutout", action="store_true")
+    parser.add_argument("--manifest", default=None, help="JSONL manifest path")
+
     args = parser.parse_args()
 
-    out_dir = (SCRIPT_DIR / args.out_dir).resolve() if not Path(args.out_dir).is_absolute() else Path(args.out_dir)
+    if not args.mongo_uri:
+        raise SystemExit("Missing --mongo-uri or MONGO_URI environment variable")
+
+    query = safe_json_loads(args.query_json, None)
+
+    if not isinstance(query, dict):
+        raise SystemExit("Invalid --query-json. It must be a JSON object.")
+
+    out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    manifest_path = out_dir / "normalized-car-images.manifest.jsonl"
+    manifest_path = Path(args.manifest) if args.manifest else out_dir / "normalized-car-images.manifest.jsonl"
+    manifest_lock = threading.Lock()
 
-    if args.input_manifest:
-        records = read_manifest(Path(args.input_manifest).expanduser().resolve())
-        collection_name = "manifest"
-    else:
-        records = load_db_records(args)
-        collection_name = args.collection
+    client = build_mongo_client(args.mongo_uri)
+    db = client[args.db_name]
+    collection = db[args.collection]
 
-    refs: list[ImageRef] = []
-    for record in records:
-        refs.extend(discover_image_refs(record, collection_name))
+    print(f"DB: {args.db_name}.{args.collection}")
+    print(f"Query: {json.dumps(query, ensure_ascii=False)}")
+    print(f"Dry run: {args.dry_run}")
+    print(f"Force: {args.force}")
+    print(f"Mode: {args.mode}")
+    print(f"Model: {args.model}")
+    print(f"Output: {out_dir}")
+    print(f"Manifest: {manifest_path}")
 
-    by_key: dict[str, ImageRef] = {}
-    for ref in refs:
-        by_key.setdefault(ref.source_key, ref)
+    entries: list[ImageEntry] = []
 
-    unique_refs = list(by_key.values())
-    if args.limit and args.limit > 0:
-        unique_refs = unique_refs[: args.limit]
+    for doc in collection.find(query):
+        doc_id = doc.get("_id")
 
-    total = len(unique_refs)
-    processed = 0
-    skipped = 0
-    failed = 0
-    rembg_count = 0
-    fallback_count = 0
+        for entry in iter_image_entries_in_node(doc, doc, doc_id):
+            entries.append(entry)
 
-    collection = None
-    client = None
-    if not args.input_manifest and not args.dry_run:
-        import certifi
-        from pymongo import MongoClient
+            if args.limit and len(entries) >= args.limit:
+                break
 
-        client = MongoClient(
-            args.mongo_uri,
-            tls=True,
-            tlsCAFile=certifi.where(),
-            serverSelectionTimeoutMS=30000,
-        )
-        collection = client[args.db_name][args.collection]
+        if args.limit and len(entries) >= args.limit:
+            break
 
-    workers = max(1, min(int(args.workers or 1), 4))
+    if not entries:
+        print("No image URLs found.")
+        return
 
-    def run_one(index: int, ref: ImageRef):
-        record = {
-            "index": index,
-            "total": total,
-            "sourceKey": ref.source_key,
-            "sourceUrl": ref.source_url,
-            "slug": ref.slug,
-            "collection": ref.collection,
-            "docId": str(ref.doc_id),
-            "path": ref.path,
-            "label": ref.label,
-            "processedAt": now_iso(),
-        }
+    grouped: dict[str, list[ImageEntry]] = {}
 
-        if args.dry_run:
-            record.update({"status": "dry_run"})
-            return record
+    for entry in entries:
+        grouped.setdefault(entry.source_key, []).append(entry)
 
-        if args.skip_existing and collection is not None and ref.doc_id is not None:
-            doc = collection.find_one({"_id": ref.doc_id}, {"normalizedImageUrl": 1})
-            if doc and doc.get("normalizedImageUrl") and not args.force:
-                record.update({"status": "skipped", "reason": "db_has_normalized"})
-                return record
+    groups = list(grouped.items())
 
-        result = call_normalizer(
-            ref=ref,
-            out_dir=out_dir,
-            public_url_prefix=args.public_url_prefix,
-            model=args.model,
-            preview=args.preview,
-            keep_raw=args.keep_raw,
-            force=args.force,
-        )
-
-        if not result.get("ok"):
-            record.update({"status": "failed", "error": result.get("error", "unknown")})
-            return record
-
-        updated = False
-        if collection is not None and ref.doc_id is not None:
-            updated = update_doc_image_fields(collection, ref.doc_id, ref, result)
-
-        record.update(
-            {
-                "status": "processed",
-                "method": result.get("method"),
-                "cleanWebpUrl": result.get("cleanWebpUrl"),
-                "cleanPngUrl": result.get("cleanPngUrl"),
-                "updatedDb": bool(updated),
-                "skipped": bool(result.get("skipped")),
-            }
-        )
-        return record
-
-    with manifest_path.open("a", encoding="utf-8") as manifest_file:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(run_one, index + 1, ref): (index + 1, ref)
-                for index, ref in enumerate(unique_refs)
-            }
-
-            for future in as_completed(futures):
-                index, ref = futures[future]
-                try:
-                    result = future.result()
-                except Exception as exc:
-                    result = {
-                        "index": index,
-                        "total": total,
-                        "sourceKey": ref.source_key,
-                        "sourceUrl": ref.source_url,
-                        "slug": ref.slug,
-                        "status": "failed",
-                        "error": str(exc),
-                        "processedAt": now_iso(),
-                    }
-
-                manifest_file.write(json.dumps(result, ensure_ascii=False) + "\n")
-                manifest_file.flush()
-
-                status = result.get("status")
-                if status in {"processed", "dry_run"}:
-                    processed += 1
-                elif status == "skipped":
-                    skipped += 1
-                else:
-                    failed += 1
-
-                method = result.get("method", "")
-                if method == "rembg":
-                    rembg_count += 1
-                if method == "white-bg-fallback":
-                    fallback_count += 1
-
-                reason = result.get("reason") or result.get("error") or method or status
-                print(f"[{index}/{total}] {ref.slug} - {reason}")
-
-    if client is not None:
-        client.close()
+    print(f"Image URL entries found: {len(entries)}")
+    print(f"Unique source URLs: {len(groups)}")
 
     summary = {
-        "total": total,
-        "processed": processed,
-        "skipped": skipped,
-        "failed": failed,
-        "rembg": rembg_count,
-        "fallback": fallback_count,
-        "outputDir": str(out_dir),
-        "manifestPath": str(manifest_path),
+        "totalGroups": len(groups),
+        "processed": 0,
+        "skipped": 0,
+        "failed": 0,
+        "dryRun": 0,
+        "modifiedDocs": 0,
     }
 
+    max_workers = max(1, int(args.workers or 1))
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        total = len(groups)
+
+        for index, (source_key, group_entries) in enumerate(groups, start=1):
+            futures.append(
+                executor.submit(
+                    process_group,
+                    source_key=source_key,
+                    entries=group_entries,
+                    collection=collection,
+                    args=args,
+                    manifest_path=manifest_path,
+                    manifest_lock=manifest_lock,
+                    index=index,
+                    total=total,
+                )
+            )
+
+        for future in as_completed(futures):
+            result = future.result()
+
+            status = result.get("status")
+
+            if status == "processed":
+                summary["processed"] += 1
+                summary["modifiedDocs"] += int(result.get("modified") or 0)
+            elif status == "skipped":
+                summary["skipped"] += 1
+            elif status == "dry_run":
+                summary["dryRun"] += 1
+            elif status == "failed":
+                summary["failed"] += 1
+
+    print("\n===== SUMMARY =====")
     print(json.dumps(summary, indent=2, ensure_ascii=False))
+    print(f"Manifest: {manifest_path}")
 
 
 if __name__ == "__main__":
