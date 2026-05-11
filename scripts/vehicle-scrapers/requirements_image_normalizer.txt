@@ -1,0 +1,6 @@
+rembg[cpu,cli]
+pillow
+requests
+opencv-python
+numpy
+pymongo

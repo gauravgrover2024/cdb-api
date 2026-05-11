@@ -55,6 +55,12 @@ const VEHICLE_LIST_PROJECTION = {
   discontinuedDate: 1,
   image_url: 1,
   imageUrl: 1,
+  sourceImageUrl: 1,
+  normalizedImageUrl: 1,
+  cleanImageUrl: 1,
+  normalized_image_url: 1,
+  clean_image_url: 1,
+  normalizedImagePngUrl: 1,
   color_name: 1,
   color_hex: 1,
   hex: 1,
@@ -177,8 +183,16 @@ const toVehicleListItem = (doc) => {
     isDiscontinued: discontinued,
     discontinued_date: normalized.discontinued_date ?? null,
     discontinuedDate: normalized.discontinuedDate ?? null,
-    image_url: normalized.image_url || normalized.imageUrl || '',
-    imageUrl: normalized.imageUrl || normalized.image_url || '',
+    sourceImageUrl: normalized.sourceImageUrl || normalized.image_url || normalized.imageUrl || '',
+    normalizedImageUrl: normalized.normalizedImageUrl || '',
+    cleanImageUrl: normalized.cleanImageUrl || normalized.normalizedImageUrl || '',
+    image_url: normalized.image_url || normalized.sourceImageUrl || normalized.imageUrl || '',
+    imageUrl:
+      normalized.imageUrl ||
+      normalized.normalizedImageUrl ||
+      normalized.cleanImageUrl ||
+      normalized.image_url ||
+      '',
     color_name: normalized.color_name || '',
     color_hex: normalized.color_hex || normalized.hex || '',
     hex: normalized.hex || normalized.color_hex || '',
@@ -314,6 +328,20 @@ const dedupeMediaRowsByHexLatest = (rows = []) => {
   );
 };
 
+const resolveDisplayImageUrl = (row = {}) =>
+  String(
+    row.normalizedImageUrl ||
+      row.cleanImageUrl ||
+      row.normalized_image_url ||
+      row.clean_image_url ||
+      row.normalizedImagePngUrl ||
+      row.imageUrl ||
+      row.image_url ||
+      row.sourceImageUrl ||
+      row.car_image_url ||
+      '',
+  ).trim();
+
 const normalizeVehicleRecord = (doc) => {
   const raw = doc?.toObject ? doc.toObject() : { ...(doc || {}) };
   const pricing = normalizeVehiclePricing(raw);
@@ -327,6 +355,21 @@ const normalizeVehicleRecord = (doc) => {
     trimLeading(rawVariant, `${make} ${model}`.trim()) ||
     trimLeading(rawVariant, make) ||
     rawVariant;
+  const sourceImageUrl = String(
+    raw.sourceImageUrl || raw.image_url || raw.imageUrl || raw.car_image_url || '',
+  ).trim();
+  const normalizedImageUrl = String(
+    raw.normalizedImageUrl ||
+      raw.cleanImageUrl ||
+      raw.normalized_image_url ||
+      raw.clean_image_url ||
+      raw.normalizedImagePngUrl ||
+      '',
+  ).trim();
+  const imageUrl = resolveDisplayImageUrl({
+    normalizedImageUrl,
+    imageUrl: sourceImageUrl,
+  });
 
   return {
     ...raw,
@@ -351,6 +394,11 @@ const normalizeVehicleRecord = (doc) => {
     other_totalOtherCharges: pricing.otherCharges,
     optional_total: pricing.optionalTotal,
     optional_totalAccessories: pricing.optionalTotal,
+    sourceImageUrl,
+    normalizedImageUrl,
+    cleanImageUrl: normalizedImageUrl,
+    imageUrl,
+    image_url: sourceImageUrl,
     ...vehicleNormalizationFields({
       ...raw,
       brand: raw.brand || make,
@@ -1481,9 +1529,9 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
         matchesExact(doc.variant, variant),
     )
     .filter((doc) => {
-      const imageUrl = doc.image_url || doc.imageUrl || '';
-      if (!imageUrl) return true;
-      return mediaUrlMatchesMakeModel(imageUrl, make, model);
+      const sourceUrl = doc.sourceImageUrl || doc.image_url || doc.imageUrl || '';
+      if (!sourceUrl) return true;
+      return mediaUrlMatchesMakeModel(sourceUrl, make, model);
     })
     .sort((a, b) => String(a.color_name || '').localeCompare(String(b.color_name || '')));
 
@@ -1493,9 +1541,9 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
         .map((doc) => normalizeVehicleRecord(doc))
         .filter((doc) => matchesExact(doc.make, make) && matchesExact(doc.model, model))
         .filter((doc) => {
-          const imageUrl = doc.image_url || doc.imageUrl || '';
-          if (!imageUrl) return true;
-          return mediaUrlMatchesMakeModel(imageUrl, make, model);
+          const sourceUrl = doc.sourceImageUrl || doc.image_url || doc.imageUrl || '';
+          if (!sourceUrl) return true;
+          return mediaUrlMatchesMakeModel(sourceUrl, make, model);
         })
         .sort((a, b) => String(a.color_name || '').localeCompare(String(b.color_name || '')));
 

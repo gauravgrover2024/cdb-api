@@ -425,6 +425,20 @@ export const normalizeVehicleRow = (row = {}) => {
     row.status === "discontinued" ||
     row.active === false ||
     row.isActive === false;
+  const sourceImageUrl = firstMeaningful(
+    row.sourceImageUrl,
+    row.image_url,
+    row.imageUrl,
+    row.car_image_url,
+  );
+  const normalizedImageUrl = firstMeaningful(
+    row.normalizedImageUrl,
+    row.cleanImageUrl,
+    row.normalized_image_url,
+    row.clean_image_url,
+    row.normalizedImagePngUrl,
+  );
+  const imageUrl = firstMeaningful(normalizedImageUrl, sourceImageUrl);
 
   return compactObject({
     id: String(row._id || row.id || ""),
@@ -449,6 +463,11 @@ export const normalizeVehicleRow = (row = {}) => {
     variantNormalized: row.variant_normalized || "",
     modelNormalized: row.model_normalized || "",
     brandNormalized: row.brand_normalized || "",
+    sourceImageUrl,
+    normalizedImageUrl,
+    cleanImageUrl: normalizedImageUrl || "",
+    imageUrl,
+    image_url: sourceImageUrl || "",
     searchText: row.search_text || "",
     discontinued,
     active: !discontinued,

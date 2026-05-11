@@ -1,4 +1,19 @@
 import { runVehiclePricelistTool } from "./vehiclePricelist.tool.js";
+import {
+  runQuotationLeadTool,
+  runVehicleColorsTool,
+  runVehicleCompareTool,
+  runVehicleEmiTool,
+  runVehicleFeaturesTool,
+  runVehicleOffersTool,
+  runVehicleOverviewTool,
+  runVehicleOwnershipCostTool,
+  runVehiclePricelistNewCarsTool,
+  runVehicleRecommendationTool,
+  runVehicleSafetyRankingTool,
+  runVehicleSimilarTool,
+  runVehicleVariantAdvisorTool,
+} from "./newCars/index.js";
 
 /**
  * ACI Assist V2 tool registry.
@@ -9,6 +24,24 @@ import { runVehiclePricelistTool } from "./vehiclePricelist.tool.js";
 
 export const ACI_V2_TOOL_RUNNERS = {
   vehicle_pricelist: runVehiclePricelistTool,
+  vehicle_overview: runVehicleOverviewTool,
+  vehicle_colors: runVehicleColorsTool,
+  vehicle_similar: runVehicleSimilarTool,
+  vehicle_safety_ranking: runVehicleSafetyRankingTool,
+  vehicle_recommendation: runVehicleRecommendationTool,
+  vehicle_variant_advisor: runVehicleVariantAdvisorTool,
+  vehicle_compare: runVehicleCompareTool,
+  vehicle_emi: runVehicleEmiTool,
+  vehicle_features: runVehicleFeaturesTool,
+  vehicle_ownership_cost: runVehicleOwnershipCostTool,
+  vehicle_offers: runVehicleOffersTool,
+  quotation_lead: runQuotationLeadTool,
+
+  // Planner/runtime compatibility aliases.
+  vehicle_feature_lookup: runVehicleFeaturesTool,
+  vehicle_recommend: runVehicleRecommendationTool,
+  aci_lead_capture: runQuotationLeadTool,
+  vehicle_pricelist_v2: runVehiclePricelistNewCarsTool,
 };
 
 export const getAciV2ToolRunner = (tool = "") =>

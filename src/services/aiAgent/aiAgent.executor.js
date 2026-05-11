@@ -20,6 +20,7 @@ import {
 } from "./aiAgent.responseTools.js";
 
 import { sanitizeAiAgentResponse } from "./aiAgent.responseSanitizer.js";
+import { runAciV2Tool } from "./tools/index.js";
 
 /**
  * ACI Assist Executor
@@ -620,6 +621,11 @@ export const normalizeVehicleRow = (row = {}) => {
     brandNormalized: row.brand_normalized || "",
     searchText: row.search_text || "",
     imageUrl: firstMeaningful(
+      row.normalizedImageUrl,
+      row.cleanImageUrl,
+      row.normalized_image_url,
+      row.clean_image_url,
+      row.normalizedImagePngUrl,
       row.imageUrl,
       row.image_url,
       row.carImageUrl,
@@ -1211,6 +1217,11 @@ export const runtimeVehicleColors = async ({
         name,
         slug: searchKey(name).replace(/\s+/g, "-"),
         imageUrl: firstMeaningful(
+          row.normalizedImageUrl,
+          row.cleanImageUrl,
+          row.normalized_image_url,
+          row.clean_image_url,
+          row.normalizedImagePngUrl,
           row.image_url,
           row.imageUrl,
           row.car_image_url,
@@ -1634,6 +1645,15 @@ export const runtimeUsedCarPassthrough = async ({
   dataSource: "used_car_router",
 });
 
+export const runtimeModularTool = async (args = {}) =>
+  runAciV2Tool({
+    ...args,
+    runtimeHints: {
+      ...(args.runtimeHints || {}),
+      executorSource: "runtime_modular_tool",
+    },
+  });
+
 /* -------------------------------------------------------------------------- */
 /*  Runtime Tool Registry                                                     */
 /* -------------------------------------------------------------------------- */
@@ -1654,6 +1674,17 @@ export const ACI_RUNTIME_DATA_TOOLS = {
   clarification: runtimeClarification,
   unavailable: runtimeUnavailable,
   general_response: runtimeGeneralResponse,
+
+  // V2 scaffold tool routes (for upcoming modular newCars rollout).
+  vehicle_overview: runtimeModularTool,
+  vehicle_recommendation: runtimeModularTool,
+  vehicle_variant_advisor: runtimeModularTool,
+  vehicle_features: runtimeModularTool,
+  vehicle_ownership_cost: runtimeModularTool,
+  vehicle_offers: runtimeModularTool,
+  vehicle_similar: runtimeModularTool,
+  vehicle_safety_ranking: runtimeModularTool,
+  quotation_lead: runtimeModularTool,
 };
 
 export const getAciRuntimeDataTool = (tool = "") =>

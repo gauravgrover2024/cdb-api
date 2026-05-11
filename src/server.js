@@ -1,6 +1,8 @@
 import express from "express";
 import dotenv from "dotenv";
 import helmet from "helmet";
+import path from "path";
+import { fileURLToPath } from "url";
 import connectDB from "./config/db.js";
 
 import customerRoutes from "./routes/customerRoutes.js";
@@ -25,6 +27,8 @@ import { refreshVehicleHintsFromDb } from "./services/aiAgent/aiAgent.intentPars
 dotenv.config();
 
 const app = express();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const isAllowedOrigin = (origin = "") => {
   if (!origin) return true;
@@ -112,6 +116,7 @@ app.use("/api/insurance", insuranceRoutes);
 app.use("/api/used-cars", usedCarRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/ai-agent", aiAgentRoutes);
+app.use("/media", express.static(path.join(__dirname, "../public/media")));
 
 // Health check
 app.get("/", (req, res) => {
