@@ -224,12 +224,18 @@ def parse_query_json(query_json: str) -> dict[str, Any]:
 
 
 def load_db_records(args) -> list[dict[str, Any]]:
+    import certifi
     from pymongo import MongoClient
 
     if not args.mongo_uri:
         raise ValueError("--mongo-uri is required when --input-manifest is not used")
 
-    client = MongoClient(args.mongo_uri)
+    client = MongoClient(
+        args.mongo_uri,
+        tls=True,
+        tlsCAFile=certifi.where(),
+        serverSelectionTimeoutMS=30000,
+    )
     db = client[args.db_name]
     collection = db[args.collection]
 
@@ -364,9 +370,15 @@ def main() -> None:
     collection = None
     client = None
     if not args.input_manifest and not args.dry_run:
+        import certifi
         from pymongo import MongoClient
 
-        client = MongoClient(args.mongo_uri)
+        client = MongoClient(
+            args.mongo_uri,
+            tls=True,
+            tlsCAFile=certifi.where(),
+            serverSelectionTimeoutMS=30000,
+        )
         collection = client[args.db_name][args.collection]
 
     workers = max(1, min(int(args.workers or 1), 4))
