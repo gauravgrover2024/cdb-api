@@ -1853,7 +1853,9 @@ const parseAnalyticsRange = (query = {}) => {
   const range = String(query.range || "mtd").toLowerCase();
   let start;
 
-  if (range === "1m") {
+  if (range === "all") {
+    start = new Date(0);
+  } else if (range === "1m") {
     start = new Date(end);
     start.setMonth(start.getMonth() - 1);
   } else if (range === "3m") {
