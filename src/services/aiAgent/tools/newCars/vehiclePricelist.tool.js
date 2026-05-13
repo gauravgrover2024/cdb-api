@@ -358,6 +358,52 @@ const normalizeOtherItems = (row = {}) => {
     .filter((item) => item.label && item.value > 0);
 };
 
+const getExplicitRequestedMake = ({ toolPlan = {} } = {}) => {
+  const entities = getEntities(toolPlan);
+
+  return cleanVehicleText(
+    first(
+      entities.make,
+      entities.brand,
+      entities.manufacturer,
+      toolPlan.make,
+      toolPlan.brand,
+      toolPlan.input?.make,
+      toolPlan.input?.brand,
+    ),
+  );
+};
+
+const resolveContextSafeRequestedMake = ({
+  rawRequestedMake = "",
+  requestedModel = "",
+  toolPlan = {},
+  context = {},
+} = {}) => {
+  const explicitMake = getExplicitRequestedMake({ toolPlan });
+  if (explicitMake) return explicitMake;
+
+  const selectedVehicle = context.selectedVehicle || {};
+  const contextModel = cleanVehicleText(
+    first(selectedVehicle.model, context.anchorModel, context.model),
+  );
+
+  const requestedModelKey = normalizeKey(requestedModel);
+  const contextModelKey = normalizeKey(contextModel);
+
+  // User has moved from Seltos to Safari, Verna to X5, etc.
+  // Do not carry old selectedVehicle.make into the new model query.
+  if (
+    requestedModelKey &&
+    contextModelKey &&
+    requestedModelKey !== contextModelKey
+  ) {
+    return "";
+  }
+
+  return cleanVehicleText(rawRequestedMake);
+};
+
 const normalizePriceRow = (row = {}, index = 0) => {
   const raw = row.raw || row;
 
@@ -1161,12 +1207,71 @@ const deepTextValues = (value, depth = 0, output = []) => {
   return output;
 };
 
-const findFeatureValueByKey = (row = {}, patterns = []) => {
-  const queue = [row];
+const primitiveText = (value = "") => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string" || typeof value === "number") {
+    return cleanText(value);
+  }
+  return "";
+};
+
+const objectLabel = (object = {}) =>
+  cleanText(
+    first(
+      object.label,
+      object.name,
+      object.title,
+      object.key,
+      object.feature,
+      object.featureName,
+      object.spec,
+      object.specName,
+      object.heading,
+    ),
+  );
+
+const objectValue = (object = {}) =>
+  cleanText(
+    first(
+      object.value,
+      object.text,
+      object.description,
+      object.specValue,
+      object.featureValue,
+      object.displayValue,
+      object.answer,
+      object.option,
+    ),
+  );
+
+const collectPrimitiveText = (value, depth = 0, output = []) => {
+  if (value === null || value === undefined || depth > 6) return output;
+
+  if (typeof value === "string" || typeof value === "number") {
+    const text = cleanText(value);
+    if (text) output.push(text);
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectPrimitiveText(item, depth + 1, output));
+    return output;
+  }
+
+  if (typeof value === "object") {
+    Object.values(value).forEach((child) =>
+      collectPrimitiveText(child, depth + 1, output),
+    );
+  }
+
+  return output;
+};
+
+const findFeatureValueByLabel = (source = {}, patterns = []) => {
+  const queue = [source];
 
   while (queue.length) {
     const current = queue.shift();
-
     if (!current || typeof current !== "object") continue;
 
     if (Array.isArray(current)) {
@@ -1174,20 +1279,33 @@ const findFeatureValueByKey = (row = {}, patterns = []) => {
       continue;
     }
 
+    const label = objectLabel(current).toLowerCase();
+
+    if (label && patterns.some((pattern) => pattern.test(label))) {
+      const directValue = objectValue(current);
+      if (directValue) return directValue;
+
+      const nestedValue = collectPrimitiveText(current)
+        .filter((item) => normalizeKey(item) !== normalizeKey(label))
+        .join(" ");
+
+      if (nestedValue) return nestedValue;
+    }
+
     for (const [key, value] of Object.entries(current)) {
-      const cleanKey = cleanText(key).toLowerCase();
+      const keyText = cleanText(key).toLowerCase();
 
-      if (patterns.some((pattern) => pattern.test(cleanKey))) {
-        if (typeof value === "string" || typeof value === "number") {
-          const direct = cleanText(value);
-          if (direct) return direct;
-        }
+      if (patterns.some((pattern) => pattern.test(keyText))) {
+        const direct = primitiveText(value);
+        if (direct) return direct;
 
-        const nested = deepTextValues(value).join(" ");
+        const nested = collectPrimitiveText(value).join(" ");
         if (nested) return nested;
       }
 
-      if (value && typeof value === "object") queue.push(value);
+      if (value && typeof value === "object") {
+        queue.push(value);
+      }
     }
   }
 
@@ -1217,15 +1335,15 @@ const normalizeTransmissionValue = (value = "") => {
   if (/\bcvt\b/.test(text)) return "CVT";
   if (/\bamt\b/.test(text)) return "AMT";
 
-  if (
-    /\bautomatic\b/.test(text) ||
-    /\bauto\b/.test(text) ||
-    /\bat\b/.test(text)
-  ) {
+  if (/\bautomatic\b/.test(text) || /\bauto\b/.test(text)) {
     return "Automatic";
   }
 
-  if (/\bmanual\b/.test(text) || /\bmt\b/.test(text)) return "Manual";
+  if (/\bmanual\b/.test(text)) return "Manual";
+
+  // Only use AT/MT when they appear as proper tokens, not inside words.
+  if (/(^|\s|\W)at($|\s|\W)/i.test(value)) return "Automatic";
+  if (/(^|\s|\W)mt($|\s|\W)/i.test(value)) return "Manual";
 
   return "";
 };
@@ -1239,72 +1357,44 @@ const buildFeatureVariantKey = ({ variant = "", make = "", model = "" } = {}) =>
   );
 
 const getBestVariantMeta = (metaMap = new Map(), row = {}) => {
+  if (!metaMap.size) return null;
+
   const rowKey = normalizeKey(row.variant || row.variantName || "");
-  if (!rowKey || !metaMap.size) return null;
+  if (!rowKey) return null;
 
-  if (metaMap.has(rowKey)) return metaMap.get(rowKey);
-
-  const candidates = [...metaMap.entries()]
-    .filter(([key]) => {
-      if (!key) return false;
-      return key.includes(rowKey) || rowKey.includes(key);
-    })
-    .sort((a, b) => {
-      const aHasBoth = Number(Boolean(a[1]?.fuel && a[1]?.transmission));
-      const bHasBoth = Number(Boolean(b[1]?.fuel && b[1]?.transmission));
-
-      if (aHasBoth !== bHasBoth) return bHasBoth - aHasBoth;
-
-      return (
-        Math.abs(a[0].length - rowKey.length) -
-        Math.abs(b[0].length - rowKey.length)
-      );
-    });
-
-  return candidates[0]?.[1] || null;
+  // Important: exact only.
+  // No includes/fuzzy matching, otherwise Safari manual rows can inherit
+  // automatic from a different variant.
+  return metaMap.get(rowKey) || null;
 };
 
 const extractFuelTransmissionFromFeatureRow = (row = {}) => {
-  const directFuel = findFeatureValueByKey(row, [
-    /fuel/,
-    /fueltype/,
-    /engine.*type/,
-  ]);
+  const fuelText =
+    findFeatureValueByLabel(row, [/^fuel$/, /fuel\s*type/, /engine\s*type/]) ||
+    row.fuel ||
+    row.fuelType ||
+    row.fuel_type ||
+    row.engineType ||
+    row.engine_type ||
+    "";
 
-  const directTransmission = findFeatureValueByKey(row, [
-    /transmission/,
-    /gearbox/,
-    /gear\s*box/,
-  ]);
+  const transmissionText =
+    findFeatureValueByLabel(row, [
+      /^transmission$/,
+      /transmission\s*type/,
+      /^gearbox$/,
+      /gear\s*box/,
+    ]) ||
+    row.transmission ||
+    row.transmissionType ||
+    row.transmission_type ||
+    row.gearbox ||
+    "";
 
-  const fullText = [directFuel, directTransmission, ...deepTextValues(row)]
-    .filter(Boolean)
-    .join(" ");
-
-  const fuel =
-    normalizeFuelValue(directFuel) ||
-    normalizeFuelValue(fullText) ||
-    normalizeFuelValue(
-      row.fuel ||
-        row.fuelType ||
-        row.fuel_type ||
-        row.engineType ||
-        row.engine_type ||
-        "",
-    );
-
-  const transmission =
-    normalizeTransmissionValue(directTransmission) ||
-    normalizeTransmissionValue(fullText) ||
-    normalizeTransmissionValue(
-      row.transmission ||
-        row.transmissionType ||
-        row.transmission_type ||
-        row.gearbox ||
-        "",
-    );
-
-  return { fuel, transmission };
+  return {
+    fuel: normalizeFuelValue(fuelText),
+    transmission: normalizeTransmissionValue(transmissionText),
+  };
 };
 
 const resolveVariantFeatureMeta = async ({
@@ -1367,6 +1457,10 @@ const resolveVariantFeatureMeta = async ({
       featureRow.raw?.variant_name,
     ].filter(Boolean);
 
+    const meta = extractFuelTransmissionFromFeatureRow(featureRow);
+
+    if (!meta.fuel && !meta.transmission) continue;
+
     for (const variantCandidate of variantCandidates) {
       const variantKey = buildFeatureVariantKey({
         variant: variantCandidate,
@@ -1375,9 +1469,6 @@ const resolveVariantFeatureMeta = async ({
       });
 
       if (!variantKey) continue;
-
-      const meta = extractFuelTransmissionFromFeatureRow(featureRow);
-      if (!meta.fuel && !meta.transmission) continue;
 
       const previous = byVariant.get(variantKey) || {};
 
@@ -1412,6 +1503,7 @@ const enrichRowsWithFeatureMeta = async ({
 
     const existingFuel =
       cleanText(row.fuel) && row.fuel !== "N.A." ? row.fuel : "";
+
     const existingTransmission =
       cleanText(row.transmission) && row.transmission !== "N.A."
         ? row.transmission
@@ -1439,8 +1531,14 @@ const enrichRowsWithFeatureMeta = async ({
 export const runVehiclePricelistNewCarsTool = async (args = {}) => {
   const { toolPlan = {}, context = {}, userMessage = "" } = args;
 
-  const requestedMake = getRequestedMake(args);
+  const rawRequestedMake = getRequestedMake(args);
   const requestedModel = getRequestedModel(args);
+  const requestedMake = resolveContextSafeRequestedMake({
+    rawRequestedMake,
+    requestedModel,
+    toolPlan,
+    context,
+  });
   const rawRequestedVariant = getRequestedVariant(args);
   const requestedVariant = sanitizeRequestedVariant(rawRequestedVariant, {
     requestedModel,
