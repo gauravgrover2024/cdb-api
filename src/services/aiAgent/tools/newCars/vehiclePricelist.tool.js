@@ -882,6 +882,560 @@ const fetchVehiclePricelistRowsFromVehicles = async ({
 };
 
 
+
+const exactRequestedModelRows = ({
+  rows = [],
+  requestedModel = "",
+  userMessage = "",
+} = {}) => {
+  const list = Array.isArray(rows) ? rows : [];
+  const requestedClean = cleanVehicleText(requestedModel);
+  const requestedKey = normalizeKey(requestedClean);
+  const text = `${requestedModel} ${userMessage}`;
+
+  if (!requestedKey || !list.length) return list;
+
+  const explicitTour = explicitTourRequest(text);
+  const explicitNLine = explicitNLineRequest(text);
+
+  const exactRows = list.filter((row) => {
+    const rowModel =
+      row.model ||
+      row.model_normalized ||
+      row.modelNormalized ||
+      row.rawModel ||
+      row.displayName ||
+      "";
+
+    const rowKey = normalizeKey(cleanVehicleText(rowModel));
+
+    if (!rowKey) return false;
+
+    // Exact requested model should always win.
+    if (rowKey === requestedKey) return true;
+
+    // If user did not explicitly ask for Tour/N-Line, do not allow those
+    // special-series rows to become the selected model.
+    if (!explicitTour && rowKey === `${requestedKey}tour`) return false;
+    if (!explicitNLine && rowKey === `${requestedKey}nline`) return false;
+
+    return false;
+  });
+
+  // If exact rows exist, use them. If not, preserve existing fuzzy behavior
+  // so we don't accidentally break imperfect DB naming for other models.
+  return exactRows.length ? exactRows : list;
+};
+
+
+
+
+const explicitTourRequest = (value = "") =>
+  /\btour\b/i.test(String(value || ""));
+
+const preferExactRequestedModelRows = ({
+  rows = [],
+  requestedModel = "",
+  userMessage = "",
+} = {}) => {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return list;
+
+  const requestedClean = cleanVehicleText(requestedModel);
+  const requestedKey = normalizeKey(requestedClean);
+  if (!requestedKey) return list;
+
+  const text = `${requestedClean} ${userMessage}`;
+  const userAskedTour = explicitTourRequest(text);
+  const userAskedNLine = explicitNLineRequest(text);
+
+  const rowModelKey = (row = {}) =>
+    normalizeKey(
+      cleanVehicleText(
+        row.model ||
+          row.modelName ||
+          row.model_normalized ||
+          row.modelNormalized ||
+          "",
+      ),
+    );
+
+  // Best case: exact model rows exist. Use them.
+  const exactRows = list.filter((row) => rowModelKey(row) === requestedKey);
+  if (exactRows.length) return exactRows;
+
+  // Safety: for base-model requests, remove obvious special-series rows,
+  // but only if that still leaves rows.
+  const filtered = list.filter((row) => {
+    const key = rowModelKey(row);
+    if (!key) return true;
+
+    if (!userAskedTour && key === `${requestedKey}tour`) return false;
+    if (!userAskedNLine && key === `${requestedKey}nline`) return false;
+
+    return true;
+  });
+
+  return filtered.length ? filtered : list;
+};
+
+const pickVehicleImageUrl = (row = {}) =>
+  cleanText(
+    row.normalizedImageUrl ||
+      row.cleanImageUrl ||
+      row.normalized_image_url ||
+      row.clean_image_url ||
+      row.normalizedImagePngUrl ||
+      row.stagedImageUrl ||
+      row.sourceImageUrl ||
+      row.imageUrl ||
+      row.image_url ||
+      row.car_image_url ||
+      row.colorImage ||
+      row.color_image ||
+      row.swatchImage ||
+      row.url ||
+      row.src ||
+      "",
+  );
+
+const normalizeVisualColorRow = (row = {}, index = 0) => {
+  const imageUrl = pickVehicleImageUrl(row);
+  if (!imageUrl) return null;
+
+  const colorName = cleanText(
+    row.color_name ||
+      row.colorName ||
+      row.name ||
+      row.label ||
+      row.desktopName ||
+      row.mobileName ||
+      `Color ${index + 1}`,
+  );
+
+  return {
+    id: cleanText(row._id || row.id || `${colorName}-${index}`),
+    colorName,
+    name: colorName,
+    hex:
+      cleanText(
+        row.color_hex || row.colorHex || row.hex || row.hexCode || "",
+      ) || "",
+    imageUrl,
+    normalizedImageUrl:
+      cleanText(
+        row.normalizedImageUrl ||
+          row.cleanImageUrl ||
+          row.normalized_image_url ||
+          row.clean_image_url ||
+          row.normalizedImagePngUrl ||
+          imageUrl,
+      ) || imageUrl,
+    sourceImageUrl: cleanText(
+      row.sourceImageUrl || row.image_url || row.imageUrl || "",
+    ),
+  };
+};
+
+const sampleVehicleColorImages = async ({
+  make = "",
+  model = "",
+  limit = 8,
+} = {}) => {
+  if (!mongoose.connection?.db) return [];
+
+  const cleanMake = cleanVehicleText(make);
+  const cleanModel = cleanVehicleText(model);
+  if (!cleanModel) return [];
+
+  const modelRegex = buildModelRegex(cleanModel, cleanModel);
+  const makeRegex = cleanMake ? looseWordsRegex(cleanMake) : null;
+
+  const modelOr = [
+    { model: modelRegex },
+    { modelName: modelRegex },
+    { model_name: modelRegex },
+    { model_normalized: modelRegex },
+    { modelNormalized: modelRegex },
+  ];
+
+  const makeOr = makeRegex
+    ? [{ brand: makeRegex }, { make: makeRegex }, { brandName: makeRegex }]
+    : [];
+
+  const query = {
+    $and: [
+      { $or: modelOr },
+      ...(makeOr.length ? [{ $or: makeOr }] : []),
+      {
+        $or: [
+          { normalizedImageUrl: { $exists: true, $ne: "" } },
+          { cleanImageUrl: { $exists: true, $ne: "" } },
+          { normalized_image_url: { $exists: true, $ne: "" } },
+          { clean_image_url: { $exists: true, $ne: "" } },
+          { normalizedImagePngUrl: { $exists: true, $ne: "" } },
+          { image_url: { $exists: true, $ne: "" } },
+          { imageUrl: { $exists: true, $ne: "" } },
+        ],
+      },
+    ],
+  };
+
+  try {
+    const rows = await mongoose.connection.db
+      .collection("vehicle_colors")
+      .aggregate([
+        { $match: query },
+        { $sample: { size: Math.max(1, limit) } },
+        {
+          $project: {
+            brand: 1,
+            make: 1,
+            model: 1,
+            modelName: 1,
+            model_name: 1,
+            model_normalized: 1,
+            color_name: 1,
+            colorName: 1,
+            name: 1,
+            label: 1,
+            desktopName: 1,
+            mobileName: 1,
+            color_hex: 1,
+            colorHex: 1,
+            hex: 1,
+            hexCode: 1,
+            normalizedImageUrl: 1,
+            cleanImageUrl: 1,
+            normalized_image_url: 1,
+            clean_image_url: 1,
+            normalizedImagePngUrl: 1,
+            stagedImageUrl: 1,
+            sourceImageUrl: 1,
+            image_url: 1,
+            imageUrl: 1,
+          },
+        },
+      ])
+      .toArray();
+
+    return rows
+      .map(normalizeVisualColorRow)
+      .filter(Boolean)
+      .filter((item, index, list) => {
+        const key = `${item.colorName.toLowerCase()}|${item.imageUrl}`;
+        return (
+          list.findIndex(
+            (entry) =>
+              `${entry.colorName.toLowerCase()}|${entry.imageUrl}` === key,
+          ) === index
+        );
+      });
+  } catch {
+    return [];
+  }
+};
+
+const deepTextValues = (value, depth = 0, output = []) => {
+  if (value === null || value === undefined || depth > 8) return output;
+
+  if (typeof value === "string" || typeof value === "number") {
+    const text = cleanText(value);
+    if (text) output.push(text);
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => deepTextValues(item, depth + 1, output));
+    return output;
+  }
+
+  if (typeof value === "object") {
+    Object.entries(value).forEach(([key, child]) => {
+      const cleanKey = cleanText(key);
+      if (cleanKey) output.push(cleanKey);
+      deepTextValues(child, depth + 1, output);
+    });
+  }
+
+  return output;
+};
+
+const findFeatureValueByKey = (row = {}, patterns = []) => {
+  const queue = [row];
+
+  while (queue.length) {
+    const current = queue.shift();
+
+    if (!current || typeof current !== "object") continue;
+
+    if (Array.isArray(current)) {
+      queue.push(...current);
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(current)) {
+      const cleanKey = cleanText(key).toLowerCase();
+
+      if (patterns.some((pattern) => pattern.test(cleanKey))) {
+        if (typeof value === "string" || typeof value === "number") {
+          const direct = cleanText(value);
+          if (direct) return direct;
+        }
+
+        const nested = deepTextValues(value).join(" ");
+        if (nested) return nested;
+      }
+
+      if (value && typeof value === "object") queue.push(value);
+    }
+  }
+
+  return "";
+};
+
+const normalizeFuelValue = (value = "") => {
+  const text = cleanText(value).toLowerCase();
+
+  if (!text) return "";
+  if (/\bdiesel\b/.test(text)) return "Diesel";
+  if (/\bpetrol\b/.test(text)) return "Petrol";
+  if (/\bcng\b/.test(text)) return "CNG";
+  if (/\bhybrid\b/.test(text)) return "Hybrid";
+  if (/\belectric\b|\bev\b/.test(text)) return "Electric";
+
+  return "";
+};
+
+const normalizeTransmissionValue = (value = "") => {
+  const text = cleanText(value).toLowerCase();
+
+  if (!text) return "";
+
+  if (/\bdct\b/.test(text)) return "DCT";
+  if (/\bivt\b/.test(text)) return "IVT";
+  if (/\bcvt\b/.test(text)) return "CVT";
+  if (/\bamt\b/.test(text)) return "AMT";
+
+  if (
+    /\bautomatic\b/.test(text) ||
+    /\bauto\b/.test(text) ||
+    /\bat\b/.test(text)
+  ) {
+    return "Automatic";
+  }
+
+  if (/\bmanual\b/.test(text) || /\bmt\b/.test(text)) return "Manual";
+
+  return "";
+};
+
+const buildFeatureVariantKey = ({ variant = "", make = "", model = "" } = {}) =>
+  normalizeKey(
+    stripVehicleNameFromVariant(variant, {
+      make,
+      model,
+    }) || variant,
+  );
+
+const getBestVariantMeta = (metaMap = new Map(), row = {}) => {
+  const rowKey = normalizeKey(row.variant || row.variantName || "");
+  if (!rowKey || !metaMap.size) return null;
+
+  if (metaMap.has(rowKey)) return metaMap.get(rowKey);
+
+  const candidates = [...metaMap.entries()]
+    .filter(([key]) => {
+      if (!key) return false;
+      return key.includes(rowKey) || rowKey.includes(key);
+    })
+    .sort((a, b) => {
+      const aHasBoth = Number(Boolean(a[1]?.fuel && a[1]?.transmission));
+      const bHasBoth = Number(Boolean(b[1]?.fuel && b[1]?.transmission));
+
+      if (aHasBoth !== bHasBoth) return bHasBoth - aHasBoth;
+
+      return (
+        Math.abs(a[0].length - rowKey.length) -
+        Math.abs(b[0].length - rowKey.length)
+      );
+    });
+
+  return candidates[0]?.[1] || null;
+};
+
+const extractFuelTransmissionFromFeatureRow = (row = {}) => {
+  const directFuel = findFeatureValueByKey(row, [
+    /fuel/,
+    /fueltype/,
+    /engine.*type/,
+  ]);
+
+  const directTransmission = findFeatureValueByKey(row, [
+    /transmission/,
+    /gearbox/,
+    /gear\s*box/,
+  ]);
+
+  const fullText = [directFuel, directTransmission, ...deepTextValues(row)]
+    .filter(Boolean)
+    .join(" ");
+
+  const fuel =
+    normalizeFuelValue(directFuel) ||
+    normalizeFuelValue(fullText) ||
+    normalizeFuelValue(
+      row.fuel ||
+        row.fuelType ||
+        row.fuel_type ||
+        row.engineType ||
+        row.engine_type ||
+        "",
+    );
+
+  const transmission =
+    normalizeTransmissionValue(directTransmission) ||
+    normalizeTransmissionValue(fullText) ||
+    normalizeTransmissionValue(
+      row.transmission ||
+        row.transmissionType ||
+        row.transmission_type ||
+        row.gearbox ||
+        "",
+    );
+
+  return { fuel, transmission };
+};
+
+const resolveVariantFeatureMeta = async ({
+  make = "",
+  model = "",
+  rows = [],
+} = {}) => {
+  if (!mongoose.connection?.db || !Array.isArray(rows) || !rows.length) {
+    return new Map();
+  }
+
+  const cleanMake = cleanVehicleText(make);
+  const cleanModel = cleanVehicleText(model);
+
+  if (!cleanModel) return new Map();
+
+  const modelRegex = buildModelRegex(cleanModel, cleanModel);
+  const makeRegex = cleanMake ? looseWordsRegex(cleanMake) : null;
+
+  const modelOr = [
+    { model: modelRegex },
+    { modelName: modelRegex },
+    { model_name: modelRegex },
+    { model_normalized: modelRegex },
+    { modelNormalized: modelRegex },
+  ];
+
+  const makeOr = makeRegex
+    ? [{ brand: makeRegex }, { make: makeRegex }, { brandName: makeRegex }]
+    : [];
+
+  const query = {
+    $and: [{ $or: modelOr }, ...(makeOr.length ? [{ $or: makeOr }] : [])],
+  };
+
+  let featureRows = [];
+
+  try {
+    featureRows = await mongoose.connection.db
+      .collection("vehicle_features")
+      .find(query)
+      .limit(1200)
+      .toArray();
+  } catch {
+    featureRows = [];
+  }
+
+  const byVariant = new Map();
+
+  for (const featureRow of featureRows) {
+    const variantCandidates = [
+      featureRow.variant,
+      featureRow.variantName,
+      featureRow.variant_name,
+      featureRow.name,
+      featureRow.title,
+      featureRow.rawVariant,
+      featureRow.raw?.variant,
+      featureRow.raw?.variantName,
+      featureRow.raw?.variant_name,
+    ].filter(Boolean);
+
+    for (const variantCandidate of variantCandidates) {
+      const variantKey = buildFeatureVariantKey({
+        variant: variantCandidate,
+        make: cleanMake,
+        model: cleanModel,
+      });
+
+      if (!variantKey) continue;
+
+      const meta = extractFuelTransmissionFromFeatureRow(featureRow);
+      if (!meta.fuel && !meta.transmission) continue;
+
+      const previous = byVariant.get(variantKey) || {};
+
+      byVariant.set(variantKey, {
+        fuel: previous.fuel || meta.fuel,
+        transmission: previous.transmission || meta.transmission,
+      });
+    }
+  }
+
+  return byVariant;
+};
+
+const enrichRowsWithFeatureMeta = async ({
+  rows = [],
+  make = "",
+  model = "",
+} = {}) => {
+  const list = Array.isArray(rows) ? rows : [];
+
+  if (!list.length) return list;
+
+  const metaMap = await resolveVariantFeatureMeta({
+    make,
+    model,
+    rows: list,
+  });
+
+  return list.map((row) => {
+    const featureMeta = getBestVariantMeta(metaMap, row) || {};
+    const rowMeta = extractFuelTransmissionFromFeatureRow(row);
+
+    const existingFuel =
+      cleanText(row.fuel) && row.fuel !== "N.A." ? row.fuel : "";
+    const existingTransmission =
+      cleanText(row.transmission) && row.transmission !== "N.A."
+        ? row.transmission
+        : "";
+
+    const fuel = existingFuel || featureMeta.fuel || rowMeta.fuel || "";
+
+    const transmission =
+      existingTransmission ||
+      featureMeta.transmission ||
+      rowMeta.transmission ||
+      "";
+
+    return {
+      ...row,
+      fuel,
+      fuelType: row.fuelType || fuel,
+      transmission,
+      transmissionType: row.transmissionType || transmission,
+      fuelTransmission: [fuel, transmission].filter(Boolean).join(" · "),
+    };
+  });
+};
+
 export const runVehiclePricelistNewCarsTool = async (args = {}) => {
   const { toolPlan = {}, context = {}, userMessage = "" } = args;
 
@@ -931,11 +1485,72 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     userMessage,
   });
 
+  rows = preferExactRequestedModelRows({
+    rows,
+    requestedModel,
+    userMessage,
+  });
+
   const softAlternatives = buildSoftAlternatives({
     requestedModel,
     requestedMake,
     userMessage,
   });
+
+    let visualGallery = [];
+    let selectedVisual = null;
+    let resolvedImageUrl = "";
+
+    if (rows.length) {
+      visualGallery = await sampleVehicleColorImages({
+        make: rows[0]?.make || rows[0]?.brand || requestedMake,
+        model: rows[0]?.model || requestedModel,
+        limit: 8,
+      });
+
+      selectedVisual = visualGallery[0] || null;
+      resolvedImageUrl =
+        selectedVisual?.imageUrl || selectedVisual?.normalizedImageUrl || "";
+
+      rows = await enrichRowsWithFeatureMeta({
+        rows,
+        make: rows[0]?.make || rows[0]?.brand || requestedMake,
+        model: rows[0]?.model || requestedModel,
+      });
+
+      if (resolvedImageUrl || visualGallery.length) {
+        rows = rows.map((row) => ({
+          ...row,
+          imageUrl: row.imageUrl || row.normalizedImageUrl || resolvedImageUrl,
+          normalizedImageUrl:
+            row.normalizedImageUrl || row.imageUrl || resolvedImageUrl,
+          colorName: row.colorName || selectedVisual?.colorName || "",
+          selectedColor: row.selectedColor || selectedVisual || null,
+          visualGallery,
+          vehicle: {
+            ...(row.vehicle || {}),
+            make: row.make,
+            brand: row.brand || row.make,
+            model: row.model,
+            displayName: row.displayName,
+            imageUrl:
+              row.vehicle?.imageUrl ||
+              row.imageUrl ||
+              row.normalizedImageUrl ||
+              resolvedImageUrl,
+            normalizedImageUrl:
+              row.vehicle?.normalizedImageUrl ||
+              row.normalizedImageUrl ||
+              row.imageUrl ||
+              resolvedImageUrl,
+            colorName:
+              row.vehicle?.colorName || selectedVisual?.colorName || "",
+            selectedColor: row.vehicle?.selectedColor || selectedVisual || null,
+            visualGallery,
+          },
+        }));
+      }
+    }
 
   const vehicle = buildVehicle({
     rows,
@@ -943,6 +1558,49 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     requestedModel,
     city: requestedCity,
   });
+
+  if (resolvedImageUrl || visualGallery.length) {
+    vehicle.imageUrl = vehicle.imageUrl || resolvedImageUrl;
+    vehicle.normalizedImageUrl = vehicle.normalizedImageUrl || resolvedImageUrl;
+    vehicle.colorName = vehicle.colorName || selectedVisual?.colorName || "";
+    vehicle.selectedColor = vehicle.selectedColor || selectedVisual || null;
+    vehicle.visualGallery = visualGallery;
+  }
+
+  
+
+  rows = await enrichRowsWithFeatureMeta({
+    rows,
+    make: rows[0]?.make || rows[0]?.brand || requestedMake,
+    model: rows[0]?.model || requestedModel,
+  });
+
+  if (resolvedImageUrl || visualGallery.length) {
+    rows = rows.map((row) => ({
+      ...row,
+      imageUrl: row.imageUrl || row.normalizedImageUrl || resolvedImageUrl,
+      normalizedImageUrl:
+        row.normalizedImageUrl || row.imageUrl || resolvedImageUrl,
+      colorName: row.colorName || selectedVisual?.colorName || "",
+      selectedColor: row.selectedColor || selectedVisual || null,
+      visualGallery,
+      vehicle: {
+        ...(row.vehicle || {}),
+        make: row.make,
+        brand: row.brand || row.make,
+        model: row.model,
+        displayName: row.displayName,
+        imageUrl: row.vehicle?.imageUrl || row.imageUrl || resolvedImageUrl,
+        normalizedImageUrl:
+          row.vehicle?.normalizedImageUrl ||
+          row.normalizedImageUrl ||
+          resolvedImageUrl,
+        colorName: row.vehicle?.colorName || selectedVisual?.colorName || "",
+        selectedColor: row.vehicle?.selectedColor || selectedVisual || null,
+        visualGallery,
+      },
+    }));
+  }
 
   const title = `${vehicle.displayName || buildVehicleDisplayName(requestedMake, requestedModel) || "Vehicle"} price list`;
   const subtitle = `${vehicle.city || displayCity(requestedCity)} · ${rows.length} variants · Ex-showroom`;
@@ -962,6 +1620,11 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
   const contextPatch = {
     selectedVehicle: {
       ...vehicle,
+      imageUrl: vehicle.imageUrl || resolvedImageUrl || "",
+      normalizedImageUrl: vehicle.normalizedImageUrl || resolvedImageUrl || "",
+      colorName: vehicle.colorName || selectedVisual?.colorName || "",
+      selectedColor: vehicle.selectedColor || selectedVisual || null,
+      visualGallery,
       variant: requestedVariant || "",
       selectedVariant: requestedVariant || "",
     },
@@ -984,6 +1647,10 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     city: vehicle.city || displayCity(requestedCity),
     citySlug: slugify(requestedCity || DEFAULT_CITY),
     vehicle,
+    visualGallery,
+    selectedColor: selectedVisual,
+    imageUrl: vehicle.imageUrl || resolvedImageUrl || "",
+    normalizedImageUrl: vehicle.normalizedImageUrl || resolvedImageUrl || "",
     rows,
     records: rows,
     variants: rows,
@@ -992,8 +1659,20 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     matched: rows.length,
     summary: {
       ...(rawResult.summary || {}),
-      minPrice: rows.length ? Math.min(...rows.map((row) => row.exShowroomPrice || row.onRoadPrice || 0).filter(Boolean)) : 0,
-      maxPrice: rows.length ? Math.max(...rows.map((row) => row.exShowroomPrice || row.onRoadPrice || 0).filter(Boolean)) : 0,
+      minPrice: rows.length
+        ? Math.min(
+            ...rows
+              .map((row) => row.exShowroomPrice || row.onRoadPrice || 0)
+              .filter(Boolean),
+          )
+        : 0,
+      maxPrice: rows.length
+        ? Math.max(
+            ...rows
+              .map((row) => row.exShowroomPrice || row.onRoadPrice || 0)
+              .filter(Boolean),
+          )
+        : 0,
       rowCount: rows.length,
     },
     variantResolution: rawResult.variantResolution || null,
