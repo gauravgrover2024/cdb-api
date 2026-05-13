@@ -1,4 +1,3 @@
-import { runVehiclePricelistTool } from "./vehiclePricelist.tool.js";
 import {
   runQuotationLeadTool,
   runVehicleColorsTool,
@@ -23,7 +22,7 @@ import {
  */
 
 export const ACI_V2_TOOL_RUNNERS = {
-  vehicle_pricelist: runVehiclePricelistTool,
+  vehicle_pricelist: runVehiclePricelistNewCarsTool,
   vehicle_overview: runVehicleOverviewTool,
   vehicle_colors: runVehicleColorsTool,
   vehicle_similar: runVehicleSimilarTool,

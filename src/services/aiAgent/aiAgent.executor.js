@@ -21,6 +21,7 @@ import {
 
 import { sanitizeAiAgentResponse } from "./aiAgent.responseSanitizer.js";
 import { runAciV2Tool } from "./tools/index.js";
+import { runVehiclePricelistNewCarsTool } from "./tools/newCars/vehiclePricelist.tool.js";
 
 /**
  * ACI Assist Executor
@@ -1012,154 +1013,23 @@ export const calculateEmi = ({
 export const runtimeVehiclePricelist = async ({
   toolPlan = {},
   context = {},
+  userMessage = "",
+  trace = [],
+  access = {},
 } = {}) => {
-  const { collection, collectionName, reason } = await getCollection(
-    VEHICLE_COLLECTION_CANDIDATES,
-  );
-
-  const shouldIgnoreContextVariant = toolPlan.tool === "vehicle_pricelist";
-
-  const queryToolPlan = shouldIgnoreContextVariant
-    ? {
-        ...toolPlan,
-        entities: {
-          ...(toolPlan.entities || {}),
-          variant: "",
-          primaryVariant: "",
-        },
-        filters: {
-          ...(toolPlan.filters || {}),
-          variant: "",
-        },
-      }
-    : toolPlan;
-
-  const queryContext = shouldIgnoreContextVariant
-    ? {
-        ...(context || {}),
-        anchorVariant: "",
-        variant: "",
-        selectedVehicle: {
-          ...((context || {}).selectedVehicle || {}),
-          variant: "",
-        },
-      }
-    : context;
-
-  const requestedVariant = shouldIgnoreContextVariant
-    ? ""
-    : getVariant(toolPlan, context);
-  const requestedVariantKey = searchKey(requestedVariant);
-
-  const fastQuery = buildFastVehiclesQuery({
-    toolPlan: queryToolPlan,
-    context: queryContext,
+  return runVehiclePricelistNewCarsTool({
+    toolPlan,
+    context,
+    userMessage:
+      userMessage ||
+      toolPlan.message ||
+      toolPlan.query ||
+      context.message ||
+      "",
+    trace,
+    access,
   });
-  const fallbackRegexQuery = buildVehicleMongoQuery({
-    toolPlan: queryToolPlan,
-    context: queryContext,
-  });
-  let rawRows = await safeFind(collection, fastQuery, {
-    limit: DEFAULT_LIMITS.pricelist,
-  });
-  if (!rawRows.length) {
-    rawRows = await safeFind(collection, fallbackRegexQuery, {
-      limit: DEFAULT_LIMITS.pricelist,
-    });
-  }
-
-  // Exact variant query can be too strict because DB may store full names,
-  // short names, normalized names, or old naming. If strict query returns
-  // nothing, fetch model rows and resolve variant in JS.
-  if (requestedVariant && rawRows.length === 0) {
-    const modelOnlyToolPlan = {
-      ...queryToolPlan,
-      entities: {
-        ...(queryToolPlan.entities || {}),
-      },
-      filters: {
-        ...(queryToolPlan.filters || {}),
-      },
-    };
-
-    delete modelOnlyToolPlan.entities.variant;
-    delete modelOnlyToolPlan.entities.primaryVariant;
-    delete modelOnlyToolPlan.filters.variant;
-
-    const modelOnlyFastQuery = buildFastVehiclesQuery({
-      toolPlan: modelOnlyToolPlan,
-      context: queryContext,
-    });
-    rawRows = await safeFind(collection, modelOnlyFastQuery, {
-      limit: DEFAULT_LIMITS.pricelist,
-    });
-    if (!rawRows.length) {
-      rawRows = await safeFind(
-        collection,
-        buildVehicleMongoQuery({ toolPlan: modelOnlyToolPlan, context: queryContext }),
-        {
-          limit: DEFAULT_LIMITS.pricelist,
-        },
-      );
-    }
-  }
-
-  let normalizedRows = rawRows.map(normalizeVehicleRow);
-  let matchedVariantRows = [];
-
-  if (requestedVariantKey) {
-    const scoredRows = normalizedRows
-      .map((row) => ({
-        row,
-        score: variantMatchScore(row, requestedVariant),
-      }))
-      .filter((item) => item.score >= 88)
-      .sort((a, b) => b.score - a.score);
-
-    matchedVariantRows = scoredRows.map((item) => item.row);
-
-    // Important: if variant was requested and not found, do NOT silently return
-    // all model rows. Return empty rows + candidate variants so UI can ask.
-    normalizedRows = matchedVariantRows;
-  }
-
-  const rows = sortPriceRows(
-    normalizedRows.filter((row) =>
-      rowMatchesFilters(row.raw || row, {
-        ...(toolPlan.filters || {}),
-        variant: "",
-      }),
-    ),
-    toolPlan.ranking || "",
-  );
-
-  const allCandidateRows = rawRows.map(normalizeVehicleRow);
-
-  return {
-    rows,
-    candidateRows: requestedVariantKey ? allCandidateRows.slice(0, 24) : [],
-    candidateVariants: requestedVariantKey
-      ? unique(
-          allCandidateRows
-            .map((row) => row.variant || row.variantShort || row.variantNormalized)
-            .filter(Boolean),
-        ).slice(0, 24)
-      : [],
-    variantResolution: buildVariantResolution({
-      requestedVariant,
-      rows: allCandidateRows,
-      matchedRows: rows,
-      status: requestedVariant ? (rows.length ? "matched" : "not_found") : "not_required",
-    }),
-    count: rows.length,
-    matched: rows.length,
-    modulesChecked: [collectionName || reason || "vehicle_pricelist"],
-    source: collectionName || "none",
-    dataSource: collectionName ? "mongodb" : "empty",
-    summary: buildPriceSummary(rows),
-  };
 };
-
 
 export const buildPriceSummary = (rows = []) => {
   const prices = rows
@@ -1657,6 +1527,7 @@ export const runtimeModularTool = async (args = {}) =>
 /* -------------------------------------------------------------------------- */
 /*  Runtime Tool Registry                                                     */
 /* -------------------------------------------------------------------------- */
+
 
 export const ACI_RUNTIME_DATA_TOOLS = {
   vehicle_pricelist: runtimeVehiclePricelist,

@@ -612,6 +612,73 @@ export const buildVehiclePricelistResponse = ({
   runtimeData = {},
   context = {},
 } = {}) => {
+
+  /* ACI_PRICE_V2_PASSTHROUGH_START */
+  if (
+    runtimeData?.canvasType === "pricelist_canvas" &&
+    runtimeData?.widget?.canvasType === "pricelist_canvas" &&
+    Array.isArray(runtimeData?.widget?.rows)
+  ) {
+    const widget = runtimeData.widget;
+    const rows = widget.rows || runtimeData.rows || [];
+
+    return {
+      intent: runtimeData.intent || "vehicle_pricelist",
+      displayMode: "canvas",
+      canvasType: "pricelist_canvas",
+      inlineType: null,
+      title: widget.title || runtimeData.title || "Price list",
+      answer:
+        runtimeData.answer ||
+        widget.answer ||
+        `Here is the price list for ${widget?.vehicle?.displayName || widget?.vehicle?.model || "this model"}.`,
+
+      data: {
+        ...runtimeData,
+        widget,
+        rows,
+        records: rows,
+        variants: widget.variants || rows,
+      },
+
+      widget,
+      widgets: [widget],
+      rows,
+      records: rows,
+      variants: widget.variants || rows,
+
+      actions: widget.actions || runtimeData.actions || [],
+      leadingQuestions:
+        widget.leadingQuestions ||
+        runtimeData.leadingQuestions ||
+        [],
+
+      conversationSuggestions:
+        widget.leadingQuestions ||
+        runtimeData.leadingQuestions ||
+        [],
+
+      contextPatch:
+        runtimeData.contextPatch ||
+        widget.contextPatch ||
+        {},
+
+      sourceTransparency:
+        runtimeData.sourceTransparency ||
+        runtimeData.modulesChecked ||
+        [],
+
+      meta: {
+        ...(runtimeData.meta || {}),
+        source: runtimeData.source,
+        dataSource: runtimeData.dataSource,
+        modulesChecked: runtimeData.modulesChecked || [],
+        v2PricelistPassthrough: true,
+      },
+    };
+  }
+  /* ACI_PRICE_V2_PASSTHROUGH_END */
+
   const model = getModel(toolPlan, context);
   const variant = getVariant(toolPlan, context);
   const city = getCity(toolPlan, context);
