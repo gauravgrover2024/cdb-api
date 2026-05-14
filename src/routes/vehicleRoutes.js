@@ -14,6 +14,7 @@ import {
   getVariantOptionsByModel,
   getVehicleByDetails,
   getVehicleMedia,
+  getPopularCars,
   getSimilarModels,
 } from '../controllers/vehicleController.js';
 import {
@@ -51,6 +52,9 @@ router.route('/by-details')
 
 router.route('/media')
   .get(getVehicleMedia);
+
+router.route('/popular-cars')
+  .get(getPopularCars);
 
 router.route('/similar-models')
   .get(getSimilarModels);

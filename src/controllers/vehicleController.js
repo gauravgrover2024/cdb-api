@@ -653,6 +653,9 @@ const SIMILAR_BASE_CACHE = new Map();
 let FEATURE_META_CACHE = { ts: 0, data: new Map() };
 const VEHICLE_MEDIA_CACHE_TTL_MS = 10 * 60 * 1000;
 const VEHICLE_MEDIA_CACHE = new Map();
+const POPULAR_CARS_CACHE_TTL_MS = 10 * 60 * 1000;
+const POPULAR_CARS_CACHE = new Map();
+const R2_PUBLIC_IMAGE_PREFIX = 'https://pub-8504a10fc1c04f02ac8760cb90462ae3.r2.dev/';
 
 const normalizeLooseToken = (value) =>
   String(value || '')
@@ -1555,6 +1558,350 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
   res.json(payload);
 });
 
+const toSlug = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+const normalizeSalesDisplayName = (value = '') =>
+  String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/^Maruti\s+(?:Arena|Nexa)\s+/i, 'Maruti ');
+
+const parseSalesVehicleName = (displayName = '', knownMakes = []) => {
+  const cleaned = normalizeSalesDisplayName(displayName);
+  const normalized = normalizeText(cleaned).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
+  const make = [...knownMakes]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .find((candidate) => {
+      const candidateKey = normalizeText(candidate).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
+      return normalized === candidateKey || normalized.startsWith(`${candidateKey} `);
+    });
+
+  if (make) {
+    const model = trimLeading(cleaned, make) || cleaned;
+    return { make, model, displayName: [make, model].filter(Boolean).join(' ') };
+  }
+
+  const [fallbackMake = '', ...modelParts] = cleaned.split(' ');
+  const model = modelParts.join(' ').trim();
+  return {
+    make: fallbackMake,
+    model: model || cleaned,
+    displayName: [fallbackMake, model].filter(Boolean).join(' ') || cleaned,
+  };
+};
+
+const parseSalesMonth = (value = '') => {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{4})-(\d{1,2})/);
+  if (!match) {
+    return { monthLabel: raw || '', year: null, previousMonthLabel: '' };
+  }
+
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const currentDate = new Date(Date.UTC(year, monthIndex, 1));
+  const previousDate = new Date(Date.UTC(year, monthIndex - 1, 1));
+  const formatter = new Intl.DateTimeFormat('en-IN', {
+    month: 'long',
+    timeZone: 'UTC',
+  });
+
+  return {
+    monthLabel: formatter.format(currentDate),
+    year,
+    previousMonthLabel: formatter.format(previousDate),
+  };
+};
+
+const formatExShowroomRange = (minPrice, maxPrice) => {
+  const format = (value) => {
+    const amount = Number(value || 0);
+    if (!amount) return '';
+    if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(2)}Cr`;
+    return `₹${(amount / 100000).toFixed(2)}L`;
+  };
+
+  const min = format(minPrice);
+  const max = format(maxPrice);
+  if (min && max && min !== max) return `${min} – ${max}`;
+  return min || max || '';
+};
+
+const normalizeSalesNumber = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value);
+  const parsed = parseAmount(value);
+  return parsed > 0 ? Math.round(parsed) : 0;
+};
+
+const normalizeSalesChange = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? Number(number.toFixed(2)) : 0;
+};
+
+const cleanR2ImageUrl = (value) => {
+  const url = String(value || '').trim();
+  if (!url || !url.startsWith(R2_PUBLIC_IMAGE_PREFIX)) return '';
+  return url;
+};
+
+const pickPopularImageFrame = (row = {}) =>
+  row.imageFrame ||
+  row.image_frame ||
+  row.carImageFrame ||
+  row.car_image_frame ||
+  row.frame ||
+  {};
+
+const buildExactModelRegexes = (make, model) =>
+  buildModelCandidates(make, model)
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .map((value) => new RegExp(`^${escapeRegex(value)}$`, 'i'));
+
+const getPopularVehiclePriceRange = async ({ make, model, city }) => {
+  const cityQuery = buildVehicleQuery({ make, model, city });
+  mergeAndCondition(cityQuery, ACTIVE_VARIANT_FILTER);
+
+  const baseQuery = buildVehicleQuery({ make, model });
+  mergeAndCondition(baseQuery, ACTIVE_VARIANT_FILTER);
+
+  const projection = {
+    make: 1,
+    brand: 1,
+    model: 1,
+    variant: 1,
+    city: 1,
+    ex_showroom: 1,
+    exShowroom: 1,
+  };
+
+  let docs = city
+    ? await Vehicle.find(cityQuery).select(projection).lean()
+    : [];
+  if (!docs.length) {
+    docs = await Vehicle.find(baseQuery).select(projection).lean();
+  }
+
+  const prices = docs
+    .map((doc) => normalizeVehicleRecord(doc))
+    .filter((doc) => matchesExact(doc.make, make) && matchesExact(doc.model, model))
+    .map((doc) => firstPositiveAmount(doc.ex_showroom, doc.exShowroom, doc.exShowroomPrice))
+    .filter((amount) => amount > 0)
+    .sort((a, b) => a - b);
+
+  return {
+    minExShowroomPrice: prices[0] || 0,
+    maxExShowroomPrice: prices[prices.length - 1] || prices[0] || 0,
+  };
+};
+
+const getPopularVehicleImage = async ({ make, model }) => {
+  const makeRegex = buildMakeRegex(make);
+  const modelRegexes = buildExactModelRegexes(make, model);
+  if (!modelRegexes.length) return { imageUrl: '', normalizedImageUrl: '', imageFrame: {} };
+
+  const rows = await mongoose.connection.db
+    .collection('vehicle_colors')
+    .find(
+      {
+        $and: [
+          {
+            $or: [
+              { brand: makeRegex },
+              { make: makeRegex },
+              { brandName: makeRegex },
+              { manufacturer: makeRegex },
+            ],
+          },
+          {
+            $or: [
+              { model: { $in: modelRegexes } },
+              { modelName: { $in: modelRegexes } },
+              { model_name: { $in: modelRegexes } },
+            ],
+          },
+          {
+            $or: [
+              { scopeStatus: { $exists: false } },
+              { scopeStatus: { $ne: 'rejected' } },
+            ],
+          },
+          {
+            $or: [
+              { normalizedImageUrl: { $regex: `^${escapeRegex(R2_PUBLIC_IMAGE_PREFIX)}`, $options: 'i' } },
+              { cleanImageUrl: { $regex: `^${escapeRegex(R2_PUBLIC_IMAGE_PREFIX)}`, $options: 'i' } },
+            ],
+          },
+        ],
+      },
+      {
+        projection: {
+          brand: 1,
+          make: 1,
+          brandName: 1,
+          model: 1,
+          modelName: 1,
+          model_name: 1,
+          color_name: 1,
+          colorName: 1,
+          normalizedImageUrl: 1,
+          cleanImageUrl: 1,
+          imageFrame: 1,
+          image_frame: 1,
+          carImageFrame: 1,
+          car_image_frame: 1,
+          frame: 1,
+          scopeStatus: 1,
+          isSelected: 1,
+          selected: 1,
+          isDefault: 1,
+          default: 1,
+          imageBackgroundRemoved: 1,
+          updatedAt: 1,
+        },
+      },
+    )
+    .sort({
+      isSelected: -1,
+      selected: -1,
+      isDefault: -1,
+      default: -1,
+      imageBackgroundRemoved: -1,
+      color_name: 1,
+      colorName: 1,
+      updatedAt: -1,
+    })
+    .limit(8)
+    .toArray();
+
+  const exactRow = rows.find((row) => {
+    const rowModel = String(row.model || row.modelName || row.model_name || '').trim();
+    return matchesExact(trimLeading(rowModel, make) || rowModel, model);
+  });
+  const row = exactRow || rows[0] || null;
+  const normalizedImageUrl = cleanR2ImageUrl(row?.normalizedImageUrl) || cleanR2ImageUrl(row?.cleanImageUrl);
+
+  return {
+    imageUrl: normalizedImageUrl,
+    normalizedImageUrl,
+    imageFrame: row ? pickPopularImageFrame(row) : {},
+  };
+};
+
+const getPopularCars = asyncHandler(async (req, res) => {
+  const startedAt = Date.now();
+  const city = toCityToken(req.query.city || 'new-delhi') || 'new-delhi';
+  const limitRaw = Number(req.query.limit);
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.round(limitRaw), 25)
+      : 25;
+
+  const cached = readCache(POPULAR_CARS_CACHE, POPULAR_CARS_CACHE_TTL_MS, 'popular-cars', {
+    city,
+    limit,
+  });
+  if (cached) {
+    return res.json({ ...cached, cached: true });
+  }
+
+  const salesCollection = mongoose.connection.db.collection('monthly_car_sales');
+  const latest = await salesCollection
+    .find({ source: 'v3cars' })
+    .sort({ month: -1, rank: 1 })
+    .limit(1)
+    .toArray();
+  const month = latest[0]?.month || '';
+
+  if (!month) {
+    return res.json({
+      ok: true,
+      source: 'v3cars',
+      month: '',
+      year: null,
+      city,
+      count: 0,
+      rows: [],
+      meta: { queryMs: Date.now() - startedAt, reason: 'monthly_sales_empty' },
+    });
+  }
+
+  const [salesRows, makeValues, brandValues] = await Promise.all([
+    salesCollection.find({ month, source: 'v3cars' }).sort({ rank: 1 }).limit(limit).toArray(),
+    Vehicle.distinct('make', { make: { $exists: true, $ne: null } }),
+    Vehicle.distinct('brand', { brand: { $exists: true, $ne: null } }),
+  ]);
+  const knownMakes = [...new Set([...makeValues, ...brandValues].filter(Boolean))];
+  const monthInfo = parseSalesMonth(month);
+
+  const rows = (
+    await Promise.all(
+      salesRows.map(async (row) => {
+        const rawName = normalizeSalesDisplayName(row.model || row.displayName || row.name);
+        const parsed = parseSalesVehicleName(rawName, knownMakes);
+        if (!parsed.make || !parsed.model) return null;
+
+        const [{ minExShowroomPrice, maxExShowroomPrice }, image] = await Promise.all([
+          getPopularVehiclePriceRange({ make: parsed.make, model: parsed.model, city }),
+          getPopularVehicleImage({ make: parsed.make, model: parsed.model }),
+        ]);
+
+        return {
+          id: toSlug(`${parsed.make}-${parsed.model}`),
+          rank: Number(row.rank || 0) || 0,
+          make: parsed.make,
+          brand: parsed.make,
+          rawBrand: parsed.make,
+          model: parsed.model,
+          displayName: parsed.displayName,
+          bodyStyle: String(row.bodyStyle || '').trim(),
+          segment: String(row.segment || '').trim(),
+          priceRange: formatExShowroomRange(minExShowroomPrice, maxExShowroomPrice),
+          minExShowroomPrice,
+          maxExShowroomPrice,
+          currentMonth: monthInfo.monthLabel,
+          previousMonth: monthInfo.previousMonthLabel,
+          currentMonthSales: normalizeSalesNumber(row.sales || row.currentMonthSales),
+          previousMonthSales: normalizeSalesNumber(row.previousMonthSales),
+          salesChangePercent: normalizeSalesChange(row.percentChange ?? row.salesChangePercent),
+          salesTrend:
+            normalizeSalesChange(row.percentChange ?? row.salesChangePercent) > 0
+              ? 'up'
+              : normalizeSalesChange(row.percentChange ?? row.salesChangePercent) < 0
+                ? 'down'
+                : 'flat',
+          imageUrl: image.imageUrl,
+          normalizedImageUrl: image.normalizedImageUrl,
+          imageFrame: image.imageFrame || {},
+          city,
+          source: 'v3cars',
+        };
+      }),
+    )
+  ).filter(Boolean);
+
+  const payload = {
+    ok: true,
+    source: 'v3cars',
+    month: monthInfo.monthLabel,
+    year: monthInfo.year,
+    city,
+    count: rows.length,
+    rows,
+    meta: { queryMs: Date.now() - startedAt },
+  };
+  writeCache(POPULAR_CARS_CACHE, 'popular-cars', { city, limit }, payload);
+  return res.json(payload);
+});
+
 const getSimilarModels = asyncHandler(async (req, res) => {
   const startedAt = Date.now();
   const make = String(req.query.make || '').trim();
@@ -1718,5 +2065,6 @@ export {
   getVariantOptionsByModel,
   getVehicleByDetails,
   getVehicleMedia,
+  getPopularCars,
   getSimilarModels,
 };
