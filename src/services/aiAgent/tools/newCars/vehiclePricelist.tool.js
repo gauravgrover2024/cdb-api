@@ -47,14 +47,21 @@ const stripMakeFromModel = (model = "", make = "") => {
 
   if (!modelKey.startsWith(`${makeKey} `)) return cleanModel;
 
-  return cleanText(cleanModel.replace(new RegExp(`^${cleanMake}\\s+`, "i"), "")) || cleanModel;
+  return (
+    cleanText(cleanModel.replace(new RegExp(`^${cleanMake}\\s+`, "i"), "")) ||
+    cleanModel
+  );
 };
 
 const buildVehicleDisplayName = (make = "", model = "") => {
   const cleanMake = cleanText(make);
   const cleanModel = stripMakeFromModel(model, cleanMake);
 
-  return cleanText([cleanMake, cleanModel].filter(Boolean).join(" ")) || cleanModel || cleanMake;
+  return (
+    cleanText([cleanMake, cleanModel].filter(Boolean).join(" ")) ||
+    cleanModel ||
+    cleanMake
+  );
 };
 
 const stripVehicleNameFromVariant = (
@@ -82,21 +89,28 @@ const stripVehicleNameFromVariant = (
     if (tokenKey && outKey === tokenKey) return "";
 
     if (tokenKey && outKey.startsWith(`${tokenKey} `)) {
-      out = cleanText(out.replace(new RegExp(`^${escapeRegex(token)}\\s+`, "i"), ""));
+      out = cleanText(
+        out.replace(new RegExp(`^${escapeRegex(token)}\\s+`, "i"), ""),
+      );
     }
   }
 
   return out;
 };
 
-const isGenericVariantCandidate = (value = "", { requestedModel = "" } = {}) => {
+const isGenericVariantCandidate = (
+  value = "",
+  { requestedModel = "" } = {},
+) => {
   const key = normalizeKey(value);
   const modelKey = normalizeKey(requestedModel);
 
   if (!key) return true;
   if (modelKey && key === modelKey) return true;
 
-  return /\b(price|prices|pricing|pricelist|price list|rate list|on road|onroad|on-road|ex showroom|exshowroom|ex-showroom|new car|variant|variants|show|list)\b/.test(key);
+  return /\b(price|prices|pricing|pricelist|price list|rate list|on road|onroad|on-road|ex showroom|exshowroom|ex-showroom|new car|variant|variants|show|list)\b/.test(
+    key,
+  );
 };
 
 const sanitizeRequestedVariant = (
@@ -121,7 +135,9 @@ const amount = (...values) => {
       return Math.round(value);
     }
 
-    const text = String(value || "").replace(/,/g, "").trim();
+    const text = String(value || "")
+      .replace(/,/g, "")
+      .trim();
     const match = text.match(/-?\d+(?:\.\d+)?/);
     if (!match) continue;
 
@@ -143,7 +159,9 @@ const amount = (...values) => {
 };
 
 const first = (...values) =>
-  values.find((value) => value !== undefined && value !== null && value !== "") || "";
+  values.find(
+    (value) => value !== undefined && value !== null && value !== "",
+  ) || "";
 
 const getEntities = (toolPlan = {}) => ({
   ...(toolPlan.entities || {}),
@@ -155,7 +173,11 @@ const getFilters = (toolPlan = {}) => ({
   ...(toolPlan.input?.filters || {}),
 });
 
-const getRequestedModel = ({ toolPlan = {}, context = {}, userMessage = "" } = {}) => {
+const getRequestedModel = ({
+  toolPlan = {},
+  context = {},
+  userMessage = "",
+} = {}) => {
   const entities = getEntities(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
 
@@ -276,7 +298,9 @@ const normalizeModel = (row = {}) => {
 };
 
 const normalizeRawModel = (row = {}) =>
-  cleanText(first(row.model, row.raw?.model, row.modelName, row.raw?.modelName));
+  cleanText(
+    first(row.model, row.raw?.model, row.modelName, row.raw?.modelName),
+  );
 
 const normalizeMake = (row = {}) =>
   cleanText(
@@ -342,7 +366,13 @@ const normalizeOtherItems = (row = {}) => {
   return items
     .map((item, index) => {
       const label = cleanText(
-        first(item.label, item.text, item.name, item.key, `Other charge ${index + 1}`),
+        first(
+          item.label,
+          item.text,
+          item.name,
+          item.key,
+          `Other charge ${index + 1}`,
+        ),
       );
 
       const value = amount(item.amount, item.value, item.price);
@@ -541,7 +571,6 @@ const normalizePriceRow = (row = {}, index = 0) => {
   };
 };
 
-
 const uniqueRows = (rows = []) => {
   const seen = new Set();
   const out = [];
@@ -572,9 +601,15 @@ const explicitNLineRequest = (value = "") =>
 
 const isNLineModel = (value = "") => explicitNLineRequest(value);
 
-const exactModelFilter = ({ rows = [], requestedModel = "", userMessage = "" } = {}) => {
+const exactModelFilter = ({
+  rows = [],
+  requestedModel = "",
+  userMessage = "",
+} = {}) => {
   const modelKey = normalizeKey(requestedModel);
-  const messageWantsNLine = explicitNLineRequest(`${requestedModel} ${userMessage}`);
+  const messageWantsNLine = explicitNLineRequest(
+    `${requestedModel} ${userMessage}`,
+  );
 
   if (!modelKey) return rows;
 
@@ -586,16 +621,26 @@ const exactModelFilter = ({ rows = [], requestedModel = "", userMessage = "" } =
   }
 
   if (messageWantsNLine) {
-    return rows.filter((row) => isNLineModel(row.model) || isNLineModel(row.variant));
+    return rows.filter(
+      (row) => isNLineModel(row.model) || isNLineModel(row.variant),
+    );
   }
 
   return rows;
 };
 
-const buildVehicle = ({ rows = [], requestedMake = "", requestedModel = "", city = "" } = {}) => {
+const buildVehicle = ({
+  rows = [],
+  requestedMake = "",
+  requestedModel = "",
+  city = "",
+} = {}) => {
   const firstRow = rows[0] || {};
   const make = cleanText(first(requestedMake, firstRow.make, firstRow.brand));
-  const model = stripMakeFromModel(cleanText(first(firstRow.model, requestedModel)), make);
+  const model = stripMakeFromModel(
+    cleanText(first(firstRow.model, requestedModel)),
+    make,
+  );
   const displayName = buildVehicleDisplayName(make, model || requestedModel);
 
   const prices = rows
@@ -613,16 +658,28 @@ const buildVehicle = ({ rows = [], requestedMake = "", requestedModel = "", city
     displayName,
     city: displayCity(city),
     citySlug: slugify(city || DEFAULT_CITY),
-    imageUrl: firstRow.imageUrl || "",
+    imageUrl: firstRow.imageUrl || firstRow.normalizedImageUrl || "",
+    normalizedImageUrl: firstRow.normalizedImageUrl || firstRow.imageUrl || "",
+    imageFrame: firstRow.imageFrame || firstRow.vehicle?.imageFrame || null,
+    selectedColor:
+      firstRow.selectedColor || firstRow.vehicle?.selectedColor || null,
+    visualGallery:
+      firstRow.visualGallery || firstRow.vehicle?.visualGallery || [],
     variantCount: rows.length,
     priceRange:
       minPrice && maxPrice
         ? `${formatMoney(minPrice)} – ${formatMoney(maxPrice)}`
         : "",
     exShowroomPrice: minPrice ? formatMoney(minPrice) : "",
-    startingOnRoadPrice: rows[0]?.onRoadPrice ? formatMoney(rows[0].onRoadPrice) : "",
-    fuelText: [...new Set(rows.map((row) => row.fuel).filter(Boolean))].join(" / "),
-    transmissionText: [...new Set(rows.map((row) => row.transmission).filter(Boolean))].join(" / "),
+    startingOnRoadPrice: rows[0]?.onRoadPrice
+      ? formatMoney(rows[0].onRoadPrice)
+      : "",
+    fuelText: [...new Set(rows.map((row) => row.fuel).filter(Boolean))].join(
+      " / ",
+    ),
+    transmissionText: [
+      ...new Set(rows.map((row) => row.transmission).filter(Boolean)),
+    ].join(" / "),
   };
 };
 
@@ -653,7 +710,12 @@ const makeAction = ({
   },
 });
 
-const buildActions = ({ vehicle, requestedModel = "", requestedVariant = "", softAlternatives = [] } = {}) => {
+const buildActions = ({
+  vehicle,
+  requestedModel = "",
+  requestedVariant = "",
+  softAlternatives = [],
+} = {}) => {
   const modelLabel = vehicle?.displayName || requestedModel || "this car";
   const variantText = requestedVariant ? ` ${requestedVariant}` : "";
 
@@ -697,7 +759,10 @@ const buildActions = ({ vehicle, requestedModel = "", requestedVariant = "", sof
         vehicle: {
           ...vehicle,
           model: alternative.model,
-          displayName: buildVehicleDisplayName(alternative.make || vehicle?.make, alternative.model),
+          displayName: buildVehicleDisplayName(
+            alternative.make || vehicle?.make,
+            alternative.model,
+          ),
         },
         contextPatch: {
           anchorModel: alternative.model,
@@ -740,7 +805,9 @@ const buildLeadingQuestions = ({ vehicle, requestedVariant = "" } = {}) => {
     },
     {
       id: "price-breakup",
-      label: requestedVariant ? "Show price breakup" : "Explain on-road charges",
+      label: requestedVariant
+        ? "Show price breakup"
+        : "Explain on-road charges",
       query: requestedVariant
         ? `Show on-road breakup of ${modelLabel} ${requestedVariant}`
         : `Explain on-road charges of ${modelLabel}`,
@@ -756,27 +823,48 @@ const buildLeadingQuestions = ({ vehicle, requestedVariant = "" } = {}) => {
   ];
 };
 
-const buildSoftAlternatives = ({ requestedModel = "", requestedMake = "", userMessage = "" } = {}) => {
+const buildSoftAlternatives = ({
+  requestedModel = "",
+  requestedMake = "",
+  userMessage = "",
+} = {}) => {
   const key = normalizeKey(`${requestedModel} ${userMessage}`);
   const explicitNLine = explicitNLineRequest(key);
 
   if (explicitNLine) return [];
 
   if (/\bvenue\b/.test(key)) {
-    return [{ make: requestedMake || "Hyundai", model: "Venue N Line", label: "Venue N Line" }];
+    return [
+      {
+        make: requestedMake || "Hyundai",
+        model: "Venue N Line",
+        label: "Venue N Line",
+      },
+    ];
   }
 
   if (/\bcreta\b/.test(key)) {
-    return [{ make: requestedMake || "Hyundai", model: "Creta N Line", label: "Creta N Line" }];
+    return [
+      {
+        make: requestedMake || "Hyundai",
+        model: "Creta N Line",
+        label: "Creta N Line",
+      },
+    ];
   }
 
   if (/\bi20\b/.test(key)) {
-    return [{ make: requestedMake || "Hyundai", model: "i20 N Line", label: "i20 N Line" }];
+    return [
+      {
+        make: requestedMake || "Hyundai",
+        model: "i20 N Line",
+        label: "i20 N Line",
+      },
+    ];
   }
 
   return [];
 };
-
 
 const escapeRegex = (value = "") =>
   String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -799,7 +887,9 @@ const buildCityRegex = (city = "") => {
 const buildModelRegex = (model = "", userMessage = "") => {
   const cleanModel = cleanVehicleText(model);
   const wantsNLine = explicitNLineRequest(`${cleanModel} ${userMessage}`);
-  const baseModel = cleanVehicleText(cleanModel.replace(/\bn\s*[- ]?\s*line\b/i, ""));
+  const baseModel = cleanVehicleText(
+    cleanModel.replace(/\bn\s*[- ]?\s*line\b/i, ""),
+  );
 
   if (wantsNLine && baseModel) {
     return new RegExp(
@@ -850,11 +940,7 @@ const fetchVehiclePricelistRowsFromVehicles = async ({
     : [];
 
   const makeOr = makeRegex
-    ? [
-        { make: makeRegex },
-        { brand: makeRegex },
-        { brandName: makeRegex },
-      ]
+    ? [{ make: makeRegex }, { brand: makeRegex }, { brandName: makeRegex }]
     : [];
 
   const cityOr = cityRegex
@@ -899,10 +985,7 @@ const fetchVehiclePricelistRowsFromVehicles = async ({
   let queryUsed = null;
 
   for (const query of queries) {
-    rows = await collection
-      .find(query)
-      .limit(limit)
-      .toArray();
+    rows = await collection.find(query).limit(limit).toArray();
 
     if (rows.length) {
       queryUsed = query;
@@ -927,8 +1010,6 @@ const fetchVehiclePricelistRowsFromVehicles = async ({
   };
 };
 
-
-
 const exactRequestedModelRows = ({
   rows = [],
   requestedModel = "",
@@ -943,6 +1024,7 @@ const exactRequestedModelRows = ({
 
   const explicitTour = explicitTourRequest(text);
   const explicitNLine = explicitNLineRequest(text);
+  
 
   const exactRows = list.filter((row) => {
     const rowModel =
@@ -972,9 +1054,6 @@ const exactRequestedModelRows = ({
   // so we don't accidentally break imperfect DB naming for other models.
   return exactRows.length ? exactRows : list;
 };
-
-
-
 
 const explicitTourRequest = (value = "") =>
   /\btour\b/i.test(String(value || ""));
@@ -1045,9 +1124,101 @@ const pickVehicleImageUrl = (row = {}) =>
       "",
   );
 
+const pickImageFrame = (row = {}) =>
+  row.imageFrame ||
+  row.image_frame ||
+  row.carImageFrame ||
+  row.car_image_frame ||
+  row.frame ||
+  row.raw?.imageFrame ||
+  null;
+
+const normalizeSeriesKey = (value = "") =>
+  cleanVehicleText(value)
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "");
+
+const getVisualModelText = (row = {}) => {
+  const make = cleanText(first(row.make, row.brand, row.brandName));
+  const rawModel = cleanText(
+    first(
+      row.model,
+      row.modelName,
+      row.model_name,
+      row.model_normalized,
+      row.modelNormalized,
+      row.rawModel,
+      row.displayName,
+    ),
+  );
+
+  return stripMakeFromModel(rawModel, make) || rawModel;
+};
+
+const isSpecialSeriesVisualAllowed = ({
+  requestedModel = "",
+  visualModel = "",
+  imageUrl = "",
+  colorName = "",
+} = {}) => {
+  const requestedKey = normalizeSeriesKey(requestedModel);
+  const visualKey = normalizeSeriesKey(visualModel);
+  const searchableKey = normalizeSeriesKey(
+    `${visualModel} ${imageUrl} ${colorName}`,
+  );
+
+  if (!requestedKey) return true;
+
+  // If the color document exposes a model, use that as the strongest signal.
+  if (visualKey && visualKey === requestedKey) return true;
+
+  // Protect base models from special-series image leakage.
+  if (requestedKey === "thar" && /roxx/.test(searchableKey)) return false;
+  if (requestedKey === "ertiga" && /tour/.test(searchableKey)) return false;
+  if (requestedKey === "venue" && /nline/.test(searchableKey)) return false;
+  if (requestedKey === "creta" && /nline/.test(searchableKey)) return false;
+  if (requestedKey === "i20" && /nline/.test(searchableKey)) return false;
+
+  // For special-series requests, avoid falling back to the base model image.
+  if (requestedKey === "tharroxx" && visualKey && visualKey !== "tharroxx")
+    return false;
+  if (requestedKey === "ertigatour" && visualKey && visualKey !== "ertigatour")
+    return false;
+  if (requestedKey === "venuenline" && visualKey && visualKey !== "venuenline")
+    return false;
+  if (requestedKey === "cretanline" && visualKey && visualKey !== "cretanline")
+    return false;
+  if (requestedKey === "i20nline" && visualKey && visualKey !== "i20nline")
+    return false;
+
+  // If model metadata exists and is clearly unrelated, reject it.
+  if (
+    visualKey &&
+    !visualKey.includes(requestedKey) &&
+    !requestedKey.includes(visualKey)
+  ) {
+    return false;
+  }
+
+  return true;
+};
+
 const normalizeVisualColorRow = (row = {}, index = 0) => {
   const imageUrl = pickVehicleImageUrl(row);
   if (!imageUrl) return null;
+
+  const make = cleanText(first(row.make, row.brand, row.brandName));
+  const rawModel = cleanText(
+    first(
+      row.model,
+      row.modelName,
+      row.model_name,
+      row.model_normalized,
+      row.modelNormalized,
+    ),
+  );
+  const model = stripMakeFromModel(rawModel, make) || rawModel;
 
   const colorName = cleanText(
     row.color_name ||
@@ -1059,8 +1230,23 @@ const normalizeVisualColorRow = (row = {}, index = 0) => {
       `Color ${index + 1}`,
   );
 
+  const normalizedImageUrl =
+    cleanText(
+      row.normalizedImageUrl ||
+        row.cleanImageUrl ||
+        row.normalized_image_url ||
+        row.clean_image_url ||
+        row.normalizedImagePngUrl ||
+        imageUrl,
+    ) || imageUrl;
+
   return {
     id: cleanText(row._id || row.id || `${colorName}-${index}`),
+    make,
+    brand: make,
+    model,
+    rawModel,
+    modelKey: normalizeSeriesKey(model),
     colorName,
     name: colorName,
     hex:
@@ -1068,15 +1254,8 @@ const normalizeVisualColorRow = (row = {}, index = 0) => {
         row.color_hex || row.colorHex || row.hex || row.hexCode || "",
       ) || "",
     imageUrl,
-    normalizedImageUrl:
-      cleanText(
-        row.normalizedImageUrl ||
-          row.cleanImageUrl ||
-          row.normalized_image_url ||
-          row.clean_image_url ||
-          row.normalizedImagePngUrl ||
-          imageUrl,
-      ) || imageUrl,
+    normalizedImageUrl,
+    imageFrame: pickImageFrame(row),
     sourceImageUrl: cleanText(
       row.sourceImageUrl || row.image_url || row.imageUrl || "",
     ),
@@ -1132,15 +1311,16 @@ const sampleVehicleColorImages = async ({
       .collection("vehicle_colors")
       .aggregate([
         { $match: query },
-        { $sample: { size: Math.max(1, limit) } },
         {
           $project: {
             brand: 1,
             make: 1,
+            brandName: 1,
             model: 1,
             modelName: 1,
             model_name: 1,
             model_normalized: 1,
+            modelNormalized: 1,
             color_name: 1,
             colorName: 1,
             name: 1,
@@ -1160,14 +1340,37 @@ const sampleVehicleColorImages = async ({
             sourceImageUrl: 1,
             image_url: 1,
             imageUrl: 1,
+            imageFrame: 1,
+            image_frame: 1,
+            carImageFrame: 1,
+            car_image_frame: 1,
+            frame: 1,
           },
         },
+        {
+          $sort: {
+            imageBackgroundRemoved: -1,
+            imageProcessingMethod: -1,
+            color_name: 1,
+            colorName: 1,
+            updatedAt: -1,
+          },
+        },
+        { $limit: Math.max(12, limit * 4) },
       ])
       .toArray();
 
     return rows
       .map(normalizeVisualColorRow)
       .filter(Boolean)
+      .filter((item) =>
+        isSpecialSeriesVisualAllowed({
+          requestedModel: cleanModel,
+          visualModel: item.model || item.rawModel,
+          imageUrl: item.imageUrl || item.normalizedImageUrl,
+          colorName: item.colorName || item.name,
+        }),
+      )
       .filter((item, index, list) => {
         const key = `${item.colorName.toLowerCase()}|${item.imageUrl}`;
         return (
@@ -1176,7 +1379,8 @@ const sampleVehicleColorImages = async ({
               `${entry.colorName.toLowerCase()}|${entry.imageUrl}` === key,
           ) === index
         );
-      });
+      })
+      .slice(0, Math.max(1, limit));
   } catch {
     return [];
   }
@@ -1595,60 +1799,65 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     userMessage,
   });
 
-    let visualGallery = [];
-    let selectedVisual = null;
-    let resolvedImageUrl = "";
+  let visualGallery = [];
+  let selectedVisual = null;
+  let resolvedImageUrl = "";
+  let resolvedImageFrame = null;
 
-    if (rows.length) {
-      visualGallery = await sampleVehicleColorImages({
-        make: rows[0]?.make || rows[0]?.brand || requestedMake,
-        model: rows[0]?.model || requestedModel,
-        limit: 8,
-      });
+  if (rows.length) {
+    // Enrich fuel/transmission before creating the vehicle summary.
+    rows = await enrichRowsWithFeatureMeta({
+      rows,
+      make: rows[0]?.make || rows[0]?.brand || requestedMake,
+      model: rows[0]?.model || requestedModel,
+    });
 
-      selectedVisual = visualGallery[0] || null;
-      resolvedImageUrl =
-        selectedVisual?.imageUrl || selectedVisual?.normalizedImageUrl || "";
+    visualGallery = await sampleVehicleColorImages({
+      make: rows[0]?.make || rows[0]?.brand || requestedMake,
+      model: rows[0]?.model || requestedModel,
+      limit: 8,
+    });
 
-      rows = await enrichRowsWithFeatureMeta({
-        rows,
-        make: rows[0]?.make || rows[0]?.brand || requestedMake,
-        model: rows[0]?.model || requestedModel,
-      });
+    selectedVisual = visualGallery[0] || null;
+    resolvedImageUrl =
+      selectedVisual?.imageUrl || selectedVisual?.normalizedImageUrl || "";
+    resolvedImageFrame = selectedVisual?.imageFrame || null;
 
-      if (resolvedImageUrl || visualGallery.length) {
-        rows = rows.map((row) => ({
-          ...row,
-          imageUrl: row.imageUrl || row.normalizedImageUrl || resolvedImageUrl,
+    if (resolvedImageUrl || resolvedImageFrame || visualGallery.length) {
+      rows = rows.map((row) => ({
+        ...row,
+        imageUrl: row.imageUrl || row.normalizedImageUrl || resolvedImageUrl,
+        normalizedImageUrl:
+          row.normalizedImageUrl || row.imageUrl || resolvedImageUrl,
+        imageFrame: row.imageFrame || resolvedImageFrame,
+        colorName: row.colorName || selectedVisual?.colorName || "",
+        selectedColor: row.selectedColor || selectedVisual || null,
+        visualGallery,
+        vehicle: {
+          ...(row.vehicle || {}),
+          make: row.make,
+          brand: row.brand || row.make,
+          model: row.model,
+          displayName: row.displayName,
+          imageUrl:
+            row.vehicle?.imageUrl ||
+            row.imageUrl ||
+            row.normalizedImageUrl ||
+            resolvedImageUrl,
           normalizedImageUrl:
-            row.normalizedImageUrl || row.imageUrl || resolvedImageUrl,
-          colorName: row.colorName || selectedVisual?.colorName || "",
-          selectedColor: row.selectedColor || selectedVisual || null,
+            row.vehicle?.normalizedImageUrl ||
+            row.normalizedImageUrl ||
+            row.imageUrl ||
+            resolvedImageUrl,
+          imageFrame:
+            row.vehicle?.imageFrame || row.imageFrame || resolvedImageFrame,
+          colorName: row.vehicle?.colorName || selectedVisual?.colorName || "",
+          selectedColor: row.vehicle?.selectedColor || selectedVisual || null,
           visualGallery,
-          vehicle: {
-            ...(row.vehicle || {}),
-            make: row.make,
-            brand: row.brand || row.make,
-            model: row.model,
-            displayName: row.displayName,
-            imageUrl:
-              row.vehicle?.imageUrl ||
-              row.imageUrl ||
-              row.normalizedImageUrl ||
-              resolvedImageUrl,
-            normalizedImageUrl:
-              row.vehicle?.normalizedImageUrl ||
-              row.normalizedImageUrl ||
-              row.imageUrl ||
-              resolvedImageUrl,
-            colorName:
-              row.vehicle?.colorName || selectedVisual?.colorName || "",
-            selectedColor: row.vehicle?.selectedColor || selectedVisual || null,
-            visualGallery,
-          },
-        }));
-      }
+        },
+      }));
     }
+  }
 
   const vehicle = buildVehicle({
     rows,
@@ -1657,47 +1866,13 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     city: requestedCity,
   });
 
-  if (resolvedImageUrl || visualGallery.length) {
+  if (resolvedImageUrl || resolvedImageFrame || visualGallery.length) {
     vehicle.imageUrl = vehicle.imageUrl || resolvedImageUrl;
     vehicle.normalizedImageUrl = vehicle.normalizedImageUrl || resolvedImageUrl;
+    vehicle.imageFrame = vehicle.imageFrame || resolvedImageFrame || null;
     vehicle.colorName = vehicle.colorName || selectedVisual?.colorName || "";
     vehicle.selectedColor = vehicle.selectedColor || selectedVisual || null;
     vehicle.visualGallery = visualGallery;
-  }
-
-  
-
-  rows = await enrichRowsWithFeatureMeta({
-    rows,
-    make: rows[0]?.make || rows[0]?.brand || requestedMake,
-    model: rows[0]?.model || requestedModel,
-  });
-
-  if (resolvedImageUrl || visualGallery.length) {
-    rows = rows.map((row) => ({
-      ...row,
-      imageUrl: row.imageUrl || row.normalizedImageUrl || resolvedImageUrl,
-      normalizedImageUrl:
-        row.normalizedImageUrl || row.imageUrl || resolvedImageUrl,
-      colorName: row.colorName || selectedVisual?.colorName || "",
-      selectedColor: row.selectedColor || selectedVisual || null,
-      visualGallery,
-      vehicle: {
-        ...(row.vehicle || {}),
-        make: row.make,
-        brand: row.brand || row.make,
-        model: row.model,
-        displayName: row.displayName,
-        imageUrl: row.vehicle?.imageUrl || row.imageUrl || resolvedImageUrl,
-        normalizedImageUrl:
-          row.vehicle?.normalizedImageUrl ||
-          row.normalizedImageUrl ||
-          resolvedImageUrl,
-        colorName: row.vehicle?.colorName || selectedVisual?.colorName || "",
-        selectedColor: row.vehicle?.selectedColor || selectedVisual || null,
-        visualGallery,
-      },
-    }));
   }
 
   const title = `${vehicle.displayName || buildVehicleDisplayName(requestedMake, requestedModel) || "Vehicle"} price list`;
@@ -1720,6 +1895,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
       ...vehicle,
       imageUrl: vehicle.imageUrl || resolvedImageUrl || "",
       normalizedImageUrl: vehicle.normalizedImageUrl || resolvedImageUrl || "",
+      imageFrame: vehicle.imageFrame || resolvedImageFrame || null,
       colorName: vehicle.colorName || selectedVisual?.colorName || "",
       selectedColor: vehicle.selectedColor || selectedVisual || null,
       visualGallery,
@@ -1749,6 +1925,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     selectedColor: selectedVisual,
     imageUrl: vehicle.imageUrl || resolvedImageUrl || "",
     normalizedImageUrl: vehicle.normalizedImageUrl || resolvedImageUrl || "",
+    imageFrame: vehicle.imageFrame || resolvedImageFrame || null,
     rows,
     records: rows,
     variants: rows,

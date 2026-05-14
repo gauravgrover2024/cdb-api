@@ -3,6 +3,9 @@ import argparse
 import random
 import re
 import time
+import subprocess
+import sys
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
@@ -24,6 +27,7 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 TODAY = date.today().isoformat()
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 IMAGE_RE = re.compile(
     r"https?://[^\"'\s<>]+\.(?:jpg|jpeg|png|webp|avif)(?:\?[^\"'\s<>]*)?",
@@ -62,17 +66,46 @@ MAKE_ALIASES = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="NCR-driven color enrichment v2")
+    parser = argparse.ArgumentParser(description="NCR-driven Cardekho color enrichment v3")
     parser.add_argument("--workers", type=int, default=3, help="Max worker threads (hard capped at 3)")
     parser.add_argument("--limit-models", type=int, default=0, help="Optional model limit for test runs")
-    parser.add_argument("--dry-run", action="store_true", help="No DB writes")
+    parser.add_argument("--dry-run", action="store_true", help="No DB writes and no post-processing")
     parser.add_argument(
         "--include-discontinued",
         action="store_true",
         help="Use all variants from vehicles collection (default: active only)",
     )
+    parser.add_argument(
+        "--delete-scope-leaks",
+        action="store_true",
+        help="Delete old wrong-model color docs instead of marking them rejected",
+    )
+    parser.add_argument("--skip-cleanup", action="store_true", help="Skip old wrong-model cleanup pass")
+    parser.add_argument("--skip-normalize", action="store_true", help="Skip image normalization/R2 upload step")
+    parser.add_argument("--skip-frame", action="store_true", help="Skip image frame computation step")
+    parser.add_argument("--force-normalize", action="store_true", help="Pass --force to normalizer")
+    parser.add_argument("--force-frame", action="store_true", help="Pass --force to frame computation")
+    parser.add_argument(
+        "--normalizer-script",
+        default="bulk_normalize_car_images.py",
+        help="Normalizer script filename/path",
+    )
+    parser.add_argument(
+        "--frame-script",
+        default="compute_car_image_frames.py",
+        help="Frame script filename/path",
+    )
+    parser.add_argument(
+        "--normalizer-extra-args",
+        default="",
+        help="Extra args for normalizer. Example: '--only-missing' if your script supports it",
+    )
+    parser.add_argument(
+        "--frame-extra-args",
+        default="",
+        help="Extra args for image-frame script",
+    )
     return parser.parse_args()
-
 
 def clamp_workers(workers: int) -> int:
     return max(1, min(int(workers or 1), 3))
@@ -135,13 +168,34 @@ def make_slug_variants(brand_slug: str) -> List[str]:
     return [item for item in variants if item]
 
 
+def normalize_slug(value: str) -> str:
+    return re.sub(
+        r"[^a-z0-9]+",
+        "-",
+        normalize_spaces(str(value or "")).lower(),
+    ).strip("-")
+
+
+def compact_slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", normalize_spaces(str(value or "")).lower())
+
+
+def slug_exact_equal(left: str, right: str) -> bool:
+    left_slug = normalize_slug(left)
+    right_slug = normalize_slug(right)
+    if not left_slug or not right_slug:
+        return False
+    if left_slug == right_slug:
+        return True
+
+    # Exact compact equivalence handles i20-n-line vs i20nline.
+    # It still rejects fortuner vs fortuner-legender and thar vs thar-roxx.
+    return compact_slug(left_slug) == compact_slug(right_slug)
+
+
 def model_slug_variants(model_slug: str) -> List[str]:
-    token = normalize_spaces(model_slug).lower().replace(" ", "-")
-    if not token:
-        return []
-    variants = {token}
-    variants.add(token.replace("-", ""))
-    return [item for item in variants if item]
+    token = normalize_slug(model_slug)
+    return [token] if token else []
 
 
 def canonicalize_image_url(raw_url: str, preferred_size: str = "930x620") -> str:
@@ -158,35 +212,59 @@ def canonicalize_image_url(raw_url: str, preferred_size: str = "930x620") -> str
     )
 
 
+def path_parts_from_url(url: str) -> List[str]:
+    parsed = urlparse(url)
+    return [
+        normalize_slug(part)
+        for part in unquote(parsed.path).split("/")
+        if normalize_slug(part)
+    ]
+
+
+def extract_url_brand_model_segments(url: str, brand_slug: str) -> Tuple[str, str]:
+    normalized = canonicalize_image_url(url)
+    if not normalized:
+        return "", ""
+
+    parts = path_parts_from_url(normalized)
+    make_variants = set(make_slug_variants(brand_slug))
+
+    for index, part in enumerate(parts):
+        if part in make_variants and index + 1 < len(parts):
+            return part, parts[index + 1]
+
+    return "", ""
+
+
 def url_matches_scope(url: str, brand_slug: str, model_slug: str) -> bool:
+    """
+    Strict generic scope check.
+
+    Do not use loose includes matching for model names.
+    We compare the Cardekho URL model segment against the expected model slug.
+
+    This is generic, not hardcoded, and separates examples like:
+    - Thar vs Thar Roxx
+    - Fortuner vs Fortuner Legender
+    - Ertiga vs Ertiga Tour
+    - Venue vs Venue N Line
+    - Creta vs Creta N Line
+    """
     normalized = canonicalize_image_url(url)
     if not normalized:
         return False
 
-    parsed = urlparse(normalized)
-    path = unquote(parsed.path).lower()
-    normalized_path = re.sub(r"[^a-z0-9]+", "-", path)
+    url_brand_segment, url_model_segment = extract_url_brand_model_segments(normalized, brand_slug)
 
-    make_variants = make_slug_variants(brand_slug)
-    model_variants = model_slug_variants(model_slug)
-    if not make_variants or not model_variants:
+    if url_brand_segment and url_model_segment:
+        return slug_exact_equal(url_model_segment, model_slug)
+
+    expected_model = normalize_slug(model_slug)
+    if not expected_model:
         return False
 
-    has_make = any(
-        f"/{make}/" in path
-        or f"-{make}-" in normalized_path
-        or normalized_path.startswith(f"{make}-")
-        for make in make_variants
-    )
-    has_model = any(
-        f"/{model}/" in path
-        or f"-{model}-" in normalized_path
-        or normalized_path.endswith(f"-{model}")
-        for model in model_variants
-    )
-
-    return has_make and has_model
-
+    # Fallback: exact path-part match only, never partial matching.
+    return any(slug_exact_equal(part, expected_model) for part in path_parts_from_url(normalized))
 
 def resolution_score(url: str) -> int:
     if not url:
@@ -520,6 +598,140 @@ def dedupe_existing_hex_duplicates(dry_run: bool = False) -> Tuple[int, int]:
     return len(duplicate_groups), removed
 
 
+
+def cleanup_existing_scope_leaks(dry_run: bool = False, delete_bad_docs: bool = False) -> Tuple[int, int]:
+    docs = list(
+        colors_collection.find(
+            {
+                "brand": {"$exists": True, "$ne": ""},
+                "model": {"$exists": True, "$ne": ""},
+                "scopeStatus": {"$ne": "rejected"},
+                "$or": [
+                    {"image_url": {"$exists": True, "$ne": ""}},
+                    {"sourceImageUrl": {"$exists": True, "$ne": ""}},
+                    {"normalizedImageUrl": {"$exists": True, "$ne": ""}},
+                ],
+            },
+            {
+                "_id": 1,
+                "brand": 1,
+                "model": 1,
+                "color_name": 1,
+                "image_url": 1,
+                "sourceImageUrl": 1,
+                "normalizedImageUrl": 1,
+            },
+        )
+    )
+
+    bad_ids = []
+
+    for doc in docs:
+        brand_slug = normalize_slug(doc.get("brand"))
+        model_slug = normalize_slug(doc.get("model"))
+        source_url = doc.get("image_url") or doc.get("sourceImageUrl") or ""
+
+        # Only source Cardekho URLs have reliable brand/model path segments.
+        # Do not judge using R2 normalized URL if source image is missing.
+        if not source_url or "cardekho" not in source_url.lower():
+            continue
+
+        if not url_matches_scope(source_url, brand_slug, model_slug):
+            bad_ids.append(doc["_id"])
+
+    if not bad_ids:
+        return 0, 0
+
+    if dry_run:
+        return len(bad_ids), 0
+
+    if delete_bad_docs:
+        result = colors_collection.delete_many({"_id": {"$in": bad_ids}})
+        return len(bad_ids), result.deleted_count
+
+    result = colors_collection.update_many(
+        {"_id": {"$in": bad_ids}},
+        {
+            "$set": {
+                "scopeStatus": "rejected",
+                "scopeRejectReason": "model_scope_mismatch",
+                "scopeRejectedAt": datetime.now().isoformat(),
+                "scopeVersion": "exact-url-model-segment-v1",
+            },
+            "$unset": {
+                "image_url": "",
+                "sourceImageUrl": "",
+                "normalizedImageUrl": "",
+                "normalizedImagePngUrl": "",
+                "cleanImageUrl": "",
+                "stagedImageUrl": "",
+                "imageFrame": "",
+                "imageProcessingStatus": "",
+                "imageProcessingMethod": "",
+                "imageProcessingHash": "",
+            },
+        },
+    )
+
+    return len(bad_ids), result.modified_count
+
+
+def split_extra_args(extra: str) -> List[str]:
+    raw = str(extra or "").strip()
+    if not raw:
+        return []
+    return raw.split()
+
+
+def script_path(value: str) -> str:
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return str(candidate)
+    return str(SCRIPT_DIR / value)
+
+
+def run_pipeline_step(label: str, command: List[str], dry_run: bool = False) -> bool:
+    print(f"\n===== {label} =====")
+    print(" ".join(command))
+
+    if dry_run:
+        print("Dry run: skipped")
+        return True
+
+    result = subprocess.run(command, cwd=str(SCRIPT_DIR))
+
+    if result.returncode != 0:
+        print(f"{label} failed with exit code {result.returncode}")
+        return False
+
+    return True
+
+
+def build_post_process_commands(args: argparse.Namespace, workers: int) -> Tuple[List[str], List[str]]:
+    normalizer_command = [
+        sys.executable,
+        script_path(args.normalizer_script),
+        "--write",
+        *split_extra_args(args.normalizer_extra_args),
+    ]
+
+    if args.force_normalize:
+        normalizer_command.append("--force")
+
+    frame_command = [
+        sys.executable,
+        script_path(args.frame_script),
+        "--write",
+        "--workers",
+        str(workers),
+        *split_extra_args(args.frame_extra_args),
+    ]
+
+    if args.force_frame:
+        frame_command.append("--force")
+
+    return normalizer_command, frame_command
+
 def main() -> None:
     args = parse_args()
     workers = clamp_workers(args.workers)
@@ -542,6 +754,7 @@ def main() -> None:
     new_colors = 0
     updates = 0
     unchanged = 0
+    image_changes = 0
 
     operations: List[UpdateOne] = []
 
@@ -560,6 +773,7 @@ def main() -> None:
                 "hex": 1,
                 "image_url": 1,
                 "last_updated": 1,
+                "scopeStatus": 1,
             },
         )
     )
@@ -588,14 +802,19 @@ def main() -> None:
             models_processed += 1
 
             for row in rows:
+                image_url = row.get("image_url") or ""
+
                 doc = {
                     "brand": normalize_spaces(row["brand"]),
                     "model": normalize_spaces(row["model"]),
                     "color_name": normalize_spaces(row["color_name"]),
                     "hex": row.get("hex"),
-                    "image_url": row.get("image_url"),
+                    "image_url": image_url,
+                    "sourceImageUrl": image_url,
                     "source_page": row.get("source_page"),
-                    "source": "ncr_color_enrichment_v2",
+                    "source": "ncr_color_enrichment_v3",
+                    "scopeStatus": "active",
+                    "scopeVersion": "exact-url-model-segment-v1",
                     "last_updated": TODAY,
                     "scrape_timestamp": datetime.now().isoformat(),
                 }
@@ -605,13 +824,34 @@ def main() -> None:
                     continue
 
                 existing = existing_map.get(key)
+                image_changed = bool(existing and existing.get("image_url") != doc["image_url"])
+                hex_changed = bool(existing and existing.get("hex") != doc["hex"])
 
                 if not existing:
                     new_colors += 1
-                elif existing.get("hex") != doc["hex"] or existing.get("image_url") != doc["image_url"]:
+                elif hex_changed or image_changed or existing.get("scopeStatus") == "rejected":
                     updates += 1
                 else:
                     unchanged += 1
+
+                if image_changed:
+                    image_changes += 1
+
+                update_payload = {"$set": doc}
+
+                if image_changed:
+                    update_payload["$unset"] = {
+                        "normalizedImageUrl": "",
+                        "normalizedImagePngUrl": "",
+                        "cleanImageUrl": "",
+                        "stagedImageUrl": "",
+                        "imageFrame": "",
+                        "imageProcessingStatus": "",
+                        "imageProcessingMethod": "",
+                        "imageProcessingHash": "",
+                        "imageProcessedAt": "",
+                        "imageQualityWarnings": "",
+                    }
 
                 operations.append(
                     UpdateOne(
@@ -620,13 +860,13 @@ def main() -> None:
                             "model": doc["model"],
                             "color_name": doc["color_name"],
                         },
-                        {"$set": doc},
+                        update_payload,
                         upsert=True,
                     )
                 )
 
     if not args.dry_run and operations:
-        colors_collection.bulk_write(operations)
+        colors_collection.bulk_write(operations, ordered=False)
 
     hex_duplicate_groups = 0
     hex_duplicates_removed = 0
@@ -635,9 +875,39 @@ def main() -> None:
             dry_run=args.dry_run
         )
 
+    scope_leaks_found = 0
+    scope_leaks_fixed = 0
+    if not args.skip_cleanup:
+        scope_leaks_found, scope_leaks_fixed = cleanup_existing_scope_leaks(
+            dry_run=args.dry_run,
+            delete_bad_docs=args.delete_scope_leaks,
+        )
+
+    post_process_ok = True
+    normalizer_ran = False
+    frame_ran = False
+
+    normalizer_command, frame_command = build_post_process_commands(args, workers)
+
+    if not args.skip_normalize:
+        post_process_ok = run_pipeline_step(
+            "NORMALIZE NEW / CHANGED COLOR IMAGES",
+            normalizer_command,
+            dry_run=args.dry_run,
+        )
+        normalizer_ran = post_process_ok and not args.dry_run
+
+    if post_process_ok and not args.skip_frame:
+        post_process_ok = run_pipeline_step(
+            "COMPUTE IMAGE FRAMES",
+            frame_command,
+            dry_run=args.dry_run,
+        )
+        frame_ran = post_process_ok and not args.dry_run
+
     runtime = time.time() - start
 
-    print("\n===== NCR COLOR ENRICHMENT V2 SUMMARY =====")
+    print("\n===== NCR COLOR ENRICHMENT V3 SUMMARY =====")
     print(f"Models in scope: {len(models)}")
     print(f"Models processed: {models_processed}")
     print(f"Models skipped (fetch failed): {models_skipped}")
@@ -646,11 +916,15 @@ def main() -> None:
     print(f"New colors: {new_colors}")
     print(f"Updates: {updates}")
     print(f"Unchanged: {unchanged}")
+    print(f"Image URL changes: {image_changes}")
     print(f"Upserts prepared: {len(operations)}")
     print(f"Hex duplicate groups found: {hex_duplicate_groups}")
-    print(
-        f"Hex duplicates removed (latest timestamp retained): {hex_duplicates_removed}"
-    )
+    print(f"Hex duplicates removed (latest timestamp retained): {hex_duplicates_removed}")
+    print(f"Scope leaks found: {scope_leaks_found}")
+    print(f"Scope leaks fixed: {scope_leaks_fixed}")
+    print(f"Normalizer ran: {normalizer_ran}")
+    print(f"Frame computation ran: {frame_ran}")
+    print(f"Post-process OK: {post_process_ok}")
     print(f"Workers used: {workers}")
     print(f"Dry run: {args.dry_run}")
     print(f"Runtime: {runtime:.2f}s")
