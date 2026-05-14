@@ -60,7 +60,7 @@ export const DEFAULT_CITY = "new-delhi";
 
 export const RESPONSE_INTENTS = {
   vehicle_pricelist: "vehicle_pricelist",
-  vehicle_colors: "vehicle_color_gallery",
+  vehicle_colors: "vehicle_colors",
   vehicle_feature_lookup: "vehicle_feature_answer",
   vehicle_compare: "vehicle_comparison",
   vehicle_recommend: "vehicle_recommendation",
@@ -432,7 +432,7 @@ export const modelActions = ({ model = "", variant = "", city = DEFAULT_CITY } =
       id: "show-colors",
       label: "Show colors",
       query: `Show colors of ${model || carLabel}`,
-      intent: "vehicle_color_gallery",
+      intent: "vehicle_colors",
       canvasType: "color_studio_canvas",
       entities: { model },
       filters: { city },
@@ -752,17 +752,149 @@ export const buildVehicleColorsResponse = ({
   runtimeData = {},
   context = {},
 } = {}) => {
+  /* ACI_COLORS_V2_PASSTHROUGH_START */
+  if (
+    runtimeData?.canvasType === "color_studio_canvas" &&
+    runtimeData?.widget?.canvasType === "color_studio_canvas" &&
+    Array.isArray(runtimeData?.widget?.colors)
+  ) {
+    const widget = runtimeData.widget;
+    const colors = widget.colors || runtimeData.colors || [];
+
+    const vehicle =
+      widget.vehicle ||
+      runtimeData.vehicle ||
+      runtimeData.contextPatch?.selectedVehicle ||
+      {};
+
+    const selectedColor =
+      widget.selectedColor ||
+      runtimeData.selectedColor ||
+      vehicle.selectedColor ||
+      colors.find((item) => item?.isSelected || item?.selected) ||
+      colors[0] ||
+      null;
+
+    const visualGallery =
+      widget.visualGallery ||
+      runtimeData.visualGallery ||
+      vehicle.visualGallery ||
+      [];
+
+    const finalVehicle = {
+      ...vehicle,
+      selectedColor,
+      imageUrl:
+        selectedColor?.normalizedImageUrl ||
+        selectedColor?.imageUrl ||
+        vehicle.imageUrl ||
+        vehicle.normalizedImageUrl ||
+        "",
+      normalizedImageUrl:
+        selectedColor?.normalizedImageUrl ||
+        vehicle.normalizedImageUrl ||
+        vehicle.imageUrl ||
+        "",
+      imageFrame: selectedColor?.imageFrame || vehicle.imageFrame || null,
+      visualGallery,
+    };
+
+    const finalWidget = {
+      ...widget,
+      vehicle: finalVehicle,
+      colors,
+      rows: widget.rows || colors,
+      records: widget.records || colors,
+      items: widget.items || colors,
+      selectedColor,
+      visualGallery,
+    };
+
+    return {
+      intent: runtimeData.intent || "vehicle_colors",
+      displayMode: "canvas",
+      canvasType: "color_studio_canvas",
+      inlineType: null,
+
+      title: widget.title || runtimeData.title || "Colors",
+      answer:
+        runtimeData.answer ||
+        widget.answer ||
+        `I found ${colors.length} colors for ${
+          finalVehicle.displayName || finalVehicle.model || "this model"
+        }.`,
+
+      data: {
+        ...runtimeData,
+        widget: finalWidget,
+        vehicle: finalVehicle,
+        colors,
+        rows: colors,
+        records: colors,
+        items: colors,
+        selectedColor,
+        visualGallery,
+      },
+
+      widget: finalWidget,
+      widgets: [finalWidget],
+
+      vehicle: finalVehicle,
+      colors,
+      rows: colors,
+      records: colors,
+      items: colors,
+      selectedColor,
+      visualGallery,
+
+      actions: normalizeActions(widget.actions || runtimeData.actions || []),
+      leadingQuestions: normalizeActions(
+        widget.leadingQuestions || runtimeData.leadingQuestions || [],
+      ),
+      conversationSuggestions: normalizeActions(
+        widget.leadingQuestions || runtimeData.leadingQuestions || [],
+      ),
+
+      contextPatch: runtimeData.contextPatch ||
+        widget.contextPatch || {
+          selectedVehicle: finalVehicle,
+          anchorMake: finalVehicle.make || finalVehicle.brand || "",
+          anchorModel: finalVehicle.model || "",
+          anchorCity:
+            finalVehicle.citySlug ||
+            finalVehicle.city ||
+            context.anchorCity ||
+            DEFAULT_CITY,
+          selectedColor,
+        },
+
+      sourceTransparency: runtimeData.sourceTransparency ||
+        runtimeData.modulesChecked || ["vehicle_colors"],
+
+      meta: {
+        ...(runtimeData.meta || {}),
+        source: runtimeData.source,
+        dataSource: runtimeData.dataSource,
+        modulesChecked: runtimeData.modulesChecked || ["vehicle_colors"],
+        v2ColorsPassthrough: true,
+      },
+    };
+  }
+  /* ACI_COLORS_V2_PASSTHROUGH_END */
+
   const model = getModel(toolPlan, context);
   const variant = getVariant(toolPlan, context);
   const city = getCity(toolPlan, context);
   const colors = getRuntimeRows(runtimeData);
-  const color = cleanText(firstMeaningful(toolPlan.entities?.color, toolPlan.filters?.color));
+  const color = cleanText(
+    firstMeaningful(toolPlan.entities?.color, toolPlan.filters?.color),
+  );
 
   return baseResponse({
     toolPlan,
     context,
     runtimeData,
-    intent: "vehicle_color_gallery",
+    intent: "vehicle_colors",
     displayMode: "canvas",
     canvasType: "color_studio_canvas",
     title: `${model || "Vehicle"} colors`,

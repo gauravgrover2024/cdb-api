@@ -1531,7 +1531,7 @@ export const runtimeModularTool = async (args = {}) =>
 
 export const ACI_RUNTIME_DATA_TOOLS = {
   vehicle_pricelist: runtimeVehiclePricelist,
-  vehicle_colors: runtimeVehicleColors,
+  vehicle_colors: runtimeModularTool,
   vehicle_feature_lookup: runtimeVehicleFeatureLookup,
   vehicle_compare: runtimeVehicleCompare,
   vehicle_recommend: runtimeVehicleRecommend,
