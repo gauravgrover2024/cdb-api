@@ -7,11 +7,24 @@ import InsurancePayoutRate from "../models/InsurancePayoutRate.js";
 import Receivable from "../models/Receivable.js";
 import VehicleFeature from "../models/VehicleFeature.js";
 import VehicleRecord from "../models/VehicleRecord.js";
+import { upsertChannelPartner } from "../services/channelPartnerUpsert.js";
 
 const INSURANCE_COUNTER_PREFIX = "insurance_case_id_sequence_";
 const INSURANCE_ID_PREFIX = "INS";
 const INSURANCE_TEMP_REG_COUNTER_KEY = "insurance_temp_registration_sequence";
 const DEFAULT_INSURANCE_PAYOUT_PERCENTAGE = 10;
+
+const syncChannelPartnerOnInsurancePayload = async (payload = {}) => {
+  try {
+    const channel = await upsertChannelPartner(payload);
+    if (channel?.channelId) {
+      payload.channelDealerNo = channel.channelId;
+    }
+  } catch (err) {
+    console.warn("[Insurance] Channel partner upsert skipped:", err?.message);
+  }
+  return payload;
+};
 
 const safeString = (value) =>
   value === undefined || value === null ? "" : String(value);
@@ -1349,6 +1362,8 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
     }
   }
 
+  await syncChannelPartnerOnInsurancePayload(payload);
+
   const doc = await InsuranceCase.create({
     ...payload,
     caseId,
@@ -1448,6 +1463,15 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
       res.status(400);
       throw new Error(submitValidation.errors.join(" | "));
     }
+  }
+
+  const mergedForChannel = {
+    ...existingDoc.toObject(),
+    ...updatePatch,
+  };
+  await syncChannelPartnerOnInsurancePayload(mergedForChannel);
+  if (mergedForChannel.channelDealerNo) {
+    updatePatch.channelDealerNo = mergedForChannel.channelDealerNo;
   }
 
   const saved = await InsuranceCase.findByIdAndUpdate(
