@@ -1737,6 +1737,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
 
   const rawRequestedMake = getRequestedMake(args);
   const requestedModel = getRequestedModel(args);
+  const explicitRequestedMake = getExplicitRequestedMake({ toolPlan });
   const requestedMake = resolveContextSafeRequestedMake({
     rawRequestedMake,
     requestedModel,
@@ -1749,6 +1750,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     requestedMake,
   });
   const requestedCity = getRequestedCity(args);
+  let effectiveRequestedMake = requestedMake;
 
   let rawResult = await fetchVehiclePricelistRowsFromVehicles({
     requestedMake,
@@ -1773,6 +1775,40 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     rawResult.originalRequestedVariant = rawRequestedVariant;
   }
 
+  if (
+    !asArray(rawResult.rows).length &&
+    requestedMake &&
+    !explicitRequestedMake
+  ) {
+    rawResult = await fetchVehiclePricelistRowsFromVehicles({
+      requestedMake: "",
+      requestedModel,
+      requestedVariant,
+      requestedCity,
+      userMessage,
+      limit: toolPlan.limit || toolPlan.input?.limit || 240,
+    });
+
+    if (!asArray(rawResult.rows).length && requestedVariant) {
+      rawResult = await fetchVehiclePricelistRowsFromVehicles({
+        requestedMake: "",
+        requestedModel,
+        requestedVariant: "",
+        requestedCity,
+        userMessage,
+        limit: toolPlan.limit || toolPlan.input?.limit || 240,
+      });
+      rawResult.variantFilterRelaxed = true;
+      rawResult.originalRequestedVariant = rawRequestedVariant;
+    }
+
+    if (asArray(rawResult.rows).length) {
+      effectiveRequestedMake = "";
+      rawResult.makeFilterRelaxed = true;
+      rawResult.originalRequestedMake = requestedMake;
+    }
+  }
+
   const rawRows = [
     ...asArray(rawResult.rows),
     ...asArray(rawResult.records),
@@ -1795,7 +1831,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
 
   const softAlternatives = buildSoftAlternatives({
     requestedModel,
-    requestedMake,
+    requestedMake: effectiveRequestedMake,
     userMessage,
   });
 
@@ -1861,7 +1897,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
 
   const vehicle = buildVehicle({
     rows,
-    requestedMake,
+    requestedMake: effectiveRequestedMake,
     requestedModel,
     city: requestedCity,
   });

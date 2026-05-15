@@ -497,6 +497,31 @@ const buildModelCandidates = (make, model) => {
   return [...new Set([modelValue, `${makeValue} ${modelValue}`.trim()].filter(Boolean))];
 };
 
+const buildExactMakeCandidates = (make) => {
+  const value = String(make || '').trim();
+  const canonical = canonicalizeMake(value);
+  const titleCanonical = canonical
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+
+  return [
+    ...new Set(
+      [
+        value,
+        value.toUpperCase(),
+        titleCanonical,
+        titleCanonical.toUpperCase(),
+        canonical,
+        canonical.toUpperCase(),
+        value.replace(/-/g, ' '),
+        value.replace(/\s+/g, '-'),
+      ].filter(Boolean),
+    ),
+  ];
+};
+
 const buildVariantCandidates = (make, model, variant) => {
   const makeValue = String(make || '').trim();
   const modelValue = String(model || '').trim();
@@ -655,6 +680,7 @@ const VEHICLE_MEDIA_CACHE_TTL_MS = 10 * 60 * 1000;
 const VEHICLE_MEDIA_CACHE = new Map();
 const POPULAR_CARS_CACHE_TTL_MS = 10 * 60 * 1000;
 const POPULAR_CARS_CACHE = new Map();
+const POPULAR_CARS_IN_FLIGHT = new Map();
 const R2_PUBLIC_IMAGE_PREFIX = 'https://pub-8504a10fc1c04f02ac8760cb90462ae3.r2.dev/';
 
 const normalizeLooseToken = (value) =>
@@ -1572,10 +1598,40 @@ const normalizeSalesDisplayName = (value = '') =>
     .replace(/\s+/g, ' ')
     .replace(/^Maruti\s+(?:Arena|Nexa)\s+/i, 'Maruti ');
 
+const POPULAR_CAR_KNOWN_MAKES = [
+  'Mercedes Benz',
+  'Mercedes-Benz',
+  'Land Rover',
+  'Maruti Suzuki',
+  'Volkswagen',
+  'Mahindra',
+  'Hyundai',
+  'Toyota',
+  'Citroen',
+  'Renault',
+  'Skoda',
+  'Honda',
+  'Nissan',
+  'Maruti',
+  'Tata',
+  'Kia',
+  'MG',
+  'Jeep',
+  'BYD',
+  'BMW',
+  'Audi',
+  'Volvo',
+  'Lexus',
+  'Porsche',
+  'Mini',
+  'Force',
+  'Isuzu',
+];
+
 const parseSalesVehicleName = (displayName = '', knownMakes = []) => {
   const cleaned = normalizeSalesDisplayName(displayName);
   const normalized = normalizeText(cleaned).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
-  const make = [...knownMakes]
+  const make = [...new Set([...knownMakes, ...POPULAR_CAR_KNOWN_MAKES])]
     .map((item) => String(item || '').trim())
     .filter(Boolean)
     .sort((a, b) => b.length - a.length)
@@ -1666,13 +1722,38 @@ const buildExactModelRegexes = (make, model) =>
     .filter(Boolean)
     .map((value) => new RegExp(`^${escapeRegex(value)}$`, 'i'));
 
-const getPopularVehiclePriceRange = async ({ make, model, city }) => {
-  const cityQuery = buildVehicleQuery({ make, model, city });
-  mergeAndCondition(cityQuery, ACTIVE_VARIANT_FILTER);
+const buildPopularVehicleIdentity = (make, model) => {
+  const normalized = normalizeVehicleDatasetRow({ brand: make, make, model });
+  return {
+    makeCandidates: buildExactMakeCandidates(make),
+    modelCandidates: buildModelCandidates(make, model),
+    brandNormalized: normalized.brand_normalized,
+    modelNormalized: normalized.model_normalized,
+  };
+};
 
-  const baseQuery = buildVehicleQuery({ make, model });
-  mergeAndCondition(baseQuery, ACTIVE_VARIANT_FILTER);
+const popularIdentityKey = (make, model) => {
+  const identity = buildPopularVehicleIdentity(make, model);
+  return [identity.brandNormalized, identity.modelNormalized]
+    .map((value) => normalizeText(value).replace(/[-_]+/g, ' ').replace(/\s+/g, ' '))
+    .join('|');
+};
 
+const getPopularVehiclePriceRangeMap = async ({ vehicles = [], city }) => {
+  const identities = vehicles
+    .map((vehicle) => ({
+      ...vehicle,
+      identity: buildPopularVehicleIdentity(vehicle.make, vehicle.model),
+      key: popularIdentityKey(vehicle.make, vehicle.model),
+    }))
+    .filter((item) => item.identity.brandNormalized && item.identity.modelNormalized);
+
+  if (!identities.length) return new Map();
+
+  const identityOr = identities.map((item) => ({
+    brand_normalized: item.identity.brandNormalized,
+    model_normalized: item.identity.modelNormalized,
+  }));
   const projection = {
     make: 1,
     brand: 1,
@@ -1682,12 +1763,213 @@ const getPopularVehiclePriceRange = async ({ make, model, city }) => {
     ex_showroom: 1,
     exShowroom: 1,
   };
+  const cityCandidates = buildCityCandidates(city);
+  const buildQuery = (withCity = true) => {
+    const query = {
+      $and: [
+        { $or: identityOr },
+        ...(withCity && cityCandidates.length
+          ? [
+              cityCandidates.length === 1
+                ? { city: cityCandidates[0] }
+                : { city: { $in: cityCandidates } },
+            ]
+          : []),
+        ACTIVE_VARIANT_FILTER,
+      ],
+    };
+    return query;
+  };
 
-  let docs = city
-    ? await Vehicle.find(cityQuery).select(projection).lean()
-    : [];
+  const docsByKey = new Map();
+  const addDocs = (docs = []) => {
+    docs.forEach((doc) => {
+      const normalized = normalizeVehicleDatasetRow(doc);
+      const key = popularIdentityKey(normalized.brand, normalized.model);
+      if (!docsByKey.has(key)) docsByKey.set(key, []);
+      docsByKey.get(key).push(doc);
+    });
+  };
+
+  addDocs(await Vehicle.find(buildQuery(true)).select(projection).lean());
+
+  const missingIdentities = identities.filter((item) => !docsByKey.has(item.key));
+  if (missingIdentities.length) {
+    const fallbackQuery = {
+      $and: [
+        {
+          $or: missingIdentities.map((item) => ({
+            brand_normalized: item.identity.brandNormalized,
+            model_normalized: item.identity.modelNormalized,
+          })),
+        },
+        ACTIVE_VARIANT_FILTER,
+      ],
+    };
+    addDocs(await Vehicle.find(fallbackQuery).select(projection).lean());
+  }
+
+  const rangeMap = new Map();
+  identities.forEach((item) => {
+    const docs = docsByKey.get(item.key) || [];
+    const prices = docs
+      .map((doc) => normalizeVehicleRecord(doc))
+      .filter((doc) => matchesExact(doc.make, item.make) && matchesExact(doc.model, item.model))
+      .map((doc) => firstPositiveAmount(doc.ex_showroom, doc.exShowroom, doc.exShowroomPrice))
+      .filter((amount) => amount > 0)
+      .sort((a, b) => a - b);
+
+    rangeMap.set(item.key, {
+      minExShowroomPrice: prices[0] || 0,
+      maxExShowroomPrice: prices[prices.length - 1] || prices[0] || 0,
+    });
+  });
+
+  return rangeMap;
+};
+
+const getPopularVehicleImageMap = async (vehicles = []) => {
+  const identities = vehicles
+    .map((vehicle) => ({
+      ...vehicle,
+      identity: buildPopularVehicleIdentity(vehicle.make, vehicle.model),
+      key: popularIdentityKey(vehicle.make, vehicle.model),
+    }))
+    .filter((item) => item.identity.modelCandidates.length);
+
+  if (!identities.length) return new Map();
+
+  const collection = mongoose.connection.db.collection('vehicle_colors');
+  const activeScopeFilter = {
+    $or: [{ scopeStatus: { $exists: false } }, { scopeStatus: { $ne: 'rejected' } }],
+  };
+  const projection = {
+    brand: 1,
+    make: 1,
+    brandName: 1,
+    model: 1,
+    modelName: 1,
+    model_name: 1,
+    color_name: 1,
+    colorName: 1,
+    normalizedImageUrl: 1,
+    cleanImageUrl: 1,
+    imageFrame: 1,
+    image_frame: 1,
+    carImageFrame: 1,
+    car_image_frame: 1,
+    frame: 1,
+    scopeStatus: 1,
+    isSelected: 1,
+    selected: 1,
+    isDefault: 1,
+    default: 1,
+    imageBackgroundRemoved: 1,
+    updatedAt: 1,
+  };
+  const sort = {
+    isSelected: -1,
+    selected: -1,
+    isDefault: -1,
+    default: -1,
+    imageBackgroundRemoved: -1,
+    color_name: 1,
+    colorName: 1,
+    updatedAt: -1,
+  };
+  const rows = await collection
+    .find(
+      {
+        $and: [
+          {
+            $or: identities.map((item) => ({
+              brand: { $in: item.identity.makeCandidates },
+              model: { $in: item.identity.modelCandidates },
+            })),
+          },
+          activeScopeFilter,
+        ],
+      },
+      { projection },
+    )
+    .sort(sort)
+    .limit(Math.max(120, identities.length * 12))
+    .toArray();
+
+  const imageMap = new Map();
+  identities.forEach((item) => {
+    const row = rows.find((candidate) => {
+      const rowMake = candidate.brand || candidate.make || candidate.brandName || '';
+      const rowModel = String(candidate.model || candidate.modelName || candidate.model_name || '').trim();
+      const normalizedImageUrl = cleanR2ImageUrl(candidate.normalizedImageUrl) || cleanR2ImageUrl(candidate.cleanImageUrl);
+      return normalizedImageUrl && matchesExact(rowMake, item.make) && matchesExact(trimLeading(rowModel, item.make) || rowModel, item.model);
+    });
+    const normalizedImageUrl = cleanR2ImageUrl(row?.normalizedImageUrl) || cleanR2ImageUrl(row?.cleanImageUrl);
+    imageMap.set(item.key, {
+      imageUrl: normalizedImageUrl || '',
+      normalizedImageUrl: normalizedImageUrl || '',
+      imageFrame: row ? pickPopularImageFrame(row) : {},
+    });
+  });
+
+  return imageMap;
+};
+
+const getPopularVehiclePriceRange = async ({ make, model, city }) => {
+  const identity = buildPopularVehicleIdentity(make, model);
+  const projection = {
+    make: 1,
+    brand: 1,
+    model: 1,
+    variant: 1,
+    city: 1,
+    ex_showroom: 1,
+    exShowroom: 1,
+  };
+  const normalizedBaseQuery =
+    identity.brandNormalized && identity.modelNormalized
+      ? {
+          brand_normalized: identity.brandNormalized,
+          model_normalized: identity.modelNormalized,
+        }
+      : null;
+
+  let docs = [];
+  if (normalizedBaseQuery) {
+    const cityCandidates = buildCityCandidates(city);
+    const normalizedCityQuery = {
+      ...normalizedBaseQuery,
+      ...(cityCandidates.length === 1
+        ? { city: cityCandidates[0] }
+        : cityCandidates.length > 1
+          ? { city: { $in: cityCandidates } }
+          : {}),
+    };
+    mergeAndCondition(normalizedCityQuery, ACTIVE_VARIANT_FILTER);
+    docs = city
+      ? await Vehicle.find(normalizedCityQuery).select(projection).lean()
+      : [];
+
+    if (!docs.length) {
+      const normalizedFallbackQuery = { ...normalizedBaseQuery };
+      mergeAndCondition(normalizedFallbackQuery, ACTIVE_VARIANT_FILTER);
+      docs = await Vehicle.find(normalizedFallbackQuery).select(projection).lean();
+    }
+  }
+
   if (!docs.length) {
-    docs = await Vehicle.find(baseQuery).select(projection).lean();
+    const cityQuery = buildVehicleQuery({ make, model, city });
+    mergeAndCondition(cityQuery, ACTIVE_VARIANT_FILTER);
+
+    const baseQuery = buildVehicleQuery({ make, model });
+    mergeAndCondition(baseQuery, ACTIVE_VARIANT_FILTER);
+
+    docs = city
+      ? await Vehicle.find(cityQuery).select(projection).lean()
+      : [];
+    if (!docs.length) {
+      docs = await Vehicle.find(baseQuery).select(projection).lean();
+    }
   }
 
   const prices = docs
@@ -1708,79 +1990,102 @@ const getPopularVehicleImage = async ({ make, model }) => {
   const modelRegexes = buildExactModelRegexes(make, model);
   if (!modelRegexes.length) return { imageUrl: '', normalizedImageUrl: '', imageFrame: {} };
 
-  const rows = await mongoose.connection.db
-    .collection('vehicle_colors')
-    .find(
+  const collection = mongoose.connection.db.collection('vehicle_colors');
+  const identity = buildPopularVehicleIdentity(make, model);
+  const projection = {
+    brand: 1,
+    make: 1,
+    brandName: 1,
+    model: 1,
+    modelName: 1,
+    model_name: 1,
+    color_name: 1,
+    colorName: 1,
+    normalizedImageUrl: 1,
+    cleanImageUrl: 1,
+    imageFrame: 1,
+    image_frame: 1,
+    carImageFrame: 1,
+    car_image_frame: 1,
+    frame: 1,
+    scopeStatus: 1,
+    isSelected: 1,
+    selected: 1,
+    isDefault: 1,
+    default: 1,
+    imageBackgroundRemoved: 1,
+    updatedAt: 1,
+  };
+  const sort = {
+    isSelected: -1,
+    selected: -1,
+    isDefault: -1,
+    default: -1,
+    imageBackgroundRemoved: -1,
+    color_name: 1,
+    colorName: 1,
+    updatedAt: -1,
+  };
+  const activeScopeFilter = {
+    $or: [{ scopeStatus: { $exists: false } }, { scopeStatus: { $ne: 'rejected' } }],
+  };
+  const exactQuery = {
+    $and: [
       {
-        $and: [
-          {
-            $or: [
-              { brand: makeRegex },
-              { make: makeRegex },
-              { brandName: makeRegex },
-              { manufacturer: makeRegex },
-            ],
-          },
-          {
-            $or: [
-              { model: { $in: modelRegexes } },
-              { modelName: { $in: modelRegexes } },
-              { model_name: { $in: modelRegexes } },
-            ],
-          },
-          {
-            $or: [
-              { scopeStatus: { $exists: false } },
-              { scopeStatus: { $ne: 'rejected' } },
-            ],
-          },
-          {
-            $or: [
-              { normalizedImageUrl: { $regex: `^${escapeRegex(R2_PUBLIC_IMAGE_PREFIX)}`, $options: 'i' } },
-              { cleanImageUrl: { $regex: `^${escapeRegex(R2_PUBLIC_IMAGE_PREFIX)}`, $options: 'i' } },
-            ],
-          },
+        $or: [
+          { brand: { $in: identity.makeCandidates } },
+          { make: { $in: identity.makeCandidates } },
+          { brandName: { $in: identity.makeCandidates } },
         ],
       },
-      {
-        projection: {
-          brand: 1,
-          make: 1,
-          brandName: 1,
-          model: 1,
-          modelName: 1,
-          model_name: 1,
-          color_name: 1,
-          colorName: 1,
-          normalizedImageUrl: 1,
-          cleanImageUrl: 1,
-          imageFrame: 1,
-          image_frame: 1,
-          carImageFrame: 1,
-          car_image_frame: 1,
-          frame: 1,
-          scopeStatus: 1,
-          isSelected: 1,
-          selected: 1,
-          isDefault: 1,
-          default: 1,
-          imageBackgroundRemoved: 1,
-          updatedAt: 1,
-        },
-      },
-    )
-    .sort({
-      isSelected: -1,
-      selected: -1,
-      isDefault: -1,
-      default: -1,
-      imageBackgroundRemoved: -1,
-      color_name: 1,
-      colorName: 1,
-      updatedAt: -1,
-    })
-    .limit(8)
+      { model: { $in: identity.modelCandidates } },
+      activeScopeFilter,
+    ],
+  };
+
+  let rows = await collection
+    .find(exactQuery, { projection })
+    .sort(sort)
+    .limit(12)
     .toArray();
+
+  rows = rows.filter((row) => cleanR2ImageUrl(row?.normalizedImageUrl) || cleanR2ImageUrl(row?.cleanImageUrl));
+
+  if (!rows.length) {
+    rows = await collection
+      .find(
+        {
+          $and: [
+            {
+              $or: [
+                { brand: makeRegex },
+                { make: makeRegex },
+                { brandName: makeRegex },
+                { manufacturer: makeRegex },
+              ],
+            },
+            {
+              $or: [
+                { model: { $in: modelRegexes } },
+                { modelName: { $in: modelRegexes } },
+                { model_name: { $in: modelRegexes } },
+              ],
+            },
+            activeScopeFilter,
+            {
+              $or: [
+                { normalizedImageUrl: { $regex: `^${escapeRegex(R2_PUBLIC_IMAGE_PREFIX)}`, $options: 'i' } },
+                { cleanImageUrl: { $regex: `^${escapeRegex(R2_PUBLIC_IMAGE_PREFIX)}`, $options: 'i' } },
+              ],
+            },
+          ],
+        },
+        { projection },
+      )
+      .sort(sort)
+      .limit(8)
+      .toArray();
+  }
 
   const exactRow = rows.find((row) => {
     const rowModel = String(row.model || row.modelName || row.model_name || '').trim();
@@ -1796,23 +2101,8 @@ const getPopularVehicleImage = async ({ make, model }) => {
   };
 };
 
-const getPopularCars = asyncHandler(async (req, res) => {
+const buildPopularCarsPayload = async ({ city = 'new-delhi', limit = 25 } = {}) => {
   const startedAt = Date.now();
-  const city = toCityToken(req.query.city || 'new-delhi') || 'new-delhi';
-  const limitRaw = Number(req.query.limit);
-  const limit =
-    Number.isFinite(limitRaw) && limitRaw > 0
-      ? Math.min(Math.round(limitRaw), 25)
-      : 25;
-
-  const cached = readCache(POPULAR_CARS_CACHE, POPULAR_CARS_CACHE_TTL_MS, 'popular-cars', {
-    city,
-    limit,
-  });
-  if (cached) {
-    return res.json({ ...cached, cached: true });
-  }
-
   const salesCollection = mongoose.connection.db.collection('monthly_car_sales');
   const latest = await salesCollection
     .find({ source: 'v3cars' })
@@ -1822,7 +2112,7 @@ const getPopularCars = asyncHandler(async (req, res) => {
   const month = latest[0]?.month || '';
 
   if (!month) {
-    return res.json({
+    return {
       ok: true,
       source: 'v3cars',
       month: '',
@@ -1831,30 +2121,37 @@ const getPopularCars = asyncHandler(async (req, res) => {
       count: 0,
       rows: [],
       meta: { queryMs: Date.now() - startedAt, reason: 'monthly_sales_empty' },
-    });
+    };
   }
 
-  const [salesRows, makeValues, brandValues] = await Promise.all([
-    salesCollection.find({ month, source: 'v3cars' }).sort({ rank: 1 }).limit(limit).toArray(),
-    Vehicle.distinct('make', { make: { $exists: true, $ne: null } }),
-    Vehicle.distinct('brand', { brand: { $exists: true, $ne: null } }),
-  ]);
-  const knownMakes = [...new Set([...makeValues, ...brandValues].filter(Boolean))];
+  const salesRows = await salesCollection
+    .find({ month, source: 'v3cars' })
+    .sort({ rank: 1 })
+    .limit(limit)
+    .toArray();
+  const knownMakes = POPULAR_CAR_KNOWN_MAKES;
   const monthInfo = parseSalesMonth(month);
+  const parsedRows = salesRows
+    .map((row) => {
+      const rawName = normalizeSalesDisplayName(row.model || row.displayName || row.name);
+      const parsed = parseSalesVehicleName(rawName, knownMakes);
+      if (!parsed.make || !parsed.model) return null;
+      return { row, parsed, key: popularIdentityKey(parsed.make, parsed.model) };
+    })
+    .filter(Boolean);
+  const parsedVehicles = parsedRows.map((item) => item.parsed);
+  const [priceRangeMap, imageMap] = await Promise.all([
+    getPopularVehiclePriceRangeMap({ vehicles: parsedVehicles, city }),
+    getPopularVehicleImageMap(parsedVehicles),
+  ]);
 
-  const rows = (
-    await Promise.all(
-      salesRows.map(async (row) => {
-        const rawName = normalizeSalesDisplayName(row.model || row.displayName || row.name);
-        const parsed = parseSalesVehicleName(rawName, knownMakes);
-        if (!parsed.make || !parsed.model) return null;
+  const rows = parsedRows
+    .map(({ row, parsed, key }) => {
+      const { minExShowroomPrice = 0, maxExShowroomPrice = 0 } =
+        priceRangeMap.get(key) || {};
+      const image = imageMap.get(key) || {};
 
-        const [{ minExShowroomPrice, maxExShowroomPrice }, image] = await Promise.all([
-          getPopularVehiclePriceRange({ make: parsed.make, model: parsed.model, city }),
-          getPopularVehicleImage({ make: parsed.make, model: parsed.model }),
-        ]);
-
-        return {
+      return {
           id: toSlug(`${parsed.make}-${parsed.model}`),
           rank: Number(row.rank || 0) || 0,
           make: parsed.make,
@@ -1884,9 +2181,8 @@ const getPopularCars = asyncHandler(async (req, res) => {
           city,
           source: 'v3cars',
         };
-      }),
-    )
-  ).filter(Boolean);
+    })
+    .filter(Boolean);
 
   const payload = {
     ok: true,
@@ -1898,7 +2194,65 @@ const getPopularCars = asyncHandler(async (req, res) => {
     rows,
     meta: { queryMs: Date.now() - startedAt },
   };
-  writeCache(POPULAR_CARS_CACHE, 'popular-cars', { city, limit }, payload);
+  return payload;
+};
+
+const warmPopularCarsCache = async ({ city = 'new-delhi', limit = 25 } = {}) => {
+  if (!mongoose.connection?.db) {
+    throw new Error('MongoDB connection is not ready for popular cars cache warm-up');
+  }
+
+  const normalizedCity = toCityToken(city || 'new-delhi') || 'new-delhi';
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 25, 1), 25);
+  const cacheKey = getCacheKey('popular-cars', {
+    city: normalizedCity,
+    limit: normalizedLimit,
+  });
+  const cached = readCache(POPULAR_CARS_CACHE, POPULAR_CARS_CACHE_TTL_MS, 'popular-cars', {
+    city: normalizedCity,
+    limit: normalizedLimit,
+  });
+  if (cached) return cached;
+
+  if (POPULAR_CARS_IN_FLIGHT.has(cacheKey)) {
+    return POPULAR_CARS_IN_FLIGHT.get(cacheKey);
+  }
+
+  const warmPromise = buildPopularCarsPayload({
+    city: normalizedCity,
+    limit: normalizedLimit,
+  })
+    .then((payload) => {
+      writeCache(POPULAR_CARS_CACHE, 'popular-cars', { city: normalizedCity, limit: normalizedLimit }, payload);
+      return payload;
+    })
+    .finally(() => {
+      POPULAR_CARS_IN_FLIGHT.delete(cacheKey);
+    });
+
+  POPULAR_CARS_IN_FLIGHT.set(cacheKey, warmPromise);
+  return warmPromise;
+};
+
+const getPopularCars = asyncHandler(async (req, res) => {
+  const city = toCityToken(req.query.city || 'new-delhi') || 'new-delhi';
+  const limitRaw = Number(req.query.limit);
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.round(limitRaw), 25)
+      : 25;
+
+  const cached = readCache(POPULAR_CARS_CACHE, POPULAR_CARS_CACHE_TTL_MS, 'popular-cars', {
+    city,
+    limit,
+  });
+  if (cached) {
+    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    return res.json({ ...cached, cached: true });
+  }
+
+  const payload = await warmPopularCarsCache({ city, limit });
+  res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
   return res.json(payload);
 });
 
@@ -2045,11 +2399,31 @@ const getSimilarModels = asyncHandler(async (req, res) => {
   });
 });
 
-// Warm similar-cars caches in background so first UI open is fast.
-setImmediate(() => {
-  void getBaseModelRowsCached({ city: 'new-delhi', includeDiscontinued: false }).catch(() => {});
-  void getFeatureMetaMapCached().catch(() => {});
-});
+let vehicleCacheWarmupStarted = false;
+
+const warmVehicleCachesWhenConnected = (attempt = 0) => {
+  if (!mongoose.connection?.db) {
+    if (attempt < 24) {
+      setTimeout(() => warmVehicleCachesWhenConnected(attempt + 1), 500);
+    }
+    return;
+  }
+
+  if (vehicleCacheWarmupStarted) return;
+  vehicleCacheWarmupStarted = true;
+
+  void warmPopularCarsCache({ city: 'new-delhi', limit: 25 }).catch(() => {
+    vehicleCacheWarmupStarted = false;
+  });
+
+  setTimeout(() => {
+    void getBaseModelRowsCached({ city: 'new-delhi', includeDiscontinued: false }).catch(() => {});
+    void getFeatureMetaMapCached().catch(() => {});
+  }, 1500);
+};
+
+// Warm vehicle discovery caches in background so first UI open is fast once Mongo is ready.
+setTimeout(() => warmVehicleCachesWhenConnected(), 500);
 
 export {
   getVehicles,

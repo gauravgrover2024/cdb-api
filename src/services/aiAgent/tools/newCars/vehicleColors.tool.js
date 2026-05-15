@@ -149,6 +149,18 @@ const getRequestedMake = ({ toolPlan = {}, context = {} } = {}) => {
   );
 };
 
+const getExplicitRequestedMake = ({ toolPlan = {} } = {}) => {
+  const entities = getEntities(toolPlan);
+
+  return firstText(
+    entities.make,
+    entities.brand,
+    entities.manufacturer,
+    toolPlan.make,
+    toolPlan.brand,
+  );
+};
+
 const getRequestedModel = ({
   toolPlan = {},
   context = {},
@@ -173,8 +185,12 @@ const getRequestedModel = ({
 const resolveContextSafeMake = ({
   requestedMake = "",
   requestedModel = "",
+  toolPlan = {},
   context = {},
 } = {}) => {
+  const explicitMake = getExplicitRequestedMake({ toolPlan });
+  if (explicitMake) return explicitMake;
+
   const selectedVehicle = context.selectedVehicle || {};
   const contextMake = cleanText(
     requestedMake ||
@@ -585,6 +601,7 @@ export const runVehicleColorsTool = async (args = {}) => {
   const requestedMake = resolveContextSafeMake({
     requestedMake: rawRequestedMake,
     requestedModel,
+    toolPlan,
     context,
   });
   const requestedCity =
@@ -608,22 +625,29 @@ export const runVehicleColorsTool = async (args = {}) => {
   const collection = mongoose.connection.db.collection(COLLECTION_NAME);
 
   const queries = [
-    buildMakeModelQuery({
+    {
+      query: buildMakeModelQuery({
+        make: requestedMake,
+        model: requestedModel,
+      }),
       make: requestedMake,
-      model: requestedModel,
-    }),
+    },
     requestedMake
-      ? buildMakeModelQuery({
+      ? {
+          query: buildMakeModelQuery({
+            make: "",
+            model: requestedModel,
+          }),
           make: "",
-          model: requestedModel,
-        })
+        }
       : null,
   ].filter(Boolean);
 
   let docs = [];
   let queryUsed = null;
+  let queryMakeUsed = "";
 
-  for (const query of queries) {
+  for (const { query, make: queryMake } of queries) {
     docs = await collection
       .find(query)
       .sort({ color_name: 1, colorName: 1, name: 1 })
@@ -634,12 +658,13 @@ export const runVehicleColorsTool = async (args = {}) => {
       rowModelMatchesRequest({
         row,
         requestedModel,
-        requestedMake,
+        requestedMake: queryMake,
       }),
     );
 
     if (docs.length) {
       queryUsed = query;
+      queryMakeUsed = queryMake;
       break;
     }
   }
@@ -663,9 +688,13 @@ export const runVehicleColorsTool = async (args = {}) => {
     selected: selectedColor?.id === color.id,
   }));
 
+  const resolvedMake = cleanText(
+    queryMakeUsed || docs[0]?.brand || docs[0]?.make || requestedMake,
+  );
+
   const vehicle = buildVehicle({
-    make: requestedMake || docs[0]?.brand || docs[0]?.make || "",
-    model: normalizeModelKey(requestedModel, requestedMake),
+    make: resolvedMake,
+    model: normalizeModelKey(requestedModel, resolvedMake),
     city: requestedCity,
     selectedColor,
     colorCount: colors.length,

@@ -17,7 +17,33 @@ const run = async () => {
     await vehicleColorsCollection.createIndex({ brand: 1, model: 1, variant: 1 });
     await vehicleColorsCollection.createIndex({ brand: 1, model: 1 });
     await vehicleColorsCollection.createIndex({ brand: 1, model: 1, color_hex: 1, scrape_timestamp: -1 });
+    await vehicleColorsCollection.createIndex(
+      { brand: 1, model: 1, scopeStatus: 1, color_name: 1, updatedAt: -1 },
+      { name: "vehicle_colors_brand_model_scope_color_updated" },
+    );
+    await vehicleColorsCollection.createIndex(
+      { make: 1, model: 1, scopeStatus: 1, color_name: 1, updatedAt: -1 },
+      { name: "vehicle_colors_make_model_scope_color_updated" },
+    );
+    await vehicleColorsCollection.createIndex(
+      { model: 1, scopeStatus: 1, color_name: 1, updatedAt: -1 },
+      { name: "vehicle_colors_model_scope_color_updated" },
+    );
+    await Vehicle.collection.createIndex(
+      { brand_normalized: 1, model_normalized: 1, city: 1, is_discontinued: 1, ex_showroom: 1 },
+      { name: "vehicle_popular_price_city_exact" },
+    );
+    await Vehicle.collection.createIndex(
+      { brand_normalized: 1, model_normalized: 1, is_discontinued: 1, ex_showroom: 1 },
+      { name: "vehicle_popular_price_exact" },
+    );
+    const monthlySalesCollection = mongoose.connection.db.collection("monthly_car_sales");
+    await monthlySalesCollection.createIndex(
+      { source: 1, month: -1, rank: 1 },
+      { name: "monthly_sales_source_month_rank" },
+    );
     const vehicleColorsIndexes = await vehicleColorsCollection.indexes();
+    const monthlySalesIndexes = await monthlySalesCollection.indexes();
 
     console.log("Vehicle indexes ensured.");
     console.log("vehicle createIndexes result:", vehicleResult);
@@ -34,6 +60,10 @@ const run = async () => {
     console.log(
       "vehicle_colors active indexes:",
       vehicleColorsIndexes.map((idx) => idx.name),
+    );
+    console.log(
+      "monthly_car_sales active indexes:",
+      monthlySalesIndexes.map((idx) => idx.name),
     );
   } catch (error) {
     console.error("Failed to ensure Vehicle indexes:", error);

@@ -79,6 +79,8 @@ const run = async () => {
           [{ brand: 1, model: 1, variant: 1, city: 1 }, { name: "ai_vehicle_brand_model_variant_city" }],
           [{ model: 1, on_road_price_cardekho: 1, ex_showroom: 1 }, { name: "ai_vehicle_model_prices" }],
           [{ brand_normalized: 1, model_normalized: 1, variant_normalized: 1, city: 1 }, { name: "ai_vehicle_normalized_catalogue_city" }],
+          [{ brand_normalized: 1, model_normalized: 1, city: 1, is_discontinued: 1, ex_showroom: 1 }, { name: "vehicle_popular_price_city_exact" }],
+          [{ brand_normalized: 1, model_normalized: 1, is_discontinued: 1, ex_showroom: 1 }, { name: "vehicle_popular_price_exact" }],
           [{ city: 1, is_discontinued: 1, LastSeenDate: -1 }, { name: "ai_vehicle_city_active_seen" }],
           [{ bodyType: 1, fuel: 1, transmission: 1, ex_showroom: 1 }, { name: "ai_vehicle_body_fuel_trans_price" }],
         ],
@@ -156,10 +158,23 @@ const run = async () => {
       const created = await ensure(vehicleColorsCollection, [
         [{ brand: 1, model: 1, color_name: 1 }, { name: "ai_vehicle_colors_brand_model_color" }],
         [{ model: 1, updatedAt: -1 }, { name: "ai_vehicle_colors_model_updated" }],
+        [{ brand: 1, model: 1, scopeStatus: 1, color_name: 1, updatedAt: -1 }, { name: "vehicle_colors_brand_model_scope_color_updated" }],
+        [{ make: 1, model: 1, scopeStatus: 1, color_name: 1, updatedAt: -1 }, { name: "vehicle_colors_make_model_scope_color_updated" }],
+        [{ model: 1, scopeStatus: 1, color_name: 1, updatedAt: -1 }, { name: "vehicle_colors_model_scope_color_updated" }],
       ]);
       console.log(`vehicle_colors: ${created.join(", ")}`);
     } else {
       console.log("vehicle_colors: collection not present, skipped optional indexes");
+    }
+
+    const monthlySalesCollection = await optionalCollection("monthly_car_sales");
+    if (monthlySalesCollection) {
+      const created = await ensure(monthlySalesCollection, [
+        [{ source: 1, month: -1, rank: 1 }, { name: "monthly_sales_source_month_rank" }],
+      ]);
+      console.log(`monthly_car_sales: ${created.join(", ")}`);
+    } else {
+      console.log("monthly_car_sales: collection not present, skipped optional indexes");
     }
 
     const offersCollection = await optionalCollection("offers");
