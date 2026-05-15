@@ -23,8 +23,8 @@ const SCRIPT_CATALOG = {
     key: "colors",
     label: "Color Names + Photos",
     filename: "cardekho_color_names_photos.py",
-    description: "Fetches vehicle color names and image URLs into vehicle_colors collection.",
-    targetCollections: ["vehicle_colors"],
+    description: "Fetches vehicle color names and image URLs into vehicle_colors_v2 collection.",
+    targetCollections: ["vehicle_colors_v2"],
   },
   features: {
     key: "features",
@@ -94,7 +94,7 @@ const getCollectionLatest = async (name) => {
 };
 
 const getCollectionsSnapshot = async () => {
-  const targets = ["vehicles", "vehicle_colors", "vehicle_features"];
+  const targets = ["vehicles", "vehicle_colors_v2", "vehicle_features"];
   const collections = {};
   for (const name of targets) {
     const [count, latest] = await Promise.all([

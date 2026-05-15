@@ -20,7 +20,7 @@ const DEFAULT_COLLECTION_NAMES = [
   "vehicle_prices",
   "vehicle_pricelists",
   "vehicle_price_lists",
-  "vehicle_colors",
+  "vehicle_colors_v2",
   "vehiclecolors",
   "price_history",
   "pricehistories",

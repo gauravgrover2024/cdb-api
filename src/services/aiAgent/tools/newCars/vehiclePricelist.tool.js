@@ -3,6 +3,7 @@ import { formatMoney } from "../shared/pricing.js";
 import { buildV2PriceBreakup } from "./shared/priceBreakup.js";
 
 const DEFAULT_CITY = "new-delhi";
+const VEHICLE_COLORS_COLLECTION = "vehicle_colors_v2";
 
 const asArray = (value) => {
   if (!value) return [];
@@ -1106,12 +1107,22 @@ const preferExactRequestedModelRows = ({
 
 const pickVehicleImageUrl = (row = {}) =>
   cleanText(
-    row.normalizedImageUrl ||
+    row.heroImageNormalizedUrl ||
+      row.normalizedHeroImageUrl ||
+      row.heroNormalizedImageUrl ||
+      row.heroImageUrl ||
+      row.heroImage ||
+      row.displayNormalizedImageUrl ||
+      row.defaultNormalizedImageUrl ||
+      row.normalizedImageUrl ||
       row.cleanImageUrl ||
       row.normalized_image_url ||
       row.clean_image_url ||
       row.normalizedImagePngUrl ||
+      row.displayNormalizedImagePngUrl ||
+      row.displayStagedImageUrl ||
       row.stagedImageUrl ||
+      row.defaultColorImageUrl ||
       row.sourceImageUrl ||
       row.imageUrl ||
       row.image_url ||
@@ -1124,14 +1135,81 @@ const pickVehicleImageUrl = (row = {}) =>
       "",
   );
 
+const normalizeFrameMeta = (frame = {}) => {
+  if (!frame || typeof frame !== "object") return frame || null;
+
+  const readNumber = (...values) => {
+    for (const value of values) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  };
+
+  const x = readNumber(frame.x, frame.left, frame.minX);
+  const y = readNumber(frame.y, frame.top, frame.minY);
+  const width = readNumber(frame.width, frame.w);
+  const height = readNumber(frame.height, frame.h);
+  const canvasWidth = readNumber(frame.canvas_width, frame.canvasWidth, frame.naturalWidth, frame.imageWidth, frame.sourceWidth);
+  const canvasHeight = readNumber(frame.canvas_height, frame.canvasHeight, frame.naturalHeight, frame.imageHeight, frame.sourceHeight);
+
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    !Number.isFinite(canvasWidth) ||
+    !Number.isFinite(canvasHeight) ||
+    width <= 0 ||
+    height <= 0 ||
+    canvasWidth <= 0 ||
+    canvasHeight <= 0
+  ) {
+    return frame;
+  }
+
+  const centerX = (x + width / 2) / canvasWidth;
+  const centerY = (y + height / 2) / canvasHeight;
+  const widthRatio = width / canvasWidth;
+  const heightRatio = height / canvasHeight;
+  const scale = Math.min(
+    1.3,
+    Math.max(1, Math.max(0.86 / Math.max(widthRatio, 0.01), 0.58 / Math.max(heightRatio, 0.01))),
+  );
+
+  return {
+    ...frame,
+    naturalWidth: canvasWidth,
+    naturalHeight: canvasHeight,
+    bounds: { x, y, width, height },
+    cssVars: {
+      ...(frame.cssVars || {}),
+      "--car-frame-scale": Number(scale.toFixed(3)),
+      "--car-frame-x": `${Number(((0.5 - centerX) * 100).toFixed(2))}%`,
+      "--car-frame-y": `${Number(((0.5 - centerY) * 100).toFixed(2))}%`,
+      "--car-frame-origin": "center center",
+    },
+  };
+};
+
+const firstMeaningfulFrame = (...frames) =>
+  frames.find((frame) => frame && typeof frame === "object" && Object.keys(frame).length) || null;
+
 const pickImageFrame = (row = {}) =>
-  row.imageFrame ||
-  row.image_frame ||
-  row.carImageFrame ||
-  row.car_image_frame ||
-  row.frame ||
-  row.raw?.imageFrame ||
-  null;
+  normalizeFrameMeta(
+    row.heroFrameMeta ||
+      row.displayFrameMeta ||
+      row.defaultFrameMeta ||
+      row.imageFrame ||
+      row.frameMeta ||
+      row.image_frame ||
+      row.carImageFrame ||
+      row.car_image_frame ||
+      row.frame ||
+      row.raw?.imageFrame ||
+      row.raw?.displayFrameMeta ||
+      null,
+  );
 
 const normalizeSeriesKey = (value = "") =>
   cleanVehicleText(value)
@@ -1262,6 +1340,64 @@ const normalizeVisualColorRow = (row = {}, index = 0) => {
   };
 };
 
+const flattenVisualColorDocuments = (docs = []) =>
+  docs.flatMap((doc = {}) => {
+    const make = cleanText(first(doc.make, doc.brand, doc.brandName));
+    const model = cleanText(first(doc.model, doc.modelName, doc.model_name));
+    const topFrame = pickImageFrame(doc);
+    const topImage = pickVehicleImageUrl(doc);
+
+    if (topImage) {
+      return [{
+        ...doc,
+        make,
+        brand: doc.brand || make,
+        model,
+        color_name: doc.defaultColorName || doc.color_name || doc.colorName || "Display",
+        colorName: doc.defaultColorName || doc.colorName || doc.color_name || "Display",
+        normalizedImageUrl: topImage,
+        cleanImageUrl: topImage,
+        imageUrl: topImage,
+        sourceImageUrl: doc.displayImageUrl || doc.defaultColorImageUrl || doc.sourceImageUrl || "",
+        imageFrame: topFrame,
+      }];
+    }
+
+    const fallbackColor = (Array.isArray(doc.colors) ? doc.colors : []).find((color) =>
+      pickVehicleImageUrl(color),
+    );
+    if (!fallbackColor) return [doc];
+
+    const imageUrl = pickVehicleImageUrl(fallbackColor);
+    return [{
+      ...fallbackColor,
+      _id: `${doc._id || `${make}-${model}`}:hero-fallback`,
+      make,
+      brand: doc.brand || make,
+      model,
+      color_name:
+        fallbackColor.name ||
+        fallbackColor.color_name ||
+        fallbackColor.colorName ||
+        "Display",
+      colorName:
+        fallbackColor.name ||
+        fallbackColor.colorName ||
+        fallbackColor.color_name ||
+        "Display",
+      color_hex: fallbackColor.hex || fallbackColor.color_hex || fallbackColor.colorHex || "",
+      hex: fallbackColor.hex || fallbackColor.color_hex || fallbackColor.colorHex || "",
+      normalizedImageUrl: imageUrl,
+      cleanImageUrl: imageUrl,
+      imageUrl,
+      sourceImageUrl: fallbackColor.sourceImageUrl || "",
+      imageFrame: normalizeFrameMeta(
+        firstMeaningfulFrame(fallbackColor.imageFrame, fallbackColor.frameMeta),
+      ),
+      updatedAt: fallbackColor.updatedAt || doc.updatedAt,
+    }];
+  });
+
 const sampleVehicleColorImages = async ({
   make = "",
   model = "",
@@ -1282,10 +1418,11 @@ const sampleVehicleColorImages = async ({
     { model_name: modelRegex },
     { model_normalized: modelRegex },
     { modelNormalized: modelRegex },
+    { model_slug: slugify(stripMakeFromModel(cleanModel, cleanMake) || cleanModel) },
   ];
 
   const makeOr = makeRegex
-    ? [{ brand: makeRegex }, { make: makeRegex }, { brandName: makeRegex }]
+    ? [{ brand: makeRegex }, { make: makeRegex }, { brandName: makeRegex }, { brand_slug: slugify(cleanMake) }]
     : [];
 
   const query = {
@@ -1296,11 +1433,18 @@ const sampleVehicleColorImages = async ({
         $or: [
           { normalizedImageUrl: { $exists: true, $ne: "" } },
           { cleanImageUrl: { $exists: true, $ne: "" } },
+          { displayNormalizedImageUrl: { $exists: true, $ne: "" } },
+          { heroImageUrl: { $exists: true, $ne: "" } },
+          { heroImage: { $exists: true, $ne: "" } },
+          { defaultNormalizedImageUrl: { $exists: true, $ne: "" } },
+          { displayStagedImageUrl: { $exists: true, $ne: "" } },
           { normalized_image_url: { $exists: true, $ne: "" } },
           { clean_image_url: { $exists: true, $ne: "" } },
           { normalizedImagePngUrl: { $exists: true, $ne: "" } },
           { image_url: { $exists: true, $ne: "" } },
           { imageUrl: { $exists: true, $ne: "" } },
+          { "colors.normalizedImageUrl": { $exists: true, $ne: "" } },
+          { "colors.stagedImageUrl": { $exists: true, $ne: "" } },
         ],
       },
     ],
@@ -1308,7 +1452,7 @@ const sampleVehicleColorImages = async ({
 
   try {
     const rows = await mongoose.connection.db
-      .collection("vehicle_colors")
+      .collection(VEHICLE_COLORS_COLLECTION)
       .aggregate([
         { $match: query },
         {
@@ -1331,8 +1475,22 @@ const sampleVehicleColorImages = async ({
             colorHex: 1,
             hex: 1,
             hexCode: 1,
+            heroImageNormalizedUrl: 1,
+            normalizedHeroImageUrl: 1,
+            heroNormalizedImageUrl: 1,
             normalizedImageUrl: 1,
             cleanImageUrl: 1,
+            displayNormalizedImageUrl: 1,
+            displayNormalizedImagePngUrl: 1,
+            displayStagedImageUrl: 1,
+            heroFrameMeta: 1,
+            displayFrameMeta: 1,
+            defaultFrameMeta: 1,
+            heroImageUrl: 1,
+            heroImage: 1,
+            defaultNormalizedImageUrl: 1,
+            defaultColorImageUrl: 1,
+            colors: 1,
             normalized_image_url: 1,
             clean_image_url: 1,
             normalizedImagePngUrl: 1,
@@ -1360,7 +1518,7 @@ const sampleVehicleColorImages = async ({
       ])
       .toArray();
 
-    return rows
+    return flattenVisualColorDocuments(rows)
       .map(normalizeVisualColorRow)
       .filter(Boolean)
       .filter((item) =>

@@ -86,7 +86,7 @@ export const VEHICLE_COLLECTION_CANDIDATES = [
 ];
 
 export const COLOR_COLLECTION_CANDIDATES = [
-  "vehicle_colors",
+  "vehicle_colors_v2",
   "vehiclecolors",
   "colors",
   "car_colors",
@@ -1141,7 +1141,7 @@ export const runtimeVehicleColors = async ({
     colors,
     count: colors.length,
     matched: colors.length,
-    modulesChecked: [collectionName || reason || "vehicle_colors"],
+    modulesChecked: [collectionName || reason || "vehicle_colors_v2"],
     source: collectionName || "none",
     dataSource: collectionName ? "mongodb" : "empty",
     variantWiseAvailability: false,

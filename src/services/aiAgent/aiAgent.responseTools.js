@@ -869,13 +869,13 @@ export const buildVehicleColorsResponse = ({
         },
 
       sourceTransparency: runtimeData.sourceTransparency ||
-        runtimeData.modulesChecked || ["vehicle_colors"],
+        runtimeData.modulesChecked || ["vehicle_colors_v2"],
 
       meta: {
         ...(runtimeData.meta || {}),
         source: runtimeData.source,
         dataSource: runtimeData.dataSource,
-        modulesChecked: runtimeData.modulesChecked || ["vehicle_colors"],
+        modulesChecked: runtimeData.modulesChecked || ["vehicle_colors_v2"],
         v2ColorsPassthrough: true,
       },
     };

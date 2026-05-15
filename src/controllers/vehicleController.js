@@ -330,17 +330,172 @@ const dedupeMediaRowsByHexLatest = (rows = []) => {
 
 const resolveDisplayImageUrl = (row = {}) =>
   String(
-    row.normalizedImageUrl ||
+    row.heroImageNormalizedUrl ||
+      row.normalizedHeroImageUrl ||
+      row.heroNormalizedImageUrl ||
+      row.heroImageUrl ||
+      row.heroImage ||
+      row.displayNormalizedImageUrl ||
+      row.defaultNormalizedImageUrl ||
+      row.normalizedImageUrl ||
       row.cleanImageUrl ||
       row.normalized_image_url ||
       row.clean_image_url ||
       row.normalizedImagePngUrl ||
+      row.displayNormalizedImagePngUrl ||
+      row.displayStagedImageUrl ||
+      row.defaultColorImageUrl ||
       row.imageUrl ||
       row.image_url ||
       row.sourceImageUrl ||
       row.car_image_url ||
       '',
   ).trim();
+
+const normalizeImageFrameMeta = (frame = {}) => {
+  if (!frame || typeof frame !== 'object') return frame || null;
+
+  const readNumber = (...values) => {
+    for (const value of values) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  };
+
+  const x = readNumber(frame.x, frame.left, frame.minX);
+  const y = readNumber(frame.y, frame.top, frame.minY);
+  const width = readNumber(frame.width, frame.w);
+  const height = readNumber(frame.height, frame.h);
+  const canvasWidth = readNumber(frame.canvas_width, frame.canvasWidth, frame.naturalWidth, frame.imageWidth, frame.sourceWidth);
+  const canvasHeight = readNumber(frame.canvas_height, frame.canvasHeight, frame.naturalHeight, frame.imageHeight, frame.sourceHeight);
+
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    !Number.isFinite(canvasWidth) ||
+    !Number.isFinite(canvasHeight) ||
+    width <= 0 ||
+    height <= 0 ||
+    canvasWidth <= 0 ||
+    canvasHeight <= 0
+  ) {
+    return frame;
+  }
+
+  const centerX = (x + width / 2) / canvasWidth;
+  const centerY = (y + height / 2) / canvasHeight;
+  const widthRatio = width / canvasWidth;
+  const heightRatio = height / canvasHeight;
+  const scale = Math.min(
+    1.3,
+    Math.max(1, Math.max(0.86 / Math.max(widthRatio, 0.01), 0.58 / Math.max(heightRatio, 0.01))),
+  );
+  const translateX = (0.5 - centerX) * 100;
+  const translateY = (0.5 - centerY) * 100;
+
+  return {
+    ...frame,
+    naturalWidth: canvasWidth,
+    naturalHeight: canvasHeight,
+    bounds: { x, y, width, height },
+    cssVars: {
+      ...(frame.cssVars || {}),
+      '--car-frame-scale': Number(scale.toFixed(3)),
+      '--car-frame-x': `${Number(translateX.toFixed(2))}%`,
+      '--car-frame-y': `${Number(translateY.toFixed(2))}%`,
+      '--car-frame-origin': 'center center',
+    },
+  };
+};
+
+const firstMeaningfulFrame = (...frames) =>
+  frames.find((frame) => frame && typeof frame === 'object' && Object.keys(frame).length) || null;
+
+const flattenVehicleColorDocuments = (docs = []) =>
+  docs.flatMap((doc = {}) => {
+    const make = doc.make || doc.brand || doc.brandName || '';
+    const model = doc.model || doc.modelName || doc.model_name || '';
+    const topFrame = normalizeImageFrameMeta(
+      doc.heroFrameMeta ||
+        doc.displayFrameMeta ||
+        doc.defaultFrameMeta ||
+        doc.imageFrame ||
+        doc.frameMeta ||
+        doc.image_frame ||
+        doc.carImageFrame ||
+        doc.car_image_frame ||
+        doc.frame ||
+        null,
+    );
+    const topImage =
+      doc.heroImageNormalizedUrl ||
+      doc.normalizedHeroImageUrl ||
+      doc.heroNormalizedImageUrl ||
+      doc.heroImageUrl ||
+      doc.heroImage ||
+      doc.displayNormalizedImageUrl ||
+      doc.defaultNormalizedImageUrl ||
+      doc.displayStagedImageUrl ||
+      doc.normalizedImageUrl ||
+      doc.cleanImageUrl ||
+      doc.imageUrl ||
+      doc.image_url ||
+      '';
+
+    const rows = [];
+    if (topImage) {
+      rows.push({
+        ...doc,
+        make,
+        brand: doc.brand || make,
+        model,
+        color_name: doc.defaultColorName || doc.color_name || doc.colorName || 'Display',
+        colorName: doc.defaultColorName || doc.colorName || doc.color_name || 'Display',
+        normalizedImageUrl: topImage,
+        cleanImageUrl: topImage,
+        imageUrl: topImage,
+        imageFrame: topFrame,
+        sourceImageUrl: doc.displayImageUrl || doc.defaultColorImageUrl || doc.sourceImageUrl || '',
+        source: doc.source || VEHICLE_COLORS_COLLECTION,
+      });
+    }
+
+    (Array.isArray(doc.colors) ? doc.colors : []).forEach((color, index) => {
+      const colorImage =
+        color.normalizedImageUrl ||
+        color.stagedImageUrl ||
+        color.normalizedImagePngUrl ||
+        color.cleanImageUrl ||
+        color.imageUrl ||
+        color.sourceImageUrl ||
+        '';
+      if (!colorImage) return;
+
+      rows.push({
+        ...color,
+        _id: `${doc._id || `${make}-${model}`}:${index}`,
+        make,
+        brand: doc.brand || make,
+        model,
+        color_name: color.name || color.color_name || color.colorName || `Color ${index + 1}`,
+        colorName: color.name || color.colorName || color.color_name || `Color ${index + 1}`,
+        color_hex: color.hex || color.color_hex || color.colorHex || '',
+        hex: color.hex || color.color_hex || color.colorHex || '',
+        normalizedImageUrl: colorImage,
+        cleanImageUrl: colorImage,
+        imageUrl: colorImage,
+        sourceImageUrl: color.sourceImageUrl || '',
+        imageFrame: normalizeImageFrameMeta(firstMeaningfulFrame(color.imageFrame, color.frameMeta, topFrame)),
+        updatedAt: color.updatedAt || doc.updatedAt,
+        source: doc.source || VEHICLE_COLORS_COLLECTION,
+      });
+    });
+
+    return rows.length ? rows : [doc];
+  });
 
 const normalizeVehicleRecord = (doc) => {
   const raw = doc?.toObject ? doc.toObject() : { ...(doc || {}) };
@@ -681,6 +836,7 @@ const VEHICLE_MEDIA_CACHE = new Map();
 const POPULAR_CARS_CACHE_TTL_MS = 10 * 60 * 1000;
 const POPULAR_CARS_CACHE = new Map();
 const POPULAR_CARS_IN_FLIGHT = new Map();
+const VEHICLE_COLORS_COLLECTION = 'vehicle_colors_v2';
 const R2_PUBLIC_IMAGE_PREFIX = 'https://pub-8504a10fc1c04f02ac8760cb90462ae3.r2.dev/';
 
 const normalizeLooseToken = (value) =>
@@ -1506,7 +1662,7 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
     return res.json({ ...cached, fromCache: true });
   }
 
-  const collection = mongoose.connection.db.collection('vehicle_colors');
+  const collection = mongoose.connection.db.collection(VEHICLE_COLORS_COLLECTION);
   const makeValue = String(make || '').trim();
   const modelCandidates = buildModelCandidates(make, model);
   const variantCandidates = variant
@@ -1549,7 +1705,9 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
     docs = await collection.find({ brand: buildMakeRegex(make) }).toArray();
   }
 
-  const rows = docs
+  const colorRows = flattenVehicleColorDocuments(docs);
+
+  const rows = colorRows
     .map((doc) => normalizeVehicleRecord(doc))
     .filter(
       (doc) =>
@@ -1566,7 +1724,7 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
 
   const fallbackRows = rows.length
     ? rows
-    : docs
+    : colorRows
         .map((doc) => normalizeVehicleRecord(doc))
         .filter((doc) => matchesExact(doc.make, make) && matchesExact(doc.model, model))
         .filter((doc) => {
@@ -1708,12 +1866,43 @@ const cleanR2ImageUrl = (value) => {
   return url;
 };
 
+const pickVehicleColorImageUrl = (row = {}) =>
+  cleanR2ImageUrl(row.heroImageNormalizedUrl) ||
+  cleanR2ImageUrl(row.normalizedHeroImageUrl) ||
+  cleanR2ImageUrl(row.heroNormalizedImageUrl) ||
+  cleanR2ImageUrl(row.heroImageUrl) ||
+  cleanR2ImageUrl(row.heroImage) ||
+  cleanR2ImageUrl(row.displayNormalizedImageUrl) ||
+  cleanR2ImageUrl(row.defaultNormalizedImageUrl) ||
+  cleanR2ImageUrl(row.normalizedImageUrl) ||
+  cleanR2ImageUrl(row.cleanImageUrl) ||
+  cleanR2ImageUrl(row.displayStagedImageUrl) ||
+  cleanR2ImageUrl(row.normalizedImagePngUrl) ||
+  cleanR2ImageUrl(row.displayNormalizedImagePngUrl) ||
+  cleanR2ImageUrl(row.defaultColorImageUrl) ||
+  cleanR2ImageUrl(row.imageUrl) ||
+  cleanR2ImageUrl(row.image_url) ||
+  cleanR2ImageUrl(row.colors?.find?.((color) => cleanR2ImageUrl(color.normalizedImageUrl))?.normalizedImageUrl) ||
+  cleanR2ImageUrl(row.colors?.find?.((color) => cleanR2ImageUrl(color.stagedImageUrl))?.stagedImageUrl) ||
+  '';
+
 const pickPopularImageFrame = (row = {}) =>
-  row.imageFrame ||
-  row.image_frame ||
-  row.carImageFrame ||
-  row.car_image_frame ||
-  row.frame ||
+  normalizeImageFrameMeta(
+    row.heroFrameMeta ||
+      row.displayFrameMeta ||
+      row.defaultFrameMeta ||
+      row.imageFrame ||
+      row.frameMeta ||
+      row.image_frame ||
+      row.carImageFrame ||
+      row.car_image_frame ||
+      row.frame ||
+      firstMeaningfulFrame(
+        row.colors?.find?.((color) => firstMeaningfulFrame(color.frameMeta, color.imageFrame))?.frameMeta,
+        row.colors?.find?.((color) => firstMeaningfulFrame(color.frameMeta, color.imageFrame))?.imageFrame,
+      ) ||
+      null,
+  ) ||
   {};
 
 const buildExactModelRegexes = (make, model) =>
@@ -1839,7 +2028,7 @@ const getPopularVehicleImageMap = async (vehicles = []) => {
 
   if (!identities.length) return new Map();
 
-  const collection = mongoose.connection.db.collection('vehicle_colors');
+  const collection = mongoose.connection.db.collection(VEHICLE_COLORS_COLLECTION);
   const activeScopeFilter = {
     $or: [{ scopeStatus: { $exists: false } }, { scopeStatus: { $ne: 'rejected' } }],
   };
@@ -1854,6 +2043,20 @@ const getPopularVehicleImageMap = async (vehicles = []) => {
     colorName: 1,
     normalizedImageUrl: 1,
     cleanImageUrl: 1,
+    heroImageNormalizedUrl: 1,
+    normalizedHeroImageUrl: 1,
+    heroNormalizedImageUrl: 1,
+    displayNormalizedImageUrl: 1,
+    displayNormalizedImagePngUrl: 1,
+    displayStagedImageUrl: 1,
+    heroFrameMeta: 1,
+    displayFrameMeta: 1,
+    defaultFrameMeta: 1,
+    heroImageUrl: 1,
+    heroImage: 1,
+    defaultNormalizedImageUrl: 1,
+    defaultColorImageUrl: 1,
+    colors: 1,
     imageFrame: 1,
     image_frame: 1,
     carImageFrame: 1,
@@ -1898,13 +2101,13 @@ const getPopularVehicleImageMap = async (vehicles = []) => {
 
   const imageMap = new Map();
   identities.forEach((item) => {
-    const row = rows.find((candidate) => {
-      const rowMake = candidate.brand || candidate.make || candidate.brandName || '';
-      const rowModel = String(candidate.model || candidate.modelName || candidate.model_name || '').trim();
-      const normalizedImageUrl = cleanR2ImageUrl(candidate.normalizedImageUrl) || cleanR2ImageUrl(candidate.cleanImageUrl);
+      const row = rows.find((candidate) => {
+        const rowMake = candidate.brand || candidate.make || candidate.brandName || '';
+        const rowModel = String(candidate.model || candidate.modelName || candidate.model_name || '').trim();
+      const normalizedImageUrl = pickVehicleColorImageUrl(candidate);
       return normalizedImageUrl && matchesExact(rowMake, item.make) && matchesExact(trimLeading(rowModel, item.make) || rowModel, item.model);
     });
-    const normalizedImageUrl = cleanR2ImageUrl(row?.normalizedImageUrl) || cleanR2ImageUrl(row?.cleanImageUrl);
+    const normalizedImageUrl = pickVehicleColorImageUrl(row);
     imageMap.set(item.key, {
       imageUrl: normalizedImageUrl || '',
       normalizedImageUrl: normalizedImageUrl || '',
@@ -1990,7 +2193,7 @@ const getPopularVehicleImage = async ({ make, model }) => {
   const modelRegexes = buildExactModelRegexes(make, model);
   if (!modelRegexes.length) return { imageUrl: '', normalizedImageUrl: '', imageFrame: {} };
 
-  const collection = mongoose.connection.db.collection('vehicle_colors');
+  const collection = mongoose.connection.db.collection(VEHICLE_COLORS_COLLECTION);
   const identity = buildPopularVehicleIdentity(make, model);
   const projection = {
     brand: 1,
@@ -2003,6 +2206,20 @@ const getPopularVehicleImage = async ({ make, model }) => {
     colorName: 1,
     normalizedImageUrl: 1,
     cleanImageUrl: 1,
+    heroImageNormalizedUrl: 1,
+    normalizedHeroImageUrl: 1,
+    heroNormalizedImageUrl: 1,
+    displayNormalizedImageUrl: 1,
+    displayNormalizedImagePngUrl: 1,
+    displayStagedImageUrl: 1,
+    heroFrameMeta: 1,
+    displayFrameMeta: 1,
+    defaultFrameMeta: 1,
+    heroImageUrl: 1,
+    heroImage: 1,
+    defaultNormalizedImageUrl: 1,
+    defaultColorImageUrl: 1,
+    colors: 1,
     imageFrame: 1,
     image_frame: 1,
     carImageFrame: 1,
@@ -2049,7 +2266,7 @@ const getPopularVehicleImage = async ({ make, model }) => {
     .limit(12)
     .toArray();
 
-  rows = rows.filter((row) => cleanR2ImageUrl(row?.normalizedImageUrl) || cleanR2ImageUrl(row?.cleanImageUrl));
+  rows = rows.filter((row) => pickVehicleColorImageUrl(row));
 
   if (!rows.length) {
     rows = await collection
@@ -2092,7 +2309,7 @@ const getPopularVehicleImage = async ({ make, model }) => {
     return matchesExact(trimLeading(rowModel, make) || rowModel, model);
   });
   const row = exactRow || rows[0] || null;
-  const normalizedImageUrl = cleanR2ImageUrl(row?.normalizedImageUrl) || cleanR2ImageUrl(row?.cleanImageUrl);
+  const normalizedImageUrl = pickVehicleColorImageUrl(row);
 
   return {
     imageUrl: normalizedImageUrl,

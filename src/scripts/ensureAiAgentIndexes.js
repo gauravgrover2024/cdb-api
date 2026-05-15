@@ -153,18 +153,24 @@ const run = async () => {
       console.log(`${label}: ${created.join(", ")}`);
     }
 
-    const vehicleColorsCollection = await optionalCollection("vehicle_colors");
+    const vehicleColorsCollection = await optionalCollection("vehicle_colors_v2");
     if (vehicleColorsCollection) {
       const created = await ensure(vehicleColorsCollection, [
+        [{ brand_slug: 1, model_slug: 1 }, { name: "uniq_brand_model_color_media", unique: true }],
+        [{ brand: 1, model: 1, variant: 1 }, { name: "vehicle_colors_v2_brand_model_variant" }],
+        [{ brand: 1, model: 1 }, { name: "vehicle_colors_v2_brand_model" }],
         [{ brand: 1, model: 1, color_name: 1 }, { name: "ai_vehicle_colors_brand_model_color" }],
+        [{ "colors.name": 1, brand: 1, model: 1 }, { name: "vehicle_colors_v2_nested_color_name" }],
         [{ model: 1, updatedAt: -1 }, { name: "ai_vehicle_colors_model_updated" }],
         [{ brand: 1, model: 1, scopeStatus: 1, color_name: 1, updatedAt: -1 }, { name: "vehicle_colors_brand_model_scope_color_updated" }],
         [{ make: 1, model: 1, scopeStatus: 1, color_name: 1, updatedAt: -1 }, { name: "vehicle_colors_make_model_scope_color_updated" }],
         [{ model: 1, scopeStatus: 1, color_name: 1, updatedAt: -1 }, { name: "vehicle_colors_model_scope_color_updated" }],
+        [{ brand: 1, model: 1, activeColorCount: -1, updatedAt: -1 }, { name: "vehicle_colors_v2_brand_model_active_updated" }],
+        [{ brand_slug: 1, model_slug: 1, activeColorCount: -1, updatedAt: -1 }, { name: "vehicle_colors_v2_slug_active_updated" }],
       ]);
-      console.log(`vehicle_colors: ${created.join(", ")}`);
+      console.log(`vehicle_colors_v2: ${created.join(", ")}`);
     } else {
-      console.log("vehicle_colors: collection not present, skipped optional indexes");
+      console.log("vehicle_colors_v2: collection not present, skipped optional indexes");
     }
 
     const monthlySalesCollection = await optionalCollection("monthly_car_sales");

@@ -50,7 +50,7 @@ else:
 
 prices_collection = db["vehicles"]
 features_collection = db["vehicle_features"]
-colors_collection = db["vehicle_colors"]
+colors_collection = db["vehicle_colors_v2"]
 price_history_collection = db["price_history"]
 offers_collection        = db["offers"]
 service_costs_collection = db["service_costs"]

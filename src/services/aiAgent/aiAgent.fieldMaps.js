@@ -248,7 +248,7 @@ export const AI_AGENT_FIELD_MAPS = {
   },
   vehicle_colors: {
     module: "Vehicle Colors",
-    collectionName: "vehicle_colors",
+    collectionName: "vehicle_colors_v2",
     searchFields: [
       "brand",
       "model",

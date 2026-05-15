@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const TOOL_NAME = "vehicle_colors";
 const INTENT = "vehicle_colors";
 const CANVAS_TYPE = "color_studio_canvas";
-const COLLECTION_NAME = "vehicle_colors";
+const COLLECTION_NAME = "vehicle_colors_v2";
 const DEFAULT_CITY = "new-delhi";
 
 const asText = (value = "") => String(value || "").trim();
@@ -102,6 +102,66 @@ const normalizePublicImageUrl = (value = "") => {
 
   return "";
 };
+
+const normalizeFrameMeta = (frame = {}) => {
+  if (!frame || typeof frame !== "object") return frame || null;
+
+  const readNumber = (...values) => {
+    for (const value of values) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  };
+
+  const x = readNumber(frame.x, frame.left, frame.minX);
+  const y = readNumber(frame.y, frame.top, frame.minY);
+  const width = readNumber(frame.width, frame.w);
+  const height = readNumber(frame.height, frame.h);
+  const canvasWidth = readNumber(frame.canvas_width, frame.canvasWidth, frame.naturalWidth, frame.imageWidth, frame.sourceWidth);
+  const canvasHeight = readNumber(frame.canvas_height, frame.canvasHeight, frame.naturalHeight, frame.imageHeight, frame.sourceHeight);
+
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    !Number.isFinite(canvasWidth) ||
+    !Number.isFinite(canvasHeight) ||
+    width <= 0 ||
+    height <= 0 ||
+    canvasWidth <= 0 ||
+    canvasHeight <= 0
+  ) {
+    return frame;
+  }
+
+  const centerX = (x + width / 2) / canvasWidth;
+  const centerY = (y + height / 2) / canvasHeight;
+  const widthRatio = width / canvasWidth;
+  const heightRatio = height / canvasHeight;
+  const scale = Math.min(
+    1.3,
+    Math.max(1, Math.max(0.86 / Math.max(widthRatio, 0.01), 0.58 / Math.max(heightRatio, 0.01))),
+  );
+
+  return {
+    ...frame,
+    naturalWidth: canvasWidth,
+    naturalHeight: canvasHeight,
+    bounds: { x, y, width, height },
+    cssVars: {
+      ...(frame.cssVars || {}),
+      "--car-frame-scale": Number(scale.toFixed(3)),
+      "--car-frame-x": `${Number(((0.5 - centerX) * 100).toFixed(2))}%`,
+      "--car-frame-y": `${Number(((0.5 - centerY) * 100).toFixed(2))}%`,
+      "--car-frame-origin": "center center",
+    },
+  };
+};
+
+const firstMeaningfulFrame = (...frames) =>
+  frames.find((frame) => frame && typeof frame === "object" && Object.keys(frame).length) || null;
 
 const getEntities = (toolPlan = {}) => ({
   ...(toolPlan.entities || {}),
@@ -227,6 +287,8 @@ const buildMakeModelQuery = ({ make = "", model = "" } = {}) => {
 
   const modelRegex = exactRegex(modelWithoutMake || cleanModel);
   const makeRegex = cleanMake ? exactRegex(cleanMake) : null;
+  const modelSlug = slugify(modelWithoutMake || cleanModel);
+  const makeSlug = cleanMake ? slugify(cleanMake) : "";
 
   const modelOr = [
     { model: modelRegex },
@@ -234,6 +296,7 @@ const buildMakeModelQuery = ({ make = "", model = "" } = {}) => {
     { model_name: modelRegex },
     { model_normalized: modelRegex },
     { modelNormalized: modelRegex },
+    { model_slug: modelSlug },
   ];
 
   const and = [
@@ -248,8 +311,14 @@ const buildMakeModelQuery = ({ make = "", model = "" } = {}) => {
       $or: [
         { normalizedImageUrl: /^https?:\/\//i },
         { cleanImageUrl: /^https?:\/\//i },
+        { displayNormalizedImageUrl: /^https?:\/\//i },
+        { heroImageUrl: /^https?:\/\//i },
+        { heroImage: /^https?:\/\//i },
+        { defaultNormalizedImageUrl: /^https?:\/\//i },
         { imageUrl: /^https?:\/\//i },
         { image_url: /^https?:\/\//i },
+        { "colors.normalizedImageUrl": /^https?:\/\//i },
+        { "colors.stagedImageUrl": /^https?:\/\//i },
       ],
     },
   ];
@@ -261,6 +330,7 @@ const buildMakeModelQuery = ({ make = "", model = "" } = {}) => {
         { make: makeRegex },
         { brandName: makeRegex },
         { manufacturer: makeRegex },
+        { brand_slug: makeSlug },
       ],
     });
   }
@@ -296,12 +366,89 @@ const rowModelMatchesRequest = ({
 };
 
 const pickImageFrame = (row = {}) =>
-  row.imageFrame ||
-  row.image_frame ||
-  row.carImageFrame ||
-  row.car_image_frame ||
-  row.frame ||
-  null;
+  normalizeFrameMeta(
+    row.imageFrame ||
+      row.frameMeta ||
+      row.displayFrameMeta ||
+      row.image_frame ||
+      row.carImageFrame ||
+      row.car_image_frame ||
+      row.frame ||
+      null,
+  );
+
+const flattenColorDocuments = (docs = []) =>
+  docs.flatMap((doc = {}) => {
+    const make = doc.make || doc.brand || doc.brandName || "";
+    const model = doc.model || doc.modelName || doc.model_name || "";
+    const topFrame = pickImageFrame(doc);
+    const topImage = normalizePublicImageUrl(
+      doc.displayNormalizedImageUrl ||
+        doc.heroImageUrl ||
+        doc.heroImage ||
+        doc.defaultNormalizedImageUrl ||
+        doc.displayStagedImageUrl ||
+        doc.normalizedImageUrl ||
+        doc.cleanImageUrl ||
+        doc.imageUrl ||
+        doc.image_url ||
+        "",
+    );
+
+    const rows = [];
+    (Array.isArray(doc.colors) ? doc.colors : []).forEach((color, index) => {
+      const imageUrl = normalizePublicImageUrl(
+        color.normalizedImageUrl ||
+          color.stagedImageUrl ||
+          color.normalizedImagePngUrl ||
+          color.cleanImageUrl ||
+          color.imageUrl ||
+          color.sourceImageUrl ||
+          "",
+      );
+      if (!imageUrl) return;
+
+      rows.push({
+        ...color,
+        id: color.id || `${doc._id || `${make}-${model}`}-${index}`,
+        _id: `${doc._id || `${make}-${model}`}:${index}`,
+        make,
+        brand: doc.brand || make,
+        model,
+        color_name: color.name || color.color_name || color.colorName || `Color ${index + 1}`,
+        colorName: color.name || color.colorName || color.color_name || `Color ${index + 1}`,
+        hex: color.hex || color.color_hex || color.colorHex || "",
+        color_hex: color.hex || color.color_hex || color.colorHex || "",
+        normalizedImageUrl: imageUrl,
+        cleanImageUrl: imageUrl,
+        imageUrl,
+        stagedImageUrl: imageUrl,
+        sourceImageUrl: color.sourceImageUrl || "",
+        imageFrame: normalizeFrameMeta(firstMeaningfulFrame(color.imageFrame, color.frameMeta, topFrame)),
+        updatedAt: color.updatedAt || doc.updatedAt,
+        source: doc.source || COLLECTION_NAME,
+      });
+    });
+
+    if (!rows.length && topImage) {
+      rows.push({
+        ...doc,
+        make,
+        brand: doc.brand || make,
+        model,
+        color_name: doc.defaultColorName || doc.color_name || doc.colorName || "Display",
+        colorName: doc.defaultColorName || doc.colorName || doc.color_name || "Display",
+        normalizedImageUrl: topImage,
+        cleanImageUrl: topImage,
+        imageUrl: topImage,
+        sourceImageUrl: doc.displayImageUrl || doc.defaultColorImageUrl || doc.sourceImageUrl || "",
+        imageFrame: topFrame,
+        source: doc.source || COLLECTION_NAME,
+      });
+    }
+
+    return rows.length ? rows : [doc];
+  });
 
 const normalizeColorRow = (row = {}, index = 0) => {
   const colorName = firstText(
@@ -323,7 +470,12 @@ const normalizeColorRow = (row = {}, index = 0) => {
   );
 
   const sourceImageUrl = normalizePublicImageUrl(
-    row.sourceImageUrl || row.source_image_url || row.image_url || "",
+    row.sourceImageUrl ||
+      row.source_image_url ||
+      row.displayImageUrl ||
+      row.defaultColorImageUrl ||
+      row.image_url ||
+      "",
   );
 
   const id =
@@ -355,7 +507,7 @@ const normalizeColorRow = (row = {}, index = 0) => {
     imageFrame: pickImageFrame(row),
     scopeStatus: row.scopeStatus || "active",
     scopeVersion: row.scopeVersion || "",
-    source: row.source || "vehicle_colors",
+    source: row.source || COLLECTION_NAME,
     hasPopularity:
       row.votes !== undefined ||
       row.popularity !== undefined ||
@@ -650,11 +802,11 @@ export const runVehicleColorsTool = async (args = {}) => {
   for (const { query, make: queryMake } of queries) {
     docs = await collection
       .find(query)
-      .sort({ color_name: 1, colorName: 1, name: 1 })
+      .sort({ activeColorCount: -1, updatedAt: -1, color_name: 1, colorName: 1, name: 1 })
       .limit(toolPlan.limit || toolPlan.input?.limit || 80)
       .toArray();
 
-    docs = docs.filter((row) =>
+    docs = flattenColorDocuments(docs).filter((row) =>
       rowModelMatchesRequest({
         row,
         requestedModel,

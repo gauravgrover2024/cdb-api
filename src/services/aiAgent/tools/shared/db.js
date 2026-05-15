@@ -23,7 +23,7 @@ export const VEHICLE_COLLECTION_CANDIDATES = [
 ];
 
 export const COLOR_COLLECTION_CANDIDATES = [
-  "vehicle_colors",
+  "vehicle_colors_v2",
   "vehiclecolors",
   "colors",
   "car_colors",

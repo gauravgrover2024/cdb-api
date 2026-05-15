@@ -350,7 +350,7 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=6, help="Parallel workers.")
     parser.add_argument("--batch-size", type=int, default=100, help="Mongo bulk update batch size.")
     parser.add_argument("--db", default="", help="Mongo database name override.")
-    parser.add_argument("--collection", default="vehicle_colors", help="Mongo collection name.")
+    parser.add_argument("--collection", default="vehicle_colors_v2", help="Mongo collection name.")
     parser.add_argument("--brand", default="", help="Optional brand filter for testing.")
     parser.add_argument("--model", default="", help="Optional model filter for testing.")
     parser.add_argument("--timeout", type=int, default=25, help="HTTP image fetch timeout seconds.")

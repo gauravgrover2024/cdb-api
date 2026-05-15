@@ -26,7 +26,7 @@ const fieldChanged = (doc, key, value) => {
 
 const buildColorMaps = async () => {
   const rows = await mongoose.connection.db
-    .collection("vehicle_colors")
+    .collection("vehicle_colors_v2")
     .find(
       {},
       {

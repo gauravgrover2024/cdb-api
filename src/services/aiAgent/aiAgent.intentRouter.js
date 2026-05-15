@@ -344,7 +344,7 @@ export const INTENT_DEFINITIONS = [
       /\b(which|show|find)\b.*\b(black|white|red|blue|grey|gray|silver|green|orange|brown|gold|matte|dual[- ]tone)\b.*\b(cars?|models?|suvs?|sedans?|hatchbacks?)\b/i,
       /\b(which|show|find)\b.*\b(cars?|models?|suvs?|sedans?|hatchbacks?)\b.*\b(black|white|red|blue|grey|gray|silver|green|orange|brown|gold|matte|dual[- ]tone)\b/i,
     ],
-    collections: ["vehicle_colors", "vehicles", "vehicle_features"],
+    collections: ["vehicle_colors_v2", "vehicles", "vehicle_features"],
     requiredEntities: ["color"],
     optionalEntities: ["make", "model", "budgetMax", "bodyType"],
     widgetType: "vehicle_color_search",
@@ -357,7 +357,7 @@ export const INTENT_DEFINITIONS = [
     patterns: [
       /\b(colou?rs?|color options|available colou?rs?|show colou?rs?|color gallery|colour gallery)\b/i,
     ],
-    collections: ["vehicle_colors"],
+    collections: ["vehicle_colors_v2"],
     requiredEntities: ["model"],
     optionalEntities: ["make", "color"],
     widgetType: "vehicle_colors",

@@ -2695,7 +2695,7 @@ export const vehicleColors = async (parsed, access, trace) => {
         rows: displayColors,
         records: displayColors,
         notices: [
-          "Showing only model-level colors stored in vehicle_colors. Variant-wise color availability is not stored.",
+          "Showing only model-level colors stored in vehicle_colors_v2. Variant-wise color availability is not stored.",
         ],
       }),
     ],
@@ -3413,7 +3413,7 @@ export const vehicleColorSearch = async (parsed, access, trace) => {
         colors: compactRows,
         data: { color, total: compactRows.length, colors: compactRows },
         notices: [
-          "Color results come only from stored vehicle_colors records.",
+          "Color results come only from stored vehicle_colors_v2 records.",
         ],
       }),
     ],
