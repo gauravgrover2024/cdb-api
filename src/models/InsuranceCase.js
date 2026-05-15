@@ -94,6 +94,8 @@ const paymentHistorySchema = new mongoose.Schema(
 const customerSnapshotSchema = new mongoose.Schema(
   {
     customerName: { type: String, default: "" },
+    companyName: { type: String, default: "" },
+    contactPersonName: { type: String, default: "" },
     primaryMobile: { type: String, default: "" },
     email: { type: String, default: "" },
     panNumber: { type: String, default: "" },

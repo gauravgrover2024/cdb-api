@@ -1,6 +1,22 @@
 import asyncHandler from 'express-async-handler';
 import Customer from '../models/Customer.js';
 import Loan from '../models/Loan.js';
+import InsuranceCase from '../models/InsuranceCase.js';
+
+const buildInsuranceCustomerSnapshot = (customer) => {
+  if (!customer) return {};
+  return {
+    customerName: String(customer.customerName || '').trim(),
+    companyName: String(customer.companyName || '').trim(),
+    contactPersonName: String(customer.contactPersonName || '').trim(),
+    primaryMobile: String(customer.primaryMobile || '').trim(),
+    email: String(customer.email || customer.emailAddress || '').trim(),
+    panNumber: String(customer.panNumber || '').trim(),
+    residenceAddress: String(customer.residenceAddress || '').trim(),
+    pincode: String(customer.pincode || '').trim(),
+    city: String(customer.city || '').trim(),
+  };
+};
 
 const normalizeIfsc = (value) =>
   String(value || "")
@@ -666,6 +682,39 @@ const updateCustomer = asyncHandler(async (req, res) => {
       }
     } catch (err) {
       console.error('⚠️ Failed to sync loans with customer update:', err.message);
+    }
+
+    // Sync linked insurance cases (denormalized customer fields + snapshot)
+    try {
+      const insuranceUpdate = {};
+      if (normalizedData?.customerName !== undefined) {
+        insuranceUpdate.customerName = normalizedData.customerName;
+      }
+      if (normalizedData?.companyName !== undefined) {
+        insuranceUpdate.companyName = normalizedData.companyName;
+      }
+      if (normalizedData?.contactPersonName !== undefined) {
+        insuranceUpdate.contactPersonName = normalizedData.contactPersonName;
+      }
+      if (normalizedData?.primaryMobile !== undefined) {
+        insuranceUpdate.mobile = normalizedData.primaryMobile;
+      }
+      if (normalizedData?.email !== undefined) {
+        insuranceUpdate.email = normalizedData.email;
+      }
+      if (Object.keys(insuranceUpdate).length > 0) {
+        insuranceUpdate.customerSnapshot = buildInsuranceCustomerSnapshot(updatedCustomer);
+        const insuranceSyncResult = await InsuranceCase.updateMany(
+          { customerId: customer._id },
+          { $set: { ...insuranceUpdate, updatedAt: new Date() } },
+        );
+        console.log(
+          '🔄 Insurance cases synced with customer update:',
+          insuranceSyncResult?.modifiedCount || 0,
+        );
+      }
+    } catch (err) {
+      console.error('⚠️ Failed to sync insurance cases with customer update:', err.message);
     }
 
     console.log('✅ CUSTOMER UPDATED WITH ALL DETAILS');
