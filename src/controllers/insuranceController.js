@@ -95,6 +95,8 @@ const buildCustomerSnapshot = (customer) => {
   if (!customer) return {};
   return {
     customerName: safeString(customer.customerName).trim(),
+    companyName: safeString(customer.companyName).trim(),
+    contactPersonName: safeString(customer.contactPersonName).trim(),
     primaryMobile: safeString(customer.primaryMobile).trim(),
     email: safeString(customer.email || customer.emailAddress).trim(),
     panNumber: safeString(customer.panNumber).trim(),
@@ -190,22 +192,6 @@ const normalizeInsuranceCurrentStep = (value, fallback = 1) => {
   return Math.max(1, Math.round(base));
 };
 
-const REQUIRED_DOCS_BY_SCENARIO = {
-  "new-car-insurance": ["Invoice"],
-  "used-car-insurance": ["RC Copy", "Form 29", "Form 30 page 1", "Form 30 page 2"],
-  "used-car-renewal": ["RC Copy", "Previous Year Policy"],
-  "policy-already-expired": ["RC Copy", "Previous Year Policy"],
-};
-
-const getDocScenario = (row = {}) => {
-  const vehicleType = safeString(row.vehicleType).trim().toLowerCase();
-  const usedFlow = safeString(row.usedCarFlowType || "Renewal").trim().toLowerCase();
-  if (vehicleType === "new car") return "new-car-insurance";
-  if (usedFlow.includes("expired")) return "policy-already-expired";
-  if (usedFlow.includes("renew") || usedFlow.includes("rollover")) return "used-car-renewal";
-  return "used-car-insurance";
-};
-
 const isInsuranceCaseReadyForSubmit = (payload = {}) => {
   const errors = [];
   const isCompany = safeString(payload.buyerType).trim() === "Company";
@@ -263,17 +249,14 @@ const isInsuranceCaseReadyForSubmit = (payload = {}) => {
   if (!safeString(payload.nomineeName).trim() || !safeString(payload.nomineeRelationship).trim()) {
     errors.push("Nominee name and relationship are required");
   }
-  if (!safeString(payload.referenceName).trim() || !/^\d{10}$/.test(safeString(payload.referencePhone).trim())) {
-    errors.push("Reference name and valid 10-digit reference phone are required");
+  const referencePhoneRaw = safeString(payload.referencePhone).replace(/\D/g, "");
+  const referencePhone =
+    referencePhoneRaw.length >= 10
+      ? referencePhoneRaw.slice(-10)
+      : referencePhoneRaw;
+  if (referencePhoneRaw && referencePhone.length !== 10) {
+    errors.push("Reference phone must be a valid 10-digit number when provided");
   }
-  const requiredDocTags = REQUIRED_DOCS_BY_SCENARIO[getDocScenario(payload)] || [];
-  const taggedDocs = new Set(
-    (Array.isArray(payload.documents) ? payload.documents : [])
-      .map((d) => safeString(d?.tag).trim()),
-  );
-  requiredDocTags.forEach((tag) => {
-    if (!taggedDocs.has(tag)) errors.push(`Missing required document: ${tag}`);
-  });
   return { ok: errors.length === 0, errors };
 };
 
