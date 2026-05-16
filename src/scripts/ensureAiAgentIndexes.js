@@ -167,6 +167,9 @@ const run = async () => {
         [{ model: 1, scopeStatus: 1, color_name: 1, updatedAt: -1 }, { name: "vehicle_colors_model_scope_color_updated" }],
         [{ brand: 1, model: 1, activeColorCount: -1, updatedAt: -1 }, { name: "vehicle_colors_v2_brand_model_active_updated" }],
         [{ brand_slug: 1, model_slug: 1, activeColorCount: -1, updatedAt: -1 }, { name: "vehicle_colors_v2_slug_active_updated" }],
+        [{ brand_slug: 1, model_slug: 1, scopeStatus: 1, activeColorCount: -1, updatedAt: -1 }, { name: "vehicle_colors_v2_slug_scope_active_updated" }],
+        [{ model_slug: 1, scopeStatus: 1, activeColorCount: -1, updatedAt: -1 }, { name: "vehicle_colors_v2_model_slug_scope_active_updated" }],
+        [{ model: 1, scopeStatus: 1, activeColorCount: -1, updatedAt: -1 }, { name: "vehicle_colors_v2_model_scope_active_updated" }],
       ]);
       console.log(`vehicle_colors_v2: ${created.join(", ")}`);
     } else {

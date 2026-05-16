@@ -39,6 +39,18 @@ const run = async () => {
       { brand_slug: 1, model_slug: 1, activeColorCount: -1, updatedAt: -1 },
       { name: "vehicle_colors_v2_slug_active_updated" },
     );
+    await vehicleColorsCollection.createIndex(
+      { brand_slug: 1, model_slug: 1, scopeStatus: 1, activeColorCount: -1, updatedAt: -1 },
+      { name: "vehicle_colors_v2_slug_scope_active_updated" },
+    );
+    await vehicleColorsCollection.createIndex(
+      { model_slug: 1, scopeStatus: 1, activeColorCount: -1, updatedAt: -1 },
+      { name: "vehicle_colors_v2_model_slug_scope_active_updated" },
+    );
+    await vehicleColorsCollection.createIndex(
+      { model: 1, scopeStatus: 1, activeColorCount: -1, updatedAt: -1 },
+      { name: "vehicle_colors_v2_model_scope_active_updated" },
+    );
     await Vehicle.collection.createIndex(
       { brand_normalized: 1, model_normalized: 1, city: 1, is_discontinued: 1, ex_showroom: 1 },
       { name: "vehicle_popular_price_city_exact" },

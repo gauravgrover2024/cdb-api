@@ -93,7 +93,7 @@ HEADERS = {
 }
 
 FUZZ_THRESHOLD = 88
-PIPELINE_VERSION = 9
+PIPELINE_VERSION = 10
 REQUEST_SLEEP_SECONDS = 0.15
 
 # Match the existing ACI image normalizer technology.
@@ -1217,53 +1217,132 @@ def normalize_car_image(input_path, output_path):
 
 
 def compute_frame_metadata(path):
+    """
+    Compute visible vehicle frame for both output modes:
+      1. cutout / clean images with alpha transparency
+      2. stage-only .aci images with an opaque studio background
+
+    The previous implementation only worked for alpha cutouts, so stage-only
+    color images were getting frameMeta: {}.
+    """
     img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-    if img is None or len(img.shape) < 3 or img.shape[2] < 4:
+    if img is None or len(img.shape) < 3:
         return {}
 
-    alpha = img[:, :, 3]
-    coords = cv2.findNonZero(alpha)
-    if coords is None:
+    height, width = img.shape[:2]
+
+    # --------------------------------------------------------
+    # 1) Alpha-based frame for transparent cutouts
+    # --------------------------------------------------------
+    if img.shape[2] >= 4:
+        alpha = img[:, :, 3]
+
+        # Use alpha only if the image is actually transparent/cutout.
+        # Fully opaque .webp/.png files can have alpha=255 everywhere.
+        if int(alpha.min()) < 250:
+            mask = (alpha > 12).astype("uint8") * 255
+            coords = cv2.findNonZero(mask)
+            if coords is not None:
+                x, y, w, h = cv2.boundingRect(coords)
+                if w > 0 and h > 0 and (w * h) < (width * height * 0.98):
+                    return {
+                        "x": int(x),
+                        "y": int(y),
+                        "width": int(w),
+                        "height": int(h),
+                        "aspect_ratio": round(w / h, 4) if h else None,
+                        "canvas_width": int(width),
+                        "canvas_height": int(height),
+                        "frameMethod": "alpha",
+                    }
+
+    # --------------------------------------------------------
+    # 2) Background-difference frame for staged/studio images
+    # --------------------------------------------------------
+    bgr = img[:, :, :3]
+
+    # Estimate background from image borders.
+    border = max(8, min(width, height) // 40)
+    samples = np.concatenate([
+        bgr[:border, :, :].reshape(-1, 3),
+        bgr[-border:, :, :].reshape(-1, 3),
+        bgr[:, :border, :].reshape(-1, 3),
+        bgr[:, -border:, :].reshape(-1, 3),
+    ], axis=0)
+
+    bg = np.median(samples, axis=0).astype("float32")
+    diff = np.linalg.norm(bgr.astype("float32") - bg, axis=2)
+
+    # Dynamic threshold: enough to remove uniform studio background but keep
+    # vehicle body/shadow details. Clamp to avoid being too loose/tight.
+    p85 = float(np.percentile(diff, 85))
+    threshold = max(14.0, min(42.0, p85 * 0.55))
+    mask = (diff > threshold).astype("uint8") * 255
+
+    # Strengthen actual vehicle edges/details.
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 40, 120)
+    mask = cv2.bitwise_or(mask, edges)
+
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    # Ignore border noise.
+    mask[:border, :] = 0
+    mask[-border:, :] = 0
+    mask[:, :border] = 0
+    mask[:, -border:] = 0
+
+    num_labels, labels, stats, _centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+
+    if num_labels <= 1:
         return {}
 
-    x, y, w, h = cv2.boundingRect(coords)
+    # Keep substantial components, usually car + shadow/reflections.
+    image_area = width * height
+    components = []
+    for label in range(1, num_labels):
+        x, y, w, h, area = stats[label]
+        if area < max(120, image_area * 0.0008):
+            continue
+        if w < width * 0.05 or h < height * 0.04:
+            continue
+        components.append((x, y, w, h, area))
+
+    if not components:
+        return {}
+
+    # Union the meaningful components instead of picking only the largest,
+    # because wheels/shadow can be split.
+    x1 = min(x for x, y, w, h, area in components)
+    y1 = min(y for x, y, w, h, area in components)
+    x2 = max(x + w for x, y, w, h, area in components)
+    y2 = max(y + h for x, y, w, h, area in components)
+
+    pad_x = max(2, int(width * 0.01))
+    pad_y = max(2, int(height * 0.01))
+    x1 = max(0, x1 - pad_x)
+    y1 = max(0, y1 - pad_y)
+    x2 = min(width, x2 + pad_x)
+    y2 = min(height, y2 + pad_y)
+
+    w = int(x2 - x1)
+    h = int(y2 - y1)
+
+    if w <= 0 or h <= 0:
+        return {}
+
     return {
-        "x": int(x),
-        "y": int(y),
+        "x": int(x1),
+        "y": int(y1),
         "width": int(w),
         "height": int(h),
         "aspect_ratio": round(w / h, 4) if h else None,
-        "canvas_width": int(img.shape[1]),
-        "canvas_height": int(img.shape[0]),
+        "canvas_width": int(width),
+        "canvas_height": int(height),
+        "frameMethod": "background-diff",
     }
-
-
-def upload_to_r2(file_path, skip_upload=False):
-    if skip_upload:
-        log(f"SKIP UPLOAD: {file_path}")
-        return True
-
-    result = subprocess.run(
-        [
-            "rclone",
-            "copy",
-            file_path,
-            R2_REMOTE,
-            "--s3-no-check-bucket",
-        ],
-        capture_output=True,
-        text=True,
-    )
-
-    if result.returncode != 0:
-        log("R2 UPLOAD FAILED")
-        if result.stdout:
-            log(result.stdout)
-        if result.stderr:
-            log(result.stderr)
-        return False
-
-    return True
 
 
 def local_path_from_public_url(public_url):
@@ -1330,14 +1409,29 @@ def process_media_asset(
 
     slug = f"{brand_slug}-{model_slug}-{slugify(asset_slug)}-{source_hash[:10]}"
 
+    existing_primary_url = existing_asset.get("normalizedImageUrl") or existing_asset.get("stagedImageUrl")
+    existing_frame_meta = existing_asset.get("frameMeta") or {}
+
+    # If old records have URLs but empty frameMeta, recompute from the local
+    # normalized/staged file when available. This avoids re-uploading unchanged
+    # images just to backfill frames.
+    if (
+        not force
+        and existing_asset.get("sourceHash") == source_hash
+        and existing_primary_url
+        and not existing_frame_meta
+    ):
+        existing_local_path = local_path_from_public_url(existing_primary_url)
+        if existing_local_path and os.path.exists(existing_local_path):
+            existing_frame_meta = compute_frame_metadata(existing_local_path)
+            if existing_frame_meta:
+                log(f"BACKFILLED EXISTING FRAME: {asset_slug} | {source_hash[:10]}")
+
     can_reuse_existing = (
         not force
         and existing_asset.get("sourceHash") == source_hash
-        and (
-            existing_asset.get("normalizedImageUrl")
-            or existing_asset.get("stagedImageUrl")
-        )
-        and existing_asset.get("frameMeta") is not None
+        and existing_primary_url
+        and bool(existing_frame_meta)
     )
 
     if can_reuse_existing:
@@ -1346,9 +1440,9 @@ def process_media_asset(
             "sourceImageUrl": source_image,
             "sourceHash": source_hash,
             "stagedImageUrl": existing_asset.get("stagedImageUrl"),
-            "normalizedImageUrl": existing_asset.get("normalizedImageUrl") or existing_asset.get("stagedImageUrl"),
+            "normalizedImageUrl": existing_primary_url,
             "normalizedImagePngUrl": existing_asset.get("normalizedImagePngUrl"),
-            "frameMeta": existing_asset.get("frameMeta") or {},
+            "frameMeta": existing_frame_meta,
             "imageProcessingMethod": existing_asset.get("imageProcessingMethod"),
             "imageModeUsed": existing_asset.get("imageModeUsed"),
             "imageQualityWarnings": existing_asset.get("imageQualityWarnings") or [],

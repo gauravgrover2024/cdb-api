@@ -135,7 +135,9 @@ const normalizePublicImageUrl = (value = "") => {
 };
 
 const normalizeFrameMeta = (frame = {}) => {
-  if (!frame || typeof frame !== "object") return frame || null;
+  if (!frame || typeof frame !== "object" || !Object.keys(frame).length) {
+    return null;
+  }
 
   const readNumber = (...values) => {
     for (const value of values) {
@@ -149,8 +151,20 @@ const normalizeFrameMeta = (frame = {}) => {
   const y = readNumber(frame.y, frame.top, frame.minY);
   const width = readNumber(frame.width, frame.w);
   const height = readNumber(frame.height, frame.h);
-  const canvasWidth = readNumber(frame.canvas_width, frame.canvasWidth, frame.naturalWidth, frame.imageWidth, frame.sourceWidth);
-  const canvasHeight = readNumber(frame.canvas_height, frame.canvasHeight, frame.naturalHeight, frame.imageHeight, frame.sourceHeight);
+  const canvasWidth = readNumber(
+    frame.canvas_width,
+    frame.canvasWidth,
+    frame.naturalWidth,
+    frame.imageWidth,
+    frame.sourceWidth,
+  );
+  const canvasHeight = readNumber(
+    frame.canvas_height,
+    frame.canvasHeight,
+    frame.naturalHeight,
+    frame.imageHeight,
+    frame.sourceHeight,
+  );
 
   if (
     !Number.isFinite(x) ||
@@ -164,35 +178,32 @@ const normalizeFrameMeta = (frame = {}) => {
     canvasWidth <= 0 ||
     canvasHeight <= 0
   ) {
-    return frame;
+    return null;
   }
-
-  const centerX = (x + width / 2) / canvasWidth;
-  const centerY = (y + height / 2) / canvasHeight;
-  const widthRatio = width / canvasWidth;
-  const heightRatio = height / canvasHeight;
-  const scale = Math.min(
-    1.3,
-    Math.max(1, Math.max(0.86 / Math.max(widthRatio, 0.01), 0.58 / Math.max(heightRatio, 0.01))),
-  );
 
   return {
     ...frame,
+    x,
+    y,
+    width,
+    height,
+    canvas_width: canvasWidth,
+    canvas_height: canvasHeight,
     naturalWidth: canvasWidth,
     naturalHeight: canvasHeight,
     bounds: { x, y, width, height },
-    cssVars: {
-      ...(frame.cssVars || {}),
-      "--car-frame-scale": Number(scale.toFixed(3)),
-      "--car-frame-x": `${Number(((0.5 - centerX) * 100).toFixed(2))}%`,
-      "--car-frame-y": `${Number(((0.5 - centerY) * 100).toFixed(2))}%`,
-      "--car-frame-origin": "center center",
-    },
+    frameMethod:
+      frame.frameMethod ||
+      frame.method ||
+      frame.bounds?.frameMethod ||
+      "background-diff",
   };
 };
 
 const firstMeaningfulFrame = (...frames) =>
-  frames.find((frame) => frame && typeof frame === "object" && Object.keys(frame).length) || null;
+  frames.find(
+    (frame) => frame && typeof frame === "object" && Object.keys(frame).length,
+  ) || null;
 
 const getEntities = (toolPlan = {}) => ({
   ...(toolPlan.entities || {}),
@@ -261,7 +272,10 @@ const stripKnownMakePrefix = (value = "") => {
   return clean;
 };
 
-const sanitizeRequestedModelText = (value = "", { requestedMake = "" } = {}) => {
+const sanitizeRequestedModelText = (
+  value = "",
+  { requestedMake = "" } = {},
+) => {
   let out = cleanText(value).replace(REQUEST_NOISE_PATTERN, " ");
   out = cleanText(out);
 
@@ -281,7 +295,9 @@ const sanitizeRequestedModelText = (value = "", { requestedMake = "" } = {}) => 
 };
 
 const inferModelFromMessage = (message = "") => {
-  const cleaned = sanitizeRequestedModelText(stripColorWordsFromMessage(message));
+  const cleaned = sanitizeRequestedModelText(
+    stripColorWordsFromMessage(message),
+  );
   const tokens = cleaned.split(/\s+/).filter(Boolean);
 
   if (!tokens.length) return "";
@@ -488,7 +504,9 @@ const rowModelMatchesRequest = ({
     { requested: "fortuner", forbidden: ["legender"] },
     { requested: "thar", forbidden: ["tharroxx", "roxx"] },
   ];
-  const rule = conflictRules.find((item) => item.requested === compactRequestedKey);
+  const rule = conflictRules.find(
+    (item) => item.requested === compactRequestedKey,
+  );
 
   if (rule?.forbidden.some((token) => searchableImageKey.includes(token))) {
     return false;
@@ -513,7 +531,6 @@ const flattenColorDocuments = (docs = []) =>
   docs.flatMap((doc = {}) => {
     const make = doc.make || doc.brand || doc.brandName || "";
     const model = doc.model || doc.modelName || doc.model_name || "";
-    const topFrame = pickImageFrame(doc);
 
     const rows = [];
     (Array.isArray(doc.colors) ? doc.colors : []).forEach((color, index) => {
@@ -535,8 +552,16 @@ const flattenColorDocuments = (docs = []) =>
         make,
         brand: doc.brand || make,
         model,
-        color_name: color.name || color.color_name || color.colorName || `Color ${index + 1}`,
-        colorName: color.name || color.colorName || color.color_name || `Color ${index + 1}`,
+        color_name:
+          color.name ||
+          color.color_name ||
+          color.colorName ||
+          `Color ${index + 1}`,
+        colorName:
+          color.name ||
+          color.colorName ||
+          color.color_name ||
+          `Color ${index + 1}`,
         hex: color.hex || color.color_hex || color.colorHex || "",
         color_hex: color.hex || color.color_hex || color.colorHex || "",
         hexCodes: normalizeHexCodes(
@@ -556,7 +581,9 @@ const flattenColorDocuments = (docs = []) =>
         imageUrl,
         stagedImageUrl: imageUrl,
         sourceImageUrl: color.sourceImageUrl || "",
-        imageFrame: normalizeFrameMeta(firstMeaningfulFrame(color.imageFrame, color.frameMeta, topFrame)),
+        imageFrame: normalizeFrameMeta(
+          firstMeaningfulFrame(color.imageFrame, color.frameMeta),
+        ),
         updatedAt: color.updatedAt || doc.updatedAt,
         source: doc.source || COLLECTION_NAME,
       });
@@ -617,7 +644,9 @@ const normalizeColorRow = (row = {}, index = 0) => {
     name: colorName,
     mobileName: firstText(row.mobileName, colorName),
     desktopName: firstText(row.desktopName, colorName),
-    hex: hexCodes[0] || normalizeHex(row.hex || row.hexCode || row.colorHex || row.color_hex),
+    hex:
+      hexCodes[0] ||
+      normalizeHex(row.hex || row.hexCode || row.colorHex || row.color_hex),
     deep:
       hexCodes[1] ||
       normalizeHex(
@@ -637,6 +666,25 @@ const normalizeColorRow = (row = {}, index = 0) => {
     stagedImageUrl: normalizedImageUrl,
     sourceImageUrl,
     imageFrame: pickImageFrame(row),
+    frameMeta: row.frameMeta || row.imageFrame || null,
+    imageModeUsed: row.imageModeUsed || row.imageMode || "",
+    imageProcessingMethod: row.imageProcessingMethod || "",
+    isStudioBackground: row.isStudioBackground === true,
+    imageBackgroundRemoved:
+      row.imageBackgroundRemoved === true
+        ? true
+        : row.imageBackgroundRemoved === false
+          ? false
+          : undefined,
+    imageQualityWarnings: Array.isArray(row.imageQualityWarnings)
+      ? row.imageQualityWarnings
+      : [],
+    frameMethod:
+      row.frameMethod ||
+      row.frameMeta?.frameMethod ||
+      row.imageFrame?.frameMethod ||
+      row.imageFrame?.bounds?.frameMethod ||
+      "",
     scopeStatus: row.scopeStatus || "active",
     scopeVersion: row.scopeVersion || "",
     source: row.source || COLLECTION_NAME,
@@ -934,7 +982,13 @@ export const runVehicleColorsTool = async (args = {}) => {
   for (const { query, make: queryMake } of queries) {
     docs = await collection
       .find(query)
-      .sort({ activeColorCount: -1, updatedAt: -1, color_name: 1, colorName: 1, name: 1 })
+      .sort({
+        activeColorCount: -1,
+        updatedAt: -1,
+        color_name: 1,
+        colorName: 1,
+        name: 1,
+      })
       .limit(toolPlan.limit || toolPlan.input?.limit || 80)
       .toArray();
 
