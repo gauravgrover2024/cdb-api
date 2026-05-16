@@ -1866,6 +1866,61 @@ const cleanR2ImageUrl = (value) => {
   return url;
 };
 
+const compactVehicleMediaKey = (value = '') =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+
+const hasVehicleImageModelConflict = ({ requestedModel = '', row = {}, imageUrl = '' } = {}) => {
+  const requestedKey = compactVehicleMediaKey(requestedModel);
+  if (!requestedKey) return false;
+
+  const mediaKey = compactVehicleMediaKey(
+    [
+      imageUrl,
+      row.normalizedImageUrl,
+      row.cleanImageUrl,
+      row.displayNormalizedImageUrl,
+      row.displayStagedImageUrl,
+      row.heroImageUrl,
+      row.heroImage,
+      row.defaultNormalizedImageUrl,
+      row.sourceImageUrl,
+      row.source_image_url,
+      row.imageUrl,
+      row.image_url,
+      row.colorName,
+      row.color_name,
+      row.name,
+      ...(Array.isArray(row.colors)
+        ? row.colors.flatMap((color) => [
+            color.normalizedImageUrl,
+            color.stagedImageUrl,
+            color.cleanImageUrl,
+            color.imageUrl,
+            color.sourceImageUrl,
+            color.source_image_url,
+          ])
+        : []),
+    ]
+      .filter(Boolean)
+      .join(' '),
+  );
+
+  const rules = [
+    { requested: 'innovahycross', forbidden: ['innovacrysta', 'crysta'] },
+    { requested: 'innovacrysta', forbidden: ['innovahycross', 'hycross'] },
+    { requested: 'creta', forbidden: ['cretaelectric', 'electric', 'nline'] },
+    { requested: 'fortuner', forbidden: ['legender'] },
+    { requested: 'thar', forbidden: ['tharroxx', 'roxx'] },
+  ];
+  const rule = rules.find((item) => item.requested === requestedKey);
+
+  return Boolean(rule?.forbidden.some((token) => mediaKey.includes(token)));
+};
+
 const pickVehicleColorImageUrl = (row = {}) =>
   cleanR2ImageUrl(row.heroImageNormalizedUrl) ||
   cleanR2ImageUrl(row.normalizedHeroImageUrl) ||
@@ -2056,6 +2111,8 @@ const getPopularVehicleImageMap = async (vehicles = []) => {
     heroImage: 1,
     defaultNormalizedImageUrl: 1,
     defaultColorImageUrl: 1,
+    sourceImageUrl: 1,
+    source_image_url: 1,
     colors: 1,
     imageFrame: 1,
     image_frame: 1,
@@ -2105,7 +2162,16 @@ const getPopularVehicleImageMap = async (vehicles = []) => {
         const rowMake = candidate.brand || candidate.make || candidate.brandName || '';
         const rowModel = String(candidate.model || candidate.modelName || candidate.model_name || '').trim();
       const normalizedImageUrl = pickVehicleColorImageUrl(candidate);
-      return normalizedImageUrl && matchesExact(rowMake, item.make) && matchesExact(trimLeading(rowModel, item.make) || rowModel, item.model);
+      return (
+        normalizedImageUrl &&
+        matchesExact(rowMake, item.make) &&
+        matchesExact(trimLeading(rowModel, item.make) || rowModel, item.model) &&
+        !hasVehicleImageModelConflict({
+          requestedModel: item.model,
+          row: candidate,
+          imageUrl: normalizedImageUrl,
+        })
+      );
     });
     const normalizedImageUrl = pickVehicleColorImageUrl(row);
     imageMap.set(item.key, {
@@ -2219,6 +2285,8 @@ const getPopularVehicleImage = async ({ make, model }) => {
     heroImage: 1,
     defaultNormalizedImageUrl: 1,
     defaultColorImageUrl: 1,
+    sourceImageUrl: 1,
+    source_image_url: 1,
     colors: 1,
     imageFrame: 1,
     image_frame: 1,
@@ -2266,7 +2334,13 @@ const getPopularVehicleImage = async ({ make, model }) => {
     .limit(12)
     .toArray();
 
-  rows = rows.filter((row) => pickVehicleColorImageUrl(row));
+  rows = rows.filter((row) => {
+    const normalizedImageUrl = pickVehicleColorImageUrl(row);
+    return (
+      normalizedImageUrl &&
+      !hasVehicleImageModelConflict({ requestedModel: model, row, imageUrl: normalizedImageUrl })
+    );
+  });
 
   if (!rows.length) {
     rows = await collection

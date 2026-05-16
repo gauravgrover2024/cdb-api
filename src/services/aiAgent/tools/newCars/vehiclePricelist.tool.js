@@ -114,6 +114,66 @@ const isGenericVariantCandidate = (
   );
 };
 
+const REQUEST_NOISE_PATTERN =
+  /\b(show|find|get|open|please|pls|tell me|price list|pricelist|prices|price|pricing|rate list|on road|onroad|on-road|ex showroom|exshowroom|ex-showroom|colors|colours|color|colour|variants|variant|new car|list|for|in|new delhi|delhi)\b/gi;
+
+const MODEL_MAKE_PREFIXES = [
+  "maruti suzuki",
+  "mercedes benz",
+  "mercedes-benz",
+  "land rover",
+  "volkswagen",
+  "mahindra",
+  "hyundai",
+  "toyota",
+  "renault",
+  "citroen",
+  "maruti",
+  "honda",
+  "nissan",
+  "skoda",
+  "tata",
+  "kia",
+  "mg",
+  "bmw",
+  "audi",
+  "jeep",
+  "volvo",
+  "lexus",
+  "isuzu",
+  "force",
+].sort((a, b) => b.length - a.length);
+
+const stripKnownMakePrefix = (value = "") => {
+  const clean = cleanVehicleText(value);
+  const key = normalizeKey(clean);
+
+  for (const make of MODEL_MAKE_PREFIXES) {
+    const makeKey = normalizeKey(make);
+    if (key === makeKey) return "";
+    if (!key.startsWith(`${makeKey} `)) continue;
+
+    return cleanVehicleText(
+      clean.replace(new RegExp(`^${escapeRegex(make)}\\s+`, "i"), ""),
+    );
+  }
+
+  return clean;
+};
+
+const sanitizeRequestedModelText = (value = "", { requestedMake = "" } = {}) => {
+  let out = cleanVehicleText(value).replace(REQUEST_NOISE_PATTERN, " ");
+  out = cleanVehicleText(out);
+
+  if (requestedMake) {
+    out = stripMakeFromModel(out, requestedMake);
+  } else {
+    out = stripKnownMakePrefix(out);
+  }
+
+  return cleanVehicleText(out);
+};
+
 const sanitizeRequestedVariant = (
   value = "",
   { requestedModel = "", requestedMake = "" } = {},
@@ -181,8 +241,9 @@ const getRequestedModel = ({
 } = {}) => {
   const entities = getEntities(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
+  const requestedMake = getRequestedMake({ toolPlan, context });
 
-  return cleanVehicleText(
+  return sanitizeRequestedModelText(
     first(
       entities.model,
       entities.models?.[0],
@@ -193,6 +254,7 @@ const getRequestedModel = ({
       context.model,
       userMessage,
     ),
+    { requestedMake },
   );
 };
 
@@ -1238,24 +1300,30 @@ const isSpecialSeriesVisualAllowed = ({
   requestedModel = "",
   visualModel = "",
   imageUrl = "",
+  sourceImageUrl = "",
   colorName = "",
 } = {}) => {
   const requestedKey = normalizeSeriesKey(requestedModel);
   const visualKey = normalizeSeriesKey(visualModel);
   const searchableKey = normalizeSeriesKey(
-    `${visualModel} ${imageUrl} ${colorName}`,
+    `${visualModel} ${imageUrl} ${sourceImageUrl} ${colorName}`,
   );
 
   if (!requestedKey) return true;
 
   // If the color document exposes a model, use that as the strongest signal.
   if (visualKey && visualKey === requestedKey) return true;
+  if (visualKey) return false;
 
   // Protect base models from special-series image leakage.
+  if (requestedKey === "innovahycross" && /innovacrysta|crysta/.test(searchableKey)) return false;
+  if (requestedKey === "innovacrysta" && /innovahycross|hycross/.test(searchableKey)) return false;
   if (requestedKey === "thar" && /roxx/.test(searchableKey)) return false;
   if (requestedKey === "ertiga" && /tour/.test(searchableKey)) return false;
   if (requestedKey === "venue" && /nline/.test(searchableKey)) return false;
   if (requestedKey === "creta" && /nline/.test(searchableKey)) return false;
+  if (requestedKey === "creta" && /electric|ev/.test(searchableKey)) return false;
+  if (requestedKey === "fortuner" && /legender/.test(searchableKey)) return false;
   if (requestedKey === "i20" && /nline/.test(searchableKey)) return false;
 
   // For special-series requests, avoid falling back to the base model image.
@@ -1526,6 +1594,7 @@ const sampleVehicleColorImages = async ({
           requestedModel: cleanModel,
           visualModel: item.model || item.rawModel,
           imageUrl: item.imageUrl || item.normalizedImageUrl,
+          sourceImageUrl: item.sourceImageUrl,
           colorName: item.colorName || item.name,
         }),
       )

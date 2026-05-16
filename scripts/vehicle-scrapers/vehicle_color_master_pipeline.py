@@ -93,7 +93,7 @@ HEADERS = {
 }
 
 FUZZ_THRESHOLD = 88
-PIPELINE_VERSION = 8
+PIPELINE_VERSION = 9
 REQUEST_SLEEP_SECONDS = 0.15
 
 # Match the existing ACI image normalizer technology.
@@ -145,6 +145,58 @@ def slugify(value):
 
 def sha1(text):
     return hashlib.sha1(str(text or "").encode("utf-8")).hexdigest()
+
+
+def smart_title(value):
+    tokens = normalize_key(value).split()
+    keep_upper = {
+        "amg", "ev", "gt", "gts", "suv", "cs", "dt", "n", "xuv", "eqs",
+        "gle", "glc", "gla", "gls", "cla", "cle", "xl6", "q5", "q7",
+    }
+    out = []
+    for token in tokens:
+        if token in keep_upper or re.search(r"[0-9]", token):
+            out.append(token.upper())
+        else:
+            out.append(token.capitalize())
+    return " ".join(out)
+
+
+def strip_redundant_brand_from_model(model, brand):
+    """
+    Fix canonical universe rows where model_normalized already includes brand.
+
+    Examples:
+      Bmw + Bmw M440I -> M440I
+      Citroen + Citroen C3 -> C3
+      Tata + Tata Nexon -> Nexon
+      Mercedes Benz + Mercedes Benz E Class -> E Class
+      Mercedes + Mercedes Benz C Class -> C Class
+    """
+    model_key = normalize_key(model)
+    brand_key = normalize_key(brand)
+
+    aliases = {brand_key}
+
+    if "mercedes" in brand_key:
+        aliases.update({"mercedes", "mercedes benz", "mercedes-benz"})
+    if brand_key == "land rover":
+        aliases.update({"land rover", "land-rover"})
+    if brand_key == "rolls royce":
+        aliases.update({"rolls royce", "rolls-royce"})
+    if brand_key == "aston martin":
+        aliases.update({"aston martin", "aston-martin"})
+
+    aliases = sorted({normalize_key(a) for a in aliases if a}, key=len, reverse=True)
+
+    for alias in aliases:
+        if model_key == alias:
+            return normalize_spaces(model)
+        if model_key.startswith(alias + " "):
+            stripped = model_key[len(alias):].strip()
+            return smart_title(stripped) if stripped else normalize_spaces(model)
+
+    return normalize_spaces(model)
 
 
 def save_debug_html(name, html):
@@ -199,12 +251,66 @@ COLOR_SUFFIX_WORDS = [
     "metallic",
 ]
 
+# Matching-only equivalents. These do NOT rename the final active color;
+# they only help us find the correct Cardekho filename when OEM/site names differ.
+COLOR_EQUIVALENCE_RULES = [
+    ("abyss black", "titanium black"),
+    ("titanium black", "abyss black"),
+    ("abyss black matte", "titanium black matte"),
+    ("titanium black matte", "abyss black matte"),
+    ("black matte", "titanium black matte"),
+    ("atlas white dual tone", "atlas white with titanium black"),
+    ("atlas white with black roof", "atlas white with titanium black"),
+    ("atlas white with abyss black", "atlas white with titanium black"),
+    ("atlas white with titanium black", "atlas white dual tone"),
+    ("shadow grey with black roof", "titan grey matte"),
+    ("shadow grey with black roof", "titan grey"),
+    ("shadow grey", "titan grey"),
+    ("titan grey", "shadow grey"),
+]
+
+
+def equivalent_color_names(color_name):
+    base = normalize_color_name(color_name)
+    if not base:
+        return []
+
+    options = [base]
+    key = normalize_key(base)
+
+    for source, target in COLOR_EQUIVALENCE_RULES:
+        source_key = normalize_key(source)
+        target_key = normalize_key(target)
+
+        if source_key in key:
+            options.append(smart_title(key.replace(source_key, target_key)))
+
+    return unique_list(options)
+
 
 def normalize_color_name(name):
     raw = normalize_spaces(name)
     if not raw:
         return ""
 
+    # Common source typos / OCR-ish variants seen in price/color feeds.
+    fixes = {
+        r"altas": "atlas",
+        r"prisitne": "pristine",
+        r"obsedian": "obsidian",
+        r"metalic": "metallic",
+        r"metallc": "metallic",
+        r"poler": "polar",
+        r"greay": "grey",
+        r"gray": "grey",
+        r"red": "red",
+    }
+
+    raw_fixed = raw
+    for pattern, replacement in fixes.items():
+        raw_fixed = re.sub(pattern, replacement, raw_fixed, flags=re.IGNORECASE)
+
+    raw = normalize_spaces(raw_fixed)
     key = compact_key(raw)
 
     for alias, canonical in CANONICAL_COLOR_ALIASES.items():
@@ -222,31 +328,148 @@ def color_slug_variants(color_name):
     """
     Generate likely Cardekho filename/URL color slugs.
 
-    Examples:
-      Glacier White Pearl -> glacier-white-pearl, glacier-white
-      Ivory Silver Gloss  -> ivory-silver-gloss, ivory-silver
-      Magma Red With Aurora Black -> magma-red-with-aurora-black, magma-red
+    Includes matching-only equivalent names such as:
+      Abyss Black -> Titanium Black
+      Atlas White Dual Tone -> Atlas White With Titanium Black
+      Shadow Grey With Black Roof -> Titan Grey Matte
     """
-    normalized = normalize_color_name(color_name)
-    base = slugify(normalized)
-    variants = [base]
+    variants = []
 
-    simplified = normalized
-    simplified = re.sub(r"\bwith aurora black\b", "", simplified, flags=re.IGNORECASE)
-    for suffix in COLOR_SUFFIX_WORDS:
-        simplified = re.sub(rf"\b{suffix}\b", "", simplified, flags=re.IGNORECASE)
+    for normalized in equivalent_color_names(color_name):
+        base = slugify(normalized)
+        if base:
+            variants.append(base)
 
-    simplified_slug = slugify(simplified)
-    if simplified_slug and simplified_slug not in variants:
-        variants.append(simplified_slug)
+        expanded = normalized
+        expanded = re.sub(r"dt", "Dual Tone", expanded, flags=re.IGNORECASE)
+        expanded = re.sub(r"d t", "Dual Tone", expanded, flags=re.IGNORECASE)
+        expanded_slug = slugify(expanded)
+        if expanded_slug:
+            variants.append(expanded_slug)
 
-    # Add core color before dual-tone joiner.
-    if "-with-" in base:
-        core = base.split("-with-")[0]
-        if core and core not in variants:
-            variants.append(core)
+        simplified = expanded
+        simplified = re.sub(r"with aurora black", "", simplified, flags=re.IGNORECASE)
+        simplified = re.sub(r"with titanium black", "", simplified, flags=re.IGNORECASE)
+        simplified = re.sub(r"with abyss black", "", simplified, flags=re.IGNORECASE)
+        simplified = re.sub(r"with black roof", "", simplified, flags=re.IGNORECASE)
+        simplified = re.sub(r"black roof", "", simplified, flags=re.IGNORECASE)
+        simplified = re.sub(r"dual tone", "", simplified, flags=re.IGNORECASE)
+
+        for suffix in COLOR_SUFFIX_WORDS:
+            simplified = re.sub(rf"{suffix}", "", simplified, flags=re.IGNORECASE)
+
+        simplified_slug = slugify(simplified)
+        if simplified_slug:
+            variants.append(simplified_slug)
+
+        for sep in ["-with-", "-and-"]:
+            if sep in base:
+                core = base.split(sep)[0]
+                if core:
+                    variants.append(core)
+
+        if "-dual-tone" in expanded_slug:
+            core = expanded_slug.replace("-dual-tone", "")
+            if core:
+                variants.append(core)
+
+    more = []
+    for item in variants:
+        if "grey" in item:
+            more.append(item.replace("grey", "gray"))
+        if "gray" in item:
+            more.append(item.replace("gray", "grey"))
+    variants.extend(more)
 
     return unique_list(variants)
+
+
+def color_identity_tokens(color_name):
+    """
+    Tokens that must identify the color in the image filename/path.
+    Prevents unsafe matches like:
+      Shadow Grey -> Maruti Splendid Silver
+      Abyss Black -> Titanium Black Matte
+    """
+    stop = {
+        "with", "and", "roof", "body", "dual", "tone", "dt", "d", "t",
+        "metallic", "pearl", "gloss", "solid", "colour", "color", "paint",
+        "edition", "limited", "king", "range", "body", "mono", "tune",
+    }
+    tokens = []
+    for variant in color_slug_variants(color_name):
+        for token in variant.split("-"):
+            token = token.strip().lower()
+            if len(token) < 3 or token in stop:
+                continue
+            tokens.append(token)
+
+    # Preserve order but dedupe.
+    return unique_list(tokens)
+
+
+def is_dual_tone_name(color_name):
+    key = normalize_key(color_name)
+    dual_markers = [
+        " dual tone",
+        " dt",
+        " with ",
+        " roof",
+        "black roof",
+        "white roof",
+        "dual",
+    ]
+    return any(marker in f" {key} " for marker in dual_markers)
+
+
+def is_dual_tone_url(url):
+    lower = str(url or "").lower()
+    dual_markers = [
+        "-with-",
+        "-and-",
+        "dual-tone",
+        "dual-ton",
+        "dual-tone",
+        "black-roof",
+        "white-roof",
+        "roof_",
+        "-roof",
+    ]
+    return any(marker in lower for marker in dual_markers)
+
+
+def image_has_color_identity(url, color_name):
+    lower = str(url or "").lower()
+    tokens = color_identity_tokens(color_name)
+
+    if not tokens:
+        return False
+
+    # Safety: do not map a single-tone active color to a dual-tone image,
+    # and do not map a dual-tone active color to a single-tone image,
+    # unless one of the matching-only equivalent names has that tone type.
+    allowed_dual_states = {
+        is_dual_tone_name(name)
+        for name in equivalent_color_names(color_name)
+    }
+    url_is_dual = is_dual_tone_url(url)
+    if allowed_dual_states and url_is_dual not in allowed_dual_states:
+        return False
+
+    # Exact slug match is strongest.
+    for variant in color_slug_variants(color_name):
+        if variant and variant in lower:
+            return True
+
+    # Require at least one strong identity token. Generic colors are allowed only
+    # when they are the main identity, e.g. Black, White, Red.
+    generic = {"black", "white", "red", "blue", "grey", "gray", "silver", "green", "orange", "yellow", "brown", "purple", "gold"}
+    strong_tokens = [t for t in tokens if t not in generic]
+
+    if strong_tokens:
+        return any(t in lower for t in strong_tokens)
+
+    return any(t in lower for t in tokens)
 
 
 def extract_hex_codes_from_image_url(url):
@@ -298,7 +521,8 @@ def build_active_universe(only_brand=None, only_model=None):
 
     for doc in docs:
         brand = normalize_spaces(doc.get("brand"))
-        model = normalize_spaces(doc.get("model_normalized") or doc.get("model"))
+        raw_model = normalize_spaces(doc.get("model_normalized") or doc.get("model"))
+        model = strip_redundant_brand_from_model(raw_model, brand)
 
         if not brand or not model:
             continue
@@ -513,6 +737,15 @@ def image_color_score(url, color_name):
     lower = str(url or "").lower()
     score = image_quality_score(url)
 
+    # Color images should come from Cardekho's color image folder, not
+    # model hero/display exterior images.
+    if "/images/car-images/" not in lower:
+        score -= 500
+
+    # Reject weak identity by score later, but penalize early too.
+    if not image_has_color_identity(url, color_name):
+        score -= 350
+
     # Match all likely color slugs against filename/path.
     for variant in color_slug_variants(color_name):
         if variant and variant in lower:
@@ -594,9 +827,47 @@ def image_display_score(url):
     return score
 
 
-def pick_best_image_for_color(images, color_name):
+def url_belongs_to_model(url, brand_slug, model_slug):
+    path_key = normalize_key(urlparse(str(url or "")).path)
+    brand_tokens = normalize_key(brand_slug).split()
+    model_tokens = normalize_key(model_slug).split()
+
+    if not brand_tokens or not model_tokens:
+        return True
+
+    # Current model image paths generally contain /Brand/Model/.
+    brand_ok = all(token in path_key for token in brand_tokens)
+    model_ok = all(token in path_key for token in model_tokens)
+
+    return brand_ok and model_ok
+
+
+def filter_images_for_model(images, brand_slug, model_slug):
+    filtered = [
+        img for img in unique_list(images)
+        if url_belongs_to_model(img, brand_slug, model_slug)
+    ]
+
+    if not filtered:
+        log(f"WARNING: no model-scoped images found for {brand_slug}/{model_slug}")
+
+    return filtered
+
+
+def pick_best_image_for_color(images, color_name, brand_slug=None, model_slug=None, min_score=300):
     candidates = unique_list([img for img in images if is_cardekho_image_url(img)])
+
+    if brand_slug and model_slug:
+        candidates = filter_images_for_model(candidates, brand_slug, model_slug)
+
+    # Never use hero/exterior images as color-specific images.
+    candidates = [img for img in candidates if "/images/car-images/" in str(img).lower()]
+
+    # Must contain actual color identity tokens.
+    candidates = [img for img in candidates if image_has_color_identity(img, color_name)]
+
     if not candidates:
+        log(f"NO SAFE IMAGE CANDIDATE for {color_name}")
         return None
 
     ranked = sorted(
@@ -606,7 +877,13 @@ def pick_best_image_for_color(images, color_name):
     )
 
     best = ranked[0]
-    log(f"BEST IMAGE for {color_name}: {image_color_score(best, color_name)} | {best}")
+    best_score = image_color_score(best, color_name)
+    log(f"BEST IMAGE for {color_name}: {best_score} | {best}")
+
+    if best_score < min_score:
+        log(f"REJECT IMAGE for {color_name}: score below {min_score}")
+        return None
+
     return best
 
 
@@ -715,20 +992,35 @@ def discover_cardekho_model_catalog(brand_slug, model_slug):
     return discovered_colors, unique_list(catalog_images), unique_list(display_candidates)
 
 
-def scrape_cardekho_gallery(brand_slug, model_slug):
+def scrape_cardekho_gallery(brand_slug, model_slug, active_colors=None):
     discovered_colors, catalog_images, display_candidates = discover_cardekho_model_catalog(
         brand_slug,
         model_slug,
     )
 
-    display_image = pick_display_image(display_candidates)
+    display_image = pick_display_image(
+        filter_images_for_model(display_candidates, brand_slug, model_slug)
+    )
 
     log(f"DISCOVERED CARDEKHO COLORS: {len(discovered_colors)}")
     log(f"CATALOG IMAGES: {len(catalog_images)}")
 
+    # Match both Cardekho-discovered colors and active pricelist colors.
+    # This fixes cases where Cardekho's JSON-LD color list is incomplete but
+    # the image catalog still contains filenames like Abyss-Black_0a0a0a.jpg.
+    candidate_colors = unique_list([
+        *[normalize_color_name(c) for c in discovered_colors],
+        *[normalize_color_name(c) for c in (active_colors or [])],
+    ])
+
     results = []
-    for color in discovered_colors:
-        best_image = pick_best_image_for_color(catalog_images, color)
+    for color in candidate_colors:
+        best_image = pick_best_image_for_color(
+            catalog_images,
+            color,
+            brand_slug=brand_slug,
+            model_slug=model_slug,
+        )
         if best_image:
             hex_meta = extract_hex_codes_from_image_url(best_image)
             results.append({
@@ -753,6 +1045,40 @@ def scrape_cardekho_gallery(brand_slug, model_slug):
                 "image": image,
             }
 
+    # Rescue active colors that are known OEM/site aliases of an already
+    # discovered Cardekho color. Example:
+    #   active: Altas/Atlas White Dual Tone
+    #   Cardekho: Atlas White With Titanium Black
+    # This does not guess a new image; it only clones a high-confidence
+    # equivalent result already found from the same model catalog.
+    if active_colors:
+        existing_items = list(deduped_by_color.values())
+        for active_color in active_colors:
+            active_norm = normalize_color_name(active_color)
+            if not active_norm or active_norm in deduped_by_color:
+                continue
+
+            best_item = None
+            best_score = 0
+            for existing in existing_items:
+                score = color_name_match_score(active_norm, existing.get("color"))
+                if score > best_score:
+                    best_score = score
+                    best_item = existing
+
+            if best_item and best_score >= 100:
+                cloned = {
+                    **best_item,
+                    "color": active_norm,
+                    "matchedAliasColor": best_item.get("color"),
+                    "aliasMatchScore": best_score,
+                }
+                deduped_by_color[active_norm] = cloned
+                log(
+                    f"ALIAS RESCUE: {active_norm} -> "
+                    f"{best_item.get('color')} | {best_item.get('image')}"
+                )
+
     deduped = list(deduped_by_color.values())
 
     log(f"FINAL COLORS: {len(deduped)}")
@@ -772,23 +1098,55 @@ def scrape_cardekho_gallery(brand_slug, model_slug):
 # COLOR MATCHING AGAINST ACTIVE PRICELIST COLORS
 # ============================================================
 
+def color_name_match_score(active, gallery_color):
+    active_norm = normalize_color_name(active)
+    gallery_norm = normalize_color_name(gallery_color)
+
+    active_key = normalize_key(active_norm)
+    gallery_key = normalize_key(gallery_norm)
+
+    active_dual_states = {
+        is_dual_tone_name(name)
+        for name in equivalent_color_names(active_norm)
+    }
+    gallery_dual_states = {
+        is_dual_tone_name(name)
+        for name in equivalent_color_names(gallery_norm)
+    }
+
+    if compact_key(active_norm) == compact_key(gallery_norm):
+        return 100
+
+    active_variants = set(color_slug_variants(active_norm))
+    gallery_variants = set(color_slug_variants(gallery_norm))
+
+    # DT vs Dual Tone, grey vs gray, and OEM rename aliases should win,
+    # but only when both sides agree on possible single-tone/dual-tone state.
+    if active_variants.intersection(gallery_variants) and active_dual_states.intersection(gallery_dual_states):
+        return 100
+
+    score = fuzz.token_sort_ratio(active_key, gallery_key)
+
+    # Prevent plain colors from matching dual-tone names and vice versa.
+    if active_dual_states.isdisjoint(gallery_dual_states):
+        score = min(score, 84)
+
+    return score
+
+
 def match_colors(active_colors, gallery):
     matched = []
 
     for active in sorted(active_colors, key=normalize_key):
         best = None
         best_score = 0
-        active_key = normalize_key(active)
 
         for item in gallery:
             gallery_color = item.get("color")
             if not gallery_color:
                 continue
 
-            score = fuzz.token_sort_ratio(active_key, normalize_key(gallery_color))
-
-            if compact_key(active) == compact_key(gallery_color):
-                score = 100
+            score = color_name_match_score(active, gallery_color)
 
             if score > best_score:
                 best_score = score
@@ -1079,7 +1437,7 @@ def process_model(payload, skip_upload=False, skip_mongo=False, force=False, all
     log(f"ACTIVE PRICELIST COLORS: {len(active_colors)}")
     log(f"MONGO TARGET COLLECTION: {COLLECTION_NAME}")
 
-    gallery_payload = scrape_cardekho_gallery(brand_slug, model_slug)
+    gallery_payload = scrape_cardekho_gallery(brand_slug, model_slug, active_colors=active_colors)
     gallery = gallery_payload.get("colors") or []
     display_image_url = gallery_payload.get("displayImageUrl")
 
@@ -1087,7 +1445,15 @@ def process_model(payload, skip_upload=False, skip_mongo=False, force=False, all
     log(f"Display image: {display_image_url}")
 
     matched = match_colors(active_colors, gallery)
+    matched_color_names = {normalize_key(item.get("color")) for item in matched}
+    unmatched_active_colors = sorted(
+        [color for color in active_colors if normalize_key(color) not in matched_color_names],
+        key=normalize_key,
+    )
+
     log(f"Matched colors: {len(matched)}")
+    if unmatched_active_colors:
+        log(f"UNMATCHED ACTIVE COLORS: {unmatched_active_colors}")
 
     if not matched:
         log("NO MATCHES")
@@ -1270,6 +1636,10 @@ def process_model(payload, skip_upload=False, skip_mongo=False, force=False, all
 
         "colors": sorted(final_colors, key=lambda x: normalize_key(x["name"])),
         "activeColorCount": len(final_colors),
+        "expectedActiveColorCount": len(active_colors),
+        "matchedActiveColorCount": len(matched),
+        "unmatchedActiveColors": unmatched_active_colors,
+        "isColorCoverageComplete": len(unmatched_active_colors) == 0,
         "pipelineVersion": PIPELINE_VERSION,
         "source": "cardekho",
         "updatedAt": utc_now(),

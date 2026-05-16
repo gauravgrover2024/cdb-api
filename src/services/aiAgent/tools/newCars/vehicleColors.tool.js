@@ -90,6 +90,37 @@ const normalizeHex = (value = "") => {
   return "#E5E7EB";
 };
 
+const parseHexValue = (value = "") => {
+  const text = cleanText(value).replace(/^#/, "");
+  if (/^[0-9a-f]{3}$/i.test(text) || /^[0-9a-f]{6}$/i.test(text)) {
+    return `#${text}`;
+  }
+  return "";
+};
+
+const normalizeHexCodes = (...values) => {
+  const output = [];
+  const push = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(push);
+      return;
+    }
+
+    const parts = cleanText(value)
+      .split(/[,\s/|]+/)
+      .map(parseHexValue)
+      .filter(Boolean);
+
+    parts.forEach((hex) => {
+      const key = hex.toLowerCase();
+      if (!output.some((item) => item.toLowerCase() === key)) output.push(hex);
+    });
+  };
+
+  values.forEach(push);
+  return output;
+};
+
 const normalizePublicImageUrl = (value = "") => {
   const text = cleanText(value);
   if (!text) return "";
@@ -183,8 +214,74 @@ const stripColorWordsFromMessage = (message = "") =>
     .replace(/\s+/g, " ")
     .trim();
 
+const REQUEST_NOISE_PATTERN =
+  /\b(show|find|get|open|display|available|all|exterior|car|vehicle|please|pls|tell me|price list|pricelist|prices|price|pricing|rate list|on road|onroad|on-road|ex showroom|exshowroom|ex-showroom|colors|colours|color|colour|paint|shade|shades|colour options|color options|variants|variant|new car|list|of|for|in|new delhi|delhi)\b/gi;
+
+const MODEL_MAKE_PREFIXES = [
+  "maruti suzuki",
+  "mercedes benz",
+  "mercedes-benz",
+  "land rover",
+  "volkswagen",
+  "mahindra",
+  "hyundai",
+  "toyota",
+  "renault",
+  "citroen",
+  "maruti",
+  "honda",
+  "nissan",
+  "skoda",
+  "tata",
+  "kia",
+  "mg",
+  "bmw",
+  "audi",
+  "jeep",
+  "volvo",
+  "lexus",
+  "isuzu",
+  "force",
+].sort((a, b) => b.length - a.length);
+
+const stripKnownMakePrefix = (value = "") => {
+  const clean = cleanText(value);
+  const key = normalizeKey(clean);
+
+  for (const make of MODEL_MAKE_PREFIXES) {
+    const makeKey = normalizeKey(make);
+    if (key === makeKey) return "";
+    if (!key.startsWith(`${makeKey} `)) continue;
+
+    return cleanText(
+      clean.replace(new RegExp(`^${escapeRegex(make)}\\s+`, "i"), ""),
+    );
+  }
+
+  return clean;
+};
+
+const sanitizeRequestedModelText = (value = "", { requestedMake = "" } = {}) => {
+  let out = cleanText(value).replace(REQUEST_NOISE_PATTERN, " ");
+  out = cleanText(out);
+
+  if (requestedMake) {
+    const makeKey = normalizeKey(requestedMake);
+    const outKey = normalizeKey(out);
+    if (makeKey && outKey.startsWith(`${makeKey} `)) {
+      out = cleanText(
+        out.replace(new RegExp(`^${escapeRegex(requestedMake)}\\s+`, "i"), ""),
+      );
+    }
+  } else {
+    out = stripKnownMakePrefix(out);
+  }
+
+  return cleanText(out);
+};
+
 const inferModelFromMessage = (message = "") => {
-  const cleaned = stripColorWordsFromMessage(message);
+  const cleaned = sanitizeRequestedModelText(stripColorWordsFromMessage(message));
   const tokens = cleaned.split(/\s+/).filter(Boolean);
 
   if (!tokens.length) return "";
@@ -228,17 +325,21 @@ const getRequestedModel = ({
 } = {}) => {
   const entities = getEntities(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
+  const requestedMake = getRequestedMake({ toolPlan, context });
 
-  return firstText(
-    entities.model,
-    entities.modelName,
-    entities.carModel,
-    toolPlan.model,
-    toolPlan.modelName,
-    context.anchorModel,
-    selectedVehicle.model,
-    selectedVehicle.modelName,
-    inferModelFromMessage(userMessage),
+  return sanitizeRequestedModelText(
+    firstText(
+      entities.model,
+      entities.modelName,
+      entities.carModel,
+      toolPlan.model,
+      toolPlan.modelName,
+      context.anchorModel,
+      selectedVehicle.model,
+      selectedVehicle.modelName,
+      inferModelFromMessage(userMessage),
+    ),
+    { requestedMake },
   );
 };
 
@@ -362,7 +463,38 @@ const rowModelMatchesRequest = ({
     requestedMake || row.brand || row.make,
   );
 
-  return rowKey === requestedKey;
+  if (rowKey !== requestedKey) return false;
+
+  const compactRequestedKey = normalizeKey(requestedModel).replace(/\s+/g, "");
+  const searchableImageKey = normalizeKey(
+    [
+      row.normalizedImageUrl,
+      row.cleanImageUrl,
+      row.stagedImageUrl,
+      row.imageUrl,
+      row.sourceImageUrl,
+      row.image_url,
+      row.colorName,
+      row.color_name,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  ).replace(/\s+/g, "");
+
+  const conflictRules = [
+    { requested: "innovahycross", forbidden: ["innovacrysta", "crysta"] },
+    { requested: "innovacrysta", forbidden: ["innovahycross", "hycross"] },
+    { requested: "creta", forbidden: ["cretaelectric", "electric", "nline"] },
+    { requested: "fortuner", forbidden: ["legender"] },
+    { requested: "thar", forbidden: ["tharroxx", "roxx"] },
+  ];
+  const rule = conflictRules.find((item) => item.requested === compactRequestedKey);
+
+  if (rule?.forbidden.some((token) => searchableImageKey.includes(token))) {
+    return false;
+  }
+
+  return true;
 };
 
 const pickImageFrame = (row = {}) =>
@@ -382,18 +514,6 @@ const flattenColorDocuments = (docs = []) =>
     const make = doc.make || doc.brand || doc.brandName || "";
     const model = doc.model || doc.modelName || doc.model_name || "";
     const topFrame = pickImageFrame(doc);
-    const topImage = normalizePublicImageUrl(
-      doc.displayNormalizedImageUrl ||
-        doc.heroImageUrl ||
-        doc.heroImage ||
-        doc.defaultNormalizedImageUrl ||
-        doc.displayStagedImageUrl ||
-        doc.normalizedImageUrl ||
-        doc.cleanImageUrl ||
-        doc.imageUrl ||
-        doc.image_url ||
-        "",
-    );
 
     const rows = [];
     (Array.isArray(doc.colors) ? doc.colors : []).forEach((color, index) => {
@@ -419,6 +539,18 @@ const flattenColorDocuments = (docs = []) =>
         colorName: color.name || color.colorName || color.color_name || `Color ${index + 1}`,
         hex: color.hex || color.color_hex || color.colorHex || "",
         color_hex: color.hex || color.color_hex || color.colorHex || "",
+        hexCodes: normalizeHexCodes(
+          color.hexCodes,
+          color.hex_codes,
+          color.dualHexCodes,
+          color.dual_hex_codes,
+          color.hex,
+          color.color_hex,
+          color.colorHex,
+          color.deep,
+          color.deepHex,
+          color.darkHex,
+        ),
         normalizedImageUrl: imageUrl,
         cleanImageUrl: imageUrl,
         imageUrl,
@@ -429,23 +561,6 @@ const flattenColorDocuments = (docs = []) =>
         source: doc.source || COLLECTION_NAME,
       });
     });
-
-    if (!rows.length && topImage) {
-      rows.push({
-        ...doc,
-        make,
-        brand: doc.brand || make,
-        model,
-        color_name: doc.defaultColorName || doc.color_name || doc.colorName || "Display",
-        colorName: doc.defaultColorName || doc.colorName || doc.color_name || "Display",
-        normalizedImageUrl: topImage,
-        cleanImageUrl: topImage,
-        imageUrl: topImage,
-        sourceImageUrl: doc.displayImageUrl || doc.defaultColorImageUrl || doc.sourceImageUrl || "",
-        imageFrame: topFrame,
-        source: doc.source || COLLECTION_NAME,
-      });
-    }
 
     return rows.length ? rows : [doc];
   });
@@ -481,6 +596,20 @@ const normalizeColorRow = (row = {}, index = 0) => {
   const id =
     cleanText(row.id || row._id) ||
     slugify(`${colorName}-${normalizedImageUrl}`, `color-${index + 1}`);
+  const hexCodes = normalizeHexCodes(
+    row.hexCodes,
+    row.hex_codes,
+    row.dualHexCodes,
+    row.dual_hex_codes,
+    row.hex,
+    row.hexCode,
+    row.colorHex,
+    row.color_hex,
+    row.deep,
+    row.deepHex,
+    row.darkHex,
+    row.dark_hex,
+  );
 
   return {
     id,
@@ -488,17 +617,20 @@ const normalizeColorRow = (row = {}, index = 0) => {
     name: colorName,
     mobileName: firstText(row.mobileName, colorName),
     desktopName: firstText(row.desktopName, colorName),
-    hex: normalizeHex(row.hex || row.hexCode || row.colorHex || row.color_hex),
-    deep: normalizeHex(
-      row.deep ||
-        row.deepHex ||
-        row.darkHex ||
-        row.dark_hex ||
-        row.hex ||
-        row.hexCode ||
-        row.colorHex ||
-        row.color_hex,
-    ),
+    hex: hexCodes[0] || normalizeHex(row.hex || row.hexCode || row.colorHex || row.color_hex),
+    deep:
+      hexCodes[1] ||
+      normalizeHex(
+        row.deep ||
+          row.deepHex ||
+          row.darkHex ||
+          row.dark_hex ||
+          row.hex ||
+          row.hexCode ||
+          row.colorHex ||
+          row.color_hex,
+      ),
+    hexCodes,
     imageUrl: normalizedImageUrl,
     normalizedImageUrl,
     cleanImageUrl: normalizedImageUrl,
@@ -528,10 +660,10 @@ const dedupeColors = (colors = []) => {
 
   for (const color of colors) {
     if (!color?.normalizedImageUrl) continue;
+    if (/display-hero/i.test(color.normalizedImageUrl)) continue;
 
-    const key = [normalizeKey(color.colorName), color.normalizedImageUrl].join(
-      "|",
-    );
+    const key = normalizeKey(color.colorName);
+    if (!key || key === "display") continue;
 
     if (seen.has(key)) continue;
 
@@ -577,8 +709,8 @@ const buildVehicle = ({
   selectedColor,
   colorCount = 0,
 } = {}) => {
-  const cleanMake = cleanText(make);
-  const cleanModel = cleanText(model);
+  const cleanMake = titleCaseWords(make);
+  const cleanModel = titleCaseWords(model);
   const displayName =
     [cleanMake, cleanModel].filter(Boolean).join(" ") ||
     cleanModel ||
