@@ -1,4 +1,5 @@
 import * as PlannerModule from "./aiAgent.planner.js";
+import { normalizeAciFinalResponse } from "./aiAgent.contractNormalizer.js";
 
 import {
   makeUnavailablePlan,
@@ -351,7 +352,7 @@ export const createPlannerPlanForMessage = async ({
 /*  Main V2 Chat Function                                                     */
 /* -------------------------------------------------------------------------- */
 
-export const chatWithAgent = async (...args) => {
+const chatWithAgentCore = async (...args) => {
   const startedAt = Date.now();
 
   const {
@@ -419,9 +420,44 @@ export const chatWithAgent = async (...args) => {
   };
 };
 
+const getNormalizerInputs = (args = []) => {
+  const rawInput = args[0] || {};
+
+  const message =
+    typeof rawInput === "string"
+      ? rawInput
+      : rawInput.message || rawInput.query || rawInput.text || rawInput.userMessage || rawInput.prompt || "";
+
+  const context =
+    typeof rawInput === "object"
+      ? rawInput.context ||
+        rawInput.conversationContext ||
+        rawInput.sessionContext ||
+        rawInput.state ||
+        rawInput.session ||
+        {}
+      : args[1] || {};
+
+  return {
+    message,
+    context,
+  };
+};
+
+export const chatWithAgent = async (...args) => {
+  const { message, context } = getNormalizerInputs(args);
+  const response = await chatWithAgentCore(...args);
+
+  return await normalizeAciFinalResponse(response, {
+    message,
+    context,
+  });
+};
+
 export const chatWithAciAssist = chatWithAgent;
 export const runAciAssist = chatWithAgent;
 export const askAciAssist = chatWithAgent;
+
 
 export default {
   chatWithAgent,
