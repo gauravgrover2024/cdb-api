@@ -320,7 +320,18 @@ const normalizeFeatureRowsForWidget = (rows = []) =>
     label: row.label || row.variant || row.variantName || row.model || `Result ${index + 1}`,
   }));
 
+const isFeatureResolverV2Response = (response = {}, widget = null) =>
+  response?.meta?.passthrough === "featureResolverV2" ||
+  response?.meta?.resolver === "featureResolverV2" ||
+  response?.tool === "vehicle_features" ||
+  response?.widget?.tool === "vehicle_features" ||
+  response?.widget?.type === "vehicle_features" ||
+  widget?.tool === "vehicle_features" ||
+  widget?.type === "vehicle_features";
+
 const applyFeatureIntentCorrections = ({ response = {}, message = "", widget = null } = {}) => {
+  if (isFeatureResolverV2Response(response, widget)) return response;
+
   const corrected = { ...response };
   const rows = normalizeFeatureRowsForWidget(getRows(corrected, widget));
 
@@ -634,6 +645,13 @@ const enhanceFeaturePayloads = async (response = {}) => {
 
 export const normalizeAciFinalResponse = async (response = {}, options = {}) => {
   if (!response || typeof response !== "object") return response;
+
+  // Feature Resolver V2 already returns a complete frontend-safe contract.
+  // Do not let legacy normalizers rewrite it back to “matching feature records”
+  // or “I could not find variants with .” copy.
+  if (isFeatureResolverV2Response(response, response.widget)) {
+    return response;
+  }
 
   const message = firstText(options.message, response.message, response.query);
   const context = options.context || {};

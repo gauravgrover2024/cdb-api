@@ -139,7 +139,22 @@ const FEATURE_HINTS = [
   "cvt",
   "ivt",
   "amt",
-];
+
+  "music system",
+  "audio system",
+  "sound system",
+  "stereo",
+  "car stereo",
+  "speaker system",
+  "speakers",
+  "infotainment",
+  "infotainment system",
+  "touchscreen",
+  "touch screen",
+  "android auto",
+  "apple carplay",
+  "apple car play",
+  "carplay",];
 
 const CITY_HINTS = [
   "new-delhi",
@@ -368,6 +383,7 @@ export const INTENT_DEFINITIONS = [
     intent: "vehicle_feature_discovery",
     priority: 12,
     patterns: [
+      /\b(which|show|find|cheapest)\b.*\b(variants?|cars?|suvs?|sedans?|hatchbacks?)\b.*\b(music\s*system|audio\s*system|sound\s*system|stereo|car\s*stereo|speaker\s*system|speakers?|infotainment\s*system|infotainment|touch\s*screen|touchscreen|android\s*auto|apple\s*car\s*play|apple\s*carplay|carplay)\b/i,
       /\b(which|cheapest|show|find)\b.*\b(variants?|cars?|suvs?|sedans?|hatchbacks?)\b.*\b(have|with|sunroof|airbags?|6 airbags|adas|wireless charging|ventilated seats|360 camera|tpms|hill assist|isofix|lane keep assist|cruise control|automatic climate control|esc|abs)\b/i,
       /\b(cheapest|cars?|suvs?|sedans?|hatchbacks?)\b.*\b(with|have)\b.*\b(sunroof|adas|6 airbags|wireless charging|ventilated seats|tpms|isofix)\b/i,
     ],
@@ -390,6 +406,7 @@ export const INTENT_DEFINITIONS = [
     intent: "vehicle_feature_answer",
     priority: 14,
     patterns: [
+      /\b(music\s*system|audio\s*system|sound\s*system|stereo|car\s*stereo|speaker\s*system|speakers?|infotainment\s*system|infotainment|touch\s*screen|touchscreen|android\s*auto|apple\s*car\s*play|apple\s*carplay|carplay)\b/i,
       /\b(does|has|have|available|how many|what is|what transmission|what engine|what mileage|what boot|what ground clearance)\b.*\b(sunroof|airbags?|6 airbags|adas|wireless charging|ventilated seats|mileage|boot space|ground clearance|engine displacement|transmission|camera|cruise|alloy wheels|climate control|hill assist|isofix|lane keep assist|automatic|dct|cvt|abs|esp|esc|tpms)\b/i,
       /\b(sunroof|airbags?|6 airbags|adas|wireless charging|ventilated seats|mileage|boot space|ground clearance|engine displacement|transmission|camera|cruise|alloy wheels|tpms|isofix)\b.*\b(in|of)\b/i,
     ],

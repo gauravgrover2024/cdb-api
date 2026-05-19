@@ -628,7 +628,15 @@ const patchCompanyNameResponse = (response = {}, message = "") => {
   };
 };
 
+const isFeatureResolverV2Response = (response = {}) =>
+  response?.meta?.passthrough === "featureResolverV2" ||
+  response?.meta?.resolver === "featureResolverV2" ||
+  response?.tool === "vehicle_features" ||
+  response?.widget?.tool === "vehicle_features" ||
+  response?.widget?.type === "vehicle_features";
+
 const patchFeatureAnswerWording = (response = {}, message = "", context = {}) => {
+  if (isFeatureResolverV2Response(response)) return response;
   if (!/\bdoes\b|\bhave\b|\bhas\b|\bgets\b/i.test(message)) return response;
   if (!/\bsunroof|adas|airbags|camera|mileage|boot|ground clearance\b/i.test(message)) return response;
   if (response.inlineType !== "feature_answer_card") return response;

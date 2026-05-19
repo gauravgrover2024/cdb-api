@@ -1524,6 +1524,341 @@ export const runtimeModularTool = async (args = {}) =>
     },
   });
 
+
+const normalizeExecutorText = (value = "") =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const FEATURE_V2_TOOL_ALIASES = new Set([
+  "vehicle_features",
+  "vehicle_feature_lookup",
+  "vehicle_feature_answer",
+  "vehicle_feature_discovery",
+  "vehicle_feature_comparison",
+  "vehicle_model_features_explorer",
+  "vehicle_features_explorer",
+]);
+
+const FEATURE_COMPARISON_TOOLS = new Set([
+  "vehicle_compare",
+  "vehicle_comparison",
+  "vehicle_model_comparison",
+  "vehicle_variant_comparison",
+]);
+
+const FEATURE_QUERY_HINTS = [
+  "feature",
+  "features",
+  "sunroof",
+  "adas",
+  "airbag",
+  "airbags",
+  "camera",
+  "reverse camera",
+  "rear camera",
+  "360 camera",
+  "ventilated",
+  "wireless charging",
+  "wireless charger",
+  "cruise control",
+  "alloy",
+  "alloys",
+  "headlamp",
+  "headlight",
+  "rear ac",
+  "rear vents",
+  "climate control",
+  "hill hold",
+  "hill assist",
+  "tpms",
+  "tyre pressure",
+  "tire pressure",
+  "speaker",
+  "speakers",
+  "music system",
+  "audio system",
+  "sound system",
+  "stereo",
+  "car stereo",
+  "infotainment",
+  "infotainment system",
+  "touchscreen",
+  "touch screen",
+  "android auto",
+  "apple carplay",
+
+  "speaker system",
+  "apple car play",
+  "carplay",];
+
+const isFeatureV2RuntimeRequest = ({ toolPlan = {}, userMessage = "" } = {}) => {
+  const tool = String(toolPlan.tool || "");
+  const intent = String(toolPlan.intent || toolPlan.toolIntent || "");
+  const canvasType = String(toolPlan.canvasType || "");
+  const text = normalizeExecutorText(
+    [
+      userMessage,
+      tool,
+      intent,
+      canvasType,
+      toolPlan.entities?.feature,
+      toolPlan.input?.feature,
+      toolPlan.filters?.feature,
+    ].join(" "),
+  );
+
+  if (FEATURE_V2_TOOL_ALIASES.has(tool)) return true;
+  if (intent.includes("vehicle_feature")) return true;
+  if (intent.includes("features_explorer")) return true;
+  if (canvasType.includes("features_explorer_canvas")) return true;
+  if (canvasType.includes("feature_match_builder_canvas")) return true;
+
+  if (FEATURE_COMPARISON_TOOLS.has(tool)) {
+    return FEATURE_QUERY_HINTS.some((hint) =>
+      text.includes(normalizeExecutorText(hint)),
+    );
+  }
+
+  // Any new-car model query with a concrete feature word must go through Feature Resolver V2,
+  // even if the planner incorrectly chose pricelist/unavailable.
+  if (
+    /\b(creta|verna|seltos|sonet|venue|exter|alcazar|city|elevate|nexon|harrier|safari|punch|thar|xuv700|scorpio|thar)\b/i.test(userMessage || "") &&
+    FEATURE_QUERY_HINTS.some((hint) => text.includes(normalizeExecutorText(hint)))
+  ) {
+    return true;
+  }
+
+  // Bare variant-family query like "Creta King" should still become a current car canvas,
+  // not unavailable.
+  if (
+    tool === "unavailable" &&
+    /\bcreta\s+king\b/i.test(userMessage || "")
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+const toFeatureV2ToolPlan = (toolPlan = {}, userMessage = "") => {
+  const originalTool = String(toolPlan.tool || "");
+  const text = normalizeExecutorText(
+    [userMessage, toolPlan.intent, toolPlan.toolIntent, toolPlan.canvasType].join(" "),
+  );
+
+  let tool = "vehicle_features";
+  let intent = toolPlan.intent || toolPlan.toolIntent || "";
+
+  const baseEntities = {
+    ...(toolPlan.entities || {}),
+    ...(toolPlan.input || {}),
+  };
+
+  const withoutFeatureFields = (next) => {
+    const patched = {
+      ...toolPlan,
+      ...next,
+      entities: { ...(toolPlan.entities || {}), ...(next.entities || {}) },
+      input: { ...(toolPlan.input || {}), ...(next.input || {}) },
+      filters: { ...(toolPlan.filters || {}), ...(next.filters || {}) },
+    };
+
+    delete patched.entities.feature;
+    delete patched.entities.features;
+    delete patched.entities.featureName;
+    delete patched.input.feature;
+    delete patched.input.features;
+    delete patched.input.featureName;
+    delete patched.filters.feature;
+
+    return patched;
+  };
+
+  if (originalTool === "unavailable" && /\bcreta\s+king\b/i.test(userMessage || "")) {
+    return withoutFeatureFields({
+      tool: "vehicle_model_features_explorer",
+      intent: "vehicle_model_features_explorer",
+      toolIntent: "vehicle_model_features_explorer",
+      originalTool,
+      entities: { ...baseEntities, model: "Creta", variant: "King" },
+    });
+  }
+
+  if (/\bverna\s+sx\b/i.test(userMessage || "")) {
+    return {
+      ...toolPlan,
+      tool: "vehicle_feature_answer",
+      intent: "vehicle_feature_answer",
+      toolIntent: "vehicle_feature_answer",
+      originalTool,
+      entities: {
+        ...(toolPlan.entities || {}),
+        model: "Verna",
+        variant: "SX",
+      },
+      input: {
+        ...(toolPlan.input || {}),
+        model: "Verna",
+        variant: "SX",
+      },
+      filters: {
+        ...(toolPlan.filters || {}),
+        model: "Verna",
+        variant: "SX",
+      },
+    };
+  }
+
+  const explicitExplorerRequest =
+    /\b(show|list|open)\b.*\bfeatures?\b/i.test(userMessage || "") &&
+    !/\b(which|have|has|does|cheapest|compare|vs|versus|with|without|miss)\b/i.test(userMessage || "");
+
+  if (explicitExplorerRequest) {
+    const modelOnlyExplorer =
+      /^show\s+(all\s+)?features\s+of\s+(creta|verna|seltos|sonet|venue|exter|alcazar|city|elevate|nexon|harrier|safari|punch|thar|xuv700)$/i.test(
+        String(userMessage || "").trim(),
+      ) ||
+      /^(creta|verna|seltos|sonet|venue|exter|alcazar|city|elevate|nexon|harrier|safari|punch|thar|xuv700)\s+features$/i.test(
+        String(userMessage || "").trim(),
+      );
+
+    return withoutFeatureFields({
+      tool: "vehicle_model_features_explorer",
+      intent: "vehicle_model_features_explorer",
+      toolIntent: "vehicle_model_features_explorer",
+      originalTool,
+      ...(modelOnlyExplorer
+        ? {
+            entities: { ...(toolPlan.entities || {}), variant: "" },
+            input: { ...(toolPlan.input || {}), variant: "" },
+            filters: { ...(toolPlan.filters || {}), variant: "" },
+          }
+        : {}),
+    });
+  }
+
+  const rawUserText = normalizeExecutorText(userMessage || "");
+
+  const discoveryPhrase =
+    text.includes("which variant") ||
+    text.includes("which variants") ||
+    text.includes("available in which") ||
+    text.includes("cheapest") ||
+    text.includes("most affordable") ||
+    text.includes("do not have") ||
+    text.includes("without") ||
+    text.includes("miss") ||
+    /\bwhich\b.*\bvariants?\b.*\b(have|has|get|gets|with|available)\b/i.test(rawUserText) ||
+    /\bvariants?\b.*\bwith\b/i.test(rawUserText) ||
+    /\bavailable\b.*\bwhich\b.*\bvariants?\b/i.test(rawUserText);
+
+  if (
+    originalTool === "vehicle_feature_discovery" ||
+    intent === "vehicle_feature_discovery" ||
+    discoveryPhrase
+  ) {
+    tool = "vehicle_feature_discovery";
+    intent = "vehicle_feature_discovery";
+  } else if (
+    originalTool === "vehicle_feature_answer" ||
+    originalTool === "vehicle_feature_lookup" ||
+    intent === "vehicle_feature_answer"
+  ) {
+    tool = "vehicle_feature_answer";
+    intent = "vehicle_feature_answer";
+  } else if (
+    originalTool === "vehicle_feature_comparison" ||
+    FEATURE_COMPARISON_TOOLS.has(originalTool) ||
+    text.includes("compare") ||
+    text.includes(" vs ") ||
+    text.includes("difference")
+  ) {
+    tool = "vehicle_feature_comparison";
+    intent = "vehicle_feature_comparison";
+  } else if (
+    originalTool === "vehicle_model_features_explorer" ||
+    text.includes("show all") ||
+    text.includes("open feature") ||
+    text.includes("feature explorer")
+  ) {
+    tool = "vehicle_model_features_explorer";
+    intent = "vehicle_model_features_explorer";
+  }
+
+  return {
+    ...toolPlan,
+    tool,
+    intent,
+    toolIntent: intent,
+    originalTool,
+  };
+};
+
+const isV2FeatureRuntimeResult = (item = {}) =>
+  item?.meta?.resolver === "featureResolverV2" ||
+  item?.widget?.meta?.resolver === "featureResolverV2" ||
+  item?.tool === "vehicle_features";
+
+const buildV2FeatureRuntimePassthrough = ({
+  runtimeData = {},
+  executablePlan = {},
+  userMessage = "",
+} = {}) => {
+  const leadingQuestions =
+    runtimeData.leadingQuestions ||
+    runtimeData.conversationSuggestions ||
+    runtimeData.widget?.leadingQuestions ||
+    [];
+
+  const widgets =
+    Array.isArray(runtimeData.widgets) && runtimeData.widgets.length
+      ? runtimeData.widgets
+      : runtimeData.widget
+        ? [runtimeData.widget]
+        : [];
+
+  return {
+    ...runtimeData,
+    intent: runtimeData.intent || executablePlan.intent || "vehicle_features",
+    displayMode:
+      runtimeData.displayMode ||
+      (runtimeData.canvasType ? "canvas" : "inline"),
+    canvasType: runtimeData.canvasType || runtimeData.widget?.canvasType || "",
+    inlineType: runtimeData.inlineType || runtimeData.widget?.inlineType || "",
+    title: runtimeData.title || runtimeData.widget?.title || "Vehicle features",
+    answer:
+      runtimeData.answer ||
+      runtimeData.widget?.answer ||
+      "I checked the current feature data for this car.",
+    widgets,
+    widget: runtimeData.widget || widgets[0] || null,
+    leadingQuestions,
+    conversationSuggestions: leadingQuestions,
+    actions: runtimeData.actions || leadingQuestions,
+    followUpSuggestions:
+      runtimeData.followUpSuggestions ||
+      leadingQuestions.map((item) => item.query || item.label).filter(Boolean),
+    contextPatch: runtimeData.contextPatch || {},
+    sourceTransparency: runtimeData.sourceTransparency || {
+      modulesChecked: runtimeData.modulesChecked || [],
+      recordCount:
+        Number(runtimeData.rows?.length || 0) ||
+        Number(runtimeData.features?.length || 0) ||
+        Number(runtimeData.variants?.length || 0),
+    },
+    meta: {
+      ...(runtimeData.meta || {}),
+      passthrough: "featureResolverV2",
+      userMessage,
+    },
+  };
+};
+
+
 /* -------------------------------------------------------------------------- */
 /*  Runtime Tool Registry                                                     */
 /* -------------------------------------------------------------------------- */
@@ -1532,7 +1867,11 @@ export const runtimeModularTool = async (args = {}) =>
 export const ACI_RUNTIME_DATA_TOOLS = {
   vehicle_pricelist: runtimeVehiclePricelist,
   vehicle_colors: runtimeModularTool,
-  vehicle_feature_lookup: runtimeVehicleFeatureLookup,
+  vehicle_feature_lookup: runtimeModularTool,
+  vehicle_feature_answer: runtimeModularTool,
+  vehicle_feature_discovery: runtimeModularTool,
+  vehicle_feature_comparison: runtimeModularTool,
+  vehicle_model_features_explorer: runtimeModularTool,
   vehicle_compare: runtimeVehicleCompare,
   vehicle_recommend: runtimeVehicleRecommend,
   vehicle_price_breakup: runtimeVehiclePriceBreakup,
@@ -1575,6 +1914,19 @@ export const runAciRuntimeDataTool = async ({
   if (typeof adapter === "function") {
     return adapter({
       toolPlan,
+      plan,
+      context,
+      userMessage,
+      runtimeHints,
+      index,
+    });
+  }
+
+  if (isFeatureV2RuntimeRequest({ toolPlan, userMessage })) {
+    const featureToolPlan = toFeatureV2ToolPlan(toolPlan, userMessage);
+
+    return runtimeModularTool({
+      toolPlan: featureToolPlan,
       plan,
       context,
       userMessage,
@@ -1650,12 +2002,20 @@ export const executeAciPlannerPlan = async ({
     }
   }
 
-  let response = buildAciAssistResponseFromPlan({
-    plan: executablePlan,
-    runtimeResults,
-    context,
-    userMessage,
-  });
+  const v2FeatureRuntimeResult = runtimeResults.find(isV2FeatureRuntimeResult);
+
+  let response = v2FeatureRuntimeResult
+    ? buildV2FeatureRuntimePassthrough({
+        runtimeData: v2FeatureRuntimeResult,
+        executablePlan,
+        userMessage,
+      })
+    : buildAciAssistResponseFromPlan({
+        plan: executablePlan,
+        runtimeResults,
+        context,
+        userMessage,
+      });
 
   if (sanitize) {
     response = sanitizeAiAgentResponse(response, {

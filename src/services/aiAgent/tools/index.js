@@ -38,6 +38,11 @@ export const ACI_V2_TOOL_RUNNERS = {
 
   // Planner/runtime compatibility aliases.
   vehicle_feature_lookup: runVehicleFeaturesTool,
+  vehicle_feature_answer: runVehicleFeaturesTool,
+  vehicle_feature_discovery: runVehicleFeaturesTool,
+  vehicle_feature_comparison: runVehicleFeaturesTool,
+  vehicle_model_features_explorer: runVehicleFeaturesTool,
+  vehicle_features_explorer: runVehicleFeaturesTool,
   vehicle_recommend: runVehicleRecommendationTool,
   aci_lead_capture: runQuotationLeadTool,
   vehicle_pricelist_v2: runVehiclePricelistNewCarsTool,
