@@ -60,6 +60,31 @@ const customerFeatureLabel = (value = "") => {
   return labels[key] || textValue;
 };
 
+
+const formatCustomerVariantName = (value = "") =>
+  String(value || "")
+    .trim()
+    .split(/\s+/)
+    .map((word) => {
+      if (/^ivt$/i.test(word)) return "iVT";
+      if (/^(dct|amt|at|mt|cvt)$/i.test(word)) return word.toUpperCase();
+      if (/^sx$/i.test(word)) return "SX";
+      if (/^htx$/i.test(word)) return "HTX";
+      if (/^abs$/i.test(word)) return "ABS";
+      if (/^[A-Z0-9()]+$/.test(word)) return word;
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
+
+const formatCustomerFeatureName = (value = "") => {
+  const text = String(value || "").trim();
+  if (/abs|anti[-\s]*lock\s*braking/i.test(text)) return "Anti-lock Braking System (ABS)";
+  if (/arai\s*mileage|mileage/i.test(text)) return "ARAI mileage";
+  if (/sunroof/i.test(text)) return "sunroof";
+  return text;
+};
+
+
 const lowerFirst = (value = "") => {
   const textValue = customerFeatureLabel(value);
   if (!textValue) return "";
@@ -545,6 +570,27 @@ const loadRuntimeIndexes = async ({ force = false } = {}) => {
     models: cachedModels,
   };
 };
+
+
+const polishSingleVariantFeatureCopy = (response = {}) => {
+  if (!response || typeof response !== "object") return response;
+
+  const answer = String(response.answer || "");
+  const singleVariantPattern =
+    /Good news\s*—\s*all\s+1\s+current\s+(.+?)\s+variants\s+get\s+(.+?)\./i;
+
+  const match = answer.match(singleVariantPattern);
+
+  if (match) {
+    const variantName = formatCustomerVariantName(match[1]);
+    const featureName = formatCustomerFeatureName(match[2]);
+
+    response.answer = `Yes — ${variantName} gets ${featureName}.`;
+  }
+
+  return response;
+};
+
 
 export const resolveFeatureModelV2 = async ({ model = "" } = {}) => {
   const { models } = await loadRuntimeIndexes();
@@ -1043,11 +1089,11 @@ export const answerModelFeatureV2 = async ({
     return {
       ok: false,
       intent: "vehicle_feature_answer",
-      leadingQuestions,
-    conversationSuggestions: leadingQuestions,
+      leadingQuestions: [],
+    conversationSuggestions: [],
     inlineType: "feature_answer_card",
-    leadingQuestions,
-    conversationSuggestions: leadingQuestions,
+    leadingQuestions: [],
+    conversationSuggestions: [],
       reason: !resolvedModel ? "model_not_found" : "feature_not_found",
       answer: !resolvedModel
         ? `I could not identify the car model from “${model}”.`

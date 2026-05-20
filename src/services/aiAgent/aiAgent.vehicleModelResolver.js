@@ -433,6 +433,13 @@ const buildMessageNgrams = (message = "") => {
     "featuers", "show", "open", "list", "all", "price", "pricelist", "on",
     "road", "cheapest", "available", "get", "gets", "of", "the", "and", "or",
     "difference", "between", "compare", "comparison", "extra", "over",
+
+    // Feature/value/advisor words must never become vehicle model candidates.
+    // Example: "Which variant has best mileage?" should use context Creta,
+    // not fuzzy-match "best" -> Chevrolet Beat.
+    "best", "better", "top", "highest", "maximum", "max", "most",
+    "mileage", "average", "fuel", "efficiency", "kmpl", "kpl",
+    "worth", "upgrade", "buy", "family", "rear", "seat", "night", "driving",
   ]);
 
   const cleanTokens = tokens.filter((token) => !stopWords.has(token));

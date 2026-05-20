@@ -366,6 +366,10 @@ const ACI_EARLY_FEATURE_MODELS = [
 ];
 
 const ACI_EARLY_FEATURE_ALIASES = [
+  {
+    feature: "ARAI Mileage",
+    pattern: /\b(mileage|fuel\s*efficiency|average|kitna\s*deti|kitna\s*deti\s*hai|kmpl|kpl|arai\s*mileage)\b/i,
+  },
   { feature: "Integrated 2DIN Audio", pattern: /\b(music\s*system|audio\s*system|sound\s*system|stereo|car\s*stereo|speaker\s*system)\b/i },
   { feature: "Speakers", pattern: /\b(speakers?|bose\s*speakers?|premium\s*speakers?)\b/i },
   { feature: "Touchscreen", pattern: /\b(infotainment\s*system|infotainment|touch\s*screen|touchscreen|music\s*display|display\s*audio)\b/i },
@@ -394,6 +398,11 @@ const ACI_EARLY_FEATURE_ALIASES = [
   {
     feature: "Hill Hold",
     pattern: /\b(hill\s*hold|hill\s*assist|hill\s*start\s*assist)\b/i,
+  },
+
+  {
+    feature: "ABS",
+    pattern: /\b(abs|anti\s*lock\s*braking|anti-lock\s*braking|anti\s*lock\s*braking\s*system|anti-lock\s*braking\s*system|braking\s*system)\b/i,
   },
 ];
 
@@ -508,6 +517,141 @@ const getAciAgentMongoDb = () => {
   return mongoose.connection.db;
 };
 
+
+const normalizeAciContextText = (value = "") =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const stripAciContextMake = (value = "", make = "") => {
+  const raw = String(value || "").trim();
+  const brand = String(make || "").trim();
+
+  if (!raw || !brand) return raw;
+
+  const rawNorm = normalizeAciContextText(raw);
+  const brandNorm = normalizeAciContextText(brand);
+
+  if (rawNorm.startsWith(`${brandNorm} `)) {
+    const brandWordCount = brandNorm.split(" ").filter(Boolean).length;
+    return raw.split(/\s+/).slice(brandWordCount).join(" ").trim() || raw;
+  }
+
+  return raw;
+};
+
+const titleAciContextName = (value = "") =>
+  String(value || "")
+    .trim()
+    .split(/\s+/)
+    .map((word) => {
+      if (/^ivt$/i.test(word)) return "iVT";
+      if (/^(dct|amt|at|mt|cvt)$/i.test(word)) return word.toUpperCase();
+      if (/^sx$/i.test(word)) return "SX";
+      if (/^htx$/i.test(word)) return "HTX";
+      if (/^abs$/i.test(word)) return "ABS";
+      if (/^[A-Z0-9()]+$/.test(word)) return word;
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
+
+
+const isAciGenericModelEntityMatch = (entity = {}) => {
+  const matched = normalizeAciContextText(entity?.matchedText || "");
+
+  if (!matched) return false;
+
+  const genericMatches = new Set([
+    "best",
+    "better",
+    "top",
+    "highest",
+    "maximum",
+    "max",
+    "most",
+    "mileage",
+    "average",
+    "fuel",
+    "efficiency",
+    "kmpl",
+    "kpl",
+    "variant",
+    "variants",
+    "feature",
+    "features",
+    "worth",
+    "upgrade",
+    "buy",
+    "family",
+    "rear",
+    "seat",
+    "night",
+    "driving",
+  ]);
+
+  return genericMatches.has(matched);
+};
+
+const chooseAciDynamicModelEntity = ({ textEntity = null, contextEntity = null } = {}) => {
+  if (!textEntity) return contextEntity;
+  if (!contextEntity) return textEntity;
+
+  if (isAciGenericModelEntityMatch(textEntity)) {
+    return contextEntity;
+  }
+
+  return textEntity;
+};
+
+
+const buildAciContextModelEntity = ({ context = {}, selectedEntity = null } = {}) => {
+  const selectedVehicle =
+    context?.selectedVehicle ||
+    selectedEntity?.selectedVehicle ||
+    selectedEntity?.vehicle ||
+    selectedEntity ||
+    {};
+
+  const make =
+    context?.anchorMake ||
+    context?.make ||
+    selectedVehicle?.make ||
+    selectedVehicle?.brand ||
+    "";
+
+  const rawModel =
+    context?.anchorModel ||
+    context?.model ||
+    selectedVehicle?.model ||
+    selectedVehicle?.name ||
+    "";
+
+  const rawFullModel =
+    context?.anchorFullModel ||
+    selectedVehicle?.fullModel ||
+    selectedVehicle?.fullName ||
+    (make && rawModel ? `${make} ${stripAciContextMake(rawModel, make)}` : rawModel);
+
+  const model = titleAciContextName(stripAciContextMake(rawModel, make));
+  const fullModel = titleAciContextName(rawFullModel);
+  const brand = titleAciContextName(make);
+
+  if (!model) return null;
+
+  return {
+    brand,
+    model,
+    fullModel: fullModel || (brand ? `${brand} ${model}` : model),
+    matchedText: "",
+    confidence: 1,
+    method: "context_anchor",
+    fromContext: true,
+  };
+};
+
+
 const resolveAciDynamicModelEntity = async (message = "") => {
   try {
     const db = getAciAgentMongoDb();
@@ -537,6 +681,54 @@ const getAciDynamicFeatureAlias = (message = "") => {
 
   return aliases.find((entry) => entry.pattern.test(raw)) || null;
 };
+
+
+const buildAciDynamicFeatureCleanUserMessage = ({
+  raw = "",
+  model = "",
+  modelEntity = null,
+  feature = "",
+  alias = null,
+} = {}) => {
+  let tail = String(raw || "").trim();
+
+  const modelCandidates = [
+    modelEntity?.matchedText,
+    modelEntity?.fullModel,
+    modelEntity?.model,
+    model,
+  ]
+    .filter(Boolean)
+    .sort((a, b) => String(b).length - String(a).length);
+
+  for (const candidate of modelCandidates) {
+    const safe = String(candidate).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    tail = tail.replace(new RegExp(`\\b${safe}\\b`, "ig"), " ");
+  }
+
+  if (alias?.pattern) {
+    tail = tail.replace(alias.pattern, " ");
+  }
+
+  tail = tail
+    .replace(/\b(does|do|is|are|has|have|having|come|comes|with|get|gets|got|available|check|tell|show|please|which|what|who|where|best|better|top|highest|maximum|max|most|gives|give|for|about|should|would|could|can|it|this|that)\b/gi, " ")
+    .replace(/\b(me|mein|mai|hai|kya|in|of|the|a|an|variant|variants|car|cars|feature|features|mileage|petrol)\b/gi, " ")
+    .replace(/[?.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // The feature is already passed explicitly in toolPlan.entities.feature.
+  // Do NOT append it to userMessage, otherwise the feature word can be misread as a variant.
+  //
+  // "Does seltos has abs in htx ivt" -> "Seltos htx ivt"
+  // "Does seltos has abs"            -> "Seltos"
+  if (tail) {
+    return `${model} ${tail}`.replace(/\s+/g, " ").trim();
+  }
+
+  return `${model}`.replace(/\s+/g, " ").trim();
+};
+
 
 const extractAciDynamicComparisonVariants = ({ message = "", modelEntity = null } = {}) => {
   const raw = String(message || "").trim();
@@ -719,6 +911,7 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
       /\bavailable\b.*\b(which|variant|variants)\b/i.test(raw) ||
       /\bvariants?\b/i.test(raw) ||
       isConnectedFeaturesPhrase ||
+      /\b(best|highest|maximum|max|most)\b.*\b(mileage|fuel\s*efficiency|average|kmpl|kpl)\b/i.test(raw) ||
       /\b(cheapest|most affordable|lowest price|without|miss|missing|do not have|dont have|don't have)\b/i.test(raw);
 
     return {
@@ -727,7 +920,15 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
       brand: modelEntity.brand || "",
       fullModel: modelEntity.fullModel || "",
       feature: alias.feature,
-      cleanUserMessage: raw,
+      cleanUserMessage: isDiscovery
+        ? raw
+        : buildAciDynamicFeatureCleanUserMessage({
+            raw,
+            model,
+            modelEntity,
+            feature: alias.feature,
+            alias,
+          }),
       intent: isDiscovery ? "vehicle_feature_discovery" : "vehicle_feature_answer",
       canvasType: isDiscovery ? "feature_match_builder_canvas" : "",
     };
@@ -767,13 +968,443 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
 };
 
 
+
+const formatAciInlineVariantName = (value = "") =>
+  String(value || "")
+    .trim()
+    .split(/\s+/)
+    .map((word) => {
+      if (/^ivt$/i.test(word)) return "iVT";
+      if (/^(dct|amt|at|mt|cvt)$/i.test(word)) return word.toUpperCase();
+      if (/^sx$/i.test(word)) return "SX";
+      if (/^htx$/i.test(word)) return "HTX";
+      if (/^abs$/i.test(word)) return "ABS";
+      if (/^[A-Z0-9()]+$/.test(word)) return word;
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
+
+
+const toAciInlineArray = (value) => {
+  if (!value) return [];
+  return Array.isArray(value) ? value.filter(Boolean) : [value].filter(Boolean);
+};
+
+const getAciInlineWidget = (response = {}) =>
+  response.widget || (Array.isArray(response.widgets) ? response.widgets[0] : null) || {};
+
+const getAciInlineRows = (response = {}) => {
+  const widget = getAciInlineWidget(response);
+
+  return toAciInlineArray(
+    response.rows ||
+      response.items ||
+      response.data?.rows ||
+      response.data?.items ||
+      response.data?.matchedVariants ||
+      response.widget?.rows ||
+      response.widget?.items ||
+      response.widget?.matchedVariants ||
+      widget.rows ||
+      widget.items ||
+      widget.matchedVariants ||
+      widget.data?.rows ||
+      widget.data?.items,
+  );
+};
+
+const getAciRowVariantName = (row = {}) =>
+  row.variant ||
+  row.variantName ||
+  row.displayVariant ||
+  row.name ||
+  row.title ||
+  row.label ||
+  "";
+
+const getAciRowValue = (row = {}) =>
+  row.value ??
+  row.displayValue ??
+  row.featureValue ??
+  row.specValue ??
+  row.formattedValue ??
+  row.rawValue ??
+  row.text ??
+  "";
+
+const normalizeAciInlineValue = (value = "") =>
+  String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/\baRAI\b/g, "ARAI")
+    .trim();
+
+const uniqueAciInlineValues = (items = []) => {
+  const seen = new Set();
+  const out = [];
+
+  for (const item of items) {
+    const key = String(item || "").toLowerCase().trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+
+  return out;
+};
+
+const isAciMileageFeature = (value = "") =>
+  /\b(arai\s*mileage|mileage|fuel\s*efficiency|kmpl|kpl|average)\b/i.test(
+    String(value || ""),
+  );
+
+const extractAciVariantFromCleanMessage = ({ cleanUserMessage = "", model = "" } = {}) => {
+  let text = String(cleanUserMessage || "").trim();
+  const modelText = String(model || "").trim();
+
+  if (!text || !modelText) return "";
+
+  const safeModel = modelText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  text = text.replace(new RegExp(`\\b${safeModel}\\b`, "ig"), " ");
+
+  text = text
+    .replace(/\b(arai\s*mileage|mileage|fuel\s*efficiency|kmpl|kpl|average)\b/gi, " ")
+    .replace(/\b(features?|variant|variants|show|tell|check|does|do|has|have|is|are|it|which|what|who|where|best|better|top|highest|maximum|max|most|gives|give|for|worth|buy|should|would|could|can)\b/gi, " ")
+    .replace(/[?.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text ? formatAciInlineVariantName(text) : "";
+};
+
+const extractAciNumericMileage = (value = "") => {
+  const text = String(value || "");
+  const match = text.match(/(\d+(?:\.\d+)?)/);
+  return match ? Number(match[1]) : null;
+};
+
+const buildAciMileageDirectAnswer = (
+  response = {},
+  { detected = {}, cleanUserMessage = "", message = "" } = {},
+) => {
+  const featureName =
+    detected.feature ||
+    response.meta?.detectedFeature ||
+    response.detectedFeature ||
+    response.feature ||
+    response.data?.feature ||
+    response.widget?.feature ||
+    "";
+
+  if (!isAciMileageFeature(featureName)) return "";
+
+  const rows = getAciInlineRows(response).filter((row) => row?.available !== false);
+
+  if (!rows.length) return "";
+
+  const values = uniqueAciInlineValues(
+    rows
+      .map((row) => normalizeAciInlineValue(getAciRowValue(row)))
+      .filter((value) => value && !/not available|false|no$/i.test(value)),
+  );
+
+  if (!values.length) return "";
+
+  const model =
+    detected.model ||
+    response.meta?.detectedModel ||
+    response.model ||
+    response.data?.model ||
+    response.widget?.model ||
+    "this car";
+
+  const askedVariant =
+    extractAciVariantFromCleanMessage({
+      cleanUserMessage: cleanUserMessage || message,
+      model,
+    }) ||
+    (rows.length === 1 ? formatAciInlineVariantName(getAciRowVariantName(rows[0])) : "");
+
+  const subject = [model, askedVariant].filter(Boolean).join(" ");
+
+  const isBestMileageQuery =
+    /\b(best|highest|maximum|max|most)\b.*\b(mileage|fuel\s*efficiency|average|kmpl|kpl)\b/i.test(
+      String(message || cleanUserMessage || ""),
+    );
+
+  if (isBestMileageQuery) {
+    const numericPairs = rows
+      .map((row) => ({
+        variant: formatAciInlineVariantName(getAciRowVariantName(row)),
+        value: normalizeAciInlineValue(getAciRowValue(row)),
+        numeric: extractAciNumericMileage(getAciRowValue(row)),
+      }))
+      .filter((item) => Number.isFinite(item.numeric))
+      .sort((a, b) => b.numeric - a.numeric);
+
+    if (numericPairs.length) {
+      const best = numericPairs[0];
+      const topVariants = uniqueAciInlineValues(
+        numericPairs
+          .filter((item) => item.numeric === best.numeric)
+          .map((item) => item.variant)
+          .filter(Boolean),
+      ).slice(0, 4);
+
+      const variantCopy = topVariants.length
+        ? ` Top variant${topVariants.length > 1 ? "s" : ""}: ${topVariants.join(", ")}.`
+        : "";
+
+      return `The best claimed mileage in ${model} is ${best.value}.${variantCopy}`;
+    }
+  }
+
+  if (rows.length === 1 || values.length === 1) {
+    return `${subject} mileage is ${values[0]}.`;
+  }
+
+  const numericValues = values
+    .map(extractAciNumericMileage)
+    .filter((value) => Number.isFinite(value));
+
+  if (numericValues.length >= 2) {
+    const min = Math.min(...numericValues);
+    const max = Math.max(...numericValues);
+
+    if (min !== max) {
+      const unit = values.find((value) => /\bkmpl\b|\bkpl\b/i.test(value))?.match(/\b(kmpl|kpl)\b/i)?.[1] || "kmpl";
+      return `${subject} mileage ranges from ${min} to ${max} ${unit}, depending on the exact transmission/variant.`;
+    }
+  }
+
+  return `${subject} mileage varies by variant — ${values.slice(0, 3).join(", ")}${values.length > 3 ? " and more" : ""}.`;
+};
+
+
+const polishAciEarlyFeatureResponseCopy = (response = {}, options = {}) => {
+  if (!response || typeof response !== "object") return response;
+
+  const directMileageAnswer = buildAciMileageDirectAnswer(response, options);
+  let answer = directMileageAnswer || String(response.answer || "");
+
+  answer = answer
+    .replace(/\baRAI Mileage\b/g, "ARAI mileage")
+    .replace(/\barai mileage\b/gi, "ARAI mileage")
+    .replace(/anti-lock\s+Braking\s+System\s*\(ABS\)/gi, "Anti-lock Braking System (ABS)")
+    .replace(/anti-lock\s+braking\s+system\s*\(ABS\)/gi, "Anti-lock Braking System (ABS)")
+    .replace(/\bHTX IVT\b/g, "HTX iVT")
+    .replace(/\bSX IVT\b/g, "SX iVT")
+    .replace(/\bSingle Pane sunroof\b/g, "single-pane sunroof")
+    .replace(/\bPanoramic sunroof\b/g, "panoramic sunroof");
+
+  const singleVariantMatch = answer.match(
+    /Good news\s*—\s*all\s+1\s+current\s+(.+?)\s+variants\s+get\s+(.+?)\./i,
+  );
+
+  if (singleVariantMatch) {
+    const variantName = formatAciInlineVariantName(singleVariantMatch[1]);
+    const featureName = singleVariantMatch[2]
+      .replace(/\baRAI Mileage\b/g, "ARAI mileage")
+      .replace(/\barai mileage\b/gi, "ARAI mileage")
+      .replace(/anti-lock\s+Braking\s+System\s*\(ABS\)/gi, "Anti-lock Braking System (ABS)")
+      .replace(/anti-lock\s+braking\s+system\s*\(ABS\)/gi, "Anti-lock Braking System (ABS)");
+
+    answer = `Yes — ${variantName} gets ${featureName}.`;
+  }
+
+  response.answer = answer;
+
+  if (response.data && typeof response.data === "object") {
+    response.data.answer = answer;
+  }
+
+  if (response.widget && typeof response.widget === "object") {
+    response.widget.answer = answer;
+  }
+
+  return response;
+};
+
+
+
+
+const pickAciContextValue = (...values) => {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text) return value;
+  }
+  return "";
+};
+
+
+const extractAciScopedVariantFromCleanMessage = ({
+  cleanUserMessage = "",
+  model = "",
+  fullModel = "",
+  make = "",
+} = {}) => {
+  let text = String(cleanUserMessage || "").trim();
+
+  [
+    fullModel,
+    model,
+    make,
+  ]
+    .filter(Boolean)
+    .sort((a, b) => String(b).length - String(a).length)
+    .forEach((candidate) => {
+      const safe = String(candidate).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      text = text.replace(new RegExp(`\\b${safe}\\b`, "ig"), " ");
+    });
+
+  text = text
+    .replace(/\b(abs|anti\s*lock\s*braking|anti-lock\s*braking|sunroof|mileage|arai\s*mileage|features?|feature|price|pricelist|on\s*road|on-road)\b/gi, " ")
+    .replace(/\b(does|do|is|are|has|have|having|with|get|gets|got|which|what|best|highest|maximum|max|most|variant|variants|car|cars|it|this|that|current|selected|new|old)\b/gi, " ")
+    .replace(/[?.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text ? formatAciInlineVariantName(text) : "";
+};
+
+const shouldCarryAciCurrentVariant = ({ message = "", dynamicModelEntity = null, explicitVariant = "", context = {} } = {}) => {
+  if (explicitVariant) return false;
+  if (!dynamicModelEntity?.fromContext) return false;
+  if (!context?.anchorVariant && !context?.selectedVehicle?.variant && !context?.selectedVehicle?.variantName) return false;
+
+  // Carry variant only for true pronoun/current-variant questions.
+  // Do not carry it for model-level questions like "Does Seltos have ABS?"
+  return /\b(it|this|that|current one|selected one|this variant|current variant|selected variant)\b/i.test(
+    String(message || ""),
+  );
+};
+
+const buildAciFeatureAuthorityContextPatch = ({
+  context = {},
+  detected = {},
+  dynamicModelEntity = null,
+  cleanUserMessage = "",
+  message = "",
+} = {}) => {
+  const make =
+    detected.make ||
+    detected.brand ||
+    dynamicModelEntity?.brand ||
+    context?.anchorMake ||
+    context?.selectedVehicle?.make ||
+    context?.selectedVehicle?.brand ||
+    "";
+
+  const model =
+    detected.model ||
+    dynamicModelEntity?.model ||
+    context?.anchorModel ||
+    context?.selectedVehicle?.model ||
+    "";
+
+  const fullModel =
+    detected.fullModel ||
+    dynamicModelEntity?.fullModel ||
+    context?.anchorFullModel ||
+    context?.selectedVehicle?.fullModel ||
+    (make && model ? `${make} ${model}` : model);
+
+  const explicitVariant = extractAciScopedVariantFromCleanMessage({
+    cleanUserMessage,
+    model,
+    fullModel,
+    make,
+  });
+
+  const carriedVariant = shouldCarryAciCurrentVariant({
+    message,
+    dynamicModelEntity,
+    explicitVariant,
+    context,
+  })
+    ? pickAciContextValue(
+        context?.anchorVariant,
+        context?.selectedVehicle?.variant,
+        context?.selectedVehicle?.variantName,
+      )
+    : "";
+
+  const nextVariant = explicitVariant || carriedVariant || "";
+
+  return {
+    selectedVehicle: {
+      ...(context?.selectedVehicle || {}),
+      make,
+      brand: make,
+      model,
+      fullModel,
+      variant: nextVariant,
+      variantName: nextVariant,
+      city: pickAciContextValue(context?.anchorCity, context?.city, context?.selectedVehicle?.city, "new-delhi"),
+      citySlug: pickAciContextValue(context?.anchorCity, context?.citySlug, context?.selectedVehicle?.citySlug, "new-delhi"),
+    },
+    anchorMake: make,
+    anchorModel: model,
+    anchorFullModel: fullModel,
+    anchorVariant: nextVariant,
+    anchorCity: pickAciContextValue(context?.anchorCity, context?.city, context?.selectedVehicle?.citySlug, "new-delhi"),
+    selectedColor: null,
+  };
+};
+
+const applyAciFeatureAuthorityContextPatch = (response = {}, patch = {}) => {
+  if (!response || typeof response !== "object") return response;
+
+  response.contextPatch = {
+    ...(response.contextPatch || {}),
+    ...patch,
+  };
+
+  response.context = {
+    ...(response.context || {}),
+    ...patch,
+  };
+
+  if (response.data && typeof response.data === "object") {
+    response.data = {
+      ...response.data,
+      contextPatch: {
+        ...(response.data.contextPatch || {}),
+        ...patch,
+      },
+    };
+  }
+
+  if (response.widget && typeof response.widget === "object") {
+    response.widget = {
+      ...response.widget,
+      contextPatch: {
+        ...(response.widget.contextPatch || {}),
+        ...patch,
+      },
+    };
+  }
+
+  return response;
+};
+
+
 const maybeRunAciEarlyFeatureGate = async ({
   message = "",
   context = {},
   selectedEntity = null,
   filters = {},
 } = {}) => {
-  const dynamicModelEntity = await resolveAciDynamicModelEntity(message);
+  const dynamicModelEntityFromText = await resolveAciDynamicModelEntity(message);
+  const dynamicModelEntityFromContext = buildAciContextModelEntity({
+    context,
+    selectedEntity,
+  });
+
+  const dynamicModelEntity = chooseAciDynamicModelEntity({
+    textEntity: dynamicModelEntityFromText,
+    contextEntity: dynamicModelEntityFromContext,
+  });
 
   const detected =
     detectAciEarlyDynamicRoutedRequest({
@@ -841,29 +1472,149 @@ const maybeRunAciEarlyFeatureGate = async ({
     },
   };
 
+  const preToolAuthorityContextPatch = buildAciFeatureAuthorityContextPatch({
+    context,
+    detected,
+    dynamicModelEntity,
+    cleanUserMessage,
+    message,
+  });
+
+  const scopedAnchorVariant = String(
+    preToolAuthorityContextPatch.anchorVariant || "",
+  );
+  const scopedSelectedVehicle = {
+    ...(preToolAuthorityContextPatch.selectedVehicle || {}),
+    variant: scopedAnchorVariant,
+    variantName: scopedAnchorVariant,
+  };
+
+  const scopedSelectedEntity =
+    selectedEntity && typeof selectedEntity === "object"
+      ? {
+          ...selectedEntity,
+          selectedVehicle: {
+            ...(selectedEntity.selectedVehicle || selectedEntity.vehicle || {}),
+            ...scopedSelectedVehicle,
+          },
+          vehicle: {
+            ...(selectedEntity.vehicle || selectedEntity.selectedVehicle || {}),
+            ...scopedSelectedVehicle,
+          },
+          variant: scopedAnchorVariant,
+          variantName: scopedAnchorVariant,
+          selectedVariant: scopedAnchorVariant,
+          selectedVariantKey: scopedAnchorVariant,
+          requestedVariant: scopedAnchorVariant,
+        }
+      : {
+          selectedVehicle: scopedSelectedVehicle,
+          vehicle: scopedSelectedVehicle,
+          variant: scopedAnchorVariant,
+          variantName: scopedAnchorVariant,
+          selectedVariant: scopedAnchorVariant,
+          selectedVariantKey: scopedAnchorVariant,
+          requestedVariant: scopedAnchorVariant,
+        };
+
+  const scopedFeatureContext = {
+    ...(context || {}),
+    ...preToolAuthorityContextPatch,
+    selectedEntity: scopedSelectedEntity,
+    anchorVariant: scopedAnchorVariant,
+    selectedVehicle: scopedSelectedVehicle,
+  };
+
+  const scopedFeatureFilters =
+    filters && typeof filters === "object"
+      ? {
+          ...filters,
+          selectedVariant: scopedAnchorVariant,
+          selectedVariantKey: scopedAnchorVariant,
+          requestedVariant: scopedAnchorVariant,
+          variant: scopedAnchorVariant,
+          variantName: scopedAnchorVariant,
+        }
+      : {
+          selectedVariant: scopedAnchorVariant,
+          selectedVariantKey: scopedAnchorVariant,
+          requestedVariant: scopedAnchorVariant,
+          variant: scopedAnchorVariant,
+          variantName: scopedAnchorVariant,
+        };
+
+  const scopedDetected =
+    detected && typeof detected === "object"
+      ? {
+          ...detected,
+          variant: scopedAnchorVariant,
+          variantName: scopedAnchorVariant,
+          selectedVariant: scopedAnchorVariant,
+          selectedVariantKey: scopedAnchorVariant,
+          requestedVariant: scopedAnchorVariant,
+          entities: {
+            ...(detected.entities || {}),
+            variant: scopedAnchorVariant,
+            variantName: scopedAnchorVariant,
+            selectedVariant: scopedAnchorVariant,
+            selectedVariantKey: scopedAnchorVariant,
+            requestedVariant: scopedAnchorVariant,
+          },
+        }
+      : detected;
+
+  const scopedToolPlan =
+    toolPlan && typeof toolPlan === "object"
+      ? {
+          ...toolPlan,
+          variant: scopedAnchorVariant,
+	          variantName: scopedAnchorVariant,
+	          selectedVariant: scopedAnchorVariant,
+	          selectedVariantKey: scopedAnchorVariant,
+	          requestedVariant: scopedAnchorVariant,
+	          entities: {
+	            ...(toolPlan.entities || {}),
+	            variant: scopedAnchorVariant,
+	            variantName: scopedAnchorVariant,
+	            selectedVariant: scopedAnchorVariant,
+	            selectedVariantKey: scopedAnchorVariant,
+	            requestedVariant: scopedAnchorVariant,
+	          },
+	          input: {
+	            ...(toolPlan.input || {}),
+	            variant: scopedAnchorVariant,
+	            variantName: scopedAnchorVariant,
+	            selectedVariant: scopedAnchorVariant,
+	            selectedVariantKey: scopedAnchorVariant,
+	            requestedVariant: scopedAnchorVariant,
+	          },
+	          filters: {
+	            ...(toolPlan.filters || {}),
+	            variant: scopedAnchorVariant,
+	            variantName: scopedAnchorVariant,
+	            selectedVariant: scopedAnchorVariant,
+	            selectedVariantKey: scopedAnchorVariant,
+	            requestedVariant: scopedAnchorVariant,
+	          },
+	        }
+	      : toolPlan;
+
   const response = await toolRunner({
-    toolPlan,
-    context: {
-      ...(context || {}),
-      selectedEntity,
-      anchorMake: detected.make || dynamicModelEntity?.brand || context?.anchorMake || "",
-      anchorModel: detected.model,
-      anchorFullModel: detected.fullModel || dynamicModelEntity?.fullModel || "",
-      anchorFeatureCategory: detected.category || "",
-      anchorFeatureCategoryLabel: detected.categoryLabel || "",
-      anchorVariant: "",
-      anchorCity: context?.anchorCity || context?.city || "new-delhi",
-      selectedVehicle: {
-        ...(context?.selectedVehicle || {}),
-        make: detected.make || dynamicModelEntity?.brand || "",
-        model: detected.model,
-        fullModel: detected.fullModel || dynamicModelEntity?.fullModel || "",
-        variant: "",
-        city: context?.anchorCity || context?.city || "new-delhi",
-      },
-    },
+    detected: scopedDetected,
+    filters: scopedFeatureFilters,
+    context: scopedFeatureContext,
+    toolPlan: scopedToolPlan,
+    selectedEntity: scopedSelectedEntity,
     userMessage: cleanUserMessage,
   });
+
+  polishAciEarlyFeatureResponseCopy(response, { detected, cleanUserMessage, message });
+
+  const authorityContextPatch = preToolAuthorityContextPatch;
+
+  applyAciFeatureAuthorityContextPatch(response, authorityContextPatch);
+
+
 
   return {
     ...response,
