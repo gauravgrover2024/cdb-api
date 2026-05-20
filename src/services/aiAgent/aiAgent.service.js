@@ -594,9 +594,54 @@ const isAciGenericModelEntityMatch = (entity = {}) => {
   return genericMatches.has(matched);
 };
 
-const chooseAciDynamicModelEntity = ({ textEntity = null, contextEntity = null } = {}) => {
+const hasAciComparisonLanguage = (message = "") =>
+  /\b(difference|different|compare|comparison|vs|versus|v\/s|extra\s+features?|upgrade)\b/i.test(
+    String(message || ""),
+  );
+
+const isAciLikelyVariantTokenModelMatch = ({
+  message = "",
+  textEntity = null,
+  contextEntity = null,
+} = {}) => {
+  if (!textEntity || !contextEntity) return false;
+  if (!hasAciComparisonLanguage(message)) return false;
+
+  const matched = normalizeAciContextText(textEntity.matchedText || "");
+  if (!matched) return false;
+
+  const weakVariantTokens = new Set([
+    "e",
+    "ex",
+    "s",
+    "sx",
+    "vx",
+    "zx",
+    "v",
+    "z",
+    "ht",
+    "htk",
+    "htx",
+    "gtx",
+    "ax",
+    "lx",
+    "mx",
+  ]);
+
+  return matched.length <= 3 && weakVariantTokens.has(matched);
+};
+
+const chooseAciDynamicModelEntity = ({
+  textEntity = null,
+  contextEntity = null,
+  message = "",
+} = {}) => {
   if (!textEntity) return contextEntity;
   if (!contextEntity) return textEntity;
+
+  if (isAciLikelyVariantTokenModelMatch({ message, textEntity, contextEntity })) {
+    return contextEntity;
+  }
 
   if (isAciGenericModelEntityMatch(textEntity)) {
     return contextEntity;
@@ -1329,7 +1374,13 @@ const buildAciFeatureAuthorityContextPatch = ({
       )
     : "";
 
-  const nextVariant = explicitVariant || carriedVariant || "";
+  const isComparisonIntent =
+    detected?.intent === "vehicle_feature_comparison" ||
+    detected?.canvasType === "comparison_canvas";
+
+  const nextVariant = isComparisonIntent
+    ? ""
+    : explicitVariant || carriedVariant || "";
 
   return {
     selectedVehicle: {
@@ -1349,6 +1400,14 @@ const buildAciFeatureAuthorityContextPatch = ({
     anchorVariant: nextVariant,
     anchorCity: pickAciContextValue(context?.anchorCity, context?.city, context?.selectedVehicle?.citySlug, "new-delhi"),
     selectedColor: null,
+    ...(isComparisonIntent
+      ? {
+          selectedComparisonSet: {
+            model,
+            variants: Array.isArray(detected?.variants) ? detected.variants : [],
+          },
+        }
+      : {}),
   };
 };
 
@@ -1404,6 +1463,7 @@ const maybeRunAciEarlyFeatureGate = async ({
   const dynamicModelEntity = chooseAciDynamicModelEntity({
     textEntity: dynamicModelEntityFromText,
     contextEntity: dynamicModelEntityFromContext,
+    message,
   });
 
   const detected =
