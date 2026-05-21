@@ -82,6 +82,9 @@ const formatCustomerModelName = (value = "") => {
 
   if (compact === "xuv700" || compact === "xuv7xo") return "XUV 7XO";
   if (compact === "xuv300" || compact === "xuv3xo") return "XUV 3XO";
+  if (compact === "tharroxx") return "Thar Roxx";
+  if (compact === "fortunerlegender") return "Fortuner Legender";
+  if (compact === "scorpion") return "Scorpio N";
 
   return text;
 };
@@ -251,10 +254,10 @@ const buildFeatureAnswerCopy = ({
   }
 
   if (mapped.length) {
-    return `No current ${model} variant lists ${lowerFirst(featureName)}. This is worth knowing before you shortlist.`;
+    return `No current ${model} variant lists ${lowerFirst(featureName)}. I’d treat that as a clear skip for this feature.`;
   }
 
-  return `${featureName} is not showing on current ${model} variants right now. I’d verify once more before final booking.`;
+  return `${featureName} is not showing on current ${model} variants right now. I’d check the feature explorer before you decide.`;
 };
 
 const buildFeatureDiscoveryCopy = ({
