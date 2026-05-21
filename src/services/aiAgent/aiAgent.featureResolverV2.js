@@ -76,6 +76,16 @@ const formatCustomerVariantName = (value = "") =>
     })
     .join(" ");
 
+const formatCustomerModelName = (value = "") => {
+  const text = clean(value);
+  const compact = compactText(text);
+
+  if (compact === "xuv700" || compact === "xuv7xo") return "XUV 7XO";
+  if (compact === "xuv300" || compact === "xuv3xo") return "XUV 3XO";
+
+  return text;
+};
+
 const formatCustomerFeatureName = (value = "") => {
   const text = String(value || "").trim();
   if (/abs|anti[-\s]*lock\s*braking/i.test(text)) return "Anti-lock Braking System (ABS)";
@@ -154,6 +164,13 @@ const buildInactiveVariantCopy = ({ model = "", variant = "", featureName = "" }
   return `${clean(variant)} looks like an older ${model} variant, so I’m only showing current new-car options here.${featurePart}`;
 };
 
+const buildFeatureModelUnavailableCopy = (model = "") => {
+  const label = clean(model);
+  return label
+    ? `I don’t have current feature data for ${label} yet.`
+    : "I could not identify the car model for this feature question.";
+};
+
 const buildFeatureAnswerCopy = ({
   model = "",
   variant = "",
@@ -190,7 +207,7 @@ const buildFeatureAnswerCopy = ({
     }
 
     if (allSame && first.available) {
-      return `Good news — all ${mapped.length} active ${targetName} sub-variants get ${featurePhrase({
+      return `Strong choice — all ${mapped.length} active ${targetName} sub-variants get ${featurePhrase({
         featureName,
         value: first.value,
       })}.`;
@@ -218,10 +235,10 @@ const buildFeatureAnswerCopy = ({
       return `Yes — ${targetName} gets ${featurePhrase({
         featureName,
         value: first.value,
-      })}.`;
+      })}. That’s the clean confirmation you were looking for.`;
     }
 
-    return `No — ${targetName} does not list ${lowerFirst(featureName)}.`;
+    return `No — ${targetName} does not list ${lowerFirst(featureName)}. I’d move one variant up if this is a must-have.`;
   }
 
   if (availableRows.length) {
@@ -234,10 +251,10 @@ const buildFeatureAnswerCopy = ({
   }
 
   if (mapped.length) {
-    return `No current ${model} variant lists ${lowerFirst(featureName)}.`;
+    return `No current ${model} variant lists ${lowerFirst(featureName)}. This is worth knowing before you shortlist.`;
   }
 
-  return `${featureName} is not showing on current ${model} variants right now.`;
+  return `${featureName} is not showing on current ${model} variants right now. I’d verify once more before final booking.`;
 };
 
 const buildFeatureDiscoveryCopy = ({
@@ -347,8 +364,8 @@ const buildLeadingQuestionsV2 = ({
     return dedupeLeadingQuestionsV2([
       makeLeadingQuestionV2({
         id: "open-car-overview",
-        label: "Open Car Overview",
-        title: "Open Car Overview",
+        label: `View ${target} profile`,
+        title: `View ${target} profile`,
         query: `Open ${target} overview`,
         intent: "vehicle_overview",
         canvasType: "car_overview_canvas",
@@ -358,8 +375,8 @@ const buildLeadingQuestionsV2 = ({
       }),
       makeLeadingQuestionV2({
         id: "check-on-road-price",
-        label: `Check ${target} on-road price`,
-        title: `Check ${target} on-road price`,
+        label: `See ${target} on-road price`,
+        title: `See ${target} on-road price`,
         query: `Check ${target} on-road price`,
         intent: "vehicle_variant_price",
         canvasType: "pricelist_canvas",
@@ -369,8 +386,8 @@ const buildLeadingQuestionsV2 = ({
       }),
       makeLeadingQuestionV2({
         id: "show-all-features",
-        label: `Show all ${target} features`,
-        title: `Show all ${target} features`,
+        label: `Explore every ${target} feature`,
+        title: `Explore every ${target} feature`,
         query: `Show all ${target} features`,
         intent: "vehicle_model_features_explorer",
         canvasType: "features_explorer_canvas",
@@ -380,8 +397,8 @@ const buildLeadingQuestionsV2 = ({
       }),
       makeLeadingQuestionV2({
         id: "show-colors",
-        label: `Which colors are available in ${cleanModel}?`,
-        title: `Which colors are available in ${cleanModel}?`,
+        label: `See real ${cleanModel} colours`,
+        title: `See real ${cleanModel} colours`,
         query: `Which colors are available in ${cleanModel}?`,
         intent: "vehicle_colors",
         canvasType: "color_gallery_canvas",
@@ -395,8 +412,8 @@ const buildLeadingQuestionsV2 = ({
   return dedupeLeadingQuestionsV2([
     makeLeadingQuestionV2({
       id: "open-car-overview",
-      label: "Open Car Overview",
-      title: "Open Car Overview",
+      label: `View ${cleanModel} profile`,
+      title: `View ${cleanModel} profile`,
       query: `Open ${cleanModel} overview`,
       intent: "vehicle_overview",
       canvasType: "car_overview_canvas",
@@ -405,8 +422,8 @@ const buildLeadingQuestionsV2 = ({
     }),
     makeLeadingQuestionV2({
       id: "check-on-road-price",
-      label: `Check ${cleanModel} on-road price`,
-      title: `Check ${cleanModel} on-road price`,
+      label: `See ${cleanModel} on-road price`,
+      title: `See ${cleanModel} on-road price`,
       query: `Check ${cleanModel} on-road price`,
       intent: "vehicle_pricelist",
       canvasType: "pricelist_canvas",
@@ -415,8 +432,8 @@ const buildLeadingQuestionsV2 = ({
     }),
     makeLeadingQuestionV2({
       id: "show-all-features",
-      label: `Show all ${cleanModel} features`,
-      title: `Show all ${cleanModel} features`,
+      label: `Explore every ${cleanModel} feature`,
+      title: `Explore every ${cleanModel} feature`,
       query: `Show all ${cleanModel} features`,
       intent: "vehicle_model_features_explorer",
       canvasType: "features_explorer_canvas",
@@ -425,8 +442,8 @@ const buildLeadingQuestionsV2 = ({
     }),
     makeLeadingQuestionV2({
       id: "show-colors",
-      label: `Which colors are available in ${cleanModel}?`,
-      title: `Which colors are available in ${cleanModel}?`,
+      label: `See real ${cleanModel} colours`,
+      title: `See real ${cleanModel} colours`,
       query: `Which colors are available in ${cleanModel}?`,
       intent: "vehicle_colors",
       canvasType: "color_gallery_canvas",
@@ -851,7 +868,7 @@ export const getModelFeatureExplorerV2 = async ({
       ok: false,
       intent: "vehicle_model_features_explorer",
       reason: "model_not_found",
-      answer: `I could not identify the car model from “${model}”.`,
+      answer: buildFeatureModelUnavailableCopy(model),
       data: null,
     };
   }
@@ -1096,7 +1113,7 @@ export const answerModelFeatureV2 = async ({
     conversationSuggestions: [],
       reason: !resolvedModel ? "model_not_found" : "feature_not_found",
       answer: !resolvedModel
-        ? `I could not identify the car model from “${model}”.`
+        ? buildFeatureModelUnavailableCopy(model)
         : `I could not safely match “${feature}” to a feature in the database.`,
       data: {
         resolvedModel,
@@ -1124,6 +1141,10 @@ export const answerModelFeatureV2 = async ({
       priceMin: 1,
       priceMax: 1,
       activePricelistMatched: 1,
+      imageUrl: 1,
+      normalizedImageUrl: 1,
+      imageFrame: 1,
+      displayFrameMeta: 1,
       [`featuresByKey.${resolvedFeature.canonicalKey}`]: 1,
     })
     .toArray();
@@ -1144,6 +1165,9 @@ export const answerModelFeatureV2 = async ({
         priceMax: row.priceMax || 0,
         priceLabel: formatPrice(row.priceMin || row.priceMax),
         activePricelistMatched: row.activePricelistMatched,
+        imageUrl: row.imageUrl || row.normalizedImageUrl || "",
+        normalizedImageUrl: row.normalizedImageUrl || row.imageUrl || "",
+        imageFrame: row.imageFrame || row.displayFrameMeta || null,
         featureKey: resolvedFeature.canonicalKey,
         feature: customerFeatureLabel(f.displayName),
         value: f.value,
@@ -1163,13 +1187,14 @@ export const answerModelFeatureV2 = async ({
   const cheapest = availableRows
     .filter((row) => row.priceMin)
     .sort((a, b) => a.priceMin - b.priceMin)[0];
+  const customerModel = formatCustomerModelName(resolvedModel.model);
 
   const targetName = variant
-    ? `${resolvedModel.model} ${clean(variant)}`
-    : resolvedModel.model;
+    ? `${customerModel} ${clean(variant)}`
+    : customerModel;
 
   const answer = buildFeatureAnswerCopy({
-    model: resolvedModel.model,
+    model: customerModel,
     variant,
     featureName: customerFeatureLabel(resolvedFeature.displayName),
     mapped,
@@ -1180,7 +1205,7 @@ export const answerModelFeatureV2 = async ({
   });
 
   const leadingQuestions = buildLeadingQuestionsV2({
-    model: resolvedModel.model,
+    model: customerModel,
     variant,
     city: "new-delhi",
   });
@@ -1194,7 +1219,10 @@ export const answerModelFeatureV2 = async ({
     title: customerFeatureLabel(resolvedFeature.displayName),
     answer,
     data: {
-      model: resolvedModel.model,
+      brand: resolvedModel.brand,
+      make: resolvedModel.brand,
+      model: customerModel,
+      sourceModel: resolvedModel.model,
       modelKey: resolvedModel.modelKey,
       requestedVariant: variant || "",
       featureKey: resolvedFeature.canonicalKey,
@@ -1291,7 +1319,7 @@ export const compareVariantFeaturesV2 = async ({
       ok: false,
       intent: "vehicle_feature_comparison",
       reason: "model_not_found",
-      answer: `I could not identify the car model from “${model}”.`,
+      answer: buildFeatureModelUnavailableCopy(model),
       data: null,
     };
   }

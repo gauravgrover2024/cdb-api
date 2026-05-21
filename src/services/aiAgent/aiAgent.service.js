@@ -360,7 +360,8 @@ export const createPlannerPlanForMessage = async ({
 const ACI_EARLY_FEATURE_MODELS = [
   "creta", "verna", "thar", "seltos", "sonet", "venue", "exter",
   "alcazar", "city", "elevate", "nexon", "harrier", "safari",
-  "punch", "scorpio", "xuv700", "xuv 700", "slavia", "virtus",
+  "punch", "scorpio", "xuv700", "xuv 700", "xuv7xo", "xuv 7xo",
+  "xuv300", "xuv 300", "xuv3xo", "xuv 3xo", "slavia", "virtus",
   "taigun", "kushaq", "brezza", "fronx", "swift", "dzire",
   "baleno", "fortuner", "innova",
 ];
@@ -402,13 +403,14 @@ const ACI_EARLY_FEATURE_ALIASES = [
 
   {
     feature: "ABS",
-    pattern: /\b(abs|anti\s*lock\s*braking|anti-lock\s*braking|anti\s*lock\s*braking\s*system|anti-lock\s*braking\s*system|braking\s*system)\b/i,
+    pattern: /\b(abs|ags|anti\s*lock\s*braking|anti-lock\s*braking|anti\s*lock\s*braking\s*system|anti-lock\s*braking\s*system|braking\s*system)\b/i,
   },
 ];
 
 const toAciTitleCaseModel = (model = "") => {
   const normalized = String(model || "").trim().toLowerCase();
-  if (normalized === "xuv700" || normalized === "xuv 700") return "XUV700";
+  if (["xuv700", "xuv 700", "xuv7xo", "xuv 7xo"].includes(normalized)) return "XUV 7XO";
+  if (["xuv300", "xuv 300", "xuv3xo", "xuv 3xo"].includes(normalized)) return "XUV 3XO";
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
 
@@ -444,8 +446,10 @@ const extractAciEarlyComparisonVariants = ({ message = "", model = "" } = {}) =>
   const raw = String(message || "").trim();
   if (!raw || !model) return [];
 
-  const modelPattern = model.toLowerCase() === "xuv700" || model.toLowerCase() === "xuv 700"
-    ? /xuv\s*700/i
+  const modelPattern = /xuv\s*(?:700|7xo)/i.test(model.toLowerCase())
+    ? /xuv\s*(?:700|7xo)/i
+    : /xuv\s*(?:300|3xo)/i.test(model.toLowerCase())
+      ? /xuv\s*(?:300|3xo)/i
     : new RegExp(`\\b${model.replace(/\\s+/g, "\\\\s*")}\\b`, "i");
 
   const modelMatch = raw.match(modelPattern);
@@ -736,8 +740,10 @@ const buildAciDynamicFeatureCleanUserMessage = ({
   alias = null,
 } = {}) => {
   let tail = String(raw || "").trim();
+  const xuvAliasMatch = tail.match(/\bxuv\s*(?:700|7xo|300|3xo)\b/i);
 
   const modelCandidates = [
+    xuvAliasMatch?.[0],
     modelEntity?.matchedText,
     modelEntity?.fullModel,
     modelEntity?.model,
@@ -883,7 +889,22 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
   const raw = String(message || "").trim();
   if (!raw || !modelEntity?.model) return null;
 
-  const model = modelEntity.model;
+  const xuvAliasMatch = raw.match(/\bxuv\s*(?:700|7xo|300|3xo)\b/i);
+  let model = modelEntity.model;
+  let brand = modelEntity.brand || "";
+  let fullModel = modelEntity.fullModel || "";
+
+  if (xuvAliasMatch) {
+    brand = brand || "Mahindra";
+    if (/7|700/i.test(xuvAliasMatch[0])) {
+      model = "XUV 7XO";
+      fullModel = "Mahindra XUV 7XO";
+    } else {
+      model = "XUV 3XO";
+      fullModel = "Mahindra XUV 3XO";
+    }
+  }
+
   const categoryMatch = detectAciDynamicFeatureCategory(raw);
 
   const isCategoryFeatureExplorerRequest =
@@ -894,9 +915,9 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
   if (isCategoryFeatureExplorerRequest) {
     return {
       model,
-      make: modelEntity.brand || "",
-      brand: modelEntity.brand || "",
-      fullModel: modelEntity.fullModel || "",
+      make: brand,
+      brand,
+      fullModel,
       feature: "",
       category: categoryMatch.key,
       categoryLabel: categoryMatch.label || categoryMatch.key,
@@ -910,9 +931,9 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
   if (/\b(price\s*list|pricelist|price|on\s*road|on-road)\b/i.test(raw)) {
     return {
       model,
-      make: modelEntity.brand || "",
-      brand: modelEntity.brand || "",
-      fullModel: modelEntity.fullModel || "",
+      make: brand,
+      brand,
+      fullModel,
       feature: "",
       cleanUserMessage: `${model} price`,
       intent: "vehicle_pricelist",
@@ -932,9 +953,9 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
     if (variants.length >= 2) {
       return {
         model,
-        make: modelEntity.brand || "",
-        brand: modelEntity.brand || "",
-        fullModel: modelEntity.fullModel || "",
+        make: brand,
+        brand,
+        fullModel,
         variants,
         feature: "",
         cleanUserMessage: `${model} ${variants.join(" vs ")}`,
@@ -961,9 +982,9 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
 
     return {
       model,
-      make: modelEntity.brand || "",
-      brand: modelEntity.brand || "",
-      fullModel: modelEntity.fullModel || "",
+      make: brand,
+      brand,
+      fullModel,
       feature: alias.feature,
       cleanUserMessage: isDiscovery
         ? raw
@@ -993,9 +1014,9 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
 
     return {
       model,
-      make: modelEntity.brand || "",
-      brand: modelEntity.brand || "",
-      fullModel: modelEntity.fullModel || "",
+      make: brand,
+      brand,
+      fullModel,
       feature: "",
       category: categoryKey,
       categoryLabel,
@@ -1007,6 +1028,49 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
       intent: "vehicle_model_features_explorer",
       canvasType: "features_explorer_canvas",
     };
+  }
+
+  const explicitModelMention = cleanText(xuvAliasMatch?.[0] || modelEntity.matchedText || "");
+  if (explicitModelMention) {
+    let residual = raw;
+    [
+      modelEntity.matchedText,
+      xuvAliasMatch?.[0],
+      fullModel,
+      modelEntity.model,
+      model,
+    ]
+      .filter(Boolean)
+      .sort((a, b) => String(b).length - String(a).length)
+      .forEach((candidate) => {
+        const safe = String(candidate).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        residual = residual.replace(new RegExp(`\\b${safe}\\b`, "ig"), " ");
+      });
+
+    residual = residual
+      .replace(/\b(show|open|tell|me|about|overview|details?|car|model|variant|new)\b/gi, " ")
+      .replace(/[?.,]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const hasSpecificIntent =
+      /\b(price|pricelist|on\s*road|on-road|emi|compare|comparison|vs|versus|features?|colors?|colours?|sunroof|abs|mileage|airbags?|quotation|offer)\b/i.test(
+        raw,
+      );
+
+    if (!hasSpecificIntent && residual.split(/\s+/).filter(Boolean).length <= 3) {
+      return {
+        model,
+        make: brand,
+        brand,
+        fullModel,
+        variant: formatAciInlineVariantName(residual),
+        feature: "",
+        cleanUserMessage: `${model} overview`,
+        intent: "vehicle_overview",
+        canvasType: "car_overview_canvas",
+      };
+    }
   }
 
   return null;
@@ -1303,7 +1367,7 @@ const extractAciScopedVariantFromCleanMessage = ({
     });
 
   text = text
-    .replace(/\b(abs|anti\s*lock\s*braking|anti-lock\s*braking|sunroof|mileage|arai\s*mileage|features?|feature|price|pricelist|on\s*road|on-road)\b/gi, " ")
+    .replace(/\b(abs|ags|anti\s*lock\s*braking|anti-lock\s*braking|sunroof|mileage|arai\s*mileage|features?|feature|price|pricelist|overview|details?|on\s*road|on-road)\b/gi, " ")
     .replace(/\b(does|do|is|are|has|have|having|with|get|gets|got|which|what|best|highest|maximum|max|most|variant|variants|car|cars|it|this|that|current|selected|new|old)\b/gi, " ")
     .replace(/[?.,]/g, " ")
     .replace(/\s+/g, " ")
@@ -1381,10 +1445,14 @@ const buildAciFeatureAuthorityContextPatch = ({
   const nextVariant = isComparisonIntent
     ? ""
     : explicitVariant || carriedVariant || "";
+  const contextVehicle = context?.selectedVehicle || {};
+  const contextVehicleMatchesModel =
+    normalizeAciContextText(contextVehicle.model || "") ===
+    normalizeAciContextText(model || "");
 
   return {
     selectedVehicle: {
-      ...(context?.selectedVehicle || {}),
+      ...(contextVehicleMatchesModel ? contextVehicle : {}),
       make,
       brand: make,
       model,
@@ -1414,33 +1482,68 @@ const buildAciFeatureAuthorityContextPatch = ({
 const applyAciFeatureAuthorityContextPatch = (response = {}, patch = {}) => {
   if (!response || typeof response !== "object") return response;
 
+  const mergeAuthorityPatch = (existingPatch = {}) => {
+    const existingVehicle =
+      existingPatch.selectedVehicle ||
+      response.vehicle ||
+      response.widget?.vehicle ||
+      {};
+    const patchVehicle = patch.selectedVehicle || {};
+    const existingModel = normalizeAciContextText(existingVehicle.model || "");
+    const patchModel = normalizeAciContextText(
+      patchVehicle.model || patch.anchorModel || "",
+    );
+    const canPreserveExistingVehicle =
+      existingVehicle &&
+      (!existingModel || !patchModel || existingModel === patchModel);
+    const selectedVehicle = {
+      ...(canPreserveExistingVehicle ? existingVehicle : {}),
+      ...patchVehicle,
+    };
+
+    if (canPreserveExistingVehicle) {
+      selectedVehicle.imageUrl =
+        patchVehicle.imageUrl || existingVehicle.imageUrl || "";
+      selectedVehicle.normalizedImageUrl =
+        patchVehicle.normalizedImageUrl ||
+        existingVehicle.normalizedImageUrl ||
+        existingVehicle.imageUrl ||
+        "";
+      selectedVehicle.imageFrame =
+        patchVehicle.imageFrame || existingVehicle.imageFrame || null;
+      selectedVehicle.displayFrameMeta =
+        patchVehicle.displayFrameMeta ||
+        existingVehicle.displayFrameMeta ||
+        selectedVehicle.imageFrame ||
+        null;
+    }
+
+    return {
+      ...existingPatch,
+      ...patch,
+      selectedVehicle,
+    };
+  };
+
   response.contextPatch = {
-    ...(response.contextPatch || {}),
-    ...patch,
+    ...mergeAuthorityPatch(response.contextPatch || {}),
   };
 
   response.context = {
-    ...(response.context || {}),
-    ...patch,
+    ...mergeAuthorityPatch(response.context || {}),
   };
 
   if (response.data && typeof response.data === "object") {
     response.data = {
       ...response.data,
-      contextPatch: {
-        ...(response.data.contextPatch || {}),
-        ...patch,
-      },
+      contextPatch: mergeAuthorityPatch(response.data.contextPatch || {}),
     };
   }
 
   if (response.widget && typeof response.widget === "object") {
     response.widget = {
       ...response.widget,
-      contextPatch: {
-        ...(response.widget.contextPatch || {}),
-        ...patch,
-      },
+      contextPatch: mergeAuthorityPatch(response.widget.contextPatch || {}),
     };
   }
 
@@ -1487,7 +1590,9 @@ const maybeRunAciEarlyFeatureGate = async ({
   if (!detected) return null;
 
   const toolRunner =
-    detected.intent === "vehicle_pricelist" ||
+    detected.intent === "vehicle_overview"
+      ? runVehiclePricelistNewCarsTool
+      : detected.intent === "vehicle_pricelist" ||
     detected.canvasType === "pricelist_canvas"
       ? runVehiclePricelistNewCarsTool
       : runVehicleFeaturesTool;
@@ -1506,6 +1611,7 @@ const maybeRunAciEarlyFeatureGate = async ({
       fullModel: detected.fullModel || dynamicModelEntity?.fullModel || "",
       feature: detected.feature || "",
       variants: detected.variants || [],
+      variant: detected.variant || "",
       category: detected.category || "",
       categoryLabel: detected.categoryLabel || "",
     },
@@ -1516,6 +1622,7 @@ const maybeRunAciEarlyFeatureGate = async ({
       fullModel: detected.fullModel || dynamicModelEntity?.fullModel || "",
       feature: detected.feature || "",
       variants: detected.variants || [],
+      variant: detected.variant || "",
       category: detected.category || "",
       categoryLabel: detected.categoryLabel || "",
     },
@@ -1527,6 +1634,7 @@ const maybeRunAciEarlyFeatureGate = async ({
       fullModel: detected.fullModel || dynamicModelEntity?.fullModel || "",
       feature: detected.feature || "",
       variants: detected.variants || [],
+      variant: detected.variant || "",
       category: detected.category || "",
       categoryLabel: detected.categoryLabel || "",
     },
@@ -1659,7 +1767,7 @@ const maybeRunAciEarlyFeatureGate = async ({
 	        }
 	      : toolPlan;
 
-  const response = await toolRunner({
+  let response = await toolRunner({
     detected: scopedDetected,
     filters: scopedFeatureFilters,
     context: scopedFeatureContext,
@@ -1668,9 +1776,76 @@ const maybeRunAciEarlyFeatureGate = async ({
     userMessage: cleanUserMessage,
   });
 
+  let overviewAuthorityContextPatch = null;
+
+  if (detected.intent === "vehicle_overview") {
+    const overviewVehicle =
+      response.vehicle ||
+      response.widget?.vehicle ||
+      response.contextPatch?.selectedVehicle ||
+      preToolAuthorityContextPatch.selectedVehicle ||
+      {};
+    const overviewContextPatch = {
+      ...preToolAuthorityContextPatch,
+      ...(response.contextPatch || {}),
+      selectedVehicle: {
+        ...(overviewVehicle || {}),
+        variant: detected.variant || "",
+        variantName: detected.variant || "",
+        selectedVariant: detected.variant || "",
+      },
+      anchorMake:
+        overviewVehicle.make ||
+        overviewVehicle.brand ||
+        response.contextPatch?.anchorMake ||
+        preToolAuthorityContextPatch.anchorMake ||
+        "",
+      anchorModel:
+        overviewVehicle.model ||
+        response.contextPatch?.anchorModel ||
+        preToolAuthorityContextPatch.anchorModel ||
+        detected.model ||
+        "",
+      anchorFullModel:
+        overviewVehicle.fullModel ||
+        overviewVehicle.displayName ||
+        response.contextPatch?.anchorFullModel ||
+        preToolAuthorityContextPatch.anchorFullModel ||
+        detected.fullModel ||
+        "",
+      anchorVariant: detected.variant || "",
+    };
+
+    response = {
+      ...response,
+      tool: "vehicle_overview",
+      intent: "vehicle_overview",
+      canvasType: "car_overview_canvas",
+      answer: `Opened ${overviewVehicle.displayName || detected.model} overview.`,
+      vehicle: overviewContextPatch.selectedVehicle,
+      contextPatch: overviewContextPatch,
+      widget: {
+        ...(response.widget || {}),
+        type: "vehicle_overview",
+        tool: "vehicle_overview",
+        intent: "vehicle_overview",
+        canvasType: "car_overview_canvas",
+        title: `${overviewVehicle.displayName || detected.model} overview`,
+        answer: `Opened ${overviewVehicle.displayName || detected.model} overview.`,
+        vehicle: overviewContextPatch.selectedVehicle,
+        rows: response.rows || response.widget?.rows || [],
+        items: response.items || response.widget?.items || response.rows || [],
+        contextPatch: overviewContextPatch,
+      },
+    };
+
+    overviewAuthorityContextPatch = overviewContextPatch;
+  }
+
   polishAciEarlyFeatureResponseCopy(response, { detected, cleanUserMessage, message });
 
-  const authorityContextPatch = preToolAuthorityContextPatch;
+  const authorityContextPatch =
+    overviewAuthorityContextPatch || preToolAuthorityContextPatch;
 
   applyAciFeatureAuthorityContextPatch(response, authorityContextPatch);
 

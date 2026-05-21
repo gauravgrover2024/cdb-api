@@ -4,6 +4,7 @@ import {
   discoverFeatureVariantsV2,
   compareVariantFeaturesV2,
 } from "../../aiAgent.featureResolverV2.js";
+import { sampleVehicleColorImages } from "./vehiclePricelist.tool.js";
 
 const TOOL_NAME = "vehicle_features";
 const DEFAULT_CITY = "new-delhi";
@@ -118,7 +119,7 @@ const getModel = ({ toolPlan = {}, context = {}, userMessage = "" } = {}) => {
     context.selectedVehicle?.modelName,
     context.activeCanvasPayload?.model,
     context.activeCanvasPayload?.selectedVehicle?.model,
-    userMessage?.match?.(/\b(creta|verna|elevate|city|seltos|sonet|venue|exter|i20|alcazar|brezza|fronx|swift|dzire|baleno|nexon|harrier|safari|punch|scorpio|xuv700|xuv 700|thar|slavia|kushaq|virtus|taigun|glanza|hyryder|fortuner|innova)\b/i)?.[0],
+    userMessage?.match?.(/\b(creta|verna|elevate|city|seltos|sonet|venue|exter|i20|alcazar|brezza|fronx|swift|dzire|baleno|nexon|harrier|safari|punch|scorpio|xuv700|xuv 700|xuv7xo|xuv 7xo|xuv300|xuv 300|xuv3xo|xuv 3xo|thar|slavia|kushaq|virtus|taigun|glanza|hyryder|fortuner|innova)\b/i)?.[0],
   );
 };
 
@@ -666,7 +667,7 @@ const normalizeCustomerCopy = (value = "") => {
 
   if (allHaveMatch) {
     const [, feature, target, count] = allHaveMatch;
-    return `Good news — all ${count} active ${target} sub-variants get ${feature}. Pick the exact fuel/transmission version to see the full details.`;
+    return `Excellent — all ${count} active ${target} sub-variants get ${feature}. Pick the exact fuel/transmission version to see the full details.`;
   }
 
   return cleaned;
@@ -785,13 +786,16 @@ const buildCustomerFeatureAnswer = ({
 
     if (availableRows.length > 0 && unavailableRows.length === 0 && conflictedRows.length === 0) {
       const count = totalChecked || availableRows.length;
-      return `Good news — all ${count} current ${target} variants get ${readableFeature}.`;
+      if (variant || count === 1) {
+        return `Yes — ${target} gets ${readableFeature}.`;
+      }
+      return `Excellent — all ${count} current ${target} variants get ${readableFeature}.`;
     }
 
     if (availableRows.length > 0 && unavailableRows.length > 0) {
       const total = availableRows.length + unavailableRows.length + conflictedRows.length;
       const onlyText = unavailableRows.length === 1 ? "only 1 skips it" : `${unavailableRows.length} skip it`;
-      return `Good news — most ${target} variants get ${readableFeature}. ${availableRows.length} of ${total} current variants have it; ${onlyText}.`;
+      return `Smart pick to check — most ${target} variants get ${readableFeature}. ${availableRows.length} of ${total} current variants have it; ${onlyText}.`;
     }
 
     if (/matching .* feature records/i.test(original) && (availableRows.length > 0 || rows.length > 0)) {
@@ -959,7 +963,7 @@ const isInactiveVariantResult = (result = {}) => {
   );
 };
 
-const toPublicResponse = ({
+const toPublicResponse = async ({
   result = {},
   model = "",
   variant = "",
@@ -981,6 +985,45 @@ const toPublicResponse = ({
           data.selectedVariant,
           variant,
         );
+  const firstVisualRow =
+    asArray(data.rows)[0] ||
+    asArray(data.availableRows)[0] ||
+    asArray(data.unavailableRows)[0] ||
+    asArray(result.rows)[0] ||
+    {};
+  let responseImageUrl = firstText(
+    data.imageUrl,
+    data.normalizedImageUrl,
+    result.imageUrl,
+    result.normalizedImageUrl,
+    firstVisualRow.imageUrl,
+    firstVisualRow.normalizedImageUrl,
+  );
+  let responseImageFrame =
+    data.imageFrame ||
+    data.displayFrameMeta ||
+    result.imageFrame ||
+    result.displayFrameMeta ||
+    firstVisualRow.imageFrame ||
+    firstVisualRow.displayFrameMeta ||
+    null;
+
+  let visualGallery = [];
+
+  if (!responseImageUrl) {
+    visualGallery = await sampleVehicleColorImages({
+      make: data.brand || data.make || "",
+      model: responseModel,
+      limit: 4,
+    });
+
+    const selectedVisual = visualGallery[0] || null;
+    responseImageUrl = firstText(
+      selectedVisual?.imageUrl,
+      selectedVisual?.normalizedImageUrl,
+    );
+    responseImageFrame = responseImageFrame || selectedVisual?.imageFrame || null;
+  }
 
   if (modelLevelExplorer) {
     data.selectedVariant = "";
@@ -996,6 +1039,10 @@ const toPublicResponse = ({
     model: responseModel,
     variant: responseVariant,
     city,
+    imageUrl: responseImageUrl,
+    normalizedImageUrl: responseImageUrl,
+    imageFrame: responseImageFrame,
+    visualGallery,
   };
 
   const resolverQuestions =
@@ -1249,7 +1296,7 @@ export const runVehicleFeaturesTool = async (args = {
     });
   }
 
-  return toPublicResponse({
+  return await toPublicResponse({
     result: isFeatureExplorerIntent(toolPlan) && requestedCategory.key
       ? filterFeatureExplorerByCategory({
           result,

@@ -1466,7 +1466,7 @@ const flattenVisualColorDocuments = (docs = []) =>
     }];
   });
 
-const sampleVehicleColorImages = async ({
+export const sampleVehicleColorImages = async ({
   make = "",
   model = "",
   limit = 8,

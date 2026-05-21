@@ -17,6 +17,9 @@ const firstText = (...values) => {
   return "";
 };
 
+const hasOwn = (object, key) =>
+  Object.prototype.hasOwnProperty.call(object || {}, key);
+
 const slugify = (value = "", fallback = "item") =>
   cleanText(value)
     .toLowerCase()
@@ -694,8 +697,9 @@ export const normalizeAciFinalResponse = async (response = {}, options = {}) => 
         "",
       anchorModel:
         normalized.contextPatch?.anchorModel || contextSnapshot.anchorModel || "",
-      anchorVariant:
-        normalized.contextPatch?.anchorVariant || contextSnapshot.anchorVariant || "",
+      anchorVariant: hasOwn(normalized.contextPatch, "anchorVariant")
+        ? String(normalized.contextPatch.anchorVariant || "")
+        : contextSnapshot.anchorVariant || "",
       anchorCity:
         normalized.contextPatch?.anchorCity || contextSnapshot.anchorCity || "new-delhi",
       selectedVehicle:

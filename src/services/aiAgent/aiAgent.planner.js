@@ -120,8 +120,12 @@ const titleCaseModel = (value = "") => {
     i20: "i20",
     aura: "Aura",
     amaze: "Amaze",
-    xuv700: "XUV700",
-    "xuv 700": "XUV700",
+    xuv700: "XUV 7XO",
+    "xuv 700": "XUV 7XO",
+    xuv7xo: "XUV 7XO",
+    "xuv 7xo": "XUV 7XO",
+    xuv300: "XUV 3XO",
+    "xuv 300": "XUV 3XO",
     xuv3xo: "XUV 3XO",
     "xuv 3xo": "XUV 3XO",
     fortuner: "Fortuner",
@@ -144,8 +148,8 @@ const titleCaseModel = (value = "") => {
 const KNOWN_MODELS = [
   "Venue N Line",
   "Innova Hycross",
+  "XUV 7XO",
   "XUV 3XO",
-  "XUV700",
   "Verna",
   "City",
   "Creta",
@@ -1968,7 +1972,7 @@ export const buildAiPlan = async ({
   if (!force && domain === "unknown") {
     const plan = makeClarificationPlan({
       question:
-        "Are you asking about a new car, pricing, comparison, EMI, quotation, or something inside CDrive?",
+        "Please share the car, variant, price, feature, EMI, or comparison you want to check.",
       domain: "unknown",
       confidence: 0.55,
     });

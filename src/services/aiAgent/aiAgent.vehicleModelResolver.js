@@ -32,8 +32,8 @@ const titleSpecial = (value = "") => {
   if (!text) return "";
 
   const compact = compactText(text);
-  if (compact === "xuv700") return "XUV700";
-  if (compact === "xuv3xo") return "XUV 3XO";
+  if (compact === "xuv700" || compact === "xuv7xo") return "XUV 7XO";
+  if (compact === "xuv300" || compact === "xuv3xo") return "XUV 3XO";
   if (compact === "xuv400") return "XUV400";
   if (compact === "mgzs") return "ZS";
   if (compact === "ev6") return "EV6";
