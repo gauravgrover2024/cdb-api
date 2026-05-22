@@ -667,7 +667,7 @@ const normalizeCustomerCopy = (value = "") => {
 
   if (allHaveMatch) {
     const [, feature, target, count] = allHaveMatch;
-    return `Excellent — all ${count} active ${target} sub-variants get ${feature}. Pick the exact fuel/transmission version to see the full details.`;
+    return `All ${count} active ${target} sub-variants get ${feature}. Pick the exact fuel/transmission version to see the full details.`;
   }
 
   return cleaned;
@@ -789,13 +789,13 @@ const buildCustomerFeatureAnswer = ({
       if (variant || count === 1) {
         return `Yes — ${target} gets ${readableFeature}.`;
       }
-      return `Excellent — all ${count} current ${target} variants get ${readableFeature}.`;
+      return `All ${count} current ${target} variants get ${readableFeature}.`;
     }
 
     if (availableRows.length > 0 && unavailableRows.length > 0) {
       const total = availableRows.length + unavailableRows.length + conflictedRows.length;
-      const onlyText = unavailableRows.length === 1 ? "only 1 skips it" : `${unavailableRows.length} skip it`;
-      return `Smart pick to check — most ${target} variants get ${readableFeature}. ${availableRows.length} of ${total} current variants have it; ${onlyText}.`;
+      const skipText = unavailableRows.length === 1 ? "1 variant skips it" : `${unavailableRows.length} variants skip it`;
+      return `${target} offers ${readableFeature} on ${availableRows.length} of ${total} current variants. ${skipText}.`;
     }
 
     if (/matching .* feature records/i.test(original) && (availableRows.length > 0 || rows.length > 0)) {
