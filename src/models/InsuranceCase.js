@@ -137,6 +137,7 @@ const insuranceCaseSchema = new mongoose.Schema(
     dealerChannelName: { type: String, default: "" },
     channelDealerNo: { type: String, default: "" },
     dealerChannelAddress: { type: String, default: "" },
+    dealerMobile: { type: String, default: "" },
     payoutApplicable: { type: String, default: "No" },
     payoutPercent: { type: Number, default: 0 },
     sourceOrigin: { type: String, default: "" },
