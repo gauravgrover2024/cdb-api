@@ -1204,7 +1204,7 @@ const syncBankCollection = async (payload) => {
         .filter((entry) => hasBankEntryValue(entry))
     : [];
 
-  const banksToSync = [
+  const primaryAndRelatedBanks = [
     {
       name: payload.bankName,
       ifsc: payload.ifscCode || payload.ifsc,
@@ -1223,18 +1223,32 @@ const syncBankCollection = async (payload) => {
       address: payload.gu_branch,
       micr: undefined,
     },
-    {
-      name: payload.ecs_bankName,
-      ifsc: undefined,
-      address: "",
-      micr: payload.ecs_micrCode,
-    },
     ...primaryBankDetails.map((entry) => ({
       name: entry.bankName,
       ifsc: entry.ifscCode || entry.ifsc,
       address: entry.branch,
       micr: undefined,
     })),
+  ];
+
+  const hasAnyPrimaryBank = primaryAndRelatedBanks.some(
+    (bank) => bank?.name && bank?.ifsc,
+  );
+
+  const banksToSync = [
+    ...primaryAndRelatedBanks,
+    // Avoid creating a second bank directory row from ECS details when a
+    // primary/co-applicant/guarantor bank is already present in the payload.
+    ...(hasAnyPrimaryBank
+      ? []
+      : [
+          {
+            name: payload.ecs_bankName,
+            ifsc: undefined,
+            address: "",
+            micr: payload.ecs_micrCode,
+          },
+        ]),
   ];
 
   const dedupedBanks = [];

@@ -37,6 +37,22 @@ const toObjectIdOrNull = (value) => {
     : null;
 };
 
+const resolveCustomerObjectId = async (value) => {
+  const raw = safeString(value).trim();
+  if (!raw) return null;
+
+  const asObjectId = toObjectIdOrNull(raw);
+  if (asObjectId) {
+    const byId = await Customer.findById(asObjectId).select("_id").lean();
+    if (byId?._id) return byId._id;
+  }
+
+  const byCustomId = await Customer.findOne({ customerId: raw })
+    .select("_id")
+    .lean();
+  return byCustomId?._id || null;
+};
+
 const hasOwn = (obj, key) =>
   Object.prototype.hasOwnProperty.call(obj || {}, key);
 
@@ -117,6 +133,97 @@ const buildCustomerSnapshot = (customer) => {
     pincode: safeString(customer.pincode).trim(),
     city: safeString(customer.city).trim(),
   };
+};
+
+const normalizeMobile10 = (value) => {
+  const digits = safeString(value).replace(/\D/g, "");
+  if (!digits) return "";
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+};
+
+const syncCustomerFromInsurancePayload = async (customerId, payload = {}) => {
+  if (!customerId) return null;
+  const customer = await Customer.findById(customerId);
+  if (!customer) return null;
+
+  const nextCustomerName = safeString(payload.customerName).trim();
+  const nextCompanyName = safeString(payload.companyName).trim();
+  const nextContactPersonName = safeString(payload.contactPersonName).trim();
+  const nextMobile = normalizeMobile10(payload.mobile);
+  const nextAltMobile = normalizeMobile10(payload.alternatePhone);
+  const nextEmail = safeString(payload.email).trim();
+  const nextGender = safeString(payload.gender).trim();
+  const nextPan = safeString(payload.panNumber).trim();
+  const nextAadhaar = safeString(
+    payload.aadhaarNumber || payload.aadharNumber,
+  ).trim();
+  const nextGst = safeString(payload.gstNumber).trim();
+  const nextResidenceAddress = safeString(payload.residenceAddress).trim();
+  const nextCity = safeString(payload.city).trim();
+  const nextPincode = safeString(payload.pincode)
+    .replace(/\D/g, "")
+    .slice(0, 6);
+  const nextNomineeName = safeString(payload.nomineeName).trim();
+  const nextNomineeRelation = safeString(
+    payload.nomineeRelationship || payload.nomineeRelation,
+  ).trim();
+  const nextNomineeDob = toDateOrNull(payload.nomineeDob);
+  const nextReferenceName = safeString(payload.referenceName).trim();
+  const nextReferencePhone = normalizeMobile10(payload.referencePhone);
+
+  let hasChanges = false;
+  const setIfPresent = (field, value) => {
+    if (value === undefined || value === null || value === "") return;
+    if (safeString(customer[field]) === safeString(value)) return;
+    customer[field] = value;
+    hasChanges = true;
+  };
+
+  setIfPresent("customerName", nextCustomerName);
+  setIfPresent("companyName", nextCompanyName);
+  setIfPresent("contactPersonName", nextContactPersonName);
+  setIfPresent("primaryMobile", nextMobile);
+  if (nextAltMobile) {
+    const existingExtraMobiles = Array.isArray(customer.extraMobiles)
+      ? customer.extraMobiles
+      : [];
+    if (!existingExtraMobiles.includes(nextAltMobile)) {
+      customer.extraMobiles = [nextAltMobile, ...existingExtraMobiles].slice(
+        0,
+        3,
+      );
+      hasChanges = true;
+    }
+  }
+  setIfPresent("email", nextEmail);
+  setIfPresent("emailAddress", nextEmail);
+  setIfPresent("gender", nextGender);
+  setIfPresent("panNumber", nextPan);
+  setIfPresent("aadharNumber", nextAadhaar);
+  setIfPresent("aadhaarNumber", nextAadhaar);
+  setIfPresent("gstNumber", nextGst);
+  setIfPresent("residenceAddress", nextResidenceAddress);
+  setIfPresent("city", nextCity);
+  setIfPresent("pincode", nextPincode);
+  setIfPresent("nomineeName", nextNomineeName);
+  setIfPresent("nomineeRelation", nextNomineeRelation);
+  if (nextNomineeDob) {
+    const existingDob = customer.nomineeDob
+      ? new Date(customer.nomineeDob).toISOString()
+      : "";
+    const nextDob = nextNomineeDob.toISOString();
+    if (existingDob !== nextDob) {
+      customer.nomineeDob = nextNomineeDob;
+      hasChanges = true;
+    }
+  }
+  setIfPresent("reference1_name", nextReferenceName);
+  setIfPresent("reference1_mobile", nextReferencePhone);
+
+  if (hasChanges) {
+    await customer.save();
+  }
+  return customer;
 };
 
 const normalizeStep1Payload = (payload = {}, options = {}) => {
@@ -463,21 +570,28 @@ const upsertVehicleRecordFromInsuranceCase = async (doc) => {
   if (!doc) return null;
   const registrationNumber = safeString(doc.registrationNumber).trim();
   const registrationNumberNormalized = normalizeRegNumber(registrationNumber);
-  if (!registrationNumberNormalized) return null;
+  const engineNumber = safeString(doc.engineNumber).trim();
+  const chassisNumber = safeString(doc.chassisNumber).trim();
+  const make = safeString(doc.vehicleMake).trim();
+  const model = safeString(doc.vehicleModel).trim();
+  const variant = safeString(doc.vehicleVariant).trim();
 
   const cubicCapacityParsed = extractCubicCapacity(doc.cubicCapacity);
   const updateDoc = {
+    customerId: doc.customerId || undefined,
     registrationNumber: registrationNumber || registrationNumberNormalized,
-    registrationNumberNormalized,
-    registrationNumberLast4: registrationNumberNormalized.slice(-4),
-    make: safeString(doc.vehicleMake).trim(),
-    model: safeString(doc.vehicleModel).trim(),
-    variant: safeString(doc.vehicleVariant).trim(),
+    registrationNumberNormalized: registrationNumberNormalized || undefined,
+    registrationNumberLast4: registrationNumberNormalized
+      ? registrationNumberNormalized.slice(-4)
+      : undefined,
+    make,
+    model,
+    variant,
     cubicCapacityCc: Number.isFinite(cubicCapacityParsed)
       ? cubicCapacityParsed
       : undefined,
-    engineNumber: safeString(doc.engineNumber).trim(),
-    chassisNumber: safeString(doc.chassisNumber).trim(),
+    engineNumber,
+    chassisNumber,
     manufactureMonth: safeString(doc.manufactureMonth).trim(),
     yearOfManufacture: safeString(doc.manufactureYear).trim(),
     registrationDate: toDateOrNull(doc.dateOfReg),
@@ -497,8 +611,20 @@ const upsertVehicleRecordFromInsuranceCase = async (doc) => {
     if (updateDoc[key] === undefined) delete updateDoc[key];
   });
 
+  const hasCoreIdentity =
+    registrationNumberNormalized || chassisNumber || engineNumber || make || model;
+  if (!hasCoreIdentity) return null;
+
+  const query = registrationNumberNormalized
+    ? { registrationNumberNormalized }
+    : chassisNumber
+      ? { chassisNumber }
+      : engineNumber
+        ? { engineNumber }
+        : { make, model, variant };
+
   return await VehicleRecord.findOneAndUpdate(
-    { registrationNumberNormalized },
+    query,
     { $set: updateDoc },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
@@ -1033,23 +1159,26 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
   // Assignment scoping should happen only when explicitly requested via query params.
   const mappedRows = rows.map((doc) => ({
     ...doc,
-    renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
+      renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
   }));
 
   const getForRenewalTab = (list) =>
     list.filter((doc) => {
+      if (String(doc?.policyCategory || "").trim().toLowerCase() === "extended warranty") return false;
       const outcome = normalizeRenewalOutcome(doc?.renewalOutcome);
       if (outcome === "CAR_SOLD" || outcome === "CAR_EXPIRED") return false;
       if (outcome === "ALREADY_RENEWED") return false;
       if (doc?.renewedToCaseId) return false;
       return true;
     });
+
   const getForRenewedTab = (list) =>
     list.filter(
       (doc) =>
         normalizeRenewalOutcome(doc?.renewalOutcome) === "ALREADY_RENEWED" ||
         Boolean(doc?.renewedToCaseId),
     );
+
   const getForExternalTab = (list) =>
     list.filter(
       (doc) => normalizeRenewalOutcome(doc?.renewalOutcome) === "POLICY_FROM_ELSEWHERE",
@@ -1266,6 +1395,7 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
   }));
   const scopedRows = pendingRows;
   const renewalRows = scopedRows.filter((doc) => {
+    if (String(doc?.policyCategory || "").trim().toLowerCase() === "extended warranty") return false;
     const outcome = normalizeRenewalOutcome(doc?.renewalOutcome);
     if (outcome === "CAR_SOLD" || outcome === "CAR_EXPIRED") return false;
     if (outcome === "ALREADY_RENEWED") return false;
@@ -1341,7 +1471,7 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
 
   const caseId = await getNextInsuranceCaseId();
   const customerIdRaw = safeString(payload.customerId).trim();
-  const customerId = toObjectIdOrNull(customerIdRaw);
+  const customerId = await resolveCustomerObjectId(customerIdRaw);
   if (customerIdRaw && !customerId) {
     res.status(400);
     throw new Error("Invalid customerId");
@@ -1349,8 +1479,11 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
 
   let customerSnapshot = payload.customerSnapshot || {};
   if (customerId) {
-    const customer = await Customer.findById(customerId);
-    if (customer) customerSnapshot = buildCustomerSnapshot(customer);
+    const syncedCustomer = await syncCustomerFromInsurancePayload(
+      customerId,
+      payload,
+    );
+    if (syncedCustomer) customerSnapshot = buildCustomerSnapshot(syncedCustomer);
   }
 
   const normalizedStatus = normalizeInsuranceStatus(payload.status, "draft");
@@ -1413,7 +1546,7 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
   }
 
   const customerIdRaw = safeString(payload.customerId).trim();
-  const parsedCustomerId = toObjectIdOrNull(customerIdRaw);
+  const parsedCustomerId = await resolveCustomerObjectId(customerIdRaw);
   if (customerIdRaw && !parsedCustomerId) {
     res.status(400);
     throw new Error("Invalid customerId");
@@ -1427,13 +1560,17 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
       ...payload.customerSnapshot,
     };
   }
-  if (
-    customerId &&
-    (!payload.customerSnapshot ||
-      Object.keys(payload.customerSnapshot || {}).length === 0)
-  ) {
-    const customer = await Customer.findById(customerId);
-    if (customer) customerSnapshot = buildCustomerSnapshot(customer);
+  if (customerId) {
+    const syncedCustomer = await syncCustomerFromInsurancePayload(customerId, {
+      ...existingDoc.toObject(),
+      ...payload,
+    });
+    if (syncedCustomer) {
+      customerSnapshot = {
+        ...customerSnapshot,
+        ...buildCustomerSnapshot(syncedCustomer),
+      };
+    }
   }
 
   const normalizedStatus = normalizeInsuranceStatus(
