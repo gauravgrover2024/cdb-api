@@ -665,6 +665,45 @@ const saveWithRetry = async (doc, maxRetries = 3) => {
   throw lastError;
 };
 
+const normalizePostfileTags = (value) => {
+  if (value == null) return [];
+  let tags = value;
+  // Handles FormData case where array comes as JSON string
+  if (typeof tags === "string") {
+    const trimmed = tags.trim();
+    if (!trimmed) return [];
+    try {
+      tags = JSON.parse(trimmed);
+    } catch {
+      return trimmed
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+  }
+  if (!Array.isArray(tags)) {
+    tags = [tags];
+  }
+  return tags
+    .map((tag) => {
+      if (!tag) return "";
+      if (typeof tag === "string") {
+        return tag.trim();
+      }
+      if (typeof tag === "object") {
+        return String(
+          tag.name ||
+          tag.label ||
+          tag.value ||
+          tag.id ||
+          ""
+        ).trim();
+      }
+      return String(tag).trim();
+    })
+    .filter(Boolean);
+};
+
 // Normalize common aliases sent by frontend
 const normalizeCustomerFields = (payload) => {
   const normalized = { ...payload };
@@ -1036,6 +1075,10 @@ const normalizeCustomerFields = (payload) => {
     const inferred = inferCityFromPin(normalized[pinKey]);
     if (inferred) normalized[cityKey] = inferred;
   });
+
+  if (normalized.postfile_tags !== undefined) {
+    normalized.postfile_tags = normalizePostfileTags(normalized.postfile_tags);
+  }
 
   return normalized;
 };
