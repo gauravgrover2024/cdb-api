@@ -84,3 +84,26 @@ Before Mastra runtime wiring, we must complete:
 - Do not allow AI to invent factual car data.
 - Do not expose internal CDrive data through public/WhatsApp routes.
 - Do not optimize for demo speed at the cost of product quality.
+
+## Data accuracy rule: no inferred facts
+
+ACI Assist must not store or display guessed vehicle facts.
+
+Examples:
+- Do not assume missing transmission means Manual.
+- Do not assume missing feature means unavailable.
+- Do not assume offers exist if source data is unavailable.
+- Do not infer fuel/transmission/body type unless the source data explicitly contains it.
+- If data is missing, store it as blank/null and expose a safe unavailable state.
+
+Allowed:
+- Normalize explicit source values.
+- Parse explicit source fields from raw payload strings.
+- Copy explicit values from one verified source collection into optimized read models.
+- Use deterministic mapping only when the mapping is source-backed and auditable.
+
+Not allowed:
+- Guessing.
+- Filling blanks for convenience.
+- Creating fake fallback values.
+- Hardcoding exhaustive variant/feature assumptions.

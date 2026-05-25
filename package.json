@@ -41,7 +41,9 @@
     "test:aci:smoke": "npm run test:aci:executor && npm run test:aci:v2",
     "test:aci:full": "npm run test:aci:planner && npm run test:aci:subset && npm run test:aci:v2",
     "test:aci:contract": "node src/scripts/testAciContractFoundation.js",
-    "test:aci:foundation": "npm run test:aci:smoke && npm run test:aci:contract"
+    "test:aci:foundation": "npm run test:aci:smoke && npm run test:aci:contract",
+    "aci:read-models:dry": "ACI_READ_MODEL_DRY_RUN=true node src/scripts/aci-read-models/buildAciVehicleReadModels.js",
+    "aci:read-models:build": "ACI_READ_MODEL_DRY_RUN=false node src/scripts/aci-read-models/buildAciVehicleReadModels.js"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
