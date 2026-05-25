@@ -666,6 +666,7 @@ const saveWithRetry = async (doc, maxRetries = 3) => {
 };
 
 const normalizePostfileTags = (value) => {
+  console.log("[DEBUG normalizePostfileTags] Received:", typeof value, value);
   if (value == null) return [];
   let tags = value;
   // Handles FormData case where array comes as JSON string
@@ -675,6 +676,18 @@ const normalizePostfileTags = (value) => {
     try {
       tags = JSON.parse(trimmed);
     } catch {
+      console.log("[DEBUG normalizePostfileTags] JSON.parse failed, attempting regex recovery. Trimmed value:", trimmed);
+      const matchNames = [];
+      const regex = /(?:name|label|value)\s*:\s*["']([^"']+)["']/g;
+      let match;
+      while ((match = regex.exec(trimmed)) !== null) {
+        matchNames.push(match[1]);
+      }
+      if (matchNames.length > 0) {
+        console.log("[DEBUG normalizePostfileTags] Extracted via regex recovery:", matchNames);
+        return matchNames;
+      }
+      
       return trimmed
         .split(",")
         .map((item) => item.trim())
@@ -684,7 +697,7 @@ const normalizePostfileTags = (value) => {
   if (!Array.isArray(tags)) {
     tags = [tags];
   }
-  return tags
+  const result = tags
     .map((tag) => {
       if (!tag) return "";
       if (typeof tag === "string") {
@@ -702,6 +715,8 @@ const normalizePostfileTags = (value) => {
       return String(tag).trim();
     })
     .filter(Boolean);
+  console.log("[DEBUG normalizePostfileTags] Result:", result);
+  return result;
 };
 
 // Normalize common aliases sent by frontend
@@ -1075,6 +1090,18 @@ const normalizeCustomerFields = (payload) => {
     const inferred = inferCityFromPin(normalized[pinKey]);
     if (inferred) normalized[cityKey] = inferred;
   });
+
+  if (normalized.postfileTags !== undefined && normalized.postfile_tags === undefined) {
+    normalized.postfile_tags = normalized.postfileTags;
+  }
+  if (normalized.postFileTags !== undefined && normalized.postfile_tags === undefined) {
+    normalized.postfile_tags = normalized.postFileTags;
+  }
+  if (normalized.tags !== undefined && normalized.postfile_tags === undefined) {
+    if (Array.isArray(normalized.tags) && normalized.tags.some(t => typeof t === 'object' && (t.name || t.documentCount !== undefined))) {
+      normalized.postfile_tags = normalized.tags;
+    }
+  }
 
   if (normalized.postfile_tags !== undefined) {
     normalized.postfile_tags = normalizePostfileTags(normalized.postfile_tags);
