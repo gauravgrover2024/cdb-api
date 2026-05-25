@@ -60,7 +60,6 @@ const customerDetails = (customer) => ({
   aadhaarNumber: maskValue(
     firstMeaningful(customer.aadhaarNumber, customer.aadharNumber),
   ),
-  financeExpectation: customer.financeExpectation,
   typeOfLoan: customer.typeOfLoan,
 });
 
@@ -87,7 +86,6 @@ const customerCardRow = (customer) => ({
   applicantType: customer.applicantType,
   customerType: customer.customerType,
   kycStatus: customer.kycStatus,
-  financeExpectation: customer.financeExpectation,
   typeOfLoan: customer.typeOfLoan,
   route: getCustomerRoute(customer),
 });

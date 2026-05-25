@@ -98,7 +98,6 @@ const CUSTOMER_SYNC_FIELDS = [
   "employmentPhone",
   "officialEmail",
   "typeOfLoan",
-  "financeExpectation",
   "loanTenureMonths",
   "nomineeName",
   "nomineeDob",
@@ -1215,6 +1214,60 @@ const applyUndefinedOnDoc = (doc, payload) => {
   Object.entries(payload || {}).forEach(([k, v]) => {
     if (v === undefined) doc.set(k, undefined);
   });
+};
+
+const isCashLoanPayload = (payload = {}) => {
+  const financedText = String(
+    payload?.isFinanced ?? payload?.isFinanceRequired ?? "",
+  )
+    .trim()
+    .toLowerCase();
+  if (["no", "false", "0"].includes(financedText)) return true;
+  if (["yes", "true", "1"].includes(financedText)) return false;
+
+  const typeText = String(
+    payload?.typeOfLoan ||
+      payload?.loanType ||
+      payload?.caseType ||
+      payload?.loan_type ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+
+  if (typeText.includes("cash-in") || typeText.includes("cash in")) {
+    return false;
+  }
+  return (
+    typeText === "cash" ||
+    typeText.includes("cash sale") ||
+    typeText.includes("cash car")
+  );
+};
+
+const scrubCashFinanceFields = (payload = {}) => {
+  if (!isCashLoanPayload(payload)) return payload;
+
+  return {
+    ...payload,
+    isFinanced: "No",
+    financeExpectation: undefined,
+    loanAmount: undefined,
+    requiredLoanAmount: undefined,
+    loanTenureMonths: undefined,
+    approval_bankId: "",
+    approval_bankName: "",
+    approval_status: "",
+    approval_loanAmountApproved: 0,
+    approval_loanAmountDisbursed: 0,
+    approval_roi: undefined,
+    approval_tenureMonths: undefined,
+    approval_processingFees: 0,
+    approval_banksData: [],
+    postfile_loanAmountApproved: 0,
+    postfile_loanAmountDisbursed: 0,
+    postfile_emiAmount: 0,
+  };
 };
 
 const upsertBankDirectoryEntry = async ({
@@ -4872,7 +4925,9 @@ const getLoanById = asyncHandler(async (req, res) => {
 // @access  Public
 const createLoan = asyncHandler(async (req, res) => {
   const { numberOfCars, ...loanData } = req.body;
-  const normalizedLoanData = normalizeCustomerFields(loanData);
+  const normalizedLoanData = scrubCashFinanceFields(
+    normalizeCustomerFields(loanData),
+  );
   const instrumentSanitizedLoanData =
     sanitizeInstrumentForPersistence(normalizedLoanData);
 
@@ -4921,7 +4976,8 @@ const createLoan = asyncHandler(async (req, res) => {
 
       const customerPayload = {
         customerId: nextCustomerId,
-        ...normalizedLoanData, // All loan form fields become customer fields
+        ...normalizedLoanData, // Shared customer-safe loan form fields
+        financeExpectation: undefined,
         createdFrom: "LOAN_FORM",
         createdBy: normalizedLoanData.createdBy || "System",
       };
@@ -5174,7 +5230,9 @@ const updateLoan = asyncHandler(async (req, res) => {
     try {
       step = "normalize-body";
       // 1. Update Loan (store full payload, including customer fields)
-      const normalizedBody = normalizeCustomerFields(req.body || {});
+      const normalizedBody = scrubCashFinanceFields(
+        normalizeCustomerFields(req.body || {}),
+      );
       const instrumentSanitizedBody =
         sanitizeInstrumentForPersistence(normalizedBody);
 

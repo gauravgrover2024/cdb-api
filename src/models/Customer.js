@@ -135,7 +135,6 @@ const customerSchema = mongoose.Schema(
 
     // Loan Request Details
     typeOfLoan: { type: String }, // Type of loan requested
-    financeExpectation: { type: Number }, // Expected Funding
     loanTenureMonths: { type: Number }, // Requested Tenure in Months
 
     // --- Banking ---

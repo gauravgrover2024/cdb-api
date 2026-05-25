@@ -168,8 +168,6 @@ const run = async () => {
 
       // Loan intent (optional)
       typeOfLoan: loan.typeOfLoan || loan.finance?.typeOfLoan || "",
-      financeExpectation:
-        loan.finance?.financeExpectation || loan.financeExpectation || null,
       loanTenureMonths:
         loan.finance?.loanTenureMonths || loan.loanTenureMonths || null,
 
