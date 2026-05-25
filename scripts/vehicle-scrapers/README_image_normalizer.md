@@ -1,4 +1,4 @@
-# ACI Assist V2 Image Normalizer
+# ACI Assist V2 Vehicle Color Media
 
 ## Install
 ```bash
@@ -8,7 +8,30 @@ source image-bg-venv/bin/activate
 pip install -r requirements_image_normalizer.txt
 ```
 
-## Single-image test
+## Full color media pipeline
+```bash
+python vehicle_color_master_pipeline.py --brand kia --model seltos
+```
+
+By default, the master pipeline only normalizes/background-removes/uploads
+new or changed assets. It reuses existing Mongo media when the source image
+hash and frame metadata are already present.
+
+Force regeneration only when intentionally rebuilding media:
+```bash
+python vehicle_color_master_pipeline.py --brand kia --model seltos --force
+```
+
+Debug without Mongo writes or R2 upload:
+```bash
+python vehicle_color_master_pipeline.py \
+  --brand kia \
+  --model seltos \
+  --skip-upload \
+  --skip-mongo
+```
+
+## Single-image helper test
 ```bash
 python normalize_car_image_rembg.py \
   --input "IMAGE_URL_HERE" \
@@ -19,32 +42,10 @@ python normalize_car_image_rembg.py \
   --json-only
 ```
 
-## Bulk dry run
-```bash
-python bulk_normalize_car_images.py \
-  --mongo-uri "$MONGO_URI" \
-  --db-name YOUR_DB_NAME \
-  --collection vehicles \
-  --dry-run \
-  --limit 20
-```
-
-## Bulk real run
-```bash
-python bulk_normalize_car_images.py \
-  --mongo-uri "$MONGO_URI" \
-  --db-name YOUR_DB_NAME \
-  --collection vehicles \
-  --out-dir ../../public/media/car-images/normalized \
-  --public-url-prefix /media/car-images/normalized \
-  --workers 1 \
-  --model u2netp
-```
-
 ## Notes
 - First run downloads ONNX model files into `~/.u2net/`.
-- Keep workers low on constrained RAM systems (`1` recommended).
+- Keep forced regeneration narrow on constrained RAM systems.
 - Raw images are not persisted unless `--keep-raw` is provided.
-- Re-running is safe; processed artifacts can be skipped and every attempt is logged in `normalized-car-images.manifest.jsonl`.
-- Default output path for normalized assets is:
-  - `/Users/gauravgrover/cdb-api/public/media/car-images/normalized`
+- Re-running the master pipeline is safe; unchanged assets are reused.
+- Default working output path for normalized assets is:
+  - `/Users/gauravgrover/cdb-api/scripts/vehicle-scrapers/normalized`
