@@ -4,6 +4,9 @@ let cachedAt = 0;
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
+const ACI_MODEL_SUMMARY_COLLECTION = "aci_vehicle_model_summary";
+const ACI_PRICE_ROWS_COLLECTION = "aci_vehicle_price_rows";
+
 const normalizeText = (value = "") =>
   String(value || "")
     .toLowerCase()
@@ -302,6 +305,49 @@ export const loadVehicleModelIndex = async ({ db, force = false } = {}) => {
 
   const entries = [];
 
+  // Fast path: use ACI Assist runtime read model first.
+  // This avoids aggregating raw scraper/runtime collections during user requests.
+  try {
+    const readModelRows = await db
+      .collection(ACI_MODEL_SUMMARY_COLLECTION)
+      .find(
+        {},
+        {
+          projection: {
+            make: 1,
+            model: 1,
+            modelKey: 1,
+            fullModel: 1,
+            displayName: 1,
+            citySlug: 1,
+          },
+        },
+      )
+      .sort({ modelKey: 1, citySlug: 1 })
+      .hint("aci_model_summary_model_city")
+      .batchSize(1200)
+      .toArray();
+
+    for (const row of readModelRows) {
+      const entry = makeModelEntry({
+        brand: row.make,
+        modelValue: row.model || row.displayName || row.fullModel,
+        modelKey: row.modelKey,
+        source: ACI_MODEL_SUMMARY_COLLECTION,
+      });
+
+      if (entry) entries.push(entry);
+    }
+
+    if (entries.length) {
+      cachedModelIndex = dedupeModelEntries(entries);
+      cachedAt = now;
+      return cachedModelIndex;
+    }
+  } catch {
+    // Fall back to legacy source aggregation below.
+  }
+
   const matrixRows = await safeAggregate(db, "vehicle_variant_feature_matrix_v2", [
     {
       $group: {
@@ -397,6 +443,78 @@ export const loadVehicleVariantIndexByModelKey = async ({
     }
   }
 
+  // Fast path: use ACI Assist runtime price rows first.
+  try {
+    const readModelRows = await db
+      .collection(ACI_PRICE_ROWS_COLLECTION)
+      .find(
+        {},
+        {
+          projection: {
+            make: 1,
+            model: 1,
+            modelKey: 1,
+            fullModel: 1,
+            variant: 1,
+            variantKey: 1,
+          },
+        },
+      )
+      .batchSize(10000)
+      .toArray();
+
+    const byModelKey = new Map();
+
+    for (const row of readModelRows) {
+      const modelEntry =
+        modelByPossibleKey.get(compactText(row.modelKey)) ||
+        makeModelEntry({
+          brand: row.make,
+          modelValue: row.model || row.fullModel,
+          modelKey: row.modelKey,
+          source: ACI_PRICE_ROWS_COLLECTION,
+        });
+
+      if (!modelEntry) continue;
+
+      const variantEntry = makeVariantEntry({
+        brand: modelEntry.brand || row.make,
+        model: modelEntry.model || row.model,
+        fullModel: modelEntry.fullModel || row.fullModel,
+        variantValue: row.variant,
+        source: ACI_PRICE_ROWS_COLLECTION,
+      });
+
+      if (!variantEntry) continue;
+
+      const keys = unique([
+        modelEntry.modelKey,
+        modelEntry.shortModelKey,
+        modelEntry.fullModelKey,
+        compactText(row.modelKey),
+      ]);
+
+      for (const key of keys) {
+        if (!key) continue;
+        const list = byModelKey.get(key) || [];
+
+        if (!list.some((item) => item.variantKey === variantEntry.variantKey)) {
+          list.push(variantEntry);
+        }
+
+        byModelKey.set(key, list);
+      }
+    }
+
+    if (byModelKey.size) {
+      cachedVariantIndexByModelKey = byModelKey;
+      cachedAt = now;
+      return cachedVariantIndexByModelKey;
+    }
+  } catch {
+    // Fall back to legacy feature matrix aggregation below.
+  }
+
   const rows = await safeAggregate(db, "vehicle_variant_feature_matrix_v2", [
     {
       $project: {
@@ -426,8 +544,8 @@ export const loadVehicleVariantIndexByModelKey = async ({
     if (!modelEntry) continue;
 
     const variantEntry = makeVariantEntry({
-      brand: modelEntry.brand,
-      model: modelEntry.model,
+      brand: modelEntry.brand || row.brand,
+      model: modelEntry.model || row.model,
       fullModel: modelEntry.fullModel,
       variantValue: row.variant,
       source: "vehicle_variant_feature_matrix_v2",
@@ -435,149 +553,29 @@ export const loadVehicleVariantIndexByModelKey = async ({
 
     if (!variantEntry) continue;
 
-    const key = modelEntry.shortModelKey;
-    const current = byModelKey.get(key) || [];
+    const keys = unique([
+      modelEntry.modelKey,
+      modelEntry.shortModelKey,
+      modelEntry.fullModelKey,
+      compactText(row.modelKey),
+    ]);
 
-    current.push({
-      ...variantEntry,
-      activePricelistMatched: row.activePricelistMatched === true,
-    });
+    for (const key of keys) {
+      if (!key) continue;
+      const list = byModelKey.get(key) || [];
 
-    byModelKey.set(key, current);
+      if (!list.some((item) => item.variantKey === variantEntry.variantKey)) {
+        list.push(variantEntry);
+      }
+
+      byModelKey.set(key, list);
+    }
   }
 
   cachedVariantIndexByModelKey = byModelKey;
+  cachedAt = now;
+
   return cachedVariantIndexByModelKey;
-};
-
-const buildMessageNgrams = (message = "") => {
-  const normalized = normalizeText(message);
-  const tokens = normalized.split(" ").filter(Boolean);
-
-  const stopWords = new Set([
-    "does", "do", "is", "are", "have", "has", "come", "with", "in", "me",
-    "hai", "kya", "which", "variant", "variants", "feature", "features",
-    "featuers", "show", "open", "list", "all", "price", "pricelist", "on",
-    "road", "cheapest", "available", "get", "gets", "of", "the", "and", "or",
-    "difference", "between", "compare", "comparison", "extra", "over",
-
-    // Feature/value/advisor words must never become vehicle model candidates.
-    // Example: "Which variant has best mileage?" should use context Creta,
-    // not fuzzy-match "best" -> Chevrolet Beat.
-    "best", "better", "top", "highest", "maximum", "max", "most",
-    "mileage", "average", "fuel", "efficiency", "kmpl", "kpl",
-    "worth", "upgrade", "buy", "family", "rear", "seat", "night", "driving",
-  ]);
-
-  const cleanTokens = tokens.filter((token) => !stopWords.has(token));
-  const grams = [];
-
-  for (let size = Math.min(5, cleanTokens.length); size >= 1; size -= 1) {
-    for (let i = 0; i <= cleanTokens.length - size; i += 1) {
-      grams.push(cleanTokens.slice(i, i + size).join(" "));
-    }
-  }
-
-  return unique([normalized, ...grams]);
-};
-
-
-const getMatchPriority = (method = "") => {
-  if (method === "exact_or_repeated_letter_fix") return 4;
-  if (method === "contains_entity") return 3;
-  if (method === "partial_entity") return 2;
-  if (method === "fuzzy_edit_distance") return 1;
-  return 0;
-};
-
-const getExactHitLengthInMessage = ({ message = "", keys = [] } = {}) => {
-  const messageCompact = compactText(message);
-  let best = 0;
-
-  for (const key of keys) {
-    const compactKey = compactText(key);
-    if (!compactKey) continue;
-    if (messageCompact.includes(compactKey)) {
-      best = Math.max(best, compactKey.length);
-    }
-  }
-
-  return best;
-};
-
-const scoreEntityCandidate = ({ gram = "", entry } = {}) => {
-  const gramNorm = normalizeText(gram);
-  const gramCompact = compactText(gramNorm);
-  const gramSquashed = squashRepeatedLetters(gramCompact);
-
-  if (!gramCompact || !entry?.aliases?.length) return null;
-
-  // Never allow a brand-only token like "hyundai" or "kia" to resolve as a model.
-  // Example: "hyundai vrna" must resolve from "vrna" -> Verna, not "hyundai" -> any Hyundai model.
-  const brandCompact = compactText(entry.brand || "");
-  if (brandCompact && gramCompact === brandCompact) {
-    return null;
-  }
-
-  let best = null;
-
-  for (const alias of entry.aliases) {
-    const aliasNorm = normalizeText(alias);
-    const aliasCompact = compactText(aliasNorm);
-    const aliasSquashed = squashRepeatedLetters(aliasCompact);
-
-    if (!aliasCompact) continue;
-
-    let score = 0;
-    let method = "";
-
-    if (gramCompact === aliasCompact || gramSquashed === aliasSquashed) {
-      score = 1;
-      method = "exact_or_repeated_letter_fix";
-    } else if (gramCompact.includes(aliasCompact) && aliasCompact.length >= 5) {
-      score = 0.96;
-      method = "contains_entity";
-    } else if (aliasCompact.includes(gramCompact) && gramCompact.length >= 4) {
-      score = 0.90;
-      method = "partial_entity";
-    } else {
-      const distance = damerauLevenshtein(gramSquashed, aliasSquashed);
-      const maxLen = Math.max(gramSquashed.length, aliasSquashed.length);
-      if (maxLen < 4) continue;
-
-      const allowedDistance =
-        maxLen <= 4 ? 1 :
-        maxLen <= 6 ? 2 :
-        Math.max(2, Math.floor(maxLen * 0.25));
-
-      if (distance <= allowedDistance) {
-        score = 1 - distance / maxLen;
-        method = "fuzzy_edit_distance";
-
-        if (gramSquashed[0] === aliasSquashed[0]) {
-          score += 0.08;
-        }
-      }
-    }
-
-    if (!score) continue;
-
-    const candidate = {
-      ...entry,
-      matchedText: gram,
-      confidence: Math.min(1, Number(score.toFixed(3))),
-      rawScore: Number(score.toFixed(3)),
-      method,
-      matchPriority: getMatchPriority(method),
-      corrected: gramCompact !== aliasCompact && gramSquashed !== aliasSquashed,
-    };
-
-    if (!best || candidate.confidence > best.confidence) {
-      best = candidate;
-    }
-  }
-
-  return best;
 };
 
 export const resolveVehicleModelFromText = async ({

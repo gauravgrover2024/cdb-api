@@ -10,20 +10,16 @@ const DEFAULT_TTL_MS = Number(
   process.env.ACI_ENTITY_INDEX_TTL_MS || 15 * 60 * 1000,
 );
 const DEFAULT_DOC_LIMIT = Number(
-  process.env.ACI_ENTITY_INDEX_DOC_LIMIT || 30000,
+  process.env.ACI_ENTITY_INDEX_DOC_LIMIT || 10000,
 );
 
+const DEFAULT_ENTITY_CITY_SLUG =
+  String(process.env.ACI_ENTITY_INDEX_CITY_SLUG || "new-delhi").trim() ||
+  "new-delhi";
+
 const DEFAULT_COLLECTION_NAMES = [
-  "features",
-  "vehicle_features",
-  "vehicleprices",
-  "vehicle_prices",
-  "vehicle_pricelists",
-  "vehicle_price_lists",
-  "vehicle_colors_v2",
-  "vehiclecolors",
-  "price_history",
-  "pricehistories",
+  "aci_vehicle_model_summary",
+  "aci_vehicle_price_rows",
 ];
 
 let cache = {
@@ -116,37 +112,30 @@ const envCollectionNames = () =>
     .map((item) => item.trim())
     .filter(Boolean);
 
-const discoverCollections = async (db) => {
+const discoverCollections = async () => {
   const configured = envCollectionNames();
 
   if (configured.length) return unique(configured);
 
-  const collections = await db
-    .listCollections(
-      {},
-      {
-        nameOnly: true,
-      },
-    )
-    .toArray();
-
-  const names = collections.map((item) => item.name);
-
-  const matched = names.filter((name) =>
-    /feature|vehicle|price|color|colour|car/i.test(name),
-  );
-
-  return unique([...DEFAULT_COLLECTION_NAMES, ...matched]).filter((name) =>
-    names.includes(name),
-  );
+  // Product rule:
+  // Runtime entity resolution must not scan broad raw/scraper collections.
+  // ACI Assist should use optimized read models by default.
+  // If a deeper local audit is needed, set ACI_ENTITY_INDEX_COLLECTIONS explicitly.
+  return DEFAULT_COLLECTION_NAMES;
 };
 
 const buildProjection = () => ({
   brand: 1,
   make: 1,
+  makeKey: 1,
   model: 1,
+  modelKey: 1,
+  fullModel: 1,
+  displayName: 1,
   variant: 1,
+  variantKey: 1,
   city: 1,
+  citySlug: 1,
   fuel: 1,
   fuelType: 1,
   transmission: 1,
@@ -170,6 +159,72 @@ const buildProjection = () => ({
 
 const safeFindDocs = async (db, collectionName) => {
   try {
+    if (collectionName === "aci_vehicle_model_summary") {
+      return await db
+        .collection(collectionName)
+        .find(
+          {},
+          {
+            projection: {
+              brand: 1,
+              make: 1,
+              makeKey: 1,
+              model: 1,
+              modelKey: 1,
+              fullModel: 1,
+              displayName: 1,
+              city: 1,
+              citySlug: 1,
+              minExShowroomPrice: 1,
+              maxExShowroomPrice: 1,
+              fuelText: 1,
+              transmissionText: 1,
+              active: 1,
+            },
+            limit: 1200,
+          },
+        )
+        .sort({ modelKey: 1, citySlug: 1 })
+        .hint("aci_model_summary_model_city")
+        .batchSize(1200)
+        .toArray();
+    }
+
+    if (collectionName === "aci_vehicle_price_rows") {
+      return await db
+        .collection(collectionName)
+        .find(
+          {
+            citySlug: DEFAULT_ENTITY_CITY_SLUG,
+          },
+          {
+            projection: {
+              brand: 1,
+              make: 1,
+              makeKey: 1,
+              model: 1,
+              modelKey: 1,
+              fullModel: 1,
+              variant: 1,
+              variantKey: 1,
+              city: 1,
+              citySlug: 1,
+              fuel: 1,
+              fuelType: 1,
+              transmission: 1,
+              exShowroomPrice: 1,
+              onRoadPrice: 1,
+              active: 1,
+            },
+            limit: DEFAULT_DOC_LIMIT,
+          },
+        )
+        .sort({ citySlug: 1, exShowroomPrice: 1 })
+        .hint("aci_price_rows_city_price")
+        .batchSize(DEFAULT_DOC_LIMIT)
+        .toArray();
+    }
+
     return await db
       .collection(collectionName)
       .find(
@@ -186,6 +241,7 @@ const safeFindDocs = async (db, collectionName) => {
           limit: DEFAULT_DOC_LIMIT,
         },
       )
+      .batchSize(DEFAULT_DOC_LIMIT)
       .toArray();
   } catch (error) {
     console.warn(
