@@ -15,7 +15,7 @@
     "indexes:insurance": "node src/scripts/ensureInsuranceIndexes.js",
     "indexes:ops": "node src/scripts/ensureOperationsIndexes.js",
     "indexes:ai-agent": "node src/scripts/ensureAiAgentIndexes.js",
-    "test:ai-agent": "node src/scripts/testAiAgent.js",
+    "test:ai-agent": "npm run test:aci:smoke",
     "backfill:latest-business": "node src/scripts/backfillLatestBusinessDate.js",
     "banks:import": "node src/scripts/importBankDirectoryFromFile.js",
     "showrooms:import": "node src/scripts/importCardekhoShowrooms.js",
@@ -32,7 +32,14 @@
     "audit:vehicle-master": "node src/scripts/auditVehicleMasterRecords.js",
     "backfill:vehicle-master-missing": "node src/scripts/backfillMissingVehicleMasterRecords.js",
     "backfill:disbursed-status": "node src/scripts/backfillDisbursedStatusesFromDates.js --apply",
-    "dedupe:loan-ids": "node src/scripts/dedupeLoanIds.js"
+    "dedupe:loan-ids": "node src/scripts/dedupeLoanIds.js",
+    "test:aci:v2": "node src/scripts/testAiAssist.v2.js",
+    "test:aci:executor": "node src/scripts/testAiExecutor.js",
+    "test:aci:planner": "node src/scripts/testAiPlanner.js",
+    "test:aci:subset": "node src/scripts/testAciPriceColorFeatureSubset.js",
+    "test:aci:planner:full": "node src/scripts/testAiPlanner.fullRegression.js",
+    "test:aci:smoke": "npm run test:aci:executor && npm run test:aci:v2",
+    "test:aci:full": "npm run test:aci:planner && npm run test:aci:subset && npm run test:aci:v2"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

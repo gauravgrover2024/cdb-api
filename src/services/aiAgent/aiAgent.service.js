@@ -1566,12 +1566,55 @@ const applyAciFeatureAuthorityContextPatch = (response = {}, patch = {}) => {
 };
 
 
+
+const ACI_EARLY_GATE_INTERNAL_PATTERN =
+  /\b(loan|closure|lan|case\s*id|customer|cust\s*id|policy|payout|rc|challan|cdrive|internal|file\s*no|agreement|collection|overdue|repo|noc|insurance\s*expiry)\b/i;
+
+const ACI_EARLY_GATE_LEAD_PATTERN =
+  /\b(best\s*price|quotation|quote|final\s*price|deal|discount|offer|offers|callback|call\s*back|book|booking|finance|exchange|insurance)\b/i;
+
+const countAciEarlyGateIntentFamilies = (message = "") => {
+  const raw = String(message || "");
+  const checks = [
+    /\b(price|pricelist|on\s*road|on-road|ex\s*showroom|ex-showroom)\b/i,
+    /\b(compare|comparison|vs|versus|v\/s|with)\b/i,
+    /\b(emi|loan|down\s*payment|tenure|interest)\b/i,
+    /\b(offer|offers|discount|deal|best\s*price|quotation|quote)\b/i,
+    /\b(color|colors|colour|colours|black|white|red|blue|grey|gray)\b/i,
+    /\b(feature|features|sunroof|adas|airbags?|abs|mileage|camera|ventilated)\b/i,
+  ];
+
+  return checks.reduce((count, pattern) => count + (pattern.test(raw) ? 1 : 0), 0);
+};
+
+const shouldSkipAciEarlyFeatureGate = (message = "") => {
+  const raw = String(message || "").trim();
+  if (!raw) return true;
+
+  // Internal office queries must never be interpreted as new-car model names.
+  // Example: "Loan closure 7077" was being misread as Mahindra Logan.
+  if (ACI_EARLY_GATE_INTERNAL_PATTERN.test(raw)) return true;
+
+  // Quote/best-price/offer flows need planner + lead tools, not a quick price card.
+  if (ACI_EARLY_GATE_LEAD_PATTERN.test(raw)) return true;
+
+  // Multi-intent needs executor secondaryResponses. Early gate can only return one card.
+  if (countAciEarlyGateIntentFamilies(raw) >= 2) return true;
+
+  return false;
+};
+
+
 const maybeRunAciEarlyFeatureGate = async ({
   message = "",
   context = {},
   selectedEntity = null,
   filters = {},
 } = {}) => {
+  if (shouldSkipAciEarlyFeatureGate(message)) {
+    return null;
+  }
+
   const dynamicModelEntityFromText = await resolveAciDynamicModelEntity(message);
   const dynamicModelEntityFromContext = buildAciContextModelEntity({
     context,
@@ -2052,13 +2095,127 @@ const getNormalizerInputs = (args = []) => {
   };
 };
 
+
+const pickAciFirstObject = (...values) => {
+  for (const value of values) {
+    if (isPlainObject(value)) return value;
+  }
+  return {};
+};
+
+const pickAciFirstArray = (...values) => {
+  for (const value of values) {
+    if (Array.isArray(value)) return value.filter(Boolean);
+  }
+  return [];
+};
+
+const normalizeAciServiceResponseContract = (
+  response = {},
+  { startedAt = Date.now() } = {},
+) => {
+  if (!response || typeof response !== "object") return response;
+
+  const widget =
+    response.widget ||
+    (Array.isArray(response.widgets) ? response.widgets.find(Boolean) : null) ||
+    null;
+
+  const canvasType = response.canvasType || widget?.canvasType || "";
+  const inlineType = response.inlineType || widget?.inlineType || "";
+
+  const displayMode =
+    response.displayMode ||
+    (canvasType && inlineType
+      ? "both"
+      : canvasType
+        ? "canvas"
+        : inlineType
+          ? "inline"
+          : "inline");
+
+  const actions = pickAciFirstArray(
+    response.actions,
+    widget?.actions,
+    response.data?.actions,
+  );
+
+  const leadingQuestions = pickAciFirstArray(
+    response.leadingQuestions,
+    response.conversationSuggestions,
+    widget?.leadingQuestions,
+    widget?.conversationSuggestions,
+    response.data?.leadingQuestions,
+    response.data?.conversationSuggestions,
+  );
+
+  const rows = pickAciFirstArray(
+    response.rows,
+    response.items,
+    response.data?.rows,
+    response.data?.items,
+    widget?.rows,
+    widget?.items,
+  );
+
+  const data = {
+    ...pickAciFirstObject(response.data),
+  };
+
+  if (!Object.keys(data).length) {
+    data.title = response.title || widget?.title || "";
+    data.answer = response.answer || widget?.answer || "";
+    data.intent = response.intent || widget?.intent || "";
+    data.canvasType;
+    data.inlineType;
+    data.displayMode = displayMode;
+    data.vehicle =
+      response.vehicle ||
+      widget?.vehicle ||
+      response.contextPatch?.selectedVehicle ||
+      {};
+    data.rows = rows;
+    data.items = rows;
+    data.contextPatch = response.contextPatch || {};
+  }
+
+  return {
+    ...response,
+    displayMode,
+    canvasType,
+    inlineType,
+    actions,
+    leadingQuestions,
+    data,
+    service: {
+      ...(response.service || {}),
+      version:
+        response.service?.version ||
+        ACI_ASSIST_SERVICE_VERSION,
+      executorVersion:
+        response.service?.executorVersion ||
+        EXECUTOR_VERSION,
+      durationMs:
+        response.service?.durationMs ??
+        Math.max(0, Date.now() - startedAt),
+      oldSystemUsed: false,
+    },
+  };
+};
+
+
 export const chatWithAgent = async (...args) => {
+  const startedAt = Date.now();
   const { message, context } = getNormalizerInputs(args);
   const response = await chatWithAgentCore(...args);
 
-  return await normalizeAciFinalResponse(response, {
+  const normalized = await normalizeAciFinalResponse(response, {
     message,
     context,
+  });
+
+  return normalizeAciServiceResponseContract(normalized, {
+    startedAt,
   });
 };
 
