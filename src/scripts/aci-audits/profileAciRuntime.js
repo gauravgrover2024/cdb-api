@@ -208,10 +208,14 @@ const connectWithMonitoring = async () => {
   }
 
   mongoose.set("strictQuery", false);
+  mongoose.set("autoIndex", false);
+  mongoose.set("autoCreate", false);
 
   await mongoose.connect(uri, {
     monitorCommands: true,
     serverSelectionTimeoutMS: 10000,
+    autoIndex: false,
+    autoCreate: false,
   });
 
   const client = mongoose.connection.getClient();
@@ -227,6 +231,7 @@ const connectWithMonitoring = async () => {
       collectionName:
         event.command?.find ||
         event.command?.aggregate ||
+        event.command?.createIndexes ||
         event.command?.count ||
         event.command?.distinct ||
         event.command?.insert ||

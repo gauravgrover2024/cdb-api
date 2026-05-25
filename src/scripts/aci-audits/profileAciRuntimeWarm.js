@@ -16,11 +16,15 @@ if (!uri) {
 // Connect with monitorCommands before prewarm so the existing profiler can attach
 // command listeners to a monitoring-enabled Mongo client in the same process.
 mongoose.set("strictQuery", false);
+mongoose.set("autoIndex", false);
+mongoose.set("autoCreate", false);
 
 if (mongoose.connection.readyState !== 1) {
   await mongoose.connect(uri, {
     monitorCommands: true,
     serverSelectionTimeoutMS: 10000,
+    autoIndex: false,
+    autoCreate: false,
   });
 }
 
