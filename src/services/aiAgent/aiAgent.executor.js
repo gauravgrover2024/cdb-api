@@ -224,6 +224,13 @@ export const safeJsonText = (value = {}) => {
 /*  Optional Mongo Access                                                     */
 /* -------------------------------------------------------------------------- */
 
+const ACI_EXECUTOR_COLLECTION_CACHE_TTL_MS =
+  Number(process.env.ACI_COLLECTION_DISCOVERY_CACHE_TTL_MS || 10 * 60 * 1000);
+
+let executorCollectionListCache = null;
+let executorCollectionListCachedAt = 0;
+const executorCollectionNameCache = new Map();
+
 export const getMongooseDb = async () => {
   try {
     const module = await import("mongoose");
@@ -239,41 +246,99 @@ export const getMongooseDb = async () => {
   }
 };
 
-export const listDbCollections = async (db) => {
+export const listDbCollections = async (db, { force = false } = {}) => {
   if (!db) return [];
 
+  const now = Date.now();
+
+  if (
+    !force &&
+    executorCollectionListCache &&
+    now - executorCollectionListCachedAt < ACI_EXECUTOR_COLLECTION_CACHE_TTL_MS
+  ) {
+    return executorCollectionListCache;
+  }
+
   try {
-    return await db.listCollections().toArray();
+    const collections = await db.listCollections({}, { nameOnly: true }).toArray();
+    executorCollectionListCache = collections;
+    executorCollectionListCachedAt = now;
+    return collections;
   } catch {
-    return [];
+    return executorCollectionListCache || [];
   }
 };
 
 export const findCollectionName = async (db, candidates = []) => {
+  const cleanCandidates = (candidates || [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+
+  const cacheKey = cleanCandidates.join("|").toLowerCase();
+  const cached = executorCollectionNameCache.get(cacheKey);
+
+  if (
+    cached &&
+    Date.now() - cached.cachedAt < ACI_EXECUTOR_COLLECTION_CACHE_TTL_MS
+  ) {
+    return cached.collectionName;
+  }
+
   const collections = await listDbCollections(db);
   const names = collections.map((item) => item.name).filter(Boolean);
 
   if (!names.length) return "";
+
+  const exactCandidate = cleanCandidates.find((candidate) =>
+    names.includes(candidate),
+  );
+
+  if (exactCandidate) {
+    executorCollectionNameCache.set(cacheKey, {
+      collectionName: exactCandidate,
+      cachedAt: Date.now(),
+    });
+    return exactCandidate;
+  }
 
   const normalizedNames = names.map((name) => ({
     name,
     key: searchKey(name),
   }));
 
-  for (const candidate of candidates) {
+  for (const candidate of cleanCandidates) {
     const candidateKey = searchKey(candidate);
     if (!candidateKey) continue;
 
     const exact = normalizedNames.find((item) => item.key === candidateKey);
-    if (exact) return exact.name;
+    if (exact) {
+      executorCollectionNameCache.set(cacheKey, {
+        collectionName: exact.name,
+        cachedAt: Date.now(),
+      });
+      return exact.name;
+    }
 
     const contains = normalizedNames.find(
       (item) => item.key.includes(candidateKey) || candidateKey.includes(item.key),
     );
-    if (contains) return contains.name;
+    if (contains) {
+      executorCollectionNameCache.set(cacheKey, {
+        collectionName: contains.name,
+        cachedAt: Date.now(),
+      });
+      return contains.name;
+    }
   }
 
-  return normalizedNames[0]?.name || "";
+  const collectionName = normalizedNames[0]?.name || "";
+
+  executorCollectionNameCache.set(cacheKey, {
+    collectionName,
+    cachedAt: Date.now(),
+  });
+
+  return collectionName;
 };
 
 export const getCollection = async (candidates = []) => {

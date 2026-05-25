@@ -255,9 +255,36 @@ const dedupeModelEntries = (entries = []) => {
   return [...map.values()].sort((a, b) => b.model.length - a.model.length);
 };
 
+const vehicleModelResolverCollectionExistsCache = new Map();
+
+const collectionExistsCached = async (db, collectionName = "") => {
+  if (!db || !collectionName) return false;
+
+  const cached = vehicleModelResolverCollectionExistsCache.get(collectionName);
+
+  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
+    return cached.exists;
+  }
+
+  try {
+    const exists = await db
+      .listCollections({ name: collectionName }, { nameOnly: true })
+      .hasNext();
+
+    vehicleModelResolverCollectionExistsCache.set(collectionName, {
+      exists,
+      cachedAt: Date.now(),
+    });
+
+    return exists;
+  } catch {
+    return false;
+  }
+};
+
 const safeAggregate = async (db, collectionName, pipeline = []) => {
   try {
-    const exists = await db.listCollections({ name: collectionName }).hasNext();
+    const exists = await collectionExistsCached(db, collectionName);
     if (!exists) return [];
     return await db.collection(collectionName).aggregate(pipeline).toArray();
   } catch {
