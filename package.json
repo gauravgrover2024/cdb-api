@@ -39,7 +39,9 @@
     "test:aci:subset": "node src/scripts/testAciPriceColorFeatureSubset.js",
     "test:aci:planner:full": "node src/scripts/testAiPlanner.fullRegression.js",
     "test:aci:smoke": "npm run test:aci:executor && npm run test:aci:v2",
-    "test:aci:full": "npm run test:aci:planner && npm run test:aci:subset && npm run test:aci:v2"
+    "test:aci:full": "npm run test:aci:planner && npm run test:aci:subset && npm run test:aci:v2",
+    "test:aci:contract": "node src/scripts/testAciContractFoundation.js",
+    "test:aci:foundation": "npm run test:aci:smoke && npm run test:aci:contract"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

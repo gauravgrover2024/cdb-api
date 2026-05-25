@@ -2179,6 +2179,14 @@ const normalizeAciServiceResponseContract = (
     data.contextPatch = response.contextPatch || {};
   }
 
+  const secondaryResponses = Array.isArray(response.secondaryResponses)
+    ? response.secondaryResponses
+    : [];
+
+  const runtimeResultsMeta = Array.isArray(response.runtimeResultsMeta)
+    ? response.runtimeResultsMeta
+    : [];
+
   return {
     ...response,
     displayMode,
@@ -2186,6 +2194,8 @@ const normalizeAciServiceResponseContract = (
     inlineType,
     actions,
     leadingQuestions,
+    secondaryResponses,
+    runtimeResultsMeta,
     data,
     service: {
       ...(response.service || {}),
