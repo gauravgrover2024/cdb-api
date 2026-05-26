@@ -1314,7 +1314,7 @@ const upsertBankDirectoryEntry = async ({
   return await BankDirectory.findOneAndUpdate(
     query,
     { $set: base },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
   );
 };
 
@@ -3235,7 +3235,7 @@ const upsertCollectionReceivable = asyncHandler(async (req, res) => {
     { loanId, payoutId },
     { $set: nextDoc },
     {
-      new: true,
+      returnDocument: 'after',
       upsert: true,
       setDefaultsOnInsert: true,
       runValidators: false,
@@ -3338,7 +3338,7 @@ const updateCollectionReceivable = asyncHandler(async (req, res) => {
     { loanId, payoutId },
     { $set: nextDoc },
     {
-      new: true,
+      returnDocument: 'after',
       upsert: true,
       setDefaultsOnInsert: true,
       runValidators: false,
@@ -4979,7 +4979,7 @@ const createLoan = asyncHandler(async (req, res) => {
         ...normalizedLoanData, // Shared customer-safe loan form fields
         financeExpectation: undefined,
         createdFrom: "LOAN_FORM",
-        createdBy: normalizedLoanData.createdBy || "System",
+        createdBy: (normalizedLoanData.createdBy && normalizedLoanData.createdBy !== "System") ? normalizedLoanData.createdBy : (req.user?._id || undefined),
       };
 
       try {
@@ -5297,7 +5297,7 @@ const updateLoan = asyncHandler(async (req, res) => {
               ? { $unset: unsetPayload }
               : {}),
           },
-          { new: true, runValidators: false },
+          { returnDocument: 'after', runValidators: false },
         );
 
         if (!updatedLoan) {
@@ -5581,7 +5581,7 @@ const disburseLoan = asyncHandler(async (req, res) => {
           },
           createdBy: req.user?.id || null,
         },
-        { upsert: true, new: true },
+        { upsert: true, returnDocument: 'after' },
       );
     }
   } catch (err) {

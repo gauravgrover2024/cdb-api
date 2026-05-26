@@ -8,6 +8,7 @@ import Receivable from "../models/Receivable.js";
 import VehicleFeature from "../models/VehicleFeature.js";
 import VehicleRecord from "../models/VehicleRecord.js";
 import { upsertChannelPartner } from "../services/channelPartnerUpsert.js";
+import { syncVehicleFromInsurancePayload } from "../services/vehicleUpsert.js";
 
 const INSURANCE_COUNTER_PREFIX = "insurance_case_id_sequence_";
 const INSURANCE_ID_PREFIX = "INS";
@@ -314,45 +315,6 @@ const normalizeInsuranceCurrentStep = (value, fallback = 1) => {
 
 const isInsuranceCaseReadyForSubmit = (payload = {}) => {
   const errors = [];
-  const isCompany = safeString(payload.buyerType).trim() === "Company";
-  const mobile = safeString(payload.mobile).trim();
-  if (!mobile || !/^\d{10}$/.test(mobile)) errors.push("Valid mobile is required");
-  if (isCompany) {
-    if (!safeString(payload.companyName).trim())
-      errors.push("Company name is required");
-    if (!safeString(payload.contactPersonName).trim())
-      errors.push("Contact person name is required");
-  } else if (!safeString(payload.customerName).trim()) {
-    errors.push("Customer name is required");
-  }
-  if (!safeString(payload.employeeName).trim())
-    errors.push("Assigned employee is required");
-  if (!safeString(payload.policyCategory).trim())
-    errors.push("Policy category is required");
-  if (!safeString(payload.registrationNumber).trim())
-    errors.push("Registration number is required");
-  if (!safeString(payload.vehicleMake).trim() || !safeString(payload.vehicleModel).trim()) {
-    errors.push("Vehicle make/model is required");
-  }
-  if (!safeString(payload.manufactureMonth).trim() || !safeString(payload.manufactureYear).trim()) {
-    errors.push("Vehicle manufacture month/year is required");
-  }
-  const usedFlow = safeString(payload.usedCarFlowType).trim().toLowerCase();
-  const needsPreviousPolicy =
-    safeString(payload.vehicleType).trim().toLowerCase() === "used car" &&
-    (usedFlow.includes("renew") || usedFlow.includes("rollover") || usedFlow.includes("expired"));
-  if (needsPreviousPolicy) {
-    if (!safeString(payload.previousInsuranceCompany).trim())
-      errors.push("Previous insurance company is required");
-    if (!safeString(payload.previousPolicyNumber).trim())
-      errors.push("Previous policy number is required");
-    if (!safeString(payload.previousPolicyType).trim())
-      errors.push("Previous policy type is required");
-    if (!safeString(payload.claimTakenLastYear).trim())
-      errors.push("Claim taken last year is required");
-  }
-  if (!safeString(payload.acceptedQuoteId).trim())
-    errors.push("Accepted quote is required");
   if (!safeString(payload.newInsuranceCompany).trim())
     errors.push("New insurance company is required");
   if (!safeString(payload.newPolicyType).trim())
@@ -363,21 +325,11 @@ const isInsuranceCaseReadyForSubmit = (payload = {}) => {
     errors.push("New policy issue date is required");
   if (!safeString(payload.newPolicyStartDate).trim())
     errors.push("New policy start date is required");
-  if (!safeString(payload.residenceAddress).trim() || !safeString(payload.city).trim() || !safeString(payload.pincode).trim()) {
-    errors.push("Residence address, city and pincode are required");
-  }
-  if (!safeString(payload.nomineeName).trim() || !safeString(payload.nomineeRelationship).trim()) {
-    errors.push("Nominee name and relationship are required");
-  }
-  const referencePhoneRaw = safeString(payload.referencePhone).replace(/\D/g, "");
-  const referencePhone =
-    referencePhoneRaw.length >= 10
-      ? referencePhoneRaw.slice(-10)
-      : referencePhoneRaw;
-  if (referencePhoneRaw && referencePhone.length !== 10) {
-    errors.push("Reference phone must be a valid 10-digit number when provided");
-  }
-  return { ok: errors.length === 0, errors };
+
+  return {
+    ok: errors.length === 0,
+    errors,
+  };
 };
 
 const getRenewalExpiryDate = (doc = {}) =>
@@ -404,7 +356,6 @@ const isPendingRenewalWithinWindow = (doc = {}, futureDays = 30, pastDays = 45) 
 
 const RENEWAL_LEAD_STATUSES = [
   "new",
-  "follow up",
   "quotes shared",
   "payment pending",
   "closed",
@@ -416,6 +367,7 @@ const RENEWAL_OUTCOMES = [
   "CAR_SOLD",
   "CAR_EXPIRED",
   "POLICY_FROM_ELSEWHERE",
+    "RENEW_NEXT_YEAR",
 ];
 
 const normalizeRenewalLeadStatus = (value) => {
@@ -447,11 +399,26 @@ const getNextInsuranceCaseId = async () => {
   const next = await Counter.findOneAndUpdate(
     { key },
     { $inc: { value: 1 } },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
   const seq = Number(next?.value || 0);
   return `${INSURANCE_ID_PREFIX}-${year}-${String(seq).padStart(4, "0")}`;
 };
+
+const getNextCustomerId = async () => {
+  const year = new Date().getFullYear();
+  const regex = new RegExp(`^ACILLP-${year}-\\d{4}$`);
+  const lastDoc = await Customer.findOne({ customerId: { $regex: regex } }).sort({ customerId: -1 });
+  let nextNum = 1;
+  if (lastDoc && lastDoc.customerId) {
+    const parts = lastDoc.customerId.split("-");
+    if (parts.length === 3) {
+      nextNum = parseInt(parts[2], 10) + 1;
+    }
+  }
+  return `ACILLP-${year}-${String(nextNum).padStart(4, "0")}`;
+};
+
 
 const normalizeRegNumber = (value) =>
   safeString(value)
@@ -626,7 +593,7 @@ const upsertVehicleRecordFromInsuranceCase = async (doc) => {
   return await VehicleRecord.findOneAndUpdate(
     query,
     { $set: updateDoc },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
   );
 };
 
@@ -637,7 +604,7 @@ export const getNextTempRegistration = asyncHandler(async (_req, res) => {
   const counter = await Counter.findOneAndUpdate(
     { key: INSURANCE_TEMP_REG_COUNTER_KEY },
     { $inc: { value: 1 } },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
   const seq = Number(counter?.value || 0);
   const registrationNumber = `TEMP_REDG_${String(seq).padStart(4, "0")}`;
@@ -689,7 +656,7 @@ export const resolveVehicleCubicCapacity = asyncHandler(async (req, res) => {
     vehicleRecord = await VehicleRecord.findOneAndUpdate(
       { registrationNumberNormalized },
       { $set: updateDoc },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
     );
   }
 
@@ -988,7 +955,7 @@ export const mergeVehicleMatch = asyncHandler(async (req, res) => {
         lastSyncedAt: new Date(),
       },
     },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
   );
 
   const rowsToRemove = tempRecords
@@ -1113,9 +1080,26 @@ export const mergeVehicleMatch = asyncHandler(async (req, res) => {
 export const getInsuranceCases = asyncHandler(async (req, res) => {
   const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
   const skip = Math.max(0, Number(req.query.skip || 0));
+  const search = req.query.search ? String(req.query.search).trim() : "";
 
-  const count = await InsuranceCase.countDocuments({});
-  const rows = await InsuranceCase.find({})
+  const query = {};
+  if (search) {
+    const searchRegex = new RegExp(search, "i");
+    query.$or = [
+      { caseId: searchRegex },
+      { customerName: searchRegex },
+      { companyName: searchRegex },
+      { mobile: searchRegex },
+      { registrationNumber: searchRegex },
+      { vehicleMake: searchRegex },
+      { vehicleModel: searchRegex },
+      { previousPolicyNumber: searchRegex },
+      { newPolicyNumber: searchRegex }
+    ];
+  }
+
+  const count = await InsuranceCase.countDocuments(query);
+  const rows = await InsuranceCase.find(query)
     .sort({ updatedAt: -1 })
     .limit(limit)
     .skip(skip);
@@ -1129,43 +1113,165 @@ export const getInsuranceCases = asyncHandler(async (req, res) => {
 export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
   const includeAssignedOnly = String(req.query.assignedOnly || "").trim() === "1";
   const assignedToId = safeString(req.query.assignedToId).trim();
-  const futureDays = Math.max(1, Math.min(365, Number(req.query.futureDays || 365)));
-  const pastDays = Math.max(1, Math.min(365, Number(req.query.pastDays || 365)));
-  const odAmountRange = safeString(req.query.odAmountRange).trim().toLowerCase();
   const role = safeString(req.user?.role).trim().toLowerCase();
-  const meId = safeString(req.user?._id).trim();
-  const isAdminLike = [
-    "admin",
-    "superadmin",
-    "team_lead",
-    "insurance_team_lead",
-  ].includes(role);
+  
+  const windowStr = safeString(req.query.window).trim().toLowerCase();
+  const searchQ = safeString(req.query.search).trim();
+  const statusStr = safeString(req.query.status).trim().toLowerCase();
+  const tierStr = safeString(req.query.tier).trim().toLowerCase();
   const view = safeString(req.query.view || "renewal").trim().toLowerCase();
 
-  const baseRows = await InsuranceCase.find({})
+  const completionQuery = {
+    $or: [
+      { status: { $in: ["submitted", "issued", "completed"] } },
+      {
+        $and: [
+          { newInsuranceCompany: { $exists: true, $ne: "" } },
+          { newPolicyType: { $exists: true, $ne: "" } },
+          { $or: [
+              { newPolicyNumber: { $exists: true, $ne: "" } },
+              { policyNumber: { $exists: true, $ne: "" } }
+            ]
+          },
+          { newIssueDate: { $exists: true, $ne: "" } },
+          { newPolicyStartDate: { $exists: true, $ne: "" } }
+        ]
+      }
+    ]
+  };
+
+  const query = {
+    policyCategory: { $not: { $regex: /^extended warranty$/i } },
+    $and: [completionQuery]
+  };
+
+  if (includeAssignedOnly && assignedToId) {
+    query.renewalAssignedToId = assignedToId;
+  }
+
+  if (searchQ) {
+    const sr = { $regex: searchQ, $options: "i" };
+    query.$and.push({
+      $or: [
+        { customerName: sr },
+        { companyName: sr },
+        { contactPersonName: sr },
+        { email: sr },
+        { newPolicyNumber: sr },
+        { registrationNumber: sr }
+      ]
+    });
+  }
+
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  // We construct an $expr to get the effective expiry date
+  const expiryDateExpr = {
+    $toDate: {
+      $cond: [
+        { $ifNull: ["$newOdExpiryDate", false] }, "$newOdExpiryDate",
+        {
+          $cond: [
+            { $ifNull: ["$previousOdExpiryDate", false] }, "$previousOdExpiryDate",
+            {
+              $cond: [
+                { $ifNull: ["$newTpExpiryDate", false] }, "$newTpExpiryDate",
+                "$policyExpiry"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  };
+
+  const getDayDiffExpr = {
+    $divide: [
+      { $subtract: [ expiryDateExpr, now ] },
+      86400000
+    ]
+  };
+
+  let exprConditions = [];
+
+  // Expiration Window Logic
+  if (windowStr) {
+    if (windowStr === "7d") {
+      exprConditions.push({ $and: [ { $gte: [getDayDiffExpr, 0] }, { $lte: [getDayDiffExpr, 7] } ] });
+    } else if (windowStr === "14d") {
+      exprConditions.push({ $and: [ { $gte: [getDayDiffExpr, 0] }, { $lte: [getDayDiffExpr, 14] } ] });
+    } else if (windowStr === "30d") {
+      exprConditions.push({ $and: [ { $gte: [getDayDiffExpr, 0] }, { $lte: [getDayDiffExpr, 30] } ] });
+    } else if (windowStr === "45d") {
+      exprConditions.push({ $and: [ { $gte: [getDayDiffExpr, 0] }, { $lte: [getDayDiffExpr, 45] } ] });
+    } else if (windowStr === "60d") {
+      exprConditions.push({ $and: [ { $gte: [getDayDiffExpr, 0] }, { $lte: [getDayDiffExpr, 60] } ] });
+    } else if (windowStr === "gt60d") {
+      exprConditions.push({ $gt: [getDayDiffExpr, 60] });
+    } else if (windowStr === "expired") {
+      exprConditions.push({ $lt: [getDayDiffExpr, 0] });
+    }
+  }
+
+  // Status Filter Logic (Active, Grace Period, Suspended, Cancelled)
+  if (statusStr && statusStr !== "all") {
+    if (statusStr === "active") {
+      exprConditions.push({ $gte: [getDayDiffExpr, 0] });
+    } else if (statusStr === "grace period" || statusStr === "grace") {
+      exprConditions.push({ $and: [ { $lt: [getDayDiffExpr, 0] }, { $gte: [getDayDiffExpr, -30] } ] });
+    } else if (statusStr === "suspended" || statusStr === "cancelled") {
+      if (query.$and) {
+        query.$and.push({ renewalOutcome: { $in: [/cancelled/i, /suspended/i, "CAR_SOLD", "CAR_EXPIRED"] } });
+      } else {
+        query.renewalOutcome = { $in: [/cancelled/i, /suspended/i, "CAR_SOLD", "CAR_EXPIRED"] };
+      }
+    }
+  }
+
+  if (exprConditions.length > 0) {
+    query.$expr = { $and: exprConditions };
+  }
+
+  // Tier Logic (High-Value, Premium, Basic)
+  if (tierStr && tierStr !== "all") {
+    const tierOr = [];
+    if (tierStr === "high-value") {
+      tierOr.push({ newTotalPremium: { $gt: 50000 } });
+      tierOr.push({ totalPremium: { $gt: 50000 } });
+      tierOr.push({ previousTotalPremium: { $gt: 50000 } });
+    } else if (tierStr === "premium") {
+      tierOr.push({ newTotalPremium: { $gte: 20000, $lte: 50000 } });
+      tierOr.push({ totalPremium: { $gte: 20000, $lte: 50000 } });
+      tierOr.push({ previousTotalPremium: { $gte: 20000, $lte: 50000 } });
+    } else if (tierStr === "basic") {
+      tierOr.push({ newTotalPremium: { $lt: 20000, $gt: 0 } });
+      tierOr.push({ totalPremium: { $lt: 20000, $gt: 0 } });
+      tierOr.push({ previousTotalPremium: { $lt: 20000, $gt: 0 } });
+    }
+    
+    if (query.$or) {
+      if (!query.$and) query.$and = [];
+      query.$and.push({ $or: query.$or });
+      query.$and.push({ $or: tierOr });
+      delete query.$or;
+    } else {
+      query.$or = tierOr;
+    }
+  }
+
+  const baseRows = await InsuranceCase.find(query)
     .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
 
-  let rows = baseRows.filter((doc) =>
-    isPendingRenewalWithinWindow(doc, futureDays, pastDays),
-  );
-
-  if (includeAssignedOnly && assignedToId) {
-    rows = rows.filter(
-      (doc) => safeString(doc?.renewalAssignedToId).trim() === assignedToId,
-    );
-  }
-  // Do not hard-scope non-admin users to assigned-only by default.
-  // Assignment scoping should happen only when explicitly requested via query params.
-  const mappedRows = rows.map((doc) => ({
+  const mappedRows = baseRows.map((doc) => ({
     ...doc,
-      renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
+    renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
   }));
 
   const getForRenewalTab = (list) =>
     list.filter((doc) => {
-      if (String(doc?.policyCategory || "").trim().toLowerCase() === "extended warranty") return false;
-      const outcome = normalizeRenewalOutcome(doc?.renewalOutcome);
+      const outcome = doc.renewalOutcome;
       if (outcome === "CAR_SOLD" || outcome === "CAR_EXPIRED") return false;
       if (outcome === "ALREADY_RENEWED") return false;
       if (doc?.renewedToCaseId) return false;
@@ -1175,31 +1281,19 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
   const getForRenewedTab = (list) =>
     list.filter(
       (doc) =>
-        normalizeRenewalOutcome(doc?.renewalOutcome) === "ALREADY_RENEWED" ||
-        Boolean(doc?.renewedToCaseId),
+        doc.renewalOutcome === "ALREADY_RENEWED" || Boolean(doc?.renewedToCaseId)
     );
 
   const getForExternalTab = (list) =>
-    list.filter(
-      (doc) => normalizeRenewalOutcome(doc?.renewalOutcome) === "POLICY_FROM_ELSEWHERE",
-    );
+    list.filter((doc) => doc.renewalOutcome === "POLICY_FROM_ELSEWHERE");
 
+  let rows = [];
   if (view === "renewed") {
     rows = getForRenewedTab(mappedRows);
   } else if (view === "external") {
     rows = getForExternalTab(mappedRows);
   } else {
     rows = getForRenewalTab(mappedRows);
-  }
-  if (odAmountRange) {
-    rows = rows.filter((doc) => {
-      const value = Number(doc?.previousOwnDamageAmount || doc?.odAmount || 0);
-      if (!Number.isFinite(value) || value < 0) return false;
-      if (odAmountRange === "lt10k") return value < 10000;
-      if (odAmountRange === "10k-20k") return value >= 10000 && value <= 20000;
-      if (odAmountRange === "gt20k") return value > 20000;
-      return true;
-    });
   }
 
   res.json({
@@ -1303,17 +1397,20 @@ export const updateInsuranceRenewalLead = asyncHandler(async (req, res) => {
   if (action === "CAR_SOLD") renewalLeadStatus = "Closed";
   if (action === "CAR_EXPIRED") renewalLeadStatus = "Closed";
   if (action === "POLICY_FROM_ELSEWHERE") renewalLeadStatus = "Closed";
+  if (action === "RENEW_NEXT_YEAR") renewalLeadStatus = "Closed";
 
   let renewalOutcome = requestedOutcome;
   if (action === "ALREADY_RENEWED") renewalOutcome = "ALREADY_RENEWED";
   if (action === "CAR_SOLD") renewalOutcome = "CAR_SOLD";
   if (action === "CAR_EXPIRED") renewalOutcome = "CAR_EXPIRED";
   if (action === "POLICY_FROM_ELSEWHERE") renewalOutcome = "POLICY_FROM_ELSEWHERE";
+  if (action === "RENEW_NEXT_YEAR") renewalOutcome = "RENEW_NEXT_YEAR";
   const hasAutoClosedReason = [
     "ALREADY_RENEWED",
     "CAR_SOLD",
     "CAR_EXPIRED",
     "POLICY_FROM_ELSEWHERE",
+    "RENEW_NEXT_YEAR",
   ].includes(action);
   if (
     renewalLeadStatus.toLowerCase() === "closed" &&
@@ -1388,7 +1485,10 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
   const rows = await InsuranceCase.find({})
     .sort({ updatedAt: -1 })
     .lean();
-  let pendingRows = rows.filter((doc) => isPendingRenewalWithinWindow(doc, 365, 365));
+  let pendingRows = rows.filter((doc) => {
+    if (String(doc?.policyCategory || "").trim().toLowerCase() === "extended warranty") return false;
+    return isPendingRenewalWithinWindow(doc, 365, 365);
+  });
   pendingRows = pendingRows.map((doc) => ({
     ...doc,
     renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
@@ -1409,6 +1509,7 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
   );
   const externalRows = scopedRows.filter(
     (doc) => normalizeRenewalOutcome(doc?.renewalOutcome) === "POLICY_FROM_ELSEWHERE",
+    "RENEW_NEXT_YEAR",
   );
   const activeCases = scopedRows.filter(
     (row) => normalizeRenewalLeadStatus(row?.renewalLeadStatus) !== "Closed",
@@ -1478,15 +1579,41 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
   }
 
   let customerSnapshot = payload.customerSnapshot || {};
-  if (customerId) {
+  let finalCustomerId = customerId;
+
+  if (finalCustomerId) {
     const syncedCustomer = await syncCustomerFromInsurancePayload(
-      customerId,
+      finalCustomerId,
       payload,
     );
     if (syncedCustomer) customerSnapshot = buildCustomerSnapshot(syncedCustomer);
+  } else if (payload.customerName) {
+    // Auto-create customer if name provided but no linked ID
+    const nextCustId = await getNextCustomerId();
+    const newCustomer = await Customer.create({
+      customerId: nextCustId,
+      customerName: payload.customerName,
+      companyName: payload.companyName,
+      contactPersonName: payload.contactPersonName,
+      primaryMobile: payload.mobile,
+      alternatePhone: payload.alternatePhone,
+      email: payload.email,
+      gender: payload.gender,
+      panNumber: payload.panNumber,
+      aadhaarNumber: payload.aadhaarNumber || payload.aadharNumber,
+      gstNumber: payload.gstNumber,
+      residenceAddress: payload.residenceAddress,
+      city: payload.city,
+      pincode: payload.pincode,
+      createdFrom: "INSURANCE_FORM",
+      createdBy: req.user?._id
+    });
+    finalCustomerId = newCustomer._id;
+    customerSnapshot = buildCustomerSnapshot(newCustomer);
   }
 
-  const normalizedStatus = normalizeInsuranceStatus(payload.status, "draft");
+  const autoStatus = isInsuranceCaseReadyForSubmit(payload).ok ? "submitted" : "draft";
+  const normalizedStatus = normalizeInsuranceStatus(payload.status || autoStatus, "draft");
   if (normalizedStatus === "submitted") {
     const submitValidation = isInsuranceCaseReadyForSubmit(payload);
     if (!submitValidation.ok) {
@@ -1500,7 +1627,7 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
   const doc = await InsuranceCase.create({
     ...payload,
     caseId,
-    customerId: customerId || undefined,
+    customerId: finalCustomerId || undefined,
     customerSnapshot,
     status: normalizedStatus,
     currentStep: normalizeInsuranceCurrentStep(payload.currentStep, 1),
@@ -1560,8 +1687,10 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
       ...payload.customerSnapshot,
     };
   }
-  if (customerId) {
-    const syncedCustomer = await syncCustomerFromInsurancePayload(customerId, {
+  let finalCustomerId = customerId;
+
+  if (finalCustomerId) {
+    const syncedCustomer = await syncCustomerFromInsurancePayload(finalCustomerId, {
       ...existingDoc.toObject(),
       ...payload,
     });
@@ -1571,15 +1700,39 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
         ...buildCustomerSnapshot(syncedCustomer),
       };
     }
+  } else if (payload.customerName || existingDoc.customerName) {
+    const combined = { ...existingDoc.toObject(), ...payload };
+    const nextCustId = await getNextCustomerId();
+    const newCustomer = await Customer.create({
+      customerId: nextCustId,
+      customerName: combined.customerName,
+      companyName: combined.companyName,
+      contactPersonName: combined.contactPersonName,
+      primaryMobile: combined.mobile,
+      alternatePhone: combined.alternatePhone,
+      email: combined.email,
+      gender: combined.gender,
+      panNumber: combined.panNumber,
+      aadhaarNumber: combined.aadhaarNumber || combined.aadharNumber,
+      gstNumber: combined.gstNumber,
+      residenceAddress: combined.residenceAddress,
+      city: combined.city,
+      pincode: combined.pincode,
+      createdFrom: "INSURANCE_FORM",
+      createdBy: req.user?._id
+    });
+    finalCustomerId = newCustomer._id;
+    customerSnapshot = buildCustomerSnapshot(newCustomer);
   }
 
+  const autoStatus = isInsuranceCaseReadyForSubmit(payload).ok ? "submitted" : "draft";
   const normalizedStatus = normalizeInsuranceStatus(
-    payload.status,
+    payload.status || autoStatus,
     normalizeInsuranceStatus(existingDoc.status, "draft"),
   );
   const updatePatch = {
     ...payload,
-    customerId: customerId || undefined,
+    customerId: finalCustomerId || undefined,
     customerSnapshot,
     assignedTo:
       safeString(payload.assignedTo || payload.employeeUserId).trim() ||
@@ -1615,7 +1768,7 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
     existingDoc._id,
     { $set: updatePatch },
     {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
       context: "query",
     },
@@ -1719,7 +1872,7 @@ export const appendInsurancePayment = asyncHandler(async (req, res) => {
       $push: { paymentHistory: entry },
       $set: { updatedAt: new Date() },
     },
-    { new: true },
+    { returnDocument: 'after' },
   );
 
   if (!saved) {
@@ -1939,7 +2092,7 @@ export const upsertInsurancePayoutRate = asyncHandler(async (req, res) => {
       },
     },
     {
-      new: true,
+      returnDocument: 'after',
       upsert: true,
       setDefaultsOnInsert: true,
     },
