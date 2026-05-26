@@ -24,6 +24,78 @@ import {
 import { maybeRunAciMultiFeatureAnswer } from "./aiAgent.multiFeatureAnswer.js";
 import { maybeRunAciFeatureComparisonAnswer } from "./aiAgent.featureComparisonAnswer.js";
 
+
+const normalizeAciEarlyGateAliasText = (value = "") =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const compactAciEarlyGateAliasText = (value = "") =>
+  normalizeAciEarlyGateAliasText(value).replace(/\s+/g, "");
+
+const escapeAciEarlyGateRegExp = (value = "") =>
+  String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const sanitizeAciEarlyFeatureCleanUserMessage = ({
+  cleanUserMessage = "",
+  dynamicModelEntity = {},
+} = {}) => {
+  const text = normalizeAciEarlyGateAliasText(cleanUserMessage);
+  if (!text) return cleanUserMessage;
+
+  const modelAliases = [
+    dynamicModelEntity?.fullModel,
+    dynamicModelEntity?.displayName,
+    dynamicModelEntity?.brand && dynamicModelEntity?.model
+      ? `${dynamicModelEntity.brand} ${dynamicModelEntity.model}`
+      : "",
+    dynamicModelEntity?.make && dynamicModelEntity?.model
+      ? `${dynamicModelEntity.make} ${dynamicModelEntity.model}`
+      : "",
+    dynamicModelEntity?.model,
+  ]
+    .map(normalizeAciEarlyGateAliasText)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  for (const alias of modelAliases) {
+    const aliasCompact = compactAciEarlyGateAliasText(alias);
+    if (!aliasCompact) continue;
+
+    const aliasRegex = new RegExp(
+      `(^|\\s)${escapeAciEarlyGateRegExp(alias).replace(/\s+/g, "\\s+")}(?=\\s|$)`,
+      "i",
+    );
+
+    const residual = text
+      .replace(aliasRegex, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!residual) continue;
+
+    const residualCompact = compactAciEarlyGateAliasText(residual);
+
+    // Generic model-alias guard:
+    // If the leftover text is just the detected model plus a tiny attached suffix,
+    // treat it as a noisy model alias, not a variant.
+    // Example: "be 6e" after model "Be 6" -> model-level Be 6, not variant Be 6e.
+    if (
+      residualCompact.startsWith(aliasCompact) &&
+      residualCompact.length > aliasCompact.length &&
+      residualCompact.length <= aliasCompact.length + 2
+    ) {
+      return dynamicModelEntity?.model || cleanUserMessage;
+    }
+  }
+
+  return cleanUserMessage;
+};
+
+
+
 export const maybeRunAciEarlyFeatureGate = async ({
   message = "",
   context = {},
@@ -79,7 +151,12 @@ export const maybeRunAciEarlyFeatureGate = async ({
 
   if (!detected) return null;
 
-  const cleanUserMessage = detected.cleanUserMessage || message;
+  const cleanUserMessage = sanitizeAciEarlyFeatureCleanUserMessage({
+    cleanUserMessage: detected.cleanUserMessage || message,
+    dynamicModelEntity,
+  });
+
+  detected.cleanUserMessage = cleanUserMessage;
 
   const toolPlan = buildAciEarlyGateToolPlan({
     detected,
