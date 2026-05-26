@@ -77,6 +77,12 @@ const tasks = [
     args: ["src/scripts/aci-audits/auditAciModelAliasFeatureQueries.js"],
   },
   {
+    key: "embarrassmentQueries",
+    label: "Embarrassment query audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciEmbarrassmentQueries.js"],
+  },
+  {
     key: "contextSwitch",
     label: "Context switch audit",
     command: "node",
@@ -205,6 +211,7 @@ const summary = {
   variantMultiFeatureQueriesExitCode: byKey.variantMultiFeatureQueries?.status ?? 1,
   featureComparisonQueriesExitCode: byKey.featureComparisonQueries?.status ?? 1,
   modelAliasFeatureQueriesExitCode: byKey.modelAliasFeatureQueries?.status ?? 1,
+  embarrassmentQueriesExitCode: byKey.embarrassmentQueries?.status ?? 1,
   contextSwitchExitCode: byKey.contextSwitch?.status ?? 1,
 
   passedMentions: count(/"pass"\s*:\s*true/g),
@@ -223,6 +230,7 @@ const summary = {
     variantMultiFeatureQueries: byKey.variantMultiFeatureQueries?.durationMs ?? 0,
     featureComparisonQueries: byKey.featureComparisonQueries?.durationMs ?? 0,
     modelAliasFeatureQueries: byKey.modelAliasFeatureQueries?.durationMs ?? 0,
+    embarrassmentQueries: byKey.embarrassmentQueries?.durationMs ?? 0,
     contextSwitch: byKey.contextSwitch?.durationMs ?? 0,
     total: totalDurationMs,
   },
@@ -238,6 +246,7 @@ const summary = {
     multiFeatureQueries: extractSuite("ACI multi-feature query audit"),
     variantMultiFeatureQueries: extractSuite("ACI variant multi-feature query audit"),
     featureComparisonQueries: extractSuite("ACI feature comparison query audit"),
+    embarrassmentQueries: extractSuite("ACI embarrassment query audit"),
     modelAliasFeatureQueries: extractSuite("ACI model alias feature query audit"),
   },
 

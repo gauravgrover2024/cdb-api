@@ -149,7 +149,44 @@ export const maybeRunAciEarlyFeatureGate = async ({
       modelEntity: dynamicModelEntity,
     });
 
-  if (!detected) return null;
+  if (!detected) {
+    const catalogSingleFeatureAnswer = await maybeRunAciMultiFeatureAnswer({
+      message,
+      modelEntity: dynamicModelEntity,
+      context,
+      allowSingleFeature: true,
+    });
+
+    if (catalogSingleFeatureAnswer) {
+      return catalogSingleFeatureAnswer;
+    }
+
+    return null;
+  }
+
+  const detectedHasFeature =
+    Boolean(detected.feature) ||
+    Boolean(detected.featureKey) ||
+    Boolean(detected.category) ||
+    Boolean(detected.categoryKey);
+
+  const detectedLooksLikeOverview =
+    detected.intent === "vehicle_overview" ||
+    detected.canvasType === "car_overview_canvas" ||
+    !detectedHasFeature;
+
+  if (detectedLooksLikeOverview && !detectedHasFeature) {
+    const catalogSingleFeatureAnswer = await maybeRunAciMultiFeatureAnswer({
+      message,
+      modelEntity: dynamicModelEntity,
+      context,
+      allowSingleFeature: true,
+    });
+
+    if (catalogSingleFeatureAnswer) {
+      return catalogSingleFeatureAnswer;
+    }
+  }
 
   const cleanUserMessage = sanitizeAciEarlyFeatureCleanUserMessage({
     cleanUserMessage: detected.cleanUserMessage || message,

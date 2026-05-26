@@ -185,6 +185,21 @@ const buildAnswerLine = (summary = {}) => {
   }
 
   if (summary.available) {
+    const valueRows = summary.previewVariants
+      .map((item) => ({
+        variant: item.variant,
+        value: cleanText(item.value || ""),
+      }))
+      .filter((item) => item.value && !/^(yes|available)$/i.test(item.value));
+
+    if (valueRows.length) {
+      const parts = valueRows.map((item) =>
+        item.variant ? `${item.variant}: ${item.value}` : item.value,
+      );
+
+      return `${summary.displayName}: ${parts.join(", ")}${summary.availableCount > valueRows.length ? ` +${summary.availableCount - valueRows.length} more` : ""}.`;
+    }
+
     const variants = summary.previewVariants.map((item) => item.variant).filter(Boolean);
     const suffix = variants.length ? ` Available on ${variants.join(", ")}${summary.availableCount > variants.length ? ` +${summary.availableCount - variants.length} more` : ""}.` : "";
     return `${summary.displayName}: Yes.${suffix}`;
@@ -197,6 +212,7 @@ export const maybeRunAciMultiFeatureAnswer = async ({
   message = "",
   modelEntity = null,
   context = {},
+  allowSingleFeature = false,
 } = {}) => {
   if (!modelEntity?.model) return null;
 
@@ -205,7 +221,8 @@ export const maybeRunAciMultiFeatureAnswer = async ({
     modelEntity,
   });
 
-  if (!parsed.hasMultiFeatureRequest) return null;
+  if (!parsed.requestedFeatures?.length) return null;
+  if (!allowSingleFeature && !parsed.hasMultiFeatureRequest) return null;
 
   const db = getDb();
   if (!db) return null;
@@ -319,14 +336,20 @@ export const maybeRunAciMultiFeatureAnswer = async ({
     citySlug: context?.anchorCity || context?.selectedVehicle?.citySlug || DEFAULT_CITY,
   };
 
+  const isSingleFeatureFallback = allowSingleFeature && summaries.length === 1;
+
   return {
-    intent: "vehicle_multi_feature_answer",
-    tool: "vehicle_multi_feature_answer",
+    intent: isSingleFeatureFallback ? "vehicle_feature_answer" : "vehicle_multi_feature_answer",
+    tool: isSingleFeatureFallback ? "vehicle_feature_answer" : "vehicle_multi_feature_answer",
     displayMode: "inline",
-    inlineType: "multi_feature_answer_card",
+    inlineType: isSingleFeatureFallback ? "feature_answer_card" : "multi_feature_answer_card",
     canvasType: "",
-    title: `${fullModel || model}${requestedVariant ? ` ${requestedVariant}` : ""} feature check`,
-    answer: `I checked ${fullModel || model}${requestedVariant ? ` ${requestedVariant}` : ""} for ${summaries.length} features.\n${answerLines.join("\n")}`,
+    title: isSingleFeatureFallback
+      ? summaries[0]?.displayName || `${fullModel || model} feature check`
+      : `${fullModel || model}${requestedVariant ? ` ${requestedVariant}` : ""} feature check`,
+    answer: isSingleFeatureFallback
+      ? `${fullModel || model}${requestedVariant ? ` ${requestedVariant}` : ""} ${answerLines.join("\n")}`
+      : `I checked ${fullModel || model}${requestedVariant ? ` ${requestedVariant}` : ""} for ${summaries.length} features.\n${answerLines.join("\n")}`,
     model,
     make,
     brand: make,
@@ -369,7 +392,8 @@ export const maybeRunAciMultiFeatureAnswer = async ({
       },
     ],
     meta: {
-      multiFeatureQuery: true,
+      multiFeatureQuery: !isSingleFeatureFallback,
+      catalogSingleFeatureFallback: isSingleFeatureFallback,
       featureRequestCatalogCounts: parsed.catalogCounts,
       performance: {
         matrixCacheHit: Boolean(cacheFresh),
