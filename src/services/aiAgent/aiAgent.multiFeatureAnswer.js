@@ -24,6 +24,84 @@ const cleanText = (value = "") =>
 const slugKey = (value = "") =>
   normalizeAciContextText(value).replace(/\s+/g, "_");
 
+
+const normalizeVariantText = (value = "") =>
+  normalizeAciContextText(value)
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const escapeRegExp = (value = "") =>
+  String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildVariantAliases = (row = {}) => {
+  const values = [
+    row.variant,
+    row.variantFull,
+    row.variantName,
+    row.displayVariant,
+    row.variantKey ? String(row.variantKey).replace(/_/g, " ") : "",
+  ];
+
+  return [...new Set(values.map(normalizeVariantText).filter(Boolean))].sort(
+    (a, b) => b.length - a.length,
+  );
+};
+
+const detectRequestedVariantFromRows = ({ message = "", rows = [], model = "", make = "" } = {}) => {
+  const rawMessage = normalizeVariantText(message);
+  if (!rawMessage || !Array.isArray(rows) || !rows.length) return null;
+
+  let messageWithoutModel = ` ${rawMessage} `;
+
+  for (const value of [make, model, make && model ? `${make} ${model}` : ""]) {
+    const normalized = normalizeVariantText(value);
+    if (!normalized) continue;
+
+    messageWithoutModel = messageWithoutModel.replace(
+      new RegExp(`\\s${escapeRegExp(normalized).replace(/\s+/g, "\\s+")}\\s`, "gi"),
+      " ",
+    );
+  }
+
+  messageWithoutModel = messageWithoutModel
+    .replace(
+      /\b(does|do|have|has|with|and|or|sunroof|adas|feature|features|available|come|comes|get|gets|check|tell|me|whether|if|the|a|an)\b/g,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const candidates = [];
+
+  for (const row of rows) {
+    for (const alias of buildVariantAliases(row)) {
+      if (!alias || alias.length < 2) continue;
+
+      const exactRegex = new RegExp(`(^|\\s)${escapeRegExp(alias).replace(/\s+/g, "\\s+")}(?=\\s|$)`, "i");
+
+      const fullMessageHit = exactRegex.test(rawMessage);
+      const strippedHit = exactRegex.test(messageWithoutModel);
+
+      if (!fullMessageHit && !strippedHit) continue;
+
+      candidates.push({
+        row,
+        alias,
+        score:
+          (strippedHit ? 40 : 0) +
+          (fullMessageHit ? 20 : 0) +
+          Math.min(alias.length, 50),
+      });
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score || b.alias.length - a.alias.length);
+
+  return candidates[0]?.row || null;
+};
+
+
 const getDb = () => {
   if (mongoose.connection?.readyState !== 1 || !mongoose.connection?.db) {
     return null;
@@ -205,12 +283,22 @@ export const maybeRunAciMultiFeatureAnswer = async ({
 
   const matrixQueryMs = nowMs() - queryStartedAt;
 
+  const requestedVariantRow = detectRequestedVariantFromRows({
+    message,
+    rows,
+    model,
+    make,
+  });
+
+  const scopedRows = requestedVariantRow ? [requestedVariantRow] : rows;
+  const requestedVariant = cleanText(requestedVariantRow?.variant || "");
+
   const summarizeStartedAt = nowMs();
 
   const summaries = parsed.requestedFeatures.map((requestedFeature) =>
     summarizeFeature({
       requestedFeature,
-      rows,
+      rows: scopedRows,
     }),
   );
 
@@ -224,9 +312,9 @@ export const maybeRunAciMultiFeatureAnswer = async ({
     model,
     fullModel,
     displayName: fullModel,
-    variant: "",
-    variantName: "",
-    selectedVariant: "",
+    variant: requestedVariant,
+    variantName: requestedVariant,
+    selectedVariant: requestedVariant,
     city: context?.anchorCity || context?.selectedVehicle?.city || DEFAULT_CITY,
     citySlug: context?.anchorCity || context?.selectedVehicle?.citySlug || DEFAULT_CITY,
   };
@@ -237,8 +325,8 @@ export const maybeRunAciMultiFeatureAnswer = async ({
     displayMode: "inline",
     inlineType: "multi_feature_answer_card",
     canvasType: "",
-    title: `${fullModel || model} feature check`,
-    answer: `I checked ${fullModel || model} for ${summaries.length} features.\n${answerLines.join("\n")}`,
+    title: `${fullModel || model}${requestedVariant ? ` ${requestedVariant}` : ""} feature check`,
+    answer: `I checked ${fullModel || model}${requestedVariant ? ` ${requestedVariant}` : ""} for ${summaries.length} features.\n${answerLines.join("\n")}`,
     model,
     make,
     brand: make,
@@ -252,7 +340,7 @@ export const maybeRunAciMultiFeatureAnswer = async ({
       anchorMake: make,
       anchorModel: model,
       anchorFullModel: fullModel,
-      anchorVariant: "",
+      anchorVariant: requestedVariant,
       anchorCity: selectedVehicle.citySlug,
       selectedColor: null,
     },
@@ -263,8 +351,9 @@ export const maybeRunAciMultiFeatureAnswer = async ({
         "vehicle_variant_feature_matrix_v2",
       ],
       dataSource: "vehicle_feature_catalog_v2+vehicle_variant_feature_matrix_v2",
-      recordCount: rows.length,
+      recordCount: scopedRows.length,
       matched: summaries.length,
+      variantScoped: Boolean(requestedVariant),
       featureKeys: parsed.featureKeys,
     },
     runtimeResultsMeta: [
@@ -286,6 +375,7 @@ export const maybeRunAciMultiFeatureAnswer = async ({
         matrixCacheHit: Boolean(cacheFresh),
         matrixQueryMs,
         summarizeMs,
+        variantScoped: Boolean(requestedVariant),
       },
     },
   };
