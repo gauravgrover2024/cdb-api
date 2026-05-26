@@ -5,6 +5,7 @@ import {
   loadVehicleVariantIndexByModelKey,
 } from "./aiAgent.vehicleModelResolver.js";
 import { getVehicleEntityIndex } from "./aiAgent.vehicleEntityIndex.js";
+import { loadAciFeatureRequestCatalog } from "./aiAgent.featureRequestParser.js";
 import { refreshVehicleHintsFromDb } from "./aiAgent.intentParser.js";
 
 const DEFAULT_PREWARM_TTL_MS = Number(
@@ -67,6 +68,7 @@ export const prewarmAciAssistRuntime = async ({ force = false } = {}) => {
       ["vehicle_model_index", loadVehicleModelIndex({ db, force })],
       ["vehicle_variant_index", loadVehicleVariantIndexByModelKey({ db, force })],
       ["vehicle_entity_index", getVehicleEntityIndex({ forceRefresh: force })],
+      ["feature_request_catalog", loadAciFeatureRequestCatalog({ forceRefresh: force })],
       ["vehicle_hints", refreshVehicleHintsFromDb()],
     ];
 

@@ -21,6 +21,7 @@ import {
   normalizeAciEarlyGateOverviewResponse,
   runAciEarlyGateTool,
 } from "./aiAgent.earlyFeatureGate.runner.js";
+import { maybeRunAciMultiFeatureAnswer } from "./aiAgent.multiFeatureAnswer.js";
 
 export const maybeRunAciEarlyFeatureGate = async ({
   message = "",
@@ -49,6 +50,16 @@ export const maybeRunAciEarlyFeatureGate = async ({
     contextEntity: dynamicModelEntityFromContext,
     message,
   });
+
+  const multiFeatureAnswer = await maybeRunAciMultiFeatureAnswer({
+    message,
+    modelEntity: dynamicModelEntity,
+    context,
+  });
+
+  if (multiFeatureAnswer) {
+    return multiFeatureAnswer;
+  }
 
   const detected =
     detectAciEarlyDynamicRoutedRequest({

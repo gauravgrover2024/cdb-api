@@ -49,11 +49,15 @@ const vehicleEntityIndex = run("Vehicle entity index audit", "node", [
   "src/scripts/aci-audits/auditAciVehicleEntityIndex.js",
 ]);
 
+const multiFeatureQueries = run("Multi-feature query audit", "node", [
+  "src/scripts/aci-audits/auditAciMultiFeatureQueries.js",
+]);
+
 const contextSwitch = run("Context switch audit", "node", [
   "src/scripts/aci-audits/auditAciContextSwitch.js",
 ]);
 
-const allOutput = `${foundation.output}\n${modelResolver.output}\n${modelContextResolver.output}\n${contextPriority.output}\n${vehicleEntityIndex.output}\n${contextSwitch.output}`;
+const allOutput = `${foundation.output}\n${modelResolver.output}\n${modelContextResolver.output}\n${contextPriority.output}\n${vehicleEntityIndex.output}\n${multiFeatureQueries.output}\n${contextSwitch.output}`;
 
 const extractSuite = (name) => {
   const regex = new RegExp(
@@ -82,6 +86,7 @@ const hasFailures =
   !modelContextResolver.ok ||
   !contextPriority.ok ||
   !vehicleEntityIndex.ok ||
+  !multiFeatureQueries.ok ||
   !contextSwitch.ok ||
   /"failed"\s*:\s*[1-9]/.test(allOutput) ||
   /"pass"\s*:\s*false/.test(allOutput) ||
@@ -95,6 +100,7 @@ const summary = {
   modelContextResolverExitCode: modelContextResolver.status,
   contextPriorityExitCode: contextPriority.status,
   vehicleEntityIndexExitCode: vehicleEntityIndex.status,
+  multiFeatureQueriesExitCode: multiFeatureQueries.status,
   contextSwitchExitCode: contextSwitch.status,
   passedMentions: count(/"pass"\s*:\s*true/g),
   failedMentions: count(/"pass"\s*:\s*false/g),
@@ -106,6 +112,7 @@ const summary = {
     modelContextResolver: extractSuite("ACI model context resolver audit"),
     contextPriority: extractSuite("ACI context priority audit"),
     vehicleEntityIndex: extractSuite("ACI vehicle entity index audit"),
+    multiFeatureQueries: extractSuite("ACI multi-feature query audit"),
   },
   contextSwitch: {
     expectedChecks: contextChecks,
