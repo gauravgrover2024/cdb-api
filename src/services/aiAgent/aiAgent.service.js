@@ -1035,17 +1035,10 @@ const detectAciDynamicFeatureCategory = (message = "") => {
   ) || null;
 };
 
-const hasAciTestDriveIntent = (message = "") =>
-  /\b(test\s*drive|book\s*test|schedule\s*test|trial\s*drive|drive\s+the\s+car)\b/i.test(
-    String(message || ""),
-  );
-
 
 const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null } = {}) => {
   const raw = String(message || "").trim();
   if (!raw || !modelEntity?.model) return null;
-  if (hasAciTestDriveIntent(raw)) return null;
-
   const xuvAliasMatch = raw.match(/\bxuv\s*(?:700|7xo|300|3xo)\b/i);
   let model = toAciTitleCaseModel(modelEntity.model);
   let brand = modelEntity.brand || "";
@@ -1840,69 +1833,6 @@ const maybeRunAciEarlyFeatureGate = async ({
     contextEntity: dynamicModelEntityFromContext,
     message,
   });
-
-  if (hasAciTestDriveIntent(message)) {
-    const model = dynamicModelEntity?.model || context?.anchorModel || "";
-    const brand = dynamicModelEntity?.brand || context?.anchorMake || "";
-    const selectedVehicle = {
-      ...(context?.selectedVehicle || {}),
-      make: brand || context?.selectedVehicle?.make || "",
-      brand: brand || context?.selectedVehicle?.brand || "",
-      model: model || context?.selectedVehicle?.model || "",
-      displayName:
-        dynamicModelEntity?.fullModel ||
-        context?.selectedVehicle?.displayName ||
-        model ||
-        "",
-      variant: "",
-      variantName: "",
-      selectedVariant: "",
-    };
-
-    return {
-      intent: "unavailable",
-      tool: "unavailable",
-      displayMode: "inline",
-      inlineType: "unavailable_notice",
-      canvasType: "",
-      answer:
-        "Test drives are not available from ACI Assist right now. I can still help with price, variants, features, colours, EMI, quotation, and comparisons.",
-      actions: model
-        ? [
-            {
-              id: "test-drive-fallback-quotation",
-              label: "Get quotation",
-              type: "lead",
-              query: `Get quotation for ${model}`,
-              intent: "aci_new_car_quotation",
-              canvasType: "aci_quotation_canvas",
-              leadType: "quotation",
-            },
-            {
-              id: "test-drive-fallback-price",
-              label: "See price",
-              type: "ask",
-              query: `${model} price`,
-              intent: "vehicle_pricelist",
-              canvasType: "pricelist_canvas",
-            },
-          ]
-        : [],
-      leadingQuestions: [],
-      conversationSuggestions: [],
-      contextPatch: {
-        anchorMake: selectedVehicle.make || "",
-        anchorModel: selectedVehicle.model || "",
-        anchorFullModel: selectedVehicle.displayName || selectedVehicle.model || "",
-        anchorVariant: "",
-        selectedVehicle,
-      },
-      meta: {
-        earlyFeatureGate: true,
-        testDriveUnavailable: true,
-      },
-    };
-  }
 
   const detected =
     detectAciEarlyDynamicRoutedRequest({
