@@ -633,9 +633,75 @@ const getEntityCandidateTexts = (entry = {}) => {
   )];
 };
 
+
+const ACI_MODEL_RESOLVER_GENERIC_NGRAMS = new Set([
+  "show",
+  "open",
+  "tell",
+  "check",
+  "find",
+  "list",
+  "price",
+  "prices",
+  "pricelist",
+  "price list",
+  "on road",
+  "on road price",
+  "ex showroom",
+  "ex showroom price",
+  "emi",
+  "loan",
+  "offer",
+  "offers",
+  "discount",
+  "quotation",
+  "quote",
+  "feature",
+  "features",
+  "color",
+  "colors",
+  "colour",
+  "colours",
+  "available",
+  "availability",
+  "black",
+  "white",
+  "red",
+  "blue",
+  "grey",
+  "gray",
+  "in",
+  "for",
+  "of",
+  "the",
+  "a",
+  "an",
+  "new",
+  "car",
+  "cars",
+  "model",
+  "variant",
+  "variants",
+  "delhi",
+  "new delhi",
+  "new-delhi",
+]);
+
+const isGenericVehicleModelResolverGram = (gram = "") => {
+  const norm = normalizeText(gram);
+  if (!norm) return true;
+  if (norm.length < 3) return true;
+  if (ACI_MODEL_RESOLVER_GENERIC_NGRAMS.has(norm)) return true;
+
+  const tokens = norm.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+
+  return tokens.every((token) => ACI_MODEL_RESOLVER_GENERIC_NGRAMS.has(token));
+};
+
 const scoreEntityCandidate = ({ gram = "", entry = {} } = {}) => {
   const gramNorm = normalizeText(gram);
-  if (!gramNorm) return null;
+  if (!gramNorm || isGenericVehicleModelResolverGram(gramNorm)) return null;
 
   const texts = getEntityCandidateTexts(entry);
   if (!texts.length) return null;
@@ -653,8 +719,8 @@ const scoreEntityCandidate = ({ gram = "", entry = {} } = {}) => {
     else if (textNorm.replace(/\s+/g, "") === gramNorm.replace(/\s+/g, "")) score += 110;
     else if (textNorm.startsWith(`${gramNorm} `)) score += 80;
     else if (textNorm.endsWith(` ${gramNorm}`)) score += 75;
-    else if (textNorm.includes(gramNorm)) score += 55;
-    else if (gramNorm.includes(textNorm) && textNorm.length >= 3) score += 35;
+    else if (` ${textNorm} `.includes(` ${gramNorm} `) && gramNorm.length >= 3) score += 55;
+    else if (gramNorm.includes(textNorm) && textNorm.length >= 4) score += 35;
 
     if (entry.model && normalizeText(entry.model) === gramNorm) score += 35;
     if (entry.fullModel && normalizeText(entry.fullModel) === gramNorm) score += 30;
