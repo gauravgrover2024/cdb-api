@@ -22,6 +22,7 @@ import {
   runAciEarlyGateTool,
 } from "./aiAgent.earlyFeatureGate.runner.js";
 import { maybeRunAciMultiFeatureAnswer } from "./aiAgent.multiFeatureAnswer.js";
+import { maybeRunAciFeatureComparisonAnswer } from "./aiAgent.featureComparisonAnswer.js";
 
 export const maybeRunAciEarlyFeatureGate = async ({
   message = "",
@@ -29,6 +30,15 @@ export const maybeRunAciEarlyFeatureGate = async ({
   selectedEntity = null,
   filters = {},
 } = {}) => {
+  const featureComparisonAnswer = await maybeRunAciFeatureComparisonAnswer({
+    message,
+    context,
+  });
+
+  if (featureComparisonAnswer) {
+    return featureComparisonAnswer;
+  }
+
   if (shouldSkipAciEarlyFeatureGate(message)) {
     return null;
   }

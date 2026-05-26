@@ -65,6 +65,12 @@ const tasks = [
     args: ["src/scripts/aci-audits/auditAciVariantMultiFeatureQueries.js"],
   },
   {
+    key: "featureComparisonQueries",
+    label: "Feature comparison query audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciFeatureComparisonQueries.js"],
+  },
+  {
     key: "contextSwitch",
     label: "Context switch audit",
     command: "node",
@@ -191,6 +197,7 @@ const summary = {
   vehicleEntityIndexExitCode: byKey.vehicleEntityIndex?.status ?? 1,
   multiFeatureQueriesExitCode: byKey.multiFeatureQueries?.status ?? 1,
   variantMultiFeatureQueriesExitCode: byKey.variantMultiFeatureQueries?.status ?? 1,
+  featureComparisonQueriesExitCode: byKey.featureComparisonQueries?.status ?? 1,
   contextSwitchExitCode: byKey.contextSwitch?.status ?? 1,
 
   passedMentions: count(/"pass"\s*:\s*true/g),
@@ -207,6 +214,7 @@ const summary = {
     vehicleEntityIndex: byKey.vehicleEntityIndex?.durationMs ?? 0,
     multiFeatureQueries: byKey.multiFeatureQueries?.durationMs ?? 0,
     variantMultiFeatureQueries: byKey.variantMultiFeatureQueries?.durationMs ?? 0,
+    featureComparisonQueries: byKey.featureComparisonQueries?.durationMs ?? 0,
     contextSwitch: byKey.contextSwitch?.durationMs ?? 0,
     total: totalDurationMs,
   },
@@ -221,6 +229,7 @@ const summary = {
     vehicleEntityIndex: extractSuite("ACI vehicle entity index audit"),
     multiFeatureQueries: extractSuite("ACI multi-feature query audit"),
     variantMultiFeatureQueries: extractSuite("ACI variant multi-feature query audit"),
+    featureComparisonQueries: extractSuite("ACI feature comparison query audit"),
   },
 
   contextSwitch: {
