@@ -8,6 +8,9 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const logPath = path.join(outDir, "aci_safety_gate_full.log");
 
+fs.mkdirSync(outDir, { recursive: true });
+fs.writeFileSync(logPath, "", { flag: "a" });
+
 const run = (label, command, args) => {
   console.log(`\n▶ ${label}`);
   const result = spawnSync(command, args, {
@@ -16,6 +19,8 @@ const run = (label, command, args) => {
   });
 
   const output = `${result.stdout || ""}${result.stderr || ""}`;
+
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
   fs.appendFileSync(logPath, `\n\n===== ${label} =====\n${output}`);
 
   return {

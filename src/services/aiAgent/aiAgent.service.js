@@ -362,46 +362,6 @@ export const createPlannerPlanForMessage = async ({
 /* -------------------------------------------------------------------------- */
 
 
-const ACI_EARLY_FEATURE_ALIASES = [
-  {
-    feature: "ARAI Mileage",
-    pattern: /\b(mileage|fuel\s*efficiency|average|kitna\s*deti|kitna\s*deti\s*hai|kmpl|kpl|arai\s*mileage)\b/i,
-  },
-  { feature: "Integrated 2DIN Audio", pattern: /\b(music\s*system|audio\s*system|sound\s*system|stereo|car\s*stereo|speaker\s*system)\b/i },
-  { feature: "Speakers", pattern: /\b(speakers?|bose\s*speakers?|premium\s*speakers?)\b/i },
-  { feature: "Touchscreen", pattern: /\b(infotainment\s*system|infotainment|touch\s*screen|touchscreen|music\s*display|display\s*audio)\b/i },
-  { feature: "Android Auto", pattern: /\b(android\s*auto|android\s*connect|phone\s*projection)\b/i },
-  { feature: "Apple CarPlay", pattern: /\b(apple\s*car\s*play|apple\s*carplay|carplay|iphone\s*carplay)\b/i },
-  { feature: "Sunroof", pattern: /\b(sunroof|panoramic\s*sunroof|single\s*pane\s*sunroof)\b/i },
-  { feature: "ADAS", pattern: /\b(adas|advanced\s*driver|driver\s*assist)\b/i },
-  { feature: "6 Airbags", pattern: /\b(6\s*airbags?|six\s*airbags?|airbags?)\b/i },
-  { feature: "Rear Camera", pattern: /\b(rear\s*camera|reverse\s*camera|parking\s*camera|rear\s*view\s*camera)\b/i },
-  { feature: "360 Camera", pattern: /\b(360\s*camera|360\s*degree\s*camera|360\s*view\s*camera)\b/i },
-  { feature: "Ventilated Seats", pattern: /\b(ventilated\s*seats?|seat\s*ventilation)\b/i },
-  { feature: "Wireless Charging", pattern: /\b(wireless\s*charger|wireless\s*charging|phone\s*charging)\b/i },
-  { feature: "Cruise Control", pattern: /\b(cruise\s*control|adaptive\s*cruise)\b/i },
-  { feature: "Alloy Wheels", pattern: /\b(alloy\s*wheels?|alloys?)\b/i },
-  { feature: "Rear AC Vents", pattern: /\b(rear\s*ac\s*vents?|rear\s*vents?|rear\s*blower)\b/i },
-  { feature: "TPMS", pattern: /\b(tpms|tyre\s*pressure|tire\s*pressure)\b/i },
-
-  {
-    feature: "LED Headlamps",
-    pattern: /\b(led\s*headlamps?|led\s*headlights?|headlamps?|headlights?|projector\s*headlamps?)\b/i,
-  },
-  {
-    feature: "Automatic Climate Control",
-    pattern: /\b(automatic\s*climate\s*control|climate\s*control|auto\s*ac|automatic\s*ac)\b/i,
-  },
-  {
-    feature: "Hill Hold",
-    pattern: /\b(hill\s*hold|hill\s*assist|hill\s*start\s*assist)\b/i,
-  },
-
-  {
-    feature: "ABS",
-    pattern: /\b(abs|ags|anti\s*lock\s*braking|anti-lock\s*braking|anti\s*lock\s*braking\s*system|anti-lock\s*braking\s*system|braking\s*system)\b/i,
-  },
-];
 
 
 
