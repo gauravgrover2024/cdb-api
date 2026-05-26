@@ -873,14 +873,18 @@ const pickLatestBusinessDate = (doc, isCashCase) => {
 loanSchema.pre("validate", function normalizeTagsHook() {
   try {
     if (this.postfile_tags && Array.isArray(this.postfile_tags)) {
-      this.postfile_tags = this.postfile_tags.map(tag => {
-        if (!tag) return "";
-        if (typeof tag === "string") return tag.trim();
-        if (typeof tag === "object") {
-          return String(tag.name || tag.label || tag.value || tag.id || "").trim();
-        }
-        return String(tag).trim();
-      }).filter(Boolean);
+      this.postfile_tags = this.postfile_tags
+        .map((tag) => {
+          if (!tag) return "";
+          if (typeof tag === "string") return tag.trim();
+          if (typeof tag === "object") {
+            return String(
+              tag.name || tag.label || tag.value || tag.id || "",
+            ).trim();
+          }
+          return String(tag).trim();
+        })
+        .filter(Boolean);
     }
   } catch (err) {
     console.error("Error in normalizeTagsHook:", err);
