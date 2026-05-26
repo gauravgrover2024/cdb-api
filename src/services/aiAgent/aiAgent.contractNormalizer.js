@@ -87,6 +87,68 @@ const normalizeFeatureSourceTransparency = (response = {}, source = {}) => {
 };
 
 
+
+const normalizeReadModelSourceTransparency = (response = {}, source = {}) => {
+  const responseModules = toArray(
+    response.modulesChecked ||
+      response.meta?.modulesChecked ||
+      response.data?.modulesChecked,
+  );
+
+  const responseSource = String(
+    response.dataSource ||
+      response.source ||
+      response.meta?.dataSource ||
+      response.meta?.source ||
+      "",
+  );
+
+  const readModelModules = ["aci_vehicle_model_summary", "aci_vehicle_price_rows"];
+  const hasReadModelModules = readModelModules.every((moduleName) =>
+    responseModules.includes(moduleName),
+  );
+
+  const isReadModelPricelist =
+    responseSource === "aci_vehicle_read_models" || hasReadModelModules;
+
+  if (!isReadModelPricelist) return source;
+
+  const normalizedSource = { ...source };
+
+  // Remove accidental array-spread numeric keys like "0", "1" from sourceTransparency.
+  for (const key of Object.keys(normalizedSource)) {
+    if (/^\d+$/.test(key)) {
+      delete normalizedSource[key];
+    }
+  }
+
+  if (normalizedSource.responseTool === "multi_tool") {
+    const tools = toArray(normalizedSource.tools).filter((tool) => tool !== "multi_tool");
+    if (tools[0]) {
+      normalizedSource.responseTool = tools[0];
+    } else {
+      delete normalizedSource.responseTool;
+    }
+  }
+
+  return {
+    ...normalizedSource,
+    modulesChecked: responseModules.length ? responseModules : readModelModules,
+    recordCount:
+      source.recordCount ??
+      source.matched ??
+      source.matchedCount ??
+      getRows(response, response.widget).length,
+    matched:
+      source.matched ??
+      source.matchedCount ??
+      source.recordCount ??
+      getRows(response, response.widget).length,
+    dataSource: "aci_vehicle_read_models",
+  };
+};
+
+
 const normalizeSourceTransparency = (response = {}, widget = null) => {
   const raw =
     response.sourceTransparency ||
@@ -96,12 +158,15 @@ const normalizeSourceTransparency = (response = {}, widget = null) => {
     null;
 
   if (Array.isArray(raw)) {
-    return {
-      modulesChecked: raw.filter(Boolean),
-      recordCount: getRows(response, widget).length,
-      matched: getRows(response, widget).length,
-      dataSource: raw[0] || "",
-    };
+    return normalizeReadModelSourceTransparency(
+      response,
+      normalizeFeatureSourceTransparency(response, {
+        modulesChecked: raw.filter(Boolean),
+        recordCount: getRows(response, widget).length,
+        matched: getRows(response, widget).length,
+        dataSource: raw[0] || "",
+      }),
+    );
   }
 
   if (raw && typeof raw === "object") {
@@ -110,20 +175,23 @@ const normalizeSourceTransparency = (response = {}, widget = null) => {
         ? toArray(raw.modulesChecked)
         : toArray(raw.module || raw.collection || raw.dataSource);
 
-    return normalizeFeatureSourceTransparency(response, {
-      ...raw,
-      modulesChecked,
-      recordCount:
-        raw.recordCount ??
-        raw.matched ??
-        raw.matchedCount ??
-        getRows(response, widget).length,
-      matched:
-        raw.matched ??
-        raw.matchedCount ??
-        raw.recordCount ??
-        getRows(response, widget).length,
-    });
+    return normalizeReadModelSourceTransparency(
+      response,
+      normalizeFeatureSourceTransparency(response, {
+        ...raw,
+        modulesChecked,
+        recordCount:
+          raw.recordCount ??
+          raw.matched ??
+          raw.matchedCount ??
+          getRows(response, widget).length,
+        matched:
+          raw.matched ??
+          raw.matchedCount ??
+          raw.recordCount ??
+          getRows(response, widget).length,
+      }),
+    );
   }
 
   const inferredModule =
@@ -135,12 +203,15 @@ const normalizeSourceTransparency = (response = {}, widget = null) => {
           ? "vehicles"
           : response.tool || response.intent || "";
 
-  return normalizeFeatureSourceTransparency(response, {
-    modulesChecked: inferredModule ? [inferredModule] : [],
-    recordCount: getRows(response, widget).length,
-    matched: getRows(response, widget).length,
-    dataSource: inferredModule,
-  });
+  return normalizeReadModelSourceTransparency(
+    response,
+    normalizeFeatureSourceTransparency(response, {
+      modulesChecked: inferredModule ? [inferredModule] : [],
+      recordCount: getRows(response, widget).length,
+      matched: getRows(response, widget).length,
+      dataSource: inferredModule,
+    }),
+  );
 };
 
 const buildRuntimeResultsMeta = (response = {}, widget = null, source = {}) => {
@@ -166,24 +237,62 @@ const buildRuntimeResultsMeta = (response = {}, widget = null, source = {}) => {
             : response.intent || "");
 
   if (existing.length) {
+    const readModelModules = ["aci_vehicle_model_summary", "aci_vehicle_price_rows"];
+    const readModelToolNames = new Set([
+      "vehicle_pricelist",
+      "vehicle_emi",
+      "vehicle_price_breakup",
+    ]);
+
     return existing.map((item, index) => {
+      const itemTool = item.tool || "";
+      const itemModules = toArray(item.modulesChecked);
+      const itemSource = item.dataSource || item.source || "";
+
       const shouldNormalizeFeatureMeta =
         response.intent === "vehicle_model_features_explorer" ||
         response.intent === "vehicle_feature_discovery" ||
         response.canvasType === "features_explorer_canvas" ||
         response.canvasType === "feature_match_builder_canvas";
 
-      if (!shouldNormalizeFeatureMeta) return item;
+      const shouldNormalizeReadModelMeta =
+        readModelToolNames.has(itemTool) &&
+        (
+          source.dataSource === "aci_vehicle_read_models" ||
+          itemSource === "vehicles" ||
+          itemSource === "aci_vehicle_read_models" ||
+          itemModules.includes("vehicles") ||
+          itemModules.includes("aci_vehicle_model_summary") ||
+          itemModules.includes("aci_vehicle_price_rows")
+        );
+
+      if (shouldNormalizeReadModelMeta) {
+        return {
+          ...item,
+          index: item.index ?? index,
+          tool: itemTool || tool,
+          source: "aci_vehicle_read_models",
+          dataSource: "aci_vehicle_read_models",
+          modulesChecked: readModelModules,
+        };
+      }
+
+      if (!shouldNormalizeFeatureMeta) {
+        return {
+          ...item,
+          index: item.index ?? index,
+        };
+      }
 
       return {
         ...item,
         index: item.index ?? index,
-        tool,
+        tool: itemTool || tool,
         source: modulesChecked[0] || item.source || "",
         modulesChecked:
           modulesChecked.length > 0
             ? modulesChecked
-            : toArray(item.modulesChecked),
+            : itemModules,
       };
     });
   };
