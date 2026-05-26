@@ -19,12 +19,12 @@ import {
   unique,
 } from "./aiAgent.vehicleEntityIndex.normalizers.js";
 import {
-  containsAlias,
   findColorMatches,
   findModelMatches,
   findVariantMatches,
 } from "./aiAgent.vehicleEntityIndex.matchers.js";
 import { buildAutocompleteEntityMatchesFromIndex } from "./aiAgent.vehicleEntityIndex.autocomplete.js";
+import { buildRepresentativeVariantFromIndex } from "./aiAgent.vehicleEntityIndex.representativeVariant.js";
 
 const DEFAULT_TTL_MS = Number(
   process.env.ACI_ENTITY_INDEX_TTL_MS || 15 * 60 * 1000,
@@ -228,84 +228,15 @@ export const selectRepresentativeVariant = async ({
 } = {}) => {
   const index = await getVehicleEntityIndex();
 
-  const shortModelKey = normalizeSearchKey(model);
-  const modelKey = normalizeSearchKey(`${brand} ${model}`);
-
-  const candidates = index.variants.filter((variant) => {
-    if (!variant.active) return false;
-
-    return (
-      variant.shortModelKey === shortModelKey ||
-      variant.modelKey === modelKey ||
-      normalizeSearchKey(variant.model) === shortModelKey
-    );
+  return buildRepresentativeVariantFromIndex({
+    index,
+    model,
+    brand,
+    preferredTransmission,
+    preferredFuel,
+    targetPrice,
+    selectedVariant,
   });
-
-  if (!candidates.length) {
-    return {
-      model,
-      variantStrategy: "representative_default",
-    };
-  }
-
-  if (selectedVariant) {
-    const selectedKey = normalizeSearchKey(selectedVariant);
-    const exact = candidates.find(
-      (variant) =>
-        variant.shortVariantKey === selectedKey ||
-        containsAlias(normalizeSearchKey(variant.variant), selectedKey),
-    );
-
-    if (exact) return exact;
-  }
-
-  const scored = candidates.map((variant) => {
-    let score = 0;
-
-    const transmissionKey = normalizeSearchKey(variant.transmission);
-    const fuelKey = normalizeSearchKey(variant.fuelType);
-
-    if (
-      preferredTransmission &&
-      transmissionKey.includes(normalizeSearchKey(preferredTransmission))
-    ) {
-      score += 40;
-    }
-
-    if (preferredFuel && fuelKey.includes(normalizeSearchKey(preferredFuel))) {
-      score += 25;
-    }
-
-    if (targetPrice && variant.price) {
-      const distance = Math.abs(Number(variant.price) - Number(targetPrice));
-      score += Math.max(0, 30 - distance / 50000);
-    }
-
-    if (
-      /automatic|ivt|cvt|dct|amt|at/i.test(
-        `${variant.variant} ${variant.transmission}`,
-      )
-    ) {
-      score += 10;
-    }
-
-    if (
-      /sx|zx|zxi|htx|gtx|alpha|creative|accomplished|top/i.test(variant.variant)
-    ) {
-      score += 8;
-    }
-
-    if (variant.price) score += 4;
-
-    return {
-      ...variant,
-      representativeScore: score,
-    };
-  });
-
-  scored.sort((a, b) => b.representativeScore - a.representativeScore);
-
-  return scored[0];
 };
 
 export const getAutocompleteEntityMatches = async ({
