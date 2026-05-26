@@ -870,7 +870,7 @@ const pickLatestBusinessDate = (doc, isCashCase) => {
   );
 };
 
-loanSchema.pre("validate", function normalizeTagsHook(next) {
+loanSchema.pre("validate", function normalizeTagsHook() {
   try {
     if (this.postfile_tags && Array.isArray(this.postfile_tags)) {
       this.postfile_tags = this.postfile_tags.map(tag => {
@@ -885,7 +885,6 @@ loanSchema.pre("validate", function normalizeTagsHook(next) {
   } catch (err) {
     console.error("Error in normalizeTagsHook:", err);
   }
-  next();
 });
 
 loanSchema.pre("save", function computeBusinessFields() {
