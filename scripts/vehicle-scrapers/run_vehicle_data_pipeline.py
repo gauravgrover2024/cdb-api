@@ -27,14 +27,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 def run_step(name: str, command: Iterable[str]) -> None:
     command = list(command)
-    print("\n" + "=" * 80)
-    print(f"STEP: {name}")
-    print("CMD : " + " ".join(command))
-    print("=" * 80)
+    print("\n" + "=" * 80, flush=True)
+    print(f"STEP: {name}", flush=True)
+    print("CMD : " + " ".join(command), flush=True)
+    print("=" * 80, flush=True)
 
     start = time.time()
     subprocess.run(command, cwd=SCRIPT_DIR, check=True)
-    print(f"\nDONE: {name} in {time.time() - start:.2f}s")
+    print(f"\nDONE: {name} in {time.time() - start:.2f}s", flush=True)
 
 
 def parse_args() -> argparse.Namespace:

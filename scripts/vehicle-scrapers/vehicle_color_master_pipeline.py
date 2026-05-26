@@ -117,7 +117,7 @@ def utc_now():
 
 
 def log(message):
-    print(f"[{utc_now().isoformat()}] {message}")
+    print(f"[{utc_now().isoformat()}] {message}", flush=True)
 
 
 def normalize_spaces(value):
@@ -1352,6 +1352,28 @@ def local_path_from_public_url(public_url):
     if not filename:
         return None
     return os.path.join(NORMALIZED_DIR, filename)
+
+
+def upload_to_r2(local_path, skip_upload=False):
+    if skip_upload:
+        log(f"SKIP R2 UPLOAD: {local_path}")
+        return True
+
+    if not local_path or not os.path.exists(local_path):
+        log(f"R2 UPLOAD MISSING LOCAL FILE: {local_path}")
+        return False
+
+    remote_path = f"{R2_REMOTE}/{os.path.basename(local_path)}"
+    command = ["rclone", "copyto", local_path, remote_path, "--s3-no-check-bucket"]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"R2 UPLOAD FAILED: {local_path} -> {remote_path}")
+        if result.stderr:
+            log(result.stderr.strip())
+        return False
+
+    log(f"R2 UPLOAD OK: {remote_path}")
+    return True
 
 
 def upload_normalizer_outputs(result, skip_upload=False):
