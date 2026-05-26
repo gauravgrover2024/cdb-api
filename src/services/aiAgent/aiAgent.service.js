@@ -2439,7 +2439,7 @@ const normalizeAciServiceResponseContract = (
 
 
 
-const repairAciResponseContextFromActiveContext = ({
+const repairAciResponseContextFromActiveContext = async ({
   response = {},
   context = {},
 } = {}) => {
@@ -2447,24 +2447,80 @@ const repairAciResponseContextFromActiveContext = ({
   if (!context || typeof context !== "object") return response;
 
   const contextVehicle = context.selectedVehicle || {};
+  const patch = response.contextPatch || {};
+  const patchVehicle = patch.selectedVehicle || {};
+
+  const responseModel = cleanText(
+    patch.anchorModel ||
+      patchVehicle.model ||
+      response.vehicle?.model ||
+      response.data?.model ||
+      "",
+  );
+
   const activeModel = cleanText(
     context.anchorModel ||
       contextVehicle.model ||
       context.model ||
+      responseModel ||
       "",
   );
 
-  const activeMake = cleanText(
+  let activeMake = cleanText(
     context.anchorMake ||
       contextVehicle.make ||
       contextVehicle.brand ||
+      patch.anchorMake ||
+      patch.anchorBrand ||
+      patchVehicle.make ||
+      patchVehicle.brand ||
+      "",
+  );
+
+  let activeFullModel = cleanText(
+    context.anchorFullModel ||
+      contextVehicle.fullModel ||
+      contextVehicle.displayName ||
+      patch.anchorFullModel ||
+      patchVehicle.fullModel ||
+      patchVehicle.displayName ||
       "",
   );
 
   if (!activeModel) return response;
 
-  const patch = response.contextPatch || {};
-  const patchVehicle = patch.selectedVehicle || {};
+  // Empty-context flows like EMI/lead know the model but often miss make/brand.
+  // Hydrate from read-model summaries instead of guessing or hardcoding.
+  if (
+    !activeMake ||
+    !activeFullModel ||
+    normalizeAciContextText(activeFullModel) === normalizeAciContextText(activeModel)
+  ) {
+    try {
+      const hydrated = await hydrateAciExplicitModelEntityFromReadModel({
+        model: activeModel,
+        make: activeMake,
+        brand: activeMake,
+        fullModel: activeFullModel,
+      });
+
+      if (
+        hydrated?.model &&
+        normalizeAciContextText(hydrated.model) === normalizeAciContextText(activeModel)
+      ) {
+        activeMake = activeMake || cleanText(hydrated.make || hydrated.brand || "");
+        activeFullModel =
+          cleanText(hydrated.fullModel || hydrated.displayName || "") ||
+          activeFullModel;
+      }
+    } catch {
+      // Keep existing context if read-model hydration is unavailable.
+    }
+  }
+
+  if (!activeFullModel) {
+    activeFullModel = activeMake ? `${activeMake} ${activeModel}` : activeModel;
+  }
 
   const patchModel = cleanText(
     patch.anchorModel ||
@@ -2482,13 +2538,6 @@ const repairAciResponseContextFromActiveContext = ({
   ) {
     return response;
   }
-
-  const activeFullModel = cleanText(
-    context.anchorFullModel ||
-      contextVehicle.fullModel ||
-      contextVehicle.displayName ||
-      (activeMake && activeModel ? `${activeMake} ${activeModel}` : activeModel),
-  );
 
   const repairedVehicle = {
     ...patchVehicle,
@@ -2536,7 +2585,7 @@ export const chatWithAgent = async (...args) => {
   const { message, context } = getNormalizerInputs(args);
   const response = await chatWithAgentCore(...args);
 
-  repairAciResponseContextFromActiveContext({
+  await repairAciResponseContextFromActiveContext({
     response,
     context,
   });
@@ -2546,7 +2595,7 @@ export const chatWithAgent = async (...args) => {
     context,
   });
 
-  repairAciResponseContextFromActiveContext({
+  await repairAciResponseContextFromActiveContext({
     response: normalized,
     context,
   });
