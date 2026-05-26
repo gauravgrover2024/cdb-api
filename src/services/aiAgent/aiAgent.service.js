@@ -365,15 +365,6 @@ export const createPlannerPlanForMessage = async ({
 /* -------------------------------------------------------------------------- */
 
 
-const ACI_EARLY_FEATURE_MODELS = [
-  "creta", "verna", "thar", "seltos", "sonet", "venue", "exter",
-  "alcazar", "city", "elevate", "nexon", "harrier", "safari",
-  "punch", "scorpio", "xuv700", "xuv 700", "xuv7xo", "xuv 7xo",
-  "xuv300", "xuv 300", "xuv3xo", "xuv 3xo", "slavia", "virtus",
-  "taigun", "kushaq", "brezza", "fronx", "swift", "dzire",
-  "baleno", "fortuner", "innova",
-];
-
 const ACI_EARLY_FEATURE_ALIASES = [
   {
     feature: "ARAI Mileage",
@@ -415,119 +406,6 @@ const ACI_EARLY_FEATURE_ALIASES = [
   },
 ];
 
-const toAciTitleCaseModel = (model = "") => {
-  const normalized = String(model || "").trim().replace(/-/g, " ").toLowerCase();
-  if (["xuv700", "xuv 700", "xuv7xo", "xuv 7xo"].includes(normalized)) return "XUV 7XO";
-  if (["xuv300", "xuv 300", "xuv3xo", "xuv 3xo"].includes(normalized)) return "XUV 3XO";
-  if (normalized === "thar roxx") return "Thar Roxx";
-  if (normalized === "scorpio n") return "Scorpio N";
-  if (normalized === "i20" || normalized === "i 20") return "i20";
-  return normalized
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-};
-
-const detectAciEarlyFeatureRequest = (message = "") => {
-  const raw = String(message || "").trim();
-  if (!raw) return null;
-
-  const model = ACI_EARLY_FEATURE_MODELS.find((name) => {
-    const safe = name.replace(/\s+/g, "\\s*");
-    return new RegExp(`\\b${safe}\\b`, "i").test(raw);
-  });
-
-  if (!model) return null;
-
-  const alias = ACI_EARLY_FEATURE_ALIASES.find((entry) => entry.pattern.test(raw));
-  if (!alias?.feature) return null;
-
-  const isDiscovery =
-    /\b(which|show|find|list)\b.*\b(variants?|cars?)\b/i.test(raw) ||
-    /\bavailable\b.*\b(which|variant|variants)\b/i.test(raw) ||
-    /\b(cheapest|most affordable|lowest price|without|miss|missing|do not have|dont have|don't have)\b/i.test(raw);
-
-  return {
-    model: toAciTitleCaseModel(model),
-    feature: alias.feature,
-    intent: isDiscovery ? "vehicle_feature_discovery" : "vehicle_feature_answer",
-    canvasType: isDiscovery ? "feature_match_builder_canvas" : "",
-  };
-};
-
-
-const extractAciEarlyComparisonVariants = ({ message = "", model = "" } = {}) => {
-  const raw = String(message || "").trim();
-  if (!raw || !model) return [];
-
-  const modelPattern = /xuv\s*(?:700|7xo)/i.test(model.toLowerCase())
-    ? /xuv\s*(?:700|7xo)/i
-    : /xuv\s*(?:300|3xo)/i.test(model.toLowerCase())
-      ? /xuv\s*(?:300|3xo)/i
-    : new RegExp(`\\b${model.replace(/\\s+/g, "\\\\s*")}\\b`, "i");
-
-  const modelMatch = raw.match(modelPattern);
-  if (!modelMatch) return [];
-
-  let tail = raw.slice((modelMatch.index || 0) + modelMatch[0].length);
-
-  tail = tail
-    .replace(/\b(difference|different|between|in|of|features?|feature|compare|comparison|variant|variants|what|extra|do|i|get|show|tell|me|please)\b/gi, " ")
-    .replace(/[?,.]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!tail) return [];
-
-  const parts = tail
-    .split(/\s+(?:and|vs|versus|v\/s|against|over|to|with)\s+/i)
-    .map((part) =>
-      part
-        .replace(/\b(features?|variant|variants|difference|compare|comparison)\b/gi, " ")
-        .replace(/\s+/g, " ")
-        .trim(),
-    )
-    .filter(Boolean)
-    .slice(0, 3);
-
-  return parts.length >= 2 ? parts : [];
-};
-
-const detectAciEarlyVariantComparisonRequest = (message = "") => {
-  const raw = String(message || "").trim();
-  if (!raw) return null;
-
-  const hasComparisonLanguage =
-    /\b(difference|different|compare|comparison|vs|versus|v\/s|extra\s+features?|upgrade)\b/i.test(raw);
-
-  if (!hasComparisonLanguage) return null;
-
-  const model = ACI_EARLY_FEATURE_MODELS.find((name) => {
-    const safe = name.replace(/\s+/g, "\\s*");
-    return new RegExp(`\\b${safe}\\b`, "i").test(raw);
-  });
-
-  if (!model) return null;
-
-  const variants = extractAciEarlyComparisonVariants({
-    message: raw,
-    model,
-  });
-
-  if (variants.length < 2) return null;
-
-  return {
-    model: toAciTitleCaseModel(model),
-    variants,
-    feature: "",
-    intent: "vehicle_feature_comparison",
-    canvasType: "comparison_canvas",
-  };
-};
-
-
-
 const getAciAgentMongoDb = () => {
   if (mongoose.connection?.readyState !== 1 || !mongoose.connection?.db) {
     return null;
@@ -549,41 +427,6 @@ const resolveAciDynamicModelEntity = async (message = "") => {
   } catch {
     return null;
   }
-};
-
-const detectAciKnownModelEntityFromMessage = (message = "") => {
-  const raw = String(message || "").trim();
-  if (!raw) return null;
-
-  const matched = ACI_EARLY_FEATURE_MODELS.find((name) => {
-    const safe = name.replace(/\s+/g, "\\s*");
-    return new RegExp(`\\b${safe}\\b`, "i").test(raw);
-  });
-
-  if (!matched) return null;
-
-  // Avoid treating generic location wording as Honda City unless it is clearly a car request.
-  if (
-    normalizeAciContextText(matched) === "city" &&
-    !/\bhonda\s+city\b/i.test(raw) &&
-    !/\b(city)\b.*\b(price|pricelist|emi|colors?|colours?|features?|sunroof|compare|vs)\b/i.test(raw) &&
-    !/\b(price|pricelist|emi|colors?|colours?|features?|sunroof|compare|vs)\b.*\b(city)\b/i.test(raw)
-  ) {
-    return null;
-  }
-
-  const model = toAciTitleCaseModel(matched);
-
-  return {
-    brand: "",
-    make: "",
-    model,
-    fullModel: model,
-    matchedText: matched,
-    confidence: 0.98,
-    method: "known_model_message_fallback",
-    fromMessage: true,
-  };
 };
 
 const hydrateAciExplicitModelEntityFromReadModel = async (entity = {}) => {
@@ -691,8 +534,9 @@ const resolveAciExplicitMessageModelEntity = async (message = "") => {
     });
   }
 
-  const knownFallback = detectAciKnownModelEntityFromMessage(message);
-  return hydrateAciExplicitModelEntityFromReadModel(knownFallback);
+  // No static model fallback here.
+  // Explicit model truth must come from resolver/read-model data only.
+  return null;
 };
 
 const ACI_DYNAMIC_CONNECTED_FEATURE_ALIAS = {
@@ -720,10 +564,7 @@ const buildAciDynamicFeatureCleanUserMessage = ({
   alias = null,
 } = {}) => {
   let tail = String(raw || "").trim();
-  const xuvAliasMatch = tail.match(/\bxuv\s*(?:700|7xo|300|3xo)\b/i);
-
   const modelCandidates = [
-    xuvAliasMatch?.[0],
     modelEntity?.matchedText,
     modelEntity?.fullModel,
     modelEntity?.model,
@@ -868,23 +709,13 @@ const detectAciDynamicFeatureCategory = (message = "") => {
 const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null } = {}) => {
   const raw = String(message || "").trim();
   if (!raw || !modelEntity?.model) return null;
-  const xuvAliasMatch = raw.match(/\bxuv\s*(?:700|7xo|300|3xo)\b/i);
-  let model = toAciTitleCaseModel(modelEntity.model);
-  let brand = modelEntity.brand || "";
-  let fullModel = modelEntity.fullModel
-    ? `${brand ? `${brand} ` : ""}${model}`.trim()
-    : "";
-
-  if (xuvAliasMatch) {
-    brand = brand || "Mahindra";
-    if (/7|700/i.test(xuvAliasMatch[0])) {
-      model = "XUV 7XO";
-      fullModel = "Mahindra XUV 7XO";
-    } else {
-      model = "XUV 3XO";
-      fullModel = "Mahindra XUV 3XO";
-    }
-  }
+  const model = cleanText(modelEntity.model || "");
+  const brand = cleanText(modelEntity.brand || modelEntity.make || "");
+  const fullModel = cleanText(
+    modelEntity.fullModel ||
+      modelEntity.displayName ||
+      (brand && model ? `${brand} ${model}` : model),
+  );
 
   const categoryMatch = detectAciDynamicFeatureCategory(raw);
 
@@ -1011,12 +842,17 @@ const detectAciEarlyDynamicRoutedRequest = ({ message = "", modelEntity = null }
     };
   }
 
-  const explicitModelMention = cleanText(xuvAliasMatch?.[0] || modelEntity.matchedText || "");
+  const explicitModelMention = cleanText(
+    modelEntity.matchedText ||
+      modelEntity.fullModel ||
+      modelEntity.displayName ||
+      modelEntity.model ||
+      "",
+  );
   if (explicitModelMention) {
     let residual = raw;
     [
       modelEntity.matchedText,
-      xuvAliasMatch?.[0],
       fullModel,
       modelEntity.model,
       model,
@@ -1604,19 +1440,7 @@ const maybeRunAciEarlyFeatureGate = async ({
     detectAciEarlyDynamicRoutedRequest({
       message,
       modelEntity: dynamicModelEntity,
-    }) ||
-    (typeof detectAciEarlyPricelistTypoRequest === "function"
-      ? detectAciEarlyPricelistTypoRequest(message)
-      : null) ||
-    (typeof detectAciEarlyFeatureExplorerRequest === "function"
-      ? detectAciEarlyFeatureExplorerRequest(message)
-      : null) ||
-    (typeof detectAciEarlyVariantComparisonRequest === "function"
-      ? detectAciEarlyVariantComparisonRequest(message)
-      : null) ||
-    (typeof detectAciEarlyFeatureRequest === "function"
-      ? detectAciEarlyFeatureRequest(message)
-      : null);
+    });
 
   if (!detected) return null;
 

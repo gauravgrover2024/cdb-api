@@ -578,6 +578,153 @@ export const loadVehicleVariantIndexByModelKey = async ({
   return cachedVariantIndexByModelKey;
 };
 
+
+const buildMessageNgrams = (message = "") => {
+  const normalized = normalizeText(message);
+  const tokens = normalized
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  const grams = new Set();
+
+  for (let start = 0; start < tokens.length; start += 1) {
+    for (let size = 1; size <= 5 && start + size <= tokens.length; size += 1) {
+      grams.add(tokens.slice(start, start + size).join(" "));
+    }
+  }
+
+  return [...grams].sort((a, b) => b.length - a.length);
+};
+
+
+const toResolverArray = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (value === undefined || value === null || value === "") return [];
+  return [value];
+};
+
+const getEntityCandidateTexts = (entry = {}) => {
+  const values = [
+    entry.matchedText,
+    entry.alias,
+    entry.name,
+    entry.model,
+    entry.modelName,
+    entry.displayName,
+    entry.fullModel,
+    entry.fullName,
+    entry.make,
+    entry.brand,
+    entry.makeName,
+    entry.modelKey,
+    entry.makeKey,
+    entry.searchText,
+    ...toResolverArray(entry.aliases),
+    ...toResolverArray(entry.tokens),
+    ...toResolverArray(entry.searchTokens),
+    ...toResolverArray(entry.names),
+  ];
+
+  return [...new Set(
+    values
+      .map((value) => String(value || "").replace(/[-_]+/g, " ").trim())
+      .filter(Boolean),
+  )];
+};
+
+const scoreEntityCandidate = ({ gram = "", entry = {} } = {}) => {
+  const gramNorm = normalizeText(gram);
+  if (!gramNorm) return null;
+
+  const texts = getEntityCandidateTexts(entry);
+  if (!texts.length) return null;
+
+  let bestScore = 0;
+  let bestText = "";
+
+  for (const text of texts) {
+    const textNorm = normalizeText(text);
+    if (!textNorm) continue;
+
+    let score = 0;
+
+    if (textNorm === gramNorm) score += 120;
+    else if (textNorm.replace(/\s+/g, "") === gramNorm.replace(/\s+/g, "")) score += 110;
+    else if (textNorm.startsWith(`${gramNorm} `)) score += 80;
+    else if (textNorm.endsWith(` ${gramNorm}`)) score += 75;
+    else if (textNorm.includes(gramNorm)) score += 55;
+    else if (gramNorm.includes(textNorm) && textNorm.length >= 3) score += 35;
+
+    if (entry.model && normalizeText(entry.model) === gramNorm) score += 35;
+    if (entry.fullModel && normalizeText(entry.fullModel) === gramNorm) score += 30;
+    if (entry.displayName && normalizeText(entry.displayName) === gramNorm) score += 25;
+    if (entry.variantCount || entry.priceCount || entry.rowCount) score += 5;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestText = text;
+    }
+  }
+
+  if (bestScore <= 0) return null;
+
+  const confidence =
+    bestScore >= 120
+      ? 0.99
+      : bestScore >= 110
+        ? 0.97
+        : bestScore >= 80
+          ? 0.92
+          : bestScore >= 55
+            ? 0.84
+            : bestScore >= 35
+              ? 0.76
+              : 0;
+
+  if (confidence <= 0) return null;
+
+  return {
+    ...entry,
+    score: bestScore,
+    confidence: Math.max(Number(entry.confidence || 0), confidence),
+    matchedText: entry.matchedText || bestText || gram,
+    matchText: bestText || gram,
+    method: entry.method || "db_entity_ngram_match",
+  };
+};
+
+
+const getExactHitLengthInMessage = ({ message = "", keys = [] } = {}) => {
+  const messageNorm = normalizeText(message);
+  const messageCompact = compactText(message);
+
+  if (!messageNorm) return 0;
+
+  let best = 0;
+
+  for (const key of unique(keys)) {
+    const keyNorm = normalizeText(key);
+    const keyCompact = compactText(key);
+
+    if (!keyNorm) continue;
+
+    const paddedMessage = ` ${messageNorm} `;
+    const paddedKey = ` ${keyNorm} `;
+
+    if (paddedMessage.includes(paddedKey)) {
+      best = Math.max(best, keyNorm.length);
+      continue;
+    }
+
+    if (keyCompact && messageCompact.includes(keyCompact)) {
+      best = Math.max(best, keyCompact.length);
+    }
+  }
+
+  return best;
+};
+
 export const resolveVehicleModelFromText = async ({
   db,
   message = "",
