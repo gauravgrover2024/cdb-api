@@ -32,11 +32,16 @@ const run = (label, command, args) => {
 };
 
 const foundation = run("Foundation", "npm", ["run", "test:aci:foundation"]);
+
+const modelResolver = run("Model resolver audit", "node", [
+  "src/scripts/aci-audits/auditAciModelResolver.js",
+]);
+
 const contextSwitch = run("Context switch audit", "node", [
   "src/scripts/aci-audits/auditAciContextSwitch.js",
 ]);
 
-const allOutput = `${foundation.output}\n${contextSwitch.output}`;
+const allOutput = `${foundation.output}\n${modelResolver.output}\n${contextSwitch.output}`;
 
 const extractSuite = (name) => {
   const regex = new RegExp(
@@ -61,6 +66,7 @@ const missingContextChecks = contextChecks.filter((key) => !allOutput.includes(k
 
 const hasFailures =
   !foundation.ok ||
+  !modelResolver.ok ||
   !contextSwitch.ok ||
   /"failed"\s*:\s*[1-9]/.test(allOutput) ||
   /"pass"\s*:\s*false/.test(allOutput) ||
@@ -70,6 +76,7 @@ const hasFailures =
 const summary = {
   ok: !hasFailures,
   foundationExitCode: foundation.status,
+  modelResolverExitCode: modelResolver.status,
   contextSwitchExitCode: contextSwitch.status,
   passedMentions: count(/"pass"\s*:\s*true/g),
   failedMentions: count(/"pass"\s*:\s*false/g),
@@ -77,6 +84,7 @@ const summary = {
     executor: extractSuite("ACI Assist executor smoke"),
     v2: extractSuite("ACI Assist V2 service smoke"),
     contract: extractSuite("ACI Assist V2 official contract foundation"),
+    modelResolver: extractSuite("ACI model resolver audit"),
   },
   contextSwitch: {
     expectedChecks: contextChecks,
