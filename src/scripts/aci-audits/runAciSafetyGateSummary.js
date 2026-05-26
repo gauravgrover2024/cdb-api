@@ -41,11 +41,15 @@ const modelContextResolver = run("Model context resolver audit", "node", [
   "src/scripts/aci-audits/auditAciModelContextResolver.js",
 ]);
 
+const contextPriority = run("Context priority audit", "node", [
+  "src/scripts/aci-audits/auditAciContextPriority.js",
+]);
+
 const contextSwitch = run("Context switch audit", "node", [
   "src/scripts/aci-audits/auditAciContextSwitch.js",
 ]);
 
-const allOutput = `${foundation.output}\n${modelResolver.output}\n${modelContextResolver.output}\n${contextSwitch.output}`;
+const allOutput = `${foundation.output}\n${modelResolver.output}\n${modelContextResolver.output}\n${contextPriority.output}\n${contextSwitch.output}`;
 
 const extractSuite = (name) => {
   const regex = new RegExp(
@@ -72,6 +76,7 @@ const hasFailures =
   !foundation.ok ||
   !modelResolver.ok ||
   !modelContextResolver.ok ||
+  !contextPriority.ok ||
   !contextSwitch.ok ||
   /"failed"\s*:\s*[1-9]/.test(allOutput) ||
   /"pass"\s*:\s*false/.test(allOutput) ||
@@ -83,6 +88,7 @@ const summary = {
   foundationExitCode: foundation.status,
   modelResolverExitCode: modelResolver.status,
   modelContextResolverExitCode: modelContextResolver.status,
+  contextPriorityExitCode: contextPriority.status,
   contextSwitchExitCode: contextSwitch.status,
   passedMentions: count(/"pass"\s*:\s*true/g),
   failedMentions: count(/"pass"\s*:\s*false/g),
@@ -92,6 +98,7 @@ const summary = {
     contract: extractSuite("ACI Assist V2 official contract foundation"),
     modelResolver: extractSuite("ACI model resolver audit"),
     modelContextResolver: extractSuite("ACI model context resolver audit"),
+    contextPriority: extractSuite("ACI context priority audit"),
   },
   contextSwitch: {
     expectedChecks: contextChecks,
