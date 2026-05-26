@@ -79,10 +79,19 @@ for (const test of tests) {
     variant: selected.variant || selected.selectedVariant || "",
     city: selected.city || selected.citySlug || "",
   });
+  console.log("topLevelSource:", {
+    source: response?.source || "",
+    dataSource: response?.dataSource || "",
+    modulesChecked: response?.modulesChecked || [],
+    sourceTransparency: response?.sourceTransparency || {},
+  });
+
   console.log("runtimeMeta:", meta.map((item) => ({
     tool: item.tool,
     matched: item.matched,
     source: item.source,
+    dataSource: item.dataSource,
+    modulesChecked: item.modulesChecked || [],
     error: item.error,
   })));
 }
