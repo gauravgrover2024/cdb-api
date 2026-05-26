@@ -57,7 +57,7 @@ Done means:
 | Hardcoded model truth in service | FIXED | Replaced with DB-backed resolver |
 | test-drive leftovers | FIXED | Removed from service |
 | service.js mixed responsibilities | MOSTLY_FIXED | Down to orchestration layer |
-| earlyFeatureGate internal complexity | OPEN | Next cleanup target |
+| earlyFeatureGate internal complexity | MOSTLY_FIXED | Split into orchestrator/detector/languageMap/planBuilder/runner/contextPatch/polisher |
 | plannerRedFixes size/patch risk | OPEN | High-risk |
 | semanticCompiler duplication risk | OPEN | High-risk |
 | colors tool hardcoded brand/conflict rules | OPEN | Needs DB-backed disambiguation |
