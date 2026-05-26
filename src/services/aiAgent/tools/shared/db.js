@@ -3,7 +3,18 @@ import mongoose from "mongoose";
 /**
  * Shared Mongo helpers for ACI Assist V2 tools.
  * This file only handles collection discovery and safe reads.
+ *
+ * Product note:
+ * Collection discovery must not run repeatedly inside user requests.
+ * ACI Assist public responses need predictable low-latency DB access.
  */
+
+const ACI_COLLECTION_DISCOVERY_CACHE_TTL_MS =
+  Number(process.env.ACI_COLLECTION_DISCOVERY_CACHE_TTL_MS || 10 * 60 * 1000);
+
+let cachedCollectionList = null;
+let cachedCollectionListAt = 0;
+const collectionNameResolutionCache = new Map();
 
 export const VEHICLE_COLLECTION_CANDIDATES = [
   "vehicles",
@@ -67,13 +78,26 @@ export const getMongooseDb = async () => {
   return null;
 };
 
-export const listDbCollections = async (db) => {
+export const listDbCollections = async (db, { force = false } = {}) => {
   if (!db) return [];
 
+  const now = Date.now();
+
+  if (
+    !force &&
+    cachedCollectionList &&
+    now - cachedCollectionListAt < ACI_COLLECTION_DISCOVERY_CACHE_TTL_MS
+  ) {
+    return cachedCollectionList;
+  }
+
   try {
-    return await db.listCollections().toArray();
+    const collections = await db.listCollections({}, { nameOnly: true }).toArray();
+    cachedCollectionList = collections;
+    cachedCollectionListAt = now;
+    return collections;
   } catch {
-    return [];
+    return cachedCollectionList || [];
   }
 };
 
@@ -84,26 +108,66 @@ export const normalizeCollectionName = (value = "") =>
     .trim();
 
 export const findCollectionName = async (db, candidates = []) => {
+  const normalizedCandidates = (candidates || [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+
+  const cacheKey = normalizedCandidates.join("|").toLowerCase();
+  const cached = collectionNameResolutionCache.get(cacheKey);
+
+  if (
+    cached &&
+    Date.now() - cached.cachedAt < ACI_COLLECTION_DISCOVERY_CACHE_TTL_MS
+  ) {
+    return cached.collectionName;
+  }
+
   const collections = await listDbCollections(db);
   const names = collections.map((item) => item.name).filter(Boolean);
 
   if (!names.length) return "";
 
-  const candidateKeys = candidates.map(normalizeCollectionName);
+  // Prefer exact configured collection names first. This avoids fuzzy discovery
+  // choosing a wrong collection and avoids unnecessary contains scans.
+  const exactCandidate = normalizedCandidates.find((candidate) =>
+    names.includes(candidate),
+  );
+
+  if (exactCandidate) {
+    collectionNameResolutionCache.set(cacheKey, {
+      collectionName: exactCandidate,
+      cachedAt: Date.now(),
+    });
+    return exactCandidate;
+  }
+
+  const candidateKeys = normalizedCandidates.map(normalizeCollectionName);
 
   const exact = names.find((name) =>
     candidateKeys.includes(normalizeCollectionName(name)),
   );
 
-  if (exact) return exact;
+  if (exact) {
+    collectionNameResolutionCache.set(cacheKey, {
+      collectionName: exact,
+      cachedAt: Date.now(),
+    });
+    return exact;
+  }
 
   const contains = names.find((name) => {
     const nameKey = normalizeCollectionName(name);
-
     return candidateKeys.some((candidate) => nameKey.includes(candidate));
   });
 
-  return contains || "";
+  const collectionName = contains || "";
+
+  collectionNameResolutionCache.set(cacheKey, {
+    collectionName,
+    cachedAt: Date.now(),
+  });
+
+  return collectionName;
 };
 
 export const getCollection = async (candidates = []) => {

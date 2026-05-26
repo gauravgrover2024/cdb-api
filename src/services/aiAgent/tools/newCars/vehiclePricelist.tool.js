@@ -4,6 +4,8 @@ import { buildV2PriceBreakup } from "./shared/priceBreakup.js";
 
 const DEFAULT_CITY = "new-delhi";
 const VEHICLE_COLORS_COLLECTION = "vehicle_colors_v2";
+const ACI_MODEL_SUMMARY_COLLECTION = "aci_vehicle_model_summary";
+const ACI_PRICE_ROWS_COLLECTION = "aci_vehicle_price_rows";
 
 const asArray = (value) => {
   if (!value) return [];
@@ -1073,6 +1075,298 @@ const fetchVehiclePricelistRowsFromVehicles = async ({
   };
 };
 
+
+const buildReadModelVisual = (summary = {}) => {
+  const hero = summary?.hero || {};
+  const imageUrl = hero.imageUrl || hero.normalizedImageUrl || "";
+
+  if (!imageUrl && !hero.imageFrame) return null;
+
+  return {
+    id: `${summary.makeKey || summary.make || "aci"}-${summary.modelKey || summary.model || "model"}-display`,
+    make: summary.make || "",
+    brand: summary.make || "",
+    model: summary.model || "",
+    rawModel: summary.model || "",
+    modelKey: summary.modelKey || slugify(summary.model || ""),
+    colorName: hero.colorName || "Display",
+    name: hero.colorName || "Display",
+    hex: "",
+    imageUrl,
+    normalizedImageUrl: hero.normalizedImageUrl || imageUrl,
+    imageFrame: hero.imageFrame || null,
+    sourceImageUrl: hero.sourceImageUrl || "",
+  };
+};
+
+const buildReadModelVehicleFromSummary = (summary = {}, visual = null) => ({
+  id: `${summary.makeKey || slugify(summary.make || "")}-${summary.modelKey || slugify(summary.model || "")}`,
+  make: summary.make || "",
+  brand: summary.make || "",
+  model: summary.model || "",
+  fullModel: summary.fullModel || summary.displayName || buildVehicleDisplayName(summary.make, summary.model),
+  displayName: summary.displayName || summary.fullModel || buildVehicleDisplayName(summary.make, summary.model),
+  city: summary.city || displayCity(summary.citySlug || DEFAULT_CITY),
+  citySlug: summary.citySlug || DEFAULT_CITY,
+  imageUrl: visual?.imageUrl || "",
+  normalizedImageUrl: visual?.normalizedImageUrl || visual?.imageUrl || "",
+  imageFrame: visual?.imageFrame || null,
+  selectedColor: visual || null,
+  visualGallery: visual ? [visual] : [],
+  variantCount: Number(summary.variantCount || 0),
+  priceRange: summary.priceRangeLabel || "",
+  exShowroomPrice: summary.minExShowroomPrice ? formatMoney(summary.minExShowroomPrice) : "",
+  startingOnRoadPrice: summary.minOnRoadPrice ? formatMoney(summary.minOnRoadPrice) : "",
+  fuelText: summary.fuelText || "",
+  transmissionText: summary.transmissionText || "",
+  gearboxText: summary.gearboxText || "",
+  colorName: visual?.colorName || "",
+  variant: "",
+  selectedVariant: "",
+});
+
+const fetchVehiclePricelistRowsFromReadModels = async ({
+  requestedMake = "",
+  requestedModel = "",
+  requestedVariant = "",
+  requestedCity = DEFAULT_CITY,
+  limit = 240,
+} = {}) => {
+  if (!mongoose.connection?.db) {
+    return {
+      rows: [],
+      records: [],
+      variants: [],
+      count: 0,
+      matched: 0,
+      source: "aci_vehicle_read_models",
+      dataSource: "aci_vehicle_read_models",
+      modulesChecked: ["aci_vehicle_read_models:not_connected"],
+    };
+  }
+
+  const db = mongoose.connection.db;
+  const modelText = stripKnownMakePrefix(requestedModel) || requestedModel;
+  const modelKey = slugify(modelText);
+  const makeKey = requestedMake ? slugify(requestedMake) : "";
+  const citySlug = slugify(requestedCity || DEFAULT_CITY);
+  const variantText = sanitizeRequestedVariant(requestedVariant, {
+    requestedModel,
+    requestedMake,
+  });
+  const variantKey = variantText ? slugify(variantText) : "";
+
+  if (!modelKey) {
+    return {
+      rows: [],
+      records: [],
+      variants: [],
+      count: 0,
+      matched: 0,
+      source: "aci_vehicle_read_models",
+      dataSource: "aci_vehicle_read_models",
+      modulesChecked: ["aci_vehicle_read_models:no_model_key"],
+    };
+  }
+
+  const summaryQuery = {
+    modelKey,
+    citySlug,
+    ...(makeKey ? { makeKey } : {}),
+  };
+
+  const priceQuery = {
+    modelKey,
+    citySlug,
+    ...(makeKey ? { makeKey } : {}),
+    ...(variantKey ? { variantKey } : {}),
+  };
+
+  try {
+    const summary = await db.collection(ACI_MODEL_SUMMARY_COLLECTION).findOne(
+      summaryQuery,
+      {
+        projection: {
+          make: 1,
+          makeKey: 1,
+          model: 1,
+          modelKey: 1,
+          fullModel: 1,
+          displayName: 1,
+          city: 1,
+          citySlug: 1,
+          variantCount: 1,
+          variantsPreview: 1,
+          fuelText: 1,
+          transmissionText: 1,
+          gearboxText: 1,
+          fuels: 1,
+          transmissions: 1,
+          gearboxes: 1,
+          minExShowroomPrice: 1,
+          maxExShowroomPrice: 1,
+          minOnRoadPrice: 1,
+          maxOnRoadPrice: 1,
+          priceRangeLabel: 1,
+          onRoadPriceRangeLabel: 1,
+          bodyType: 1,
+          bodyTypeKey: 1,
+          hero: 1,
+          colorCount: 1,
+        },
+      },
+    );
+
+    const priceRows = await db
+      .collection(ACI_PRICE_ROWS_COLLECTION)
+      .find(
+        priceQuery,
+        {
+          projection: {
+            make: 1,
+            makeKey: 1,
+            model: 1,
+            modelKey: 1,
+            fullModel: 1,
+            variant: 1,
+            variantKey: 1,
+            city: 1,
+            citySlug: 1,
+            exShowroomPrice: 1,
+            onRoadPrice: 1,
+            exShowroomPriceLabel: 1,
+            onRoadPriceLabel: 1,
+            fuel: 1,
+            fuelKey: 1,
+            transmission: 1,
+            transmissionKey: 1,
+            transmissionSource: 1,
+            gearbox: 1,
+            gearboxKey: 1,
+            gearboxSource: 1,
+            bodyType: 1,
+            bodyTypeKey: 1,
+            sortOrder: 1,
+          },
+        },
+      )
+      .sort({ sortOrder: 1 })
+      .limit(limit)
+      .toArray();
+
+    if (!priceRows.length) {
+      return {
+        rows: [],
+        records: [],
+        variants: [],
+        count: 0,
+        matched: 0,
+        source: "aci_vehicle_read_models",
+        dataSource: "aci_vehicle_read_models",
+        modulesChecked: [
+          ACI_MODEL_SUMMARY_COLLECTION,
+          ACI_PRICE_ROWS_COLLECTION,
+          "aci_vehicle_read_models:empty",
+        ],
+        queryUsed: { summaryQuery, priceQuery },
+      };
+    }
+
+    const effectiveSummary = summary || {};
+    const visual = buildReadModelVisual(effectiveSummary);
+    const visualGallery = visual ? [visual] : [];
+    const vehicle = buildReadModelVehicleFromSummary(effectiveSummary, visual);
+
+    const rows = priceRows.map((row) => ({
+      ...row,
+      brand: row.make,
+      displayName: effectiveSummary.displayName || row.fullModel || buildVehicleDisplayName(row.make, row.model),
+      city: row.city || effectiveSummary.city || displayCity(citySlug),
+      citySlug: row.citySlug || citySlug,
+      price: row.onRoadPrice || row.exShowroomPrice || 0,
+      priceLabel: formatMoney(row.onRoadPrice || row.exShowroomPrice || 0),
+      imageUrl: visual?.imageUrl || "",
+      normalizedImageUrl: visual?.normalizedImageUrl || visual?.imageUrl || "",
+      imageFrame: visual?.imageFrame || null,
+      colorName: visual?.colorName || "",
+      selectedColor: visual || null,
+      visualGallery,
+      vehicle: {
+        ...vehicle,
+        make: row.make || vehicle.make,
+        brand: row.make || vehicle.brand,
+        model: row.model || vehicle.model,
+        city: row.city || vehicle.city,
+        citySlug: row.citySlug || vehicle.citySlug,
+      },
+      source: "aci_vehicle_read_models",
+      dataSource: "aci_vehicle_read_models",
+    }));
+
+    return {
+      rows,
+      records: rows,
+      variants: rows,
+      count: rows.length,
+      matched: rows.length,
+      source: "aci_vehicle_read_models",
+      dataSource: "aci_vehicle_read_models",
+      modulesChecked: [ACI_MODEL_SUMMARY_COLLECTION, ACI_PRICE_ROWS_COLLECTION],
+      queryUsed: { summaryQuery, priceQuery },
+      summary: {
+        rowCount: rows.length,
+        collection: ACI_PRICE_ROWS_COLLECTION,
+        modelSummaryCollection: ACI_MODEL_SUMMARY_COLLECTION,
+        minPrice: effectiveSummary.minExShowroomPrice || rows[0]?.exShowroomPrice || 0,
+        maxPrice: effectiveSummary.maxExShowroomPrice || rows.at(-1)?.exShowroomPrice || 0,
+      },
+      readModelSummary: effectiveSummary,
+      readModelVehicle: vehicle,
+      visualGallery,
+      selectedVisual: visual,
+    };
+  } catch (error) {
+    return {
+      rows: [],
+      records: [],
+      variants: [],
+      count: 0,
+      matched: 0,
+      source: "aci_vehicle_read_models",
+      dataSource: "aci_vehicle_read_models",
+      modulesChecked: [
+        ACI_MODEL_SUMMARY_COLLECTION,
+        ACI_PRICE_ROWS_COLLECTION,
+        "aci_vehicle_read_models:error",
+      ],
+      error: error?.message || "Read model lookup failed",
+      queryUsed: { summaryQuery, priceQuery },
+    };
+  }
+};
+
+const fetchVehiclePricelistRows = async (params = {}) => {
+  const readModelResult = await fetchVehiclePricelistRowsFromReadModels(params);
+
+  if (asArray(readModelResult.rows).length) {
+    return readModelResult;
+  }
+
+  const fallbackResult = await fetchVehiclePricelistRowsFromVehicles(params);
+
+  return {
+    ...fallbackResult,
+    readModelFallback: {
+      attempted: true,
+      source: readModelResult.source,
+      dataSource: readModelResult.dataSource,
+      modulesChecked: readModelResult.modulesChecked || [],
+      error: readModelResult.error || "",
+      queryUsed: readModelResult.queryUsed || null,
+    },
+  };
+};
+
 const exactRequestedModelRows = ({
   rows = [],
   requestedModel = "",
@@ -1979,7 +2273,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
   const requestedCity = getRequestedCity(args);
   let effectiveRequestedMake = requestedMake;
 
-  let rawResult = await fetchVehiclePricelistRowsFromVehicles({
+  let rawResult = await fetchVehiclePricelistRows({
     requestedMake,
     requestedModel,
     requestedVariant,
@@ -1989,7 +2283,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
   });
 
   if (!asArray(rawResult.rows).length && requestedVariant) {
-    rawResult = await fetchVehiclePricelistRowsFromVehicles({
+    rawResult = await fetchVehiclePricelistRows({
       requestedMake,
       requestedModel,
       requestedVariant: "",
@@ -2007,7 +2301,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     requestedMake &&
     !explicitRequestedMake
   ) {
-    rawResult = await fetchVehiclePricelistRowsFromVehicles({
+    rawResult = await fetchVehiclePricelistRows({
       requestedMake: "",
       requestedModel,
       requestedVariant,
@@ -2017,7 +2311,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     });
 
     if (!asArray(rawResult.rows).length && requestedVariant) {
-      rawResult = await fetchVehiclePricelistRowsFromVehicles({
+      rawResult = await fetchVehiclePricelistRows({
         requestedMake: "",
         requestedModel,
         requestedVariant: "",
@@ -2068,23 +2362,35 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
   let resolvedImageFrame = null;
 
   if (rows.length) {
-    // Enrich fuel/transmission before creating the vehicle summary.
-    rows = await enrichRowsWithFeatureMeta({
-      rows,
-      make: rows[0]?.make || rows[0]?.brand || requestedMake,
-      model: rows[0]?.model || requestedModel,
-    });
+    const usingReadModel = rawResult.dataSource === "aci_vehicle_read_models";
 
-    visualGallery = await sampleVehicleColorImages({
-      make: rows[0]?.make || rows[0]?.brand || requestedMake,
-      model: rows[0]?.model || requestedModel,
-      limit: 8,
-    });
+    if (usingReadModel) {
+      visualGallery = asArray(rawResult.visualGallery || rows[0]?.visualGallery);
+      selectedVisual =
+        rawResult.selectedVisual ||
+        rows[0]?.selectedColor ||
+        visualGallery[0] ||
+        null;
+    } else {
+      // Enrich fuel/transmission before creating the vehicle summary.
+      rows = await enrichRowsWithFeatureMeta({
+        rows,
+        make: rows[0]?.make || rows[0]?.brand || requestedMake,
+        model: rows[0]?.model || requestedModel,
+      });
 
-    selectedVisual = visualGallery[0] || null;
+      visualGallery = await sampleVehicleColorImages({
+        make: rows[0]?.make || rows[0]?.brand || requestedMake,
+        model: rows[0]?.model || requestedModel,
+        limit: 8,
+      });
+
+      selectedVisual = visualGallery[0] || null;
+    }
+
     resolvedImageUrl =
-      selectedVisual?.imageUrl || selectedVisual?.normalizedImageUrl || "";
-    resolvedImageFrame = selectedVisual?.imageFrame || null;
+      selectedVisual?.imageUrl || selectedVisual?.normalizedImageUrl || rows[0]?.imageUrl || rows[0]?.normalizedImageUrl || "";
+    resolvedImageFrame = selectedVisual?.imageFrame || rows[0]?.imageFrame || null;
 
     if (resolvedImageUrl || resolvedImageFrame || visualGallery.length) {
       rows = rows.map((row) => ({
@@ -2182,7 +2488,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
       ? `I found the ${title} for ${vehicle.city || displayCity(requestedCity)}.`
       : `I could not find live price rows for ${requestedModel || "this model"} in ${displayCity(requestedCity)}.`,
     city: vehicle.city || displayCity(requestedCity),
-    citySlug: slugify(requestedCity || DEFAULT_CITY),
+    citySlug: vehicle.citySlug || slugify(requestedCity || DEFAULT_CITY),
     vehicle,
     visualGallery,
     selectedColor: selectedVisual,

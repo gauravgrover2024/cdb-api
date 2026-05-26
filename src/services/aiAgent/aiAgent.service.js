@@ -722,6 +722,150 @@ const resolveAciDynamicModelEntity = async (message = "") => {
   }
 };
 
+const detectAciKnownModelEntityFromMessage = (message = "") => {
+  const raw = String(message || "").trim();
+  if (!raw) return null;
+
+  const matched = ACI_EARLY_FEATURE_MODELS.find((name) => {
+    const safe = name.replace(/\s+/g, "\\s*");
+    return new RegExp(`\\b${safe}\\b`, "i").test(raw);
+  });
+
+  if (!matched) return null;
+
+  // Avoid treating generic location wording as Honda City unless it is clearly a car request.
+  if (
+    normalizeAciContextText(matched) === "city" &&
+    !/\bhonda\s+city\b/i.test(raw) &&
+    !/\b(city)\b.*\b(price|pricelist|emi|colors?|colours?|features?|sunroof|compare|vs)\b/i.test(raw) &&
+    !/\b(price|pricelist|emi|colors?|colours?|features?|sunroof|compare|vs)\b.*\b(city)\b/i.test(raw)
+  ) {
+    return null;
+  }
+
+  const model = toAciTitleCaseModel(matched);
+
+  return {
+    brand: "",
+    make: "",
+    model,
+    fullModel: model,
+    matchedText: matched,
+    confidence: 0.98,
+    method: "known_model_message_fallback",
+    fromMessage: true,
+  };
+};
+
+const hydrateAciExplicitModelEntityFromReadModel = async (entity = {}) => {
+  if (!entity?.model) return entity;
+
+  try {
+    const db = getAciAgentMongoDb();
+    if (!db) return entity;
+
+    const modelText = cleanText(entity.model || "");
+    const fullText = cleanText(entity.fullModel || "");
+    const brandText = cleanText(entity.make || entity.brand || "");
+    const modelKey = normalizeAciContextText(modelText).replace(/\s+/g, "-");
+
+    if (!modelKey && !modelText) return entity;
+
+    const escapedModel = modelText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedFull = fullText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const or = [
+      modelKey ? { modelKey } : null,
+      modelText ? { model: new RegExp(`^\\s*${escapedModel}\\s*$`, "i") } : null,
+      modelText ? { displayName: new RegExp(`\\b${escapedModel}\\b`, "i") } : null,
+      modelText ? { fullModel: new RegExp(`\\b${escapedModel}\\b`, "i") } : null,
+      fullText ? { displayName: new RegExp(`^\\s*${escapedFull}\\s*$`, "i") } : null,
+      fullText ? { fullModel: new RegExp(`^\\s*${escapedFull}\\s*$`, "i") } : null,
+    ].filter(Boolean);
+
+    const candidates = await db.collection("aci_vehicle_model_summary")
+      .find(
+        {
+          citySlug: "new-delhi",
+          $or: or,
+        },
+        {
+          projection: {
+            make: 1,
+            makeKey: 1,
+            model: 1,
+            modelKey: 1,
+            fullModel: 1,
+            displayName: 1,
+            variantCount: 1,
+          },
+        },
+      )
+      .limit(20)
+      .toArray();
+
+    if (!candidates.length) return entity;
+
+    const normalizedWanted = normalizeAciContextText(modelText);
+    const normalizedBrand = normalizeAciContextText(brandText);
+
+    const scoreCandidate = (row = {}) => {
+      const rowModel = normalizeAciContextText(row.model || "");
+      const rowFull = normalizeAciContextText(row.fullModel || row.displayName || "");
+      const rowMake = normalizeAciContextText(row.make || "");
+      let score = 0;
+
+      if (rowModel === normalizedWanted) score += 100;
+      if (rowFull === normalizedWanted) score += 90;
+      if (rowFull.endsWith(` ${normalizedWanted}`)) score += 75;
+      if (rowFull.includes(normalizedWanted)) score += 50;
+      if (normalizedBrand && rowMake === normalizedBrand) score += 25;
+      if (Number(row.variantCount || 0) > 0) score += 5;
+
+      return score;
+    };
+
+    const summary = [...candidates].sort((a, b) => scoreCandidate(b) - scoreCandidate(a))[0];
+
+    if (!summary?.model) return entity;
+
+    const make = cleanText(summary.make || "");
+    const model = cleanText(summary.model || entity.model || "");
+    const fullModel = cleanText(
+      summary.fullModel ||
+        summary.displayName ||
+        (make && model ? `${make} ${model}` : model),
+    );
+
+    return {
+      ...entity,
+      make,
+      brand: make,
+      model,
+      fullModel,
+      makeKey: summary.makeKey || "",
+      modelKey: summary.modelKey || modelKey,
+      fromReadModelSummary: true,
+    };
+  } catch {
+    return entity;
+  }
+};
+
+const resolveAciExplicitMessageModelEntity = async (message = "") => {
+  const resolved = await resolveAciDynamicModelEntity(message);
+
+  if (resolved?.model && !isAciGenericModelEntityMatch(resolved)) {
+    return hydrateAciExplicitModelEntityFromReadModel({
+      ...resolved,
+      fromMessage: true,
+    });
+  }
+
+  const knownFallback = detectAciKnownModelEntityFromMessage(message);
+  return hydrateAciExplicitModelEntityFromReadModel(knownFallback);
+};
+
 const ACI_DYNAMIC_CONNECTED_FEATURE_ALIAS = {
   feature: "Connected Features",
   pattern: /\b(connected\s*car|connected\s*features|connected\s*tech|connected\s*services|bluelink|blue\s*link)\b/i,
@@ -1605,6 +1749,70 @@ const shouldSkipAciEarlyFeatureGate = (message = "") => {
 };
 
 
+
+const isAciComparisonMessage = (message = "") =>
+  /\b(compare|comparison|vs|versus)\b/i.test(String(message || ""));
+
+const applyAciExplicitMessageModelContextOverride = ({
+  message = "",
+  context = {},
+  dynamicModelEntity = null,
+} = {}) => {
+  if (!context || typeof context !== "object") return context;
+  if (!dynamicModelEntity?.model) return context;
+
+  // Do not hijack "Compare with City" type follow-ups.
+  // In comparison follow-ups, the mentioned model can be the rival, not the selected car.
+  if (isAciComparisonMessage(message)) return context;
+
+  const nextModel = cleanText(dynamicModelEntity.model);
+  const nextMake = cleanText(dynamicModelEntity.brand || dynamicModelEntity.make || "");
+  const nextFullModel = cleanText(
+    dynamicModelEntity.fullModel ||
+      (nextMake && nextModel ? `${nextMake} ${nextModel}` : nextModel),
+  );
+
+  if (!nextModel) return context;
+
+  const selectedVehicle = context.selectedVehicle || {};
+  const currentModel = cleanText(
+    context.anchorModel ||
+      selectedVehicle.model ||
+      context.model ||
+      "",
+  );
+
+  const sameModel =
+    normalizeAciContextText(currentModel) === normalizeAciContextText(nextModel);
+
+  if (sameModel) return context;
+
+  // Latest explicit user message must beat stale frontend/backend context.
+  context.selectedVehicle = {
+    ...selectedVehicle,
+
+    // Explicit model switch must not carry stale make/brand from previous car.
+    // Example: Verna context + "Does Thar have sunroof?" must not become Hyundai Thar.
+    make: nextMake || "",
+    brand: nextMake || "",
+    model: nextModel,
+    displayName: nextFullModel || nextModel,
+    fullModel: nextFullModel || nextModel,
+    variant: "",
+    selectedVariant: "",
+    variantName: "",
+  };
+
+  context.anchorMake = nextMake || "";
+  context.anchorModel = nextModel;
+  context.anchorFullModel = nextFullModel || nextModel;
+  context.anchorVariant = "";
+  context.model = nextModel;
+
+  return context;
+};
+
+
 const maybeRunAciEarlyFeatureGate = async ({
   message = "",
   context = {},
@@ -1615,7 +1823,13 @@ const maybeRunAciEarlyFeatureGate = async ({
     return null;
   }
 
-  const dynamicModelEntityFromText = await resolveAciDynamicModelEntity(message);
+  const dynamicModelEntityFromText = await resolveAciExplicitMessageModelEntity(message);
+
+  applyAciExplicitMessageModelContextOverride({
+    message,
+    context,
+    dynamicModelEntity: dynamicModelEntityFromText,
+  });
   const dynamicModelEntityFromContext = buildAciContextModelEntity({
     context,
     selectedEntity,
@@ -2014,6 +2228,16 @@ const chatWithAgentCore = async (...args) => {
     rawInput,
   } = normalizeChatInput(...args);
 
+  const explicitMessageModelEntityForContext =
+    await resolveAciExplicitMessageModelEntity(message);
+
+  applyAciExplicitMessageModelContextOverride({
+    message,
+    context,
+    dynamicModelEntity: explicitMessageModelEntityForContext,
+  });
+
+
   if (!message) {
     const plan = createUnavailableFallbackPlan({
       message,
@@ -2179,6 +2403,14 @@ const normalizeAciServiceResponseContract = (
     data.contextPatch = response.contextPatch || {};
   }
 
+  const secondaryResponses = Array.isArray(response.secondaryResponses)
+    ? response.secondaryResponses
+    : [];
+
+  const runtimeResultsMeta = Array.isArray(response.runtimeResultsMeta)
+    ? response.runtimeResultsMeta
+    : [];
+
   return {
     ...response,
     displayMode,
@@ -2186,6 +2418,8 @@ const normalizeAciServiceResponseContract = (
     inlineType,
     actions,
     leadingQuestions,
+    secondaryResponses,
+    runtimeResultsMeta,
     data,
     service: {
       ...(response.service || {}),
@@ -2204,13 +2438,116 @@ const normalizeAciServiceResponseContract = (
 };
 
 
+
+const repairAciResponseContextFromActiveContext = ({
+  response = {},
+  context = {},
+} = {}) => {
+  if (!response || typeof response !== "object") return response;
+  if (!context || typeof context !== "object") return response;
+
+  const contextVehicle = context.selectedVehicle || {};
+  const activeModel = cleanText(
+    context.anchorModel ||
+      contextVehicle.model ||
+      context.model ||
+      "",
+  );
+
+  const activeMake = cleanText(
+    context.anchorMake ||
+      contextVehicle.make ||
+      contextVehicle.brand ||
+      "",
+  );
+
+  if (!activeModel) return response;
+
+  const patch = response.contextPatch || {};
+  const patchVehicle = patch.selectedVehicle || {};
+
+  const patchModel = cleanText(
+    patch.anchorModel ||
+      patchVehicle.model ||
+      response.vehicle?.model ||
+      response.data?.model ||
+      "",
+  );
+
+  // Only repair when response is for the same active model.
+  // Never force active context into a different returned car.
+  if (
+    patchModel &&
+    normalizeAciContextText(patchModel) !== normalizeAciContextText(activeModel)
+  ) {
+    return response;
+  }
+
+  const activeFullModel = cleanText(
+    context.anchorFullModel ||
+      contextVehicle.fullModel ||
+      contextVehicle.displayName ||
+      (activeMake && activeModel ? `${activeMake} ${activeModel}` : activeModel),
+  );
+
+  const repairedVehicle = {
+    ...patchVehicle,
+    make: cleanText(patchVehicle.make || patchVehicle.brand || "") || activeMake,
+    brand: cleanText(patchVehicle.brand || patchVehicle.make || "") || activeMake,
+    model: patchVehicle.model || activeModel,
+    fullModel: patchVehicle.fullModel || activeFullModel,
+    displayName: patchVehicle.displayName || activeFullModel,
+  };
+
+  response.contextPatch = {
+    ...patch,
+    selectedVehicle: repairedVehicle,
+    anchorMake: cleanText(patch.anchorMake || "") || activeMake,
+    anchorModel: patch.anchorModel || activeModel,
+    anchorFullModel: patch.anchorFullModel || activeFullModel,
+    anchorCity:
+      patch.anchorCity ||
+      context.anchorCity ||
+      contextVehicle.citySlug ||
+      contextVehicle.city ||
+      "new-delhi",
+  };
+
+  if (response.data && typeof response.data === "object") {
+    response.data.contextPatch = {
+      ...(response.data.contextPatch || {}),
+      ...response.contextPatch,
+    };
+  }
+
+  if (response.widget && typeof response.widget === "object") {
+    response.widget.contextPatch = {
+      ...(response.widget.contextPatch || {}),
+      ...response.contextPatch,
+    };
+  }
+
+  return response;
+};
+
+
 export const chatWithAgent = async (...args) => {
   const startedAt = Date.now();
   const { message, context } = getNormalizerInputs(args);
   const response = await chatWithAgentCore(...args);
 
+  repairAciResponseContextFromActiveContext({
+    response,
+    context,
+  });
+
   const normalized = await normalizeAciFinalResponse(response, {
     message,
+    context,
+  });
+
+  repairAciResponseContextFromActiveContext({
+    response: normalized,
     context,
   });
 

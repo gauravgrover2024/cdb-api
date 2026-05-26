@@ -1,6 +1,9 @@
 import dns from "node:dns";
 import mongoose from "mongoose";
 
+mongoose.set("autoIndex", false);
+mongoose.set("autoCreate", false);
+
 let cached = global.mongoose;
 
 const DEFAULT_DNS_FALLBACK_SERVERS = ["8.8.8.8", "1.1.1.1"];
@@ -26,6 +29,8 @@ const connectWithDnsFallback = async (mongoUri) => {
   try {
     return await mongoose.connect(mongoUri, {
       bufferCommands: true,
+      autoIndex: false,
+      autoCreate: false,
     });
   } catch (error) {
     if (!isSrvDnsResolutionError(error, mongoUri)) {
@@ -41,6 +46,8 @@ const connectWithDnsFallback = async (mongoUri) => {
 
     return mongoose.connect(mongoUri, {
       bufferCommands: true,
+      autoIndex: false,
+      autoCreate: false,
     });
   }
 };

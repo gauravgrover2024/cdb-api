@@ -22,7 +22,10 @@ import bookingsRouter from "./routes/bookings.js";
 import usedCarRoutes from "./routes/usedCarRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
 import aiAgentRoutes from "./routes/aiAgent.routes.js";
-import { refreshVehicleHintsFromDb } from "./services/aiAgent/aiAgent.intentParser.js";
+import {
+  prewarmAciAssistRuntime,
+  triggerAciAssistRuntimePrewarm,
+} from "./services/aiAgent/aiAgent.runtimePrewarm.js";
 
 dotenv.config();
 
@@ -89,8 +92,9 @@ app.use(async (req, res, next) => {
   try {
     await connectDB();
 
-    // Non-blocking warmup for DB-backed vehicle model/make hints.
-    refreshVehicleHintsFromDb().catch(() => {});
+    // Non-blocking warmup for DB-backed ACI Assist runtime caches.
+    // This keeps repeated Vercel/serverless invocations warm without delaying normal routes.
+    triggerAciAssistRuntimePrewarm();
 
     next();
   } catch (error) {
@@ -155,6 +159,10 @@ export default app;
 async function startServer() {
   try {
     await connectDB();
+
+    if (process.env.ACI_RUNTIME_PREWARM_ON_START !== "false") {
+      await prewarmAciAssistRuntime();
+    }
 
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);

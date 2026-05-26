@@ -23,3 +23,30 @@ public/media/car-images/normalized/
 # Vehicle scraper generated media/debug output
 scripts/vehicle-scrapers/normalized/
 scripts/vehicle-scrapers/tmp/
+
+# ACI Assist generated audit/profiling outputs
+aci_*_audit_*.txt
+aci_*_audit_*.md
+aci_*_audit_*.json
+aci_deep_product_audit_*/
+aci_deep_product_audit_*.zip
+aci_db_performance_audit_*/
+aci_runtime_profile_*/
+aci_runtime_query_source_audit_*.md
+aci_runtime_hotspot_snippets_*.md
+aci_pricelist_read_model_wiring_snippets_*.md
+aci_verna_source_shape_*.json
+aci_transmission_source_audit_*.json
+aci_transmission_values_verna_*.json
+audit_aci_*.sh
+aci_deep_audit_pack.sh
+
+# Local ACI generated snippet/debug exports
+aci_*_snippets_*.md
+aci_backend_context_priority_snippets_*.md
+aci_feature_color_hotspot_snippets_*.md
+aci_profile_runtime_connection_snippets_*.md
+aci_runtime_create_indexes_snippets_*.md
+
+# Local recovery scripts/exports
+src/scripts/recoverPostfileDocumentsFromR2.js
