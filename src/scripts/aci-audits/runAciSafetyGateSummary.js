@@ -1,4 +1,4 @@
-import { spawnSync } from "child_process";
+import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 
@@ -7,57 +7,130 @@ const outDir = path.resolve(`aci_safety_gate_${stamp}`);
 fs.mkdirSync(outDir, { recursive: true });
 
 const logPath = path.join(outDir, "aci_safety_gate_full.log");
-
-fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(logPath, "", { flag: "a" });
 
-const run = (label, command, args) => {
-  console.log(`\n▶ ${label}`);
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    shell: false,
+const tasks = [
+  {
+    key: "executor",
+    label: "Executor smoke",
+    command: "node",
+    args: ["src/scripts/testAiExecutor.js"],
+  },
+  {
+    key: "v2",
+    label: "V2 service smoke",
+    command: "node",
+    args: ["src/scripts/testAiAssist.v2.js"],
+  },
+  {
+    key: "contract",
+    label: "Contract foundation",
+    command: "node",
+    args: ["src/scripts/testAciContractFoundation.js"],
+  },
+  {
+    key: "modelResolver",
+    label: "Model resolver audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciModelResolver.js"],
+  },
+  {
+    key: "modelContextResolver",
+    label: "Model context resolver audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciModelContextResolver.js"],
+  },
+  {
+    key: "contextPriority",
+    label: "Context priority audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciContextPriority.js"],
+  },
+  {
+    key: "vehicleEntityIndex",
+    label: "Vehicle entity index audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciVehicleEntityIndex.js"],
+  },
+  {
+    key: "multiFeatureQueries",
+    label: "Multi-feature query audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciMultiFeatureQueries.js"],
+  },
+  {
+    key: "contextSwitch",
+    label: "Context switch audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciContextSwitch.js"],
+  },
+];
+
+const runTask = (task) =>
+  new Promise((resolve) => {
+    console.log(`\n▶ ${task.label}`);
+
+    const startedAt = Date.now();
+    const child = spawn(task.command, task.args, {
+      shell: false,
+      env: process.env,
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", (error) => {
+      const durationMs = Date.now() - startedAt;
+      const output = `${stdout}${stderr}\n${error?.stack || error?.message || String(error)}`;
+
+      resolve({
+        ...task,
+        ok: false,
+        status: 1,
+        durationMs,
+        output,
+      });
+    });
+
+    child.on("close", (code, signal) => {
+      const durationMs = Date.now() - startedAt;
+      const output = `${stdout}${stderr}${signal ? `\nProcess terminated by signal: ${signal}` : ""}`;
+
+      resolve({
+        ...task,
+        ok: code === 0,
+        status: Number.isInteger(code) ? code : 1,
+        signal: signal || "",
+        durationMs,
+        output,
+      });
+    });
   });
 
-  const output = `${result.stdout || ""}${result.stderr || ""}`;
+const startedAt = Date.now();
+const results = await Promise.all(tasks.map(runTask));
+const totalDurationMs = Date.now() - startedAt;
 
-  fs.mkdirSync(path.dirname(logPath), { recursive: true });
-  fs.appendFileSync(logPath, `\n\n===== ${label} =====\n${output}`);
+for (const result of results) {
+  fs.appendFileSync(
+    logPath,
+    `\n\n===== ${result.label} (${result.durationMs}ms) =====\n${result.output}`,
+  );
 
-  return {
-    label,
-    ok: result.status === 0,
-    status: result.status,
-    output,
-  };
-};
+  const icon = result.ok ? "✅" : "❌";
+  console.log(`${icon} ${result.label} finished in ${result.durationMs}ms`);
+}
 
-const foundation = run("Foundation", "npm", ["run", "test:aci:foundation"]);
-
-const modelResolver = run("Model resolver audit", "node", [
-  "src/scripts/aci-audits/auditAciModelResolver.js",
-]);
-
-const modelContextResolver = run("Model context resolver audit", "node", [
-  "src/scripts/aci-audits/auditAciModelContextResolver.js",
-]);
-
-const contextPriority = run("Context priority audit", "node", [
-  "src/scripts/aci-audits/auditAciContextPriority.js",
-]);
-
-const vehicleEntityIndex = run("Vehicle entity index audit", "node", [
-  "src/scripts/aci-audits/auditAciVehicleEntityIndex.js",
-]);
-
-const multiFeatureQueries = run("Multi-feature query audit", "node", [
-  "src/scripts/aci-audits/auditAciMultiFeatureQueries.js",
-]);
-
-const contextSwitch = run("Context switch audit", "node", [
-  "src/scripts/aci-audits/auditAciContextSwitch.js",
-]);
-
-const allOutput = `${foundation.output}\n${modelResolver.output}\n${modelContextResolver.output}\n${contextPriority.output}\n${vehicleEntityIndex.output}\n${multiFeatureQueries.output}\n${contextSwitch.output}`;
+const byKey = Object.fromEntries(results.map((result) => [result.key, result]));
+const allOutput = results.map((result) => result.output).join("\n");
 
 const extractSuite = (name) => {
   const regex = new RegExp(
@@ -80,30 +153,56 @@ const contextChecks = [
 
 const missingContextChecks = contextChecks.filter((key) => !allOutput.includes(key));
 
+const foundationOk =
+  Boolean(byKey.executor?.ok) &&
+  Boolean(byKey.v2?.ok) &&
+  Boolean(byKey.contract?.ok);
+
 const hasFailures =
-  !foundation.ok ||
-  !modelResolver.ok ||
-  !modelContextResolver.ok ||
-  !contextPriority.ok ||
-  !vehicleEntityIndex.ok ||
-  !multiFeatureQueries.ok ||
-  !contextSwitch.ok ||
+  !foundationOk ||
+  results.some((result) => !result.ok) ||
   /"failed"\s*:\s*[1-9]/.test(allOutput) ||
   /"pass"\s*:\s*false/.test(allOutput) ||
   /ReferenceError|TypeError|SyntaxError|MongoServerError|contractErrors"\s*:\s*\[[^\]]*\{/.test(allOutput) ||
   missingContextChecks.length > 0;
 
+const foundationDurationMs =
+  (byKey.executor?.durationMs || 0) +
+  (byKey.v2?.durationMs || 0) +
+  (byKey.contract?.durationMs || 0);
+
 const summary = {
   ok: !hasFailures,
-  foundationExitCode: foundation.status,
-  modelResolverExitCode: modelResolver.status,
-  modelContextResolverExitCode: modelContextResolver.status,
-  contextPriorityExitCode: contextPriority.status,
-  vehicleEntityIndexExitCode: vehicleEntityIndex.status,
-  multiFeatureQueriesExitCode: multiFeatureQueries.status,
-  contextSwitchExitCode: contextSwitch.status,
+
+  foundationExitCode: foundationOk ? 0 : 1,
+  executorExitCode: byKey.executor?.status ?? 1,
+  v2ExitCode: byKey.v2?.status ?? 1,
+  contractExitCode: byKey.contract?.status ?? 1,
+
+  modelResolverExitCode: byKey.modelResolver?.status ?? 1,
+  modelContextResolverExitCode: byKey.modelContextResolver?.status ?? 1,
+  contextPriorityExitCode: byKey.contextPriority?.status ?? 1,
+  vehicleEntityIndexExitCode: byKey.vehicleEntityIndex?.status ?? 1,
+  multiFeatureQueriesExitCode: byKey.multiFeatureQueries?.status ?? 1,
+  contextSwitchExitCode: byKey.contextSwitch?.status ?? 1,
+
   passedMentions: count(/"pass"\s*:\s*true/g),
   failedMentions: count(/"pass"\s*:\s*false/g),
+
+  durationsMs: {
+    executor: byKey.executor?.durationMs ?? 0,
+    v2: byKey.v2?.durationMs ?? 0,
+    contract: byKey.contract?.durationMs ?? 0,
+    foundationSequentialEquivalent: foundationDurationMs,
+    modelResolver: byKey.modelResolver?.durationMs ?? 0,
+    modelContextResolver: byKey.modelContextResolver?.durationMs ?? 0,
+    contextPriority: byKey.contextPriority?.durationMs ?? 0,
+    vehicleEntityIndex: byKey.vehicleEntityIndex?.durationMs ?? 0,
+    multiFeatureQueries: byKey.multiFeatureQueries?.durationMs ?? 0,
+    contextSwitch: byKey.contextSwitch?.durationMs ?? 0,
+    total: totalDurationMs,
+  },
+
   suites: {
     executor: extractSuite("ACI Assist executor smoke"),
     v2: extractSuite("ACI Assist V2 service smoke"),
@@ -114,10 +213,12 @@ const summary = {
     vehicleEntityIndex: extractSuite("ACI vehicle entity index audit"),
     multiFeatureQueries: extractSuite("ACI multi-feature query audit"),
   },
+
   contextSwitch: {
     expectedChecks: contextChecks,
     missingChecks: missingContextChecks,
   },
+
   fullLogPath: logPath,
 };
 
