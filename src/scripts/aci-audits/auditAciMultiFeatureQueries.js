@@ -21,6 +21,46 @@ const cases = [
     forbiddenFeatureKeyParts: ["voice_assisted_sunroof"],
     maxFeatureCount: 3,
   },
+  {
+    id: "punch-seven-feature-bundle",
+    message:
+      "Does Tata Punch have sunroof, ADAS, 6 airbags, TPMS, wireless charging, rear camera and cruise control?",
+    expectMake: "Tata",
+    expectModel: "Punch",
+    forbiddenVariantParts: [
+      "adas",
+      "sunroof",
+      "airbags",
+      "tpms",
+      "wireless",
+      "rear camera",
+      "cruise",
+    ],
+    expectedMentionParts: [
+      "sunroof",
+      "adas",
+      "airbag",
+      "tpms",
+      "wireless",
+      "camera",
+      "cruise",
+    ],
+    requiredFeatureKeyParts: [
+      "sunroof",
+      "adas",
+      "six_airbags",
+      "tpms",
+      "wireless",
+      "rear_camera",
+      "cruise_control",
+    ],
+    forbiddenFeatureKeyParts: [
+      "voice_assisted_sunroof",
+      "camera_360",
+      "adaptive_cruise_control",
+    ],
+    maxFeatureCount: 8,
+  },
 ];
 
 const hasText = (value = "", part = "") => clean(value).includes(clean(part));
