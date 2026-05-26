@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 
 import { parseAciFeatureRequestFromMessage } from "./aiAgent.featureRequestParser.js";
+import { resolveAciExplicitMessageModelEntity } from "./aiAgent.modelContextResolver.js";
 import { normalizeAciContextText } from "./aiAgent.contextPriority.js";
 
 const DEFAULT_CITY = "new-delhi";
@@ -23,6 +24,155 @@ const cleanText = (value = "") =>
 
 const slugKey = (value = "") =>
   normalizeAciContextText(value).replace(/\s+/g, "_");
+
+
+const hyphenKey = (value = "") =>
+  normalizeAciContextText(value).replace(/\s+/g, "-");
+
+const sameModelEntity = (a = {}, b = {}) => {
+  const aModel = normalizeAciContextText(a?.model || "");
+  const bModel = normalizeAciContextText(b?.model || "");
+  const aBrand = normalizeAciContextText(a?.brand || a?.make || "");
+  const bBrand = normalizeAciContextText(b?.brand || b?.make || "");
+
+  return Boolean(aModel && bModel && aModel === bModel && (!aBrand || !bBrand || aBrand === bBrand));
+};
+
+const resolveExactShortModelEntityFromReadModels = async (query = "") => {
+  const cleanQuery = normalizeAciContextText(query);
+  const key = hyphenKey(query);
+
+  // Only rescue short exact DB model keys after feature stripping.
+  // Example: "ix range" -> strip "range" -> exact model "ix".
+  if (!cleanQuery || cleanQuery.length < 2 || cleanQuery.length > 12) return null;
+
+  const db = mongoose.connection?.readyState === 1 ? mongoose.connection?.db : null;
+  if (!db) return null;
+
+  const rows = await db
+    .collection("aci_vehicle_model_summary")
+    .find(
+      {
+        $or: [
+          { modelKey: key },
+          { model: new RegExp(`^${String(query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+        ],
+      },
+      {
+        projection: {
+          brand: 1,
+          make: 1,
+          model: 1,
+          modelKey: 1,
+          fullModel: 1,
+          displayName: 1,
+          citySlug: 1,
+        },
+        limit: 20,
+      },
+    )
+    .toArray();
+
+  const byModel = new Map();
+
+  for (const row of rows) {
+    const model = cleanText(row.model || "");
+    const brand = cleanText(row.brand || row.make || "");
+    if (!model) continue;
+
+    const dedupeKey = `${normalizeAciContextText(brand)}::${normalizeAciContextText(model)}`;
+
+    const entity = {
+      brand,
+      make: brand,
+      model,
+      fullModel: cleanText(row.fullModel || row.displayName || `${brand} ${model}`),
+      displayName: cleanText(row.displayName || row.fullModel || `${brand} ${model}`),
+      modelKey: row.modelKey || key,
+      shortModelKey: row.modelKey || key,
+      matchedText: query,
+      matchText: query,
+      method: "db_exact_short_model_feature_stripped_match",
+      confidence: 0.96,
+      fromMessage: true,
+      fromReadModelSummary: true,
+    };
+
+    const existing = byModel.get(dedupeKey);
+    if (!existing || row.citySlug === "new-delhi") {
+      byModel.set(dedupeKey, entity);
+    }
+  }
+
+  const candidates = [...byModel.values()];
+
+  // If more than one model shares this short key, do not guess.
+  if (candidates.length !== 1) return null;
+
+  return candidates[0];
+};
+
+const strippedQueryActuallyNamesEntity = (query = "", entity = {}) => {
+  const queryKey = normalizeAciContextText(query);
+  if (!queryKey || !entity?.model) return false;
+
+  const modelKey = normalizeAciContextText(entity.model || "");
+  const brandKey = normalizeAciContextText(entity.brand || entity.make || "");
+  const fullModelKey = normalizeAciContextText(entity.fullModel || entity.displayName || "");
+
+  if (queryKey === modelKey) return true;
+  if (fullModelKey && queryKey === fullModelKey) return true;
+  if (brandKey && modelKey && queryKey === `${brandKey} ${modelKey}`) return true;
+
+  // Exact short-model rescue is intentionally DB-backed and safe.
+  if (entity.method === "db_exact_short_model_feature_stripped_match") return true;
+
+  return false;
+};
+
+const buildConsistentFullModel = (entity = {}, make = "", model = "") => {
+  const rawFullModel = cleanText(entity.fullModel || entity.displayName || "");
+  const cleanMake = cleanText(make || entity.brand || entity.make || "");
+  const cleanModel = cleanText(model || entity.model || "");
+
+  if (!cleanModel) return rawFullModel || cleanMake;
+
+  const fullModelKey = normalizeAciContextText(rawFullModel);
+  const modelKey = normalizeAciContextText(cleanModel);
+  const makeKey = normalizeAciContextText(cleanMake);
+
+  const fullModelMentionsModel = Boolean(modelKey && fullModelKey.includes(modelKey));
+  const fullModelMentionsMake = !makeKey || fullModelKey.includes(makeKey);
+
+  if (rawFullModel && fullModelMentionsModel && fullModelMentionsMake) {
+    return rawFullModel;
+  }
+
+  return cleanText(`${cleanMake} ${cleanModel}`) || rawFullModel;
+};
+
+const shouldPreferFeatureStrippedModelEntity = ({
+  currentEntity = {},
+  strippedEntity = {},
+  parsed = {},
+  strippedQuery = "",
+} = {}) => {
+  if (!strippedEntity?.model) return false;
+  if (!strippedQueryActuallyNamesEntity(strippedQuery, strippedEntity)) return false;
+  if (!currentEntity?.model) return true;
+  if (sameModelEntity(currentEntity, strippedEntity)) return false;
+
+  const strippedConfidence = Number(strippedEntity.confidence || 0);
+  const currentConfidence = Number(currentEntity.confidence || 0);
+
+  // Feature words like "range" can be mistaken as model text.
+  // Prefer feature-stripped entity only when the stripped query really names that DB model.
+  if (strippedConfidence >= 0.75 && parsed?.requestedFeatures?.length) return true;
+
+  return strippedConfidence > currentConfidence;
+};
+
+
 
 
 const normalizeVariantText = (value = "") =>
@@ -216,7 +366,7 @@ export const maybeRunAciMultiFeatureAnswer = async ({
 } = {}) => {
   if (!modelEntity?.model) return null;
 
-  const parsed = await parseAciFeatureRequestFromMessage({
+  let parsed = await parseAciFeatureRequestFromMessage({
     message,
     modelEntity,
   });
@@ -224,16 +374,41 @@ export const maybeRunAciMultiFeatureAnswer = async ({
   if (!parsed.requestedFeatures?.length) return null;
   if (!allowSingleFeature && !parsed.hasMultiFeatureRequest) return null;
 
+  let effectiveModelEntity = modelEntity;
+
+  if (allowSingleFeature && parsed.featureStrippedMessage) {
+    let strippedEntity = await resolveAciExplicitMessageModelEntity(
+      parsed.featureStrippedMessage,
+    );
+
+    if (!strippedEntity?.model) {
+      strippedEntity = await resolveExactShortModelEntityFromReadModels(
+        parsed.featureStrippedMessage,
+      );
+    }
+
+    if (
+      shouldPreferFeatureStrippedModelEntity({
+        currentEntity: modelEntity,
+        strippedEntity,
+        parsed,
+        strippedQuery: parsed.featureStrippedMessage,
+      })
+    ) {
+      effectiveModelEntity = strippedEntity;
+      parsed = await parseAciFeatureRequestFromMessage({
+        message,
+        modelEntity: effectiveModelEntity,
+      });
+    }
+  }
+
   const db = getDb();
   if (!db) return null;
 
-  const make = cleanText(modelEntity.brand || modelEntity.make || "");
-  const model = cleanText(modelEntity.model || "");
-  const fullModel = cleanText(
-    modelEntity.fullModel ||
-      modelEntity.displayName ||
-      (make && model ? `${make} ${model}` : model),
-  );
+  const make = cleanText(effectiveModelEntity.brand || effectiveModelEntity.make || "");
+  const model = cleanText(effectiveModelEntity.model || "");
+  const fullModel = buildConsistentFullModel(effectiveModelEntity, make, model);
 
   const modelKey = slugKey(model);
   const brandModelKey = make ? `${slugKey(make)}_${slugKey(model)}` : "";

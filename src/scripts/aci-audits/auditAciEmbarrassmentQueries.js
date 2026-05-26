@@ -32,12 +32,15 @@ const cases = [
   {
     id: "eqs-range-must-not-open-overview",
     message: "eqs range",
+    expectedMake: "Mercedes Benz",
+    expectedModel: "Eqs",
     expectedModelParts: ["eqs"],
     expectedTextParts: ["range"],
     forbiddenTextParts: [
       "opened mercedes benz eqs overview",
       "opened",
       "overview",
+      "could not confidently match this feature",
     ],
     forbiddenIntentParts: ["overview"],
     minRecordCount: 1,
@@ -45,12 +48,53 @@ const cases = [
   {
     id: "mercedes-eqs-range-must-not-open-overview",
     message: "mercedes eqs range",
+    expectedMake: "Mercedes Benz",
+    expectedModel: "Eqs",
     expectedModelParts: ["eqs"],
     expectedTextParts: ["range"],
     forbiddenTextParts: [
       "opened mercedes benz eqs overview",
       "opened",
       "overview",
+      "could not confidently match this feature",
+    ],
+    forbiddenIntentParts: ["overview"],
+    minRecordCount: 1,
+  },
+  {
+    id: "ix-range-must-not-resolve-land-rover",
+    message: "ix range",
+    expectedMake: "Bmw",
+    expectedModel: "Ix",
+    expectedModelParts: ["ix"],
+    expectedTextParts: ["range"],
+    forbiddenModelParts: ["land rover", "range rover", "evoque"],
+    forbiddenVariantParts: ["range"],
+    forbiddenTextParts: [
+      "land rover range rover evoque",
+      "could not confidently match this feature",
+      "opened",
+      "overview",
+      "could not confidently match this feature",
+    ],
+    forbiddenIntentParts: ["overview"],
+    minRecordCount: 1,
+  },
+  {
+    id: "bmw-ix-range-control-case",
+    message: "bmw ix range",
+    expectedMake: "Bmw",
+    expectedModel: "Ix",
+    expectedModelParts: ["ix"],
+    expectedTextParts: ["range"],
+    forbiddenModelParts: ["land rover", "range rover", "evoque"],
+    forbiddenVariantParts: ["range"],
+    forbiddenTextParts: [
+      "land rover range rover evoque",
+      "could not confidently match this feature",
+      "opened",
+      "overview",
+      "could not confidently match this feature",
     ],
     forbiddenIntentParts: ["overview"],
     minRecordCount: 1,
@@ -58,6 +102,8 @@ const cases = [
   {
     id: "be-6e-sunroof-model-alias-no-fake-variant",
     message: "be 6e sunroof",
+    expectedMake: "Mahindra",
+    expectedModel: "Be 6",
     expectedModelParts: ["be 6"],
     expectedTextParts: ["sunroof"],
     forbiddenVariantParts: ["be 6e", "6e"],
@@ -70,6 +116,8 @@ const cases = [
   {
     id: "mahindra-be-6e-sunroof-model-alias-no-fake-variant",
     message: "mahindra be 6e sunroof",
+    expectedMake: "Mahindra",
+    expectedModel: "Be 6",
     expectedModelParts: ["be 6"],
     expectedTextParts: ["sunroof"],
     forbiddenVariantParts: ["be 6e", "mahindra be 6e", "6e"],
@@ -120,9 +168,31 @@ const runCase = async (testCase) => {
 
   if (error) failures.push(`chatWithAgent threw: ${error}`);
 
+  if (testCase.expectedMake && clean(patch.anchorMake) !== clean(testCase.expectedMake)) {
+    failures.push(`Expected anchorMake "${testCase.expectedMake}", got "${patch.anchorMake || ""}"`);
+  }
+
+  if (testCase.expectedModel && clean(patch.anchorModel) !== clean(testCase.expectedModel)) {
+    failures.push(`Expected anchorModel "${testCase.expectedModel}", got "${patch.anchorModel || ""}"`);
+  }
+
+  if (
+    testCase.expectedModel &&
+    patch.anchorFullModel &&
+    !hasText(patch.anchorFullModel, testCase.expectedModel)
+  ) {
+    failures.push(`Expected anchorFullModel to include "${testCase.expectedModel}", got "${patch.anchorFullModel || ""}"`);
+  }
+
   for (const expected of testCase.expectedModelParts || []) {
     if (!hasText(modelBag, expected)) {
       failures.push(`Expected model context/text to include "${expected}", got "${modelBag}"`);
+    }
+  }
+
+  for (const forbidden of testCase.forbiddenModelParts || []) {
+    if (hasText(modelBag, forbidden)) {
+      failures.push(`Forbidden wrong model text "${forbidden}" found in model context/text: "${modelBag}"`);
     }
   }
 
