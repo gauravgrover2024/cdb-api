@@ -50,3 +50,6 @@ aci_runtime_create_indexes_snippets_*.md
 
 # Local recovery scripts/exports
 src/scripts/recoverPostfileDocumentsFromR2.js
+
+# ACI eval runtime reports
+src/scripts/aci-evals/reports/*.json
