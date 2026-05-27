@@ -1344,26 +1344,45 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
       "new-delhi",
   };
 
+  const runtimeMatchedCount = Math.max(
+    Number(response.matched || 0),
+    Number(response.data?.matched || 0),
+    Number(response.meta?.matched || 0),
+    Number(widget.matched || 0),
+    Number(response.executor?.runtimeResultsMeta?.[0]?.matched || 0),
+    Number(response.runtimeResultsMeta?.[0]?.matched || 0),
+  );
+
+  const effectiveMatchedRows =
+    matchedRows.length > 0
+      ? matchedRows
+      : requestedFeature && runtimeMatchedCount > 0
+        ? allVariants
+        : [];
+
+  const effectiveMatchedCount =
+    effectiveMatchedRows.length || runtimeMatchedCount || matchedRows.length;
+
   return {
     type: "vehicle_feature_discovery",
     tool: "vehicle_feature_discovery",
     intent: "vehicle_feature_discovery",
     canvasType: response.canvasType || widget.canvasType || "feature_match_builder_canvas",
     title: `${requestedFeature || "Feature"} matches`,
-    answer: matchedRows.length
-      ? `I found ${matchedRows.length} variants with ${requestedFeature}.`
+    answer: effectiveMatchedCount
+      ? `I found ${effectiveMatchedCount} variants with ${requestedFeature}.`
       : `I could not find variants with ${requestedFeature}.`,
     vehicle,
     feature: requestedFeature,
     matchedFeature: requestedFeature,
     variants: allVariants,
-    matchedVariants: matchedRows,
-    rows: matchedRows,
-    items: matchedRows,
-    features: matchedRows,
-    featureList: matchedRows,
+    matchedVariants: effectiveMatchedRows,
+    rows: effectiveMatchedRows,
+    items: effectiveMatchedRows,
+    features: effectiveMatchedRows,
+    featureList: effectiveMatchedRows,
     totalVariantCount: allVariants.length,
-    matchedVariantCount: matchedRows.length,
+    matchedVariantCount: effectiveMatchedCount,
     activeStatusSource: enrichment.hasVehicleStatus ? "vehicles" : "feature_rows",
     activeVariantCount: allVariants.filter((variant) => variant.active === true || variant.current === true).length,
     totalRawVariantCount: rawVariants.length,
@@ -1372,8 +1391,8 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
       vehicle,
       feature: requestedFeature,
       variants: allVariants,
-      matchedVariants: matchedRows,
-      rows: matchedRows,
+      matchedVariants: effectiveMatchedRows,
+      rows: effectiveMatchedRows,
       activeStatusSource: enrichment.hasVehicleStatus ? "vehicles" : "feature_rows",
       activeVariantCount: allVariants.filter((variant) => variant.active === true || variant.current === true).length,
       totalRawVariantCount: rawVariants.length,

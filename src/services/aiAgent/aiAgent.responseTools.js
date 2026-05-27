@@ -1100,36 +1100,66 @@ export const buildVehicleRecommendResponse = ({
   const budgetLabel = filters.budgetMax ? ` under ${formatMoney(filters.budgetMax)}` : "";
   const bodyLabel = filters.bodyType ? ` ${displayName(filters.bodyType)}` : "";
   const transmissionLabel = filters.transmission ? ` ${displayName(filters.transmission)}` : "";
+  const mustHaveFeatures = asArray(filters.mustHaveFeatures);
+  const primaryFeature = cleanText(
+    firstMeaningful(
+      toolPlan.entities?.feature,
+      asArray(toolPlan.entities?.features)[0],
+      mustHaveFeatures[0],
+      runtimeData.feature,
+      runtimeData.data?.feature,
+    ),
+  );
+  const featureLabel = primaryFeature ? displayName(primaryFeature) : "";
+  const isFeatureMatch = ranking === "feature_match" || mustHaveFeatures.length > 0;
 
-  const title =
-    runtimeData.title ||
-    `Best${transmissionLabel}${bodyLabel} cars${budgetLabel}`.replace(/\s+/g, " ").trim();
+  const title = isFeatureMatch
+    ? `${featureLabel || "Feature"} matches${budgetLabel}`.replace(/\s+/g, " ").trim()
+    : runtimeData.title ||
+      `Best${transmissionLabel}${bodyLabel} cars${budgetLabel}`.replace(/\s+/g, " ").trim();
+
+  const answer = isFeatureMatch
+    ? rows.length
+      ? `I found ${rows.length} matching option${rows.length === 1 ? "" : "s"}${featureLabel ? ` with ${featureLabel}` : ""}${budgetLabel}. I’ll show the best model cards first instead of overwhelming you with every variant.`
+      : `I could not find strong matches${featureLabel ? ` with ${featureLabel}` : ""}${budgetLabel}. Try relaxing budget, body type, transmission, or must-have features.`
+    : rows.length
+      ? `I found matching cars for your filters. I’ll show the best model cards first instead of overwhelming you with every variant.`
+      : `I could not find strong matches for these filters yet. Try relaxing budget, body type, transmission, or must-have features.`;
 
   return baseResponse({
     toolPlan,
     context,
     runtimeData,
     intent:
-      ranking === "feature_match"
+      isFeatureMatch
         ? "vehicle_must_have_feature_builder"
         : "vehicle_recommendation",
     displayMode: "canvas",
     canvasType:
-      ranking === "feature_match"
+      isFeatureMatch
         ? "feature_match_builder_canvas"
         : "recommendation_results_canvas",
     title,
-    answer: rows.length
-      ? `I found matching cars for your filters. I’ll show the best model cards first instead of overwhelming you with every variant.`
-      : `I could not find strong matches for these filters yet. Try relaxing budget, body type, transmission, or must-have features.`,
+    answer,
     data: {
       city,
       ranking,
       filters,
+      feature: primaryFeature,
+      featureName: featureLabel || primaryFeature,
+      features: mustHaveFeatures.length ? mustHaveFeatures : asArray(toolPlan.entities?.features),
+      mustHaveFeatures,
       rows,
+      matchedVariants: rows,
+      variants: rows,
       groupBy: toolPlan.output?.groupBy || "model",
       summary: runtimeData.summary || {},
     },
+    feature: primaryFeature,
+    featureName: featureLabel || primaryFeature,
+    features: mustHaveFeatures.length ? mustHaveFeatures : asArray(toolPlan.entities?.features),
+    rows,
+    items: rows,
     actions: recommendationActions({ city }),
     leadingQuestions: buildRecommendationLeadingQuestions({ toolPlan }),
   });
