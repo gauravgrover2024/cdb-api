@@ -60,7 +60,9 @@
     "aci:core-index-audit": "node src/scripts/aci-audits/auditAciCoreReadModelsAndIndexes.js",
     "aci:candidates-smoke": "node src/scripts/aci-evals/runAciCandidateRetrieverSmoke.js",
     "aci:meaning-parser:smoke": "node src/scripts/aci-evals/runAciGeminiMeaningFrameSmoke.js",
-    "aci:meaning-baseline:smoke": "node src/scripts/aci-evals/runAciDeterministicMeaningFrameSmoke.js"
+    "aci:meaning-baseline:smoke": "node src/scripts/aci-evals/runAciDeterministicMeaningFrameSmoke.js",
+    "aci:meaning-baseline:profile": "node src/scripts/aci-evals/profileAciMeaningBaseline.js",
+    "aci:answer-quality:smoke": "node src/scripts/aci-evals/runAciAnswerQualitySmoke.js"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
