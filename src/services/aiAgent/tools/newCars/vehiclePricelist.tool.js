@@ -67,6 +67,22 @@ const buildVehicleDisplayName = (make = "", model = "") => {
   );
 };
 
+const stripNormalizedPrefix = (value = "", prefix = "") => {
+  const cleanValue = cleanVehicleText(value);
+  const cleanPrefix = cleanVehicleText(prefix);
+  const valueKey = normalizeKey(cleanValue);
+  const prefixKey = normalizeKey(cleanPrefix);
+
+  if (!cleanValue || !cleanPrefix || !prefixKey) return cleanValue;
+  if (valueKey === prefixKey) return "";
+  if (!valueKey.startsWith(`${prefixKey} `)) return cleanValue;
+
+  const prefixPattern = escapeRegex(cleanPrefix).replace(/[-_\s]+/g, "[-_\\s]+");
+  return cleanVehicleText(
+    cleanValue.replace(new RegExp(`^${prefixPattern}\\s+`, "i"), ""),
+  );
+};
+
 const stripVehicleNameFromVariant = (
   variant = "",
   { make = "", model = "", displayName = "" } = {},
@@ -92,9 +108,7 @@ const stripVehicleNameFromVariant = (
     if (tokenKey && outKey === tokenKey) return "";
 
     if (tokenKey && outKey.startsWith(`${tokenKey} `)) {
-      out = cleanText(
-        out.replace(new RegExp(`^${escapeRegex(token)}\\s+`, "i"), ""),
-      );
+      out = stripNormalizedPrefix(out, token);
     }
   }
 
@@ -119,58 +133,12 @@ const isGenericVariantCandidate = (
 const REQUEST_NOISE_PATTERN =
   /\b(show|find|get|open|please|pls|tell me|price list|pricelist|prices|price|pricing|rate list|on road|onroad|on-road|ex showroom|exshowroom|ex-showroom|colors|colours|color|colour|variants|variant|new car|list|for|in|new delhi|delhi)\b/gi;
 
-const MODEL_MAKE_PREFIXES = [
-  "maruti suzuki",
-  "mercedes benz",
-  "mercedes-benz",
-  "land rover",
-  "volkswagen",
-  "mahindra",
-  "hyundai",
-  "toyota",
-  "renault",
-  "citroen",
-  "maruti",
-  "honda",
-  "nissan",
-  "skoda",
-  "tata",
-  "kia",
-  "mg",
-  "bmw",
-  "audi",
-  "jeep",
-  "volvo",
-  "lexus",
-  "isuzu",
-  "force",
-].sort((a, b) => b.length - a.length);
-
-const stripKnownMakePrefix = (value = "") => {
-  const clean = cleanVehicleText(value);
-  const key = normalizeKey(clean);
-
-  for (const make of MODEL_MAKE_PREFIXES) {
-    const makeKey = normalizeKey(make);
-    if (key === makeKey) return "";
-    if (!key.startsWith(`${makeKey} `)) continue;
-
-    return cleanVehicleText(
-      clean.replace(new RegExp(`^${escapeRegex(make)}\\s+`, "i"), ""),
-    );
-  }
-
-  return clean;
-};
-
 const sanitizeRequestedModelText = (value = "", { requestedMake = "" } = {}) => {
   let out = cleanVehicleText(value).replace(REQUEST_NOISE_PATTERN, " ");
   out = cleanVehicleText(out);
 
   if (requestedMake) {
     out = stripMakeFromModel(out, requestedMake);
-  } else {
-    out = stripKnownMakePrefix(out);
   }
 
   return cleanVehicleText(out);
@@ -178,16 +146,52 @@ const sanitizeRequestedModelText = (value = "", { requestedMake = "" } = {}) => 
 
 const sanitizeRequestedVariant = (
   value = "",
-  { requestedModel = "", requestedMake = "" } = {},
+  {
+    requestedModel = "",
+    requestedMake = "",
+    requestedDisplayName = "",
+  } = {},
 ) => {
-  const stripped = stripVehicleNameFromVariant(value, {
-    make: requestedMake,
-    model: requestedModel,
-  });
+  let text = cleanVehicleText(value);
+  if (!text) return "";
 
-  if (isGenericVariantCandidate(stripped, { requestedModel })) return "";
+  const modelWithoutMake = cleanVehicleText(
+    requestedMake
+      ? stripMakeFromModel(requestedModel, requestedMake)
+      : requestedModel,
+  );
 
-  return stripped;
+  const prefixes = [
+    requestedDisplayName,
+    requestedModel,
+    requestedMake && modelWithoutMake ? `${requestedMake} ${modelWithoutMake}` : "",
+    modelWithoutMake,
+    requestedMake,
+  ]
+    .map((item) => cleanVehicleText(item))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  const seenPrefixes = new Set();
+
+  for (const prefix of prefixes) {
+    if (!prefix || seenPrefixes.has(prefix)) continue;
+    seenPrefixes.add(prefix);
+
+    // If the candidate is only the model/make text, it is not a variant.
+    if (normalizeKey(text) === normalizeKey(prefix)) return "";
+
+    // Generic prefix strip:
+    // "<make> <model> <variant>" -> "<variant>"
+    // "<model> <variant>" -> "<variant>"
+    const stripped = stripNormalizedPrefix(text, prefix);
+    if (stripped !== text) {
+      text = stripped;
+      break;
+    }
+  }
+
+  return cleanVehicleText(text);
 };
 
 const amount = (...values) => {
@@ -242,6 +246,7 @@ const getRequestedModel = ({
   userMessage = "",
 } = {}) => {
   const entities = getEntities(toolPlan);
+  const filters = getFilters(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
   const requestedMake = getRequestedMake({ toolPlan, context });
 
@@ -249,6 +254,7 @@ const getRequestedModel = ({
     first(
       entities.model,
       entities.models?.[0],
+      filters.model,
       toolPlan.model,
       toolPlan.input?.model,
       selectedVehicle.model,
@@ -281,11 +287,13 @@ const getRequestedMake = ({ toolPlan = {}, context = {} } = {}) => {
 
 const getRequestedVariant = ({ toolPlan = {}, context = {} } = {}) => {
   const entities = getEntities(toolPlan);
+  const filters = getFilters(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
 
   return cleanText(
     first(
       entities.variant,
+      filters.variant,
       toolPlan.variant,
       toolPlan.input?.variant,
       selectedVehicle.variant,
@@ -486,8 +494,7 @@ const resolveContextSafeRequestedMake = ({
   const requestedModelKey = normalizeKey(requestedModel);
   const contextModelKey = normalizeKey(contextModel);
 
-  // User has moved from Seltos to Safari, Verna to X5, etc.
-  // Do not carry old selectedVehicle.make into the new model query.
+  // Do not carry old selectedVehicle.make into a different model query.
   if (
     requestedModelKey &&
     contextModelKey &&
@@ -661,6 +668,37 @@ const uniqueRows = (rows = []) => {
   return out;
 };
 
+const uniqueCleanStrings = (values = []) => {
+  const seen = new Set();
+  const out = [];
+
+  for (const value of values) {
+    const clean = cleanText(value);
+    const key = normalizeKey(clean);
+
+    if (!clean || !key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(clean);
+  }
+
+  return out;
+};
+
+const uniqueExactCleanStrings = (values = []) => {
+  const seen = new Set();
+  const out = [];
+
+  for (const value of values) {
+    const clean = cleanText(value);
+
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+  }
+
+  return out;
+};
+
 const explicitNLineRequest = (value = "") =>
   /\bn\s*[- ]?\s*line\b/i.test(String(value || ""));
 
@@ -678,10 +716,9 @@ const exactModelFilter = ({
 
   if (!modelKey) return rows;
 
-  // Soft ambiguity rule:
-  // "Venue" means regular Venue. "Venue N Line" means N Line.
-  // Same logic also protects i20 / Creta from N Line leakage.
-  if (!messageWantsNLine && /\b(venue|i20|creta)\b/.test(modelKey)) {
+  // Soft ambiguity rule: a base model request should not drift into a
+  // special-line model unless the user explicitly asked for that line.
+  if (!messageWantsNLine) {
     return rows.filter((row) => !isNLineModel(row.model));
   }
 
@@ -893,41 +930,6 @@ const buildSoftAlternatives = ({
   requestedMake = "",
   userMessage = "",
 } = {}) => {
-  const key = normalizeKey(`${requestedModel} ${userMessage}`);
-  const explicitNLine = explicitNLineRequest(key);
-
-  if (explicitNLine) return [];
-
-  if (/\bvenue\b/.test(key)) {
-    return [
-      {
-        make: requestedMake || "Hyundai",
-        model: "Venue N Line",
-        label: "Venue N Line",
-      },
-    ];
-  }
-
-  if (/\bcreta\b/.test(key)) {
-    return [
-      {
-        make: requestedMake || "Hyundai",
-        model: "Creta N Line",
-        label: "Creta N Line",
-      },
-    ];
-  }
-
-  if (/\bi20\b/.test(key)) {
-    return [
-      {
-        make: requestedMake || "Hyundai",
-        model: "i20 N Line",
-        label: "i20 N Line",
-      },
-    ];
-  }
-
   return [];
 };
 
@@ -1125,6 +1127,126 @@ const buildReadModelVehicleFromSummary = (summary = {}, visual = null) => ({
   selectedVariant: "",
 });
 
+const READ_MODEL_SUMMARY_PROJECTION = {
+  make: 1,
+  makeKey: 1,
+  model: 1,
+  modelKey: 1,
+  fullModel: 1,
+  displayName: 1,
+  city: 1,
+  citySlug: 1,
+  variantCount: 1,
+  variantsPreview: 1,
+  fuelText: 1,
+  transmissionText: 1,
+  gearboxText: 1,
+  fuels: 1,
+  transmissions: 1,
+  gearboxes: 1,
+  minExShowroomPrice: 1,
+  maxExShowroomPrice: 1,
+  minOnRoadPrice: 1,
+  maxOnRoadPrice: 1,
+  priceRangeLabel: 1,
+  onRoadPriceRangeLabel: 1,
+  bodyType: 1,
+  bodyTypeKey: 1,
+  hero: 1,
+  colorCount: 1,
+};
+
+const slugifyStrict = (value = "") => {
+  const key = normalizeKey(value).replace(/\s+/g, "-");
+  return key || "";
+};
+
+const exactVehicleTextRegex = (value = "") => {
+  const clean = cleanVehicleText(value);
+  if (!clean) return null;
+
+  const pattern = escapeRegex(clean).replace(/[-_\s]+/g, "[-_\\s]+");
+  return new RegExp(`^${pattern}$`, "i");
+};
+
+const buildReadModelSummaryQueries = ({
+  requestedMake = "",
+  requestedModel = "",
+  citySlug = DEFAULT_CITY,
+} = {}) => {
+  const makeText = cleanVehicleText(requestedMake);
+  const modelText = cleanVehicleText(requestedModel);
+  const modelWithoutMake = makeText
+    ? stripMakeFromModel(modelText, makeText)
+    : modelText;
+  const makeKey = slugifyStrict(makeText);
+  const baseQuery = { citySlug, ...(makeKey ? { makeKey } : {}) };
+  const textCandidates = uniqueCleanStrings(
+    [modelText, modelWithoutMake]
+      .map((item) => cleanVehicleText(item))
+      .filter(Boolean),
+  );
+  const modelKeys = uniqueCleanStrings(
+    textCandidates
+      .map((item) => slugifyStrict(item))
+      .filter(Boolean),
+  );
+
+  const queries = [];
+
+  for (const modelKey of modelKeys) {
+    queries.push({ ...baseQuery, modelKey });
+  }
+
+  for (const text of textCandidates) {
+    const regex = exactVehicleTextRegex(text);
+    if (!regex) continue;
+
+    queries.push({
+      ...baseQuery,
+      $or: [{ displayName: regex }, { fullModel: regex }, { model: regex }],
+    });
+  }
+
+  if (makeKey) {
+    for (const text of textCandidates) {
+      const regex = exactVehicleTextRegex(text);
+      if (!regex) continue;
+
+      queries.push({
+        citySlug,
+        $or: [{ displayName: regex }, { fullModel: regex }, { model: regex }],
+      });
+    }
+  }
+
+  return queries;
+};
+
+const resolveReadModelSummary = async ({
+  db,
+  requestedMake = "",
+  requestedModel = "",
+  citySlug = DEFAULT_CITY,
+} = {}) => {
+  const collection = db.collection(ACI_MODEL_SUMMARY_COLLECTION);
+  const queries = buildReadModelSummaryQueries({
+    requestedMake,
+    requestedModel,
+    citySlug,
+  });
+
+  for (const query of queries) {
+    const summary = await collection.findOne(query, {
+      projection: READ_MODEL_SUMMARY_PROJECTION,
+    });
+
+    if (summary) return { summary, query };
+  }
+
+  return { summary: null, query: queries[0] || { citySlug } };
+};
+
 const fetchVehiclePricelistRowsFromReadModels = async ({
   requestedMake = "",
   requestedModel = "",
@@ -1146,15 +1268,35 @@ const fetchVehiclePricelistRowsFromReadModels = async ({
   }
 
   const db = mongoose.connection.db;
-  const modelText = stripKnownMakePrefix(requestedModel) || requestedModel;
-  const modelKey = slugify(modelText);
-  const makeKey = requestedMake ? slugify(requestedMake) : "";
   const citySlug = slugify(requestedCity || DEFAULT_CITY);
-  const variantText = sanitizeRequestedVariant(requestedVariant, {
-    requestedModel,
+  const resolved = await resolveReadModelSummary({
+    db,
     requestedMake,
+    requestedModel,
+    citySlug,
   });
-  const variantKey = variantText ? slugify(variantText) : "";
+  const resolvedSummary = resolved.summary || {};
+  const resolvedMake = resolvedSummary.make || requestedMake;
+  const resolvedModel =
+    resolvedSummary.model ||
+    (resolvedMake ? stripMakeFromModel(requestedModel, resolvedMake) : requestedModel);
+  const resolvedDisplayName =
+    resolvedSummary.displayName ||
+    resolvedSummary.fullModel ||
+    buildVehicleDisplayName(resolvedMake, resolvedModel);
+  const modelKey = resolvedSummary.modelKey || slugify(resolvedModel || requestedModel);
+  const makeKey = resolvedSummary.makeKey || (requestedMake ? slugify(requestedMake) : "");
+  const variantText = sanitizeRequestedVariant(requestedVariant, {
+    requestedModel: resolvedModel || requestedModel,
+    requestedMake: resolvedMake,
+    requestedDisplayName: resolvedDisplayName,
+  });
+  const strictVariantKeys = buildStrictRequestedVariantKeys({
+    requestedVariant: variantText || requestedVariant,
+    requestedModel: resolvedModel || requestedModel,
+    requestedMake: resolvedMake,
+    requestedDisplayName: resolvedDisplayName,
+  });
 
   if (!modelKey) {
     return {
@@ -1179,43 +1321,15 @@ const fetchVehiclePricelistRowsFromReadModels = async ({
     modelKey,
     citySlug,
     ...(makeKey ? { makeKey } : {}),
-    ...(variantKey ? { variantKey } : {}),
+    ...(strictVariantKeys.length ? { variantKey: { $in: strictVariantKeys } } : {}),
   };
 
   try {
-    const summary = await db.collection(ACI_MODEL_SUMMARY_COLLECTION).findOne(
-      summaryQuery,
-      {
-        projection: {
-          make: 1,
-          makeKey: 1,
-          model: 1,
-          modelKey: 1,
-          fullModel: 1,
-          displayName: 1,
-          city: 1,
-          citySlug: 1,
-          variantCount: 1,
-          variantsPreview: 1,
-          fuelText: 1,
-          transmissionText: 1,
-          gearboxText: 1,
-          fuels: 1,
-          transmissions: 1,
-          gearboxes: 1,
-          minExShowroomPrice: 1,
-          maxExShowroomPrice: 1,
-          minOnRoadPrice: 1,
-          maxOnRoadPrice: 1,
-          priceRangeLabel: 1,
-          onRoadPriceRangeLabel: 1,
-          bodyType: 1,
-          bodyTypeKey: 1,
-          hero: 1,
-          colorCount: 1,
-        },
-      },
-    );
+    const summary =
+      resolved.summary ||
+      (await db.collection(ACI_MODEL_SUMMARY_COLLECTION).findOne(summaryQuery, {
+        projection: READ_MODEL_SUMMARY_PROJECTION,
+      }));
 
     const priceRows = await db
       .collection(ACI_PRICE_ROWS_COLLECTION)
@@ -1415,6 +1529,145 @@ const exactRequestedModelRows = ({
 const explicitTourRequest = (value = "") =>
   /\btour\b/i.test(String(value || ""));
 
+const getRowVariantKeyCandidates = (row = {}) =>
+  [
+    row.variantKey,
+    row.variant_key,
+    row.variantNormalized,
+    row.variant_normalized,
+    row.variantShort,
+    row.variant_short,
+    row.variant,
+    row.variantName,
+    row.variant_name,
+    row.selectedVariant,
+    row.raw?.variantKey,
+    row.raw?.variant_key,
+    row.raw?.variantNormalized,
+    row.raw?.variant_normalized,
+    row.raw?.variantShort,
+    row.raw?.variant_short,
+    row.raw?.variant,
+    row.raw?.variantName,
+    row.raw?.variant_name,
+  ]
+    .map((item) => cleanText(item))
+    .filter(Boolean);
+
+const stripRequestedVehiclePrefixFromVariant = ({
+  requestedVariant = "",
+  requestedModel = "",
+  requestedMake = "",
+  requestedDisplayName = "",
+} = {}) => {
+  return stripVehicleNameFromVariant(requestedVariant, {
+    make: requestedMake,
+    model: requestedModel,
+    displayName: requestedDisplayName,
+  });
+};
+
+const buildStrictRequestedVariantKeys = ({
+  requestedVariant = "",
+  requestedModel = "",
+  requestedMake = "",
+  requestedDisplayName = "",
+} = {}) => {
+  const raw = cleanText(requestedVariant);
+  const sanitized = sanitizeRequestedVariant(raw, {
+    requestedModel,
+    requestedMake,
+    requestedDisplayName,
+  });
+
+  const prefixStrippedRaw = stripRequestedVehiclePrefixFromVariant({
+    requestedVariant: raw,
+    requestedModel,
+    requestedMake,
+    requestedDisplayName,
+  });
+
+  const prefixStrippedSanitized = stripRequestedVehiclePrefixFromVariant({
+    requestedVariant: sanitized,
+    requestedModel,
+    requestedMake,
+    requestedDisplayName,
+  });
+
+  return uniqueExactCleanStrings(
+    [raw, sanitized, prefixStrippedRaw, prefixStrippedSanitized]
+      .map((item) => cleanText(item))
+      .filter(Boolean)
+      .flatMap((item) => [
+        slugify(item),
+        normalizeKey(item),
+        normalizeKey(cleanVehicleText(item)),
+        item,
+      ])
+      .filter(Boolean),
+  );
+};
+
+const preferExactRequestedVariantRows = ({
+  rows = [],
+  requestedVariant = "",
+  requestedModel = "",
+  requestedMake = "",
+  requestedDisplayName = "",
+  dropAmbiguousLooseMatches = false,
+  ambiguousLooseMatchLimit = 3,
+} = {}) => {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length || !cleanText(requestedVariant)) return list;
+
+  const variantContexts = [
+    { requestedModel, requestedMake, requestedDisplayName },
+    ...list.slice(0, 8).map((row) => ({
+      requestedModel: row.model || requestedModel,
+      requestedMake: row.make || row.brand || requestedMake,
+      requestedDisplayName:
+        row.fullModel ||
+        row.displayName ||
+        buildVehicleDisplayName(row.make || row.brand, row.model),
+    })),
+  ];
+  const requestedKeys = new Set(
+    variantContexts.flatMap((context) =>
+      buildStrictRequestedVariantKeys({
+        requestedVariant,
+        requestedModel: context.requestedModel,
+        requestedMake: context.requestedMake,
+        requestedDisplayName: context.requestedDisplayName,
+      }),
+    ),
+  );
+
+  if (!requestedKeys.size) return list;
+
+  const exactRows = list.filter((row) => {
+    const candidates = getRowVariantKeyCandidates(row)
+      .flatMap((item) => [
+        item,
+        slugify(item),
+        normalizeKey(item),
+        normalizeKey(cleanVehicleText(item)),
+      ])
+      .filter(Boolean);
+
+    return candidates.some((candidate) => requestedKeys.has(candidate));
+  });
+
+  // Exact variant rows must win over longer variants that merely share a prefix.
+  if (exactRows.length) return exactRows;
+
+  if (dropAmbiguousLooseMatches && list.length > ambiguousLooseMatchLimit) {
+    return [];
+  }
+
+  return list;
+};
+
+
 const preferExactRequestedModelRows = ({
   rows = [],
   requestedModel = "",
@@ -1608,29 +1861,6 @@ const isSpecialSeriesVisualAllowed = ({
   // If the color document exposes a model, use that as the strongest signal.
   if (visualKey && visualKey === requestedKey) return true;
   if (visualKey) return false;
-
-  // Protect base models from special-series image leakage.
-  if (requestedKey === "innovahycross" && /innovacrysta|crysta/.test(searchableKey)) return false;
-  if (requestedKey === "innovacrysta" && /innovahycross|hycross/.test(searchableKey)) return false;
-  if (requestedKey === "thar" && /roxx/.test(searchableKey)) return false;
-  if (requestedKey === "ertiga" && /tour/.test(searchableKey)) return false;
-  if (requestedKey === "venue" && /nline/.test(searchableKey)) return false;
-  if (requestedKey === "creta" && /nline/.test(searchableKey)) return false;
-  if (requestedKey === "creta" && /electric|ev/.test(searchableKey)) return false;
-  if (requestedKey === "fortuner" && /legender/.test(searchableKey)) return false;
-  if (requestedKey === "i20" && /nline/.test(searchableKey)) return false;
-
-  // For special-series requests, avoid falling back to the base model image.
-  if (requestedKey === "tharroxx" && visualKey && visualKey !== "tharroxx")
-    return false;
-  if (requestedKey === "ertigatour" && visualKey && visualKey !== "ertigatour")
-    return false;
-  if (requestedKey === "venuenline" && visualKey && visualKey !== "venuenline")
-    return false;
-  if (requestedKey === "cretanline" && visualKey && visualKey !== "cretanline")
-    return false;
-  if (requestedKey === "i20nline" && visualKey && visualKey !== "i20nline")
-    return false;
 
   // If model metadata exists and is clearly unrelated, reject it.
   if (
@@ -2253,6 +2483,12 @@ const enrichRowsWithFeatureMeta = async ({
   });
 };
 
+const resultAttemptedStrictVariantLookup = (result = {}) =>
+  Boolean(
+    result.queryUsed?.priceQuery?.variantKey ||
+      result.readModelFallback?.queryUsed?.priceQuery?.variantKey,
+  );
+
 export const runVehiclePricelistNewCarsTool = async (args = {}) => {
   const { toolPlan = {}, context = {}, userMessage = "" } = args;
 
@@ -2265,11 +2501,34 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     toolPlan,
     context,
   });
-  const rawRequestedVariant = getRequestedVariant(args);
-  const requestedVariant = sanitizeRequestedVariant(rawRequestedVariant, {
-    requestedModel,
-    requestedMake,
-  });
+  const requestedVariantCandidates = [
+    toolPlan.entities?.primaryVariant,
+    toolPlan.entities?.variant,
+    toolPlan.filters?.variant,
+    toolPlan.input?.variant,
+    context?.selectedVehicle?.variant,
+    context?.anchorVariant,
+    context?.variant,
+    getRequestedVariant(args),
+  ]
+    .map((item) => cleanText(item))
+    .filter(Boolean);
+
+  let rawRequestedVariant = "";
+  let requestedVariant = "";
+
+  for (const candidate of requestedVariantCandidates) {
+    const sanitizedCandidate = sanitizeRequestedVariant(candidate, {
+      requestedModel,
+      requestedMake,
+    });
+
+    if (cleanText(sanitizedCandidate)) {
+      rawRequestedVariant = candidate;
+      requestedVariant = sanitizedCandidate;
+      break;
+    }
+  }
   const requestedCity = getRequestedCity(args);
   let effectiveRequestedMake = requestedMake;
 
@@ -2282,7 +2541,11 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     limit: toolPlan.limit || toolPlan.input?.limit || 240,
   });
 
-  if (!asArray(rawResult.rows).length && requestedVariant) {
+  if (
+    !asArray(rawResult.rows).length &&
+    requestedVariant &&
+    !resultAttemptedStrictVariantLookup(rawResult)
+  ) {
     rawResult = await fetchVehiclePricelistRows({
       requestedMake,
       requestedModel,
@@ -2310,7 +2573,11 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
       limit: toolPlan.limit || toolPlan.input?.limit || 240,
     });
 
-    if (!asArray(rawResult.rows).length && requestedVariant) {
+    if (
+      !asArray(rawResult.rows).length &&
+      requestedVariant &&
+      !resultAttemptedStrictVariantLookup(rawResult)
+    ) {
       rawResult = await fetchVehiclePricelistRows({
         requestedMake: "",
         requestedModel,
@@ -2348,6 +2615,14 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     rows,
     requestedModel,
     userMessage,
+  });
+
+  rows = preferExactRequestedVariantRows({
+    rows,
+    requestedVariant,
+    requestedModel,
+    requestedMake: effectiveRequestedMake || requestedMake,
+    dropAmbiguousLooseMatches: true,
   });
 
   const softAlternatives = buildSoftAlternatives({
@@ -2444,8 +2719,32 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     vehicle.visualGallery = visualGallery;
   }
 
-  const title = `${vehicle.displayName || buildVehicleDisplayName(requestedMake, requestedModel) || "Vehicle"} price list`;
-  const subtitle = `${vehicle.city || displayCity(requestedCity)} · ${rows.length} variants · Ex-showroom`;
+  const requestedPriceBasis = cleanText(
+    first(
+      toolPlan.filters?.priceBasis,
+      toolPlan.input?.priceBasis,
+      toolPlan.priceBasis,
+    ),
+  );
+  const wantsOnRoadPrice =
+    normalizeKey(`${requestedPriceBasis} ${userMessage}`).includes("on road");
+  const displayVariant = cleanVehicleText(
+    sanitizeRequestedVariant(rows[0]?.variant || requestedVariant, {
+      requestedModel: vehicle.model || requestedModel,
+      requestedMake: vehicle.make || effectiveRequestedMake || requestedMake,
+      requestedDisplayName: vehicle.displayName,
+    }) ||
+      rows[0]?.variant ||
+      requestedVariant,
+  );
+  const vehicleLabel =
+    vehicle.displayName ||
+    buildVehicleDisplayName(requestedMake, requestedModel) ||
+    "Vehicle";
+  const title = displayVariant
+    ? `${vehicleLabel} ${displayVariant} ${wantsOnRoadPrice ? "on-road price" : "price"}`
+    : `${vehicleLabel} price list`;
+  const subtitle = `${vehicle.city || displayCity(requestedCity)} · ${rows.length} variants · ${wantsOnRoadPrice ? "On-road" : "Ex-showroom"}`;
 
   const actions = buildActions({
     vehicle,
