@@ -1172,13 +1172,42 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
     10000,
   );
 
-  if (rawQ.length < 2 && q.length < 2) {
+  const fetchAll = req.query.all === 'true';
+
+  if (!fetchAll && rawQ.length < 2 && q.length < 2) {
     return res.json({ success: true, count: 0, data: [] });
   }
 
   const rawEscaped = escapeRegex(rawQ);
   const regEscaped = escapeRegex(q);
   const suffix = (q || normalizeRegNo(rawQ)).slice(-4);
+
+  // If fetchAll requested, skip clause building and return all records
+  if (fetchAll) {
+    const rows = await VehicleRecord.find({})
+      .select({
+        registrationNumber: 1,
+        customerName: 1,
+        primaryMobile: 1,
+        make: 1,
+        model: 1,
+        variant: 1,
+        yearOfManufacture: 1,
+        fuelType: 1,
+        typesOfVehicle: 1,
+        chassisNumber: 1,
+        engineNumber: 1,
+        registrationCity: 1,
+        registrationDate: 1,
+        loanId: 1,
+        updatedAt: 1,
+        createdAt: 1,
+      })
+      .sort({ updatedAt: -1 })
+      .limit(limit)
+      .lean();
+    return res.json({ success: true, count: rows.length, data: rows });
+  }
 
   const clauses = [];
   if (q.length >= 2) {
@@ -1240,19 +1269,18 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
     .map((row) => {
       const normalized = normalizeRegNo(
         row?.registrationNumberNormalized || row?.registrationNumber,
-      );
-      if (!normalized) return null;
+      ) || "";
 
       let score = 0;
-      if (q) {
+      if (q && normalized) {
         if (normalized === q) score += 150;
         if (normalized.startsWith(q)) score += 110;
         if (normalized.includes(q)) score += 50;
       }
       if (isFourDigitSuffixSearch && row?.registrationNumberLast4 === suffix) score += 220;
-      if (isFourDigitSuffixSearch && normalized.endsWith(suffix)) score += 170;
+      if (isFourDigitSuffixSearch && normalized && normalized.endsWith(suffix)) score += 170;
       if (!isFourDigitSuffixSearch && suffix.length === 4 && row?.registrationNumberLast4 === suffix) score += 80;
-      if (!isFourDigitSuffixSearch && suffix.length === 4 && normalized.endsWith(suffix)) score += 40;
+      if (!isFourDigitSuffixSearch && suffix.length === 4 && normalized && normalized.endsWith(suffix)) score += 40;
       const customerName = String(row?.customerName || '');
       const primaryMobile = String(row?.primaryMobile || '');
       const make = String(row?.make || '');
@@ -1284,7 +1312,7 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
   const deduped = [];
   const seen = new Set();
   for (const row of scored) {
-    const key = row.registrationNumberNormalized;
+    const key = row.registrationNumberNormalized || String(row._id);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     deduped.push({
@@ -1429,7 +1457,7 @@ const bulkUploadVehicles = asyncHandler(async (req, res) => {
       );
 
       if (duplicate) {
-        await Vehicle.findByIdAndUpdate(duplicate._id, payload, { new: true });
+        await Vehicle.findByIdAndUpdate(duplicate._id, payload, { returnDocument: 'after' });
         results.updated++;
       } else {
         await Vehicle.create(payload);

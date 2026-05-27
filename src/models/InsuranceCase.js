@@ -36,7 +36,7 @@ const insuranceDocumentSchema = new mongoose.Schema(
     previewUrl: { type: String, default: "" },
     downloadUrl: { type: String, default: "" },
     storageKey: { type: String, default: "" },
-    uploadedAt: { type: Date, default: null },
+    uploadedAt: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { _id: false, strict: false },
 );
@@ -286,7 +286,7 @@ const insuranceCaseSchema = new mongoose.Schema(
     renewalAssignedBy: { type: String, default: "" },
     renewalLeadStatus: {
       type: String,
-      enum: ["New", "Follow Up", "Quotes Shared", "Payment Pending", "Closed"],
+      enum: ["New", "Quotes Shared", "Payment Pending", "Closed"],
       default: "New",
     },
     renewalFollowUpDate: { type: String, default: "" },

@@ -157,7 +157,7 @@ const getNextInternalLeadId = async () => {
   const next = await Counter.findOneAndUpdate(
     { key },
     { $inc: { value: 1 } },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
   return `${USED_CAR_LEAD_ID_PREFIX}-${year}-${String(next?.value || 1).padStart(4, "0")}`;
 };
@@ -171,7 +171,7 @@ const reserveInternalLeadIds = async (count = 0) => {
   const next = await Counter.findOneAndUpdate(
     { key },
     { $inc: { value: safeCount } },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
 
   const lastValue = Number(next?.value || safeCount);

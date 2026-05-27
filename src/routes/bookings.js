@@ -11,7 +11,7 @@ async function generateBookingId() {
   const bumped = await Counter.findOneAndUpdate(
     { key },
     { $inc: { value: 1 } },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
   ).lean();
   const next = Number(bumped?.value || 1);
   return `BKG-${String(next).padStart(4, "0")}`;
