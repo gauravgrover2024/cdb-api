@@ -62,7 +62,8 @@
     "aci:meaning-parser:smoke": "node src/scripts/aci-evals/runAciGeminiMeaningFrameSmoke.js",
     "aci:meaning-baseline:smoke": "node src/scripts/aci-evals/runAciDeterministicMeaningFrameSmoke.js",
     "aci:meaning-baseline:profile": "node src/scripts/aci-evals/profileAciMeaningBaseline.js",
-    "aci:answer-quality:smoke": "node src/scripts/aci-evals/runAciAnswerQualitySmoke.js"
+    "aci:answer-quality:smoke": "node src/scripts/aci-evals/runAciAnswerQualitySmoke.js",
+    "aci:meaning-router:smoke": "node src/scripts/aci-evals/runAciHybridMeaningFrameSmoke.js"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
