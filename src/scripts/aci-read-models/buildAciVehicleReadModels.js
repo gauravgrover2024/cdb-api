@@ -589,6 +589,47 @@ const createIndexes = async (db) => {
   ]);
 };
 
+const modelSummaryIdentityKey = (doc = {}) =>
+  `${doc.makeKey || ""}:${doc.modelKey || ""}:${doc.citySlug || ""}`;
+
+const priceRowIdentityKey = (doc = {}) =>
+  `${doc.makeKey || ""}:${doc.modelKey || ""}:${doc.variantKey || ""}:${doc.citySlug || ""}`;
+
+const cleanupStaleReadModelDocs = async ({
+  db,
+  collectionName,
+  currentKeys,
+  keyForDoc,
+  projection,
+}) => {
+  if (!currentKeys?.size) {
+    console.log(`${collectionName}: stale cleanup skipped because current key set is empty.`);
+    return;
+  }
+
+  const existingDocs = await db
+    .collection(collectionName)
+    .find({}, { projection: { _id: 1, ...projection } })
+    .toArray();
+
+  const staleIds = existingDocs
+    .filter((doc) => !currentKeys.has(keyForDoc(doc)))
+    .map((doc) => doc._id);
+
+  if (!staleIds.length) {
+    console.log(`${collectionName}: no stale read-model rows found.`);
+    return;
+  }
+
+  const result = await db
+    .collection(collectionName)
+    .deleteMany({ _id: { $in: staleIds } });
+
+  console.log(
+    `${collectionName}: deleted ${result.deletedCount || 0} stale read-model rows.`,
+  );
+};
+
 const build = async () => {
   await connectDB();
 
@@ -871,6 +912,9 @@ const build = async () => {
   console.log(`Model summaries to upsert: ${summaries.length}`);
   console.log(`Price rows to upsert: ${priceRows.length}`);
 
+  const currentSummaryKeys = new Set(summaries.map(modelSummaryIdentityKey));
+  const currentPriceRowKeys = new Set(priceRows.map(priceRowIdentityKey));
+
   const sampleSummary =
     summaries.find((item) => item.modelKey === "verna" && item.citySlug === DEFAULT_CITY_SLUG) ||
     summaries.find((item) => item.modelKey === "verna") ||
@@ -949,6 +993,31 @@ const build = async () => {
     console.log("Price rows bulk result:");
     console.log(JSON.stringify(result, null, 2));
   }
+
+  await cleanupStaleReadModelDocs({
+    db,
+    collectionName: MODEL_SUMMARY_COLLECTION,
+    currentKeys: currentSummaryKeys,
+    keyForDoc: modelSummaryIdentityKey,
+    projection: {
+      makeKey: 1,
+      modelKey: 1,
+      citySlug: 1,
+    },
+  });
+
+  await cleanupStaleReadModelDocs({
+    db,
+    collectionName: PRICE_ROWS_COLLECTION,
+    currentKeys: currentPriceRowKeys,
+    keyForDoc: priceRowIdentityKey,
+    projection: {
+      makeKey: 1,
+      modelKey: 1,
+      variantKey: 1,
+      citySlug: 1,
+    },
+  });
 
   await mongoose.disconnect();
 };

@@ -12,6 +12,21 @@ const DEFAULT_PYTHON_BIN = fs.existsSync("/usr/local/bin/python3")
 const PYTHON_BIN = process.env.SCRAPER_PYTHON_BIN || DEFAULT_PYTHON_BIN;
 
 const SCRIPT_CATALOG = {
+  pipeline: {
+    key: "pipeline",
+    label: "Vehicle Data Pipeline",
+    filename: "run_vehicle_data_pipeline.py",
+    description: "Runs prices, variant features, color media, and ACI post-refresh.",
+    targetCollections: [
+      "vehicles",
+      "vehicle_features",
+      "vehicle_colors_v2",
+      "vehicle_feature_catalog_v2",
+      "vehicle_variant_feature_matrix_v2",
+      "aci_vehicle_model_summary",
+      "aci_vehicle_price_rows",
+    ],
+  },
   prices: {
     key: "prices",
     label: "Cardekho NCR Pricelist",
@@ -22,14 +37,14 @@ const SCRIPT_CATALOG = {
   colors: {
     key: "colors",
     label: "Color Names + Photos",
-    filename: "cardekho_color_names_photos.py",
+    filename: "vehicle_color_master_pipeline.py",
     description: "Fetches vehicle color names and image URLs into vehicle_colors_v2 collection.",
     targetCollections: ["vehicle_colors_v2"],
   },
   features: {
     key: "features",
     label: "Variant Enrichment",
-    filename: "variant_enrichment.py",
+    filename: "variant_enrichment_ncr_v2.py",
     description: "Fetches variant feature set into vehicle_features collection.",
     targetCollections: ["vehicle_features"],
   },

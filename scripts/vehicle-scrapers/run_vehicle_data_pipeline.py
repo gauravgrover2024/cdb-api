@@ -15,6 +15,7 @@ Pass --force-colors only when you intentionally want to regenerate media.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -23,9 +24,10 @@ from typing import Iterable
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
 
 
-def run_step(name: str, command: Iterable[str]) -> None:
+def run_step(name: str, command: Iterable[str], cwd: Path = SCRIPT_DIR) -> None:
     command = list(command)
     print("\n" + "=" * 80, flush=True)
     print(f"STEP: {name}", flush=True)
@@ -33,7 +35,7 @@ def run_step(name: str, command: Iterable[str]) -> None:
     print("=" * 80, flush=True)
 
     start = time.time()
-    subprocess.run(command, cwd=SCRIPT_DIR, check=True)
+    subprocess.run(command, cwd=cwd, check=True)
     print(f"\nDONE: {name} in {time.time() - start:.2f}s", flush=True)
 
 
@@ -43,6 +45,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-prices", action="store_true", help="Skip Cardekho NCR price update.")
     parser.add_argument("--skip-variants", action="store_true", help="Skip variant feature enrichment.")
     parser.add_argument("--skip-colors", action="store_true", help="Skip color/media master pipeline.")
+    parser.add_argument(
+        "--skip-aci-post-refresh",
+        action="store_true",
+        help="Skip derived ACI read-model rebuilds after the source data refresh.",
+    )
 
     parser.add_argument("--variant-workers", type=int, default=3, help="Workers for variant enrichment.")
     parser.add_argument("--variant-limit-models", type=int, default=0, help="Optional model limit for variant enrichment.")
@@ -121,6 +128,15 @@ def main() -> int:
         run_step("Refresh color media master", command)
 
     print("\nVehicle data pipeline complete.")
+
+    if not args.skip_aci_post_refresh:
+        npm_bin = "npm.cmd" if os.name == "nt" else "npm"
+        run_step(
+            "Refresh ACI read models and indexes",
+            [npm_bin, "run", "aci:post-data-refresh"],
+            cwd=REPO_ROOT,
+        )
+
     return 0
 
 
