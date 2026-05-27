@@ -66,7 +66,8 @@
     "aci:meaning-router:smoke": "node src/scripts/aci-evals/runAciHybridMeaningFrameSmoke.js",
     "aci:core-prewarm-smoke": "node src/scripts/aci-evals/runAciCorePrewarmSmoke.js",
     "aci:core-plan-adapter:smoke": "node src/scripts/aci-evals/runAciCoreLegacyPlanAdapterSmoke.js",
-    "aci:core-legacy-executor:smoke": "node src/scripts/aci-evals/runAciCoreLegacyExecutorSmoke.js"
+    "aci:core-legacy-executor:smoke": "node src/scripts/aci-evals/runAciCoreLegacyExecutorSmoke.js",
+    "aci:core-live-bridge:smoke": "node src/scripts/aci-evals/runAciCoreLiveBridgeSmoke.js"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

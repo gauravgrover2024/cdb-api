@@ -20,6 +20,10 @@ import {
   executeAciPlannerPlan,
   EXECUTOR_VERSION,
 } from "./aiAgent.executor.js";
+import {
+  runAciCoreLiveBridge,
+  shouldUseAciCoreLiveBridge,
+} from "../aciCore/integration/aciCoreLiveBridge.service.js";
 
 /**
  * ACI Assist V2 Service
@@ -367,19 +371,6 @@ export const createPlannerPlanForMessage = async ({
 
 const chatWithAgentCore = async (...args) => {
   const __aciEarlyAgentArgs = Array.isArray(args) ? (args[0] || {}) : {};
-
-  const earlyFeatureResponse = await maybeRunAciEarlyFeatureGate({
-    message: __aciEarlyAgentArgs.message,
-    context: __aciEarlyAgentArgs.context,
-    selectedEntity: __aciEarlyAgentArgs.selectedEntity,
-    filters: __aciEarlyAgentArgs.filters,
-  });
-
-  if (earlyFeatureResponse) {
-    return earlyFeatureResponse;
-  }
-
-
   const startedAt = Date.now();
 
   const {
@@ -389,16 +380,6 @@ const chatWithAgentCore = async (...args) => {
     options,
     rawInput,
   } = normalizeChatInput(...args);
-
-  const explicitMessageModelEntityForContext =
-    await resolveAciExplicitMessageModelEntity(message);
-
-  applyAciExplicitMessageModelContextOverride({
-    message,
-    context,
-    dynamicModelEntity: explicitMessageModelEntityForContext,
-  });
-
 
   if (!message) {
     const plan = createUnavailableFallbackPlan({
@@ -422,6 +403,47 @@ const chatWithAgentCore = async (...args) => {
         plannerFallbackUsed: true,
       },
     };
+  }
+
+  if (shouldUseAciCoreLiveBridge({ message })) {
+    try {
+      return await runAciCoreLiveBridge({
+        message,
+        context,
+        user: __aciEarlyAgentArgs?.user || null,
+        session: __aciEarlyAgentArgs?.session || null,
+        meta: {
+          ...(__aciEarlyAgentArgs?.meta || {}),
+          source: "aiAgent.service",
+          fallback: "legacy_ai_agent",
+        },
+      });
+    } catch (error) {
+      console.warn(
+        "[ACI Core Live Bridge] failed; falling back to legacy ACI Assist path:",
+        error?.message || error,
+      );
+    }
+  }
+
+  const explicitMessageModelEntityForContext =
+    await resolveAciExplicitMessageModelEntity(message);
+
+  applyAciExplicitMessageModelContextOverride({
+    message,
+    context,
+    dynamicModelEntity: explicitMessageModelEntityForContext,
+  });
+
+  const earlyFeatureResponse = await maybeRunAciEarlyFeatureGate({
+    message,
+    context,
+    selectedEntity: __aciEarlyAgentArgs.selectedEntity,
+    filters: __aciEarlyAgentArgs.filters,
+  });
+
+  if (earlyFeatureResponse) {
+    return earlyFeatureResponse;
   }
 
   const {
