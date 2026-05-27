@@ -76,6 +76,40 @@ const uniqueBy = (items = [], keyFn) => {
   return output;
 };
 
+const isTokenSubset = (small = [], large = []) => {
+  const largeSet = new Set(large);
+  return small.every((token) => largeSet.has(token));
+};
+
+const getVariantSpecificityTokens = (item = {}) => {
+  if (Array.isArray(item.variantTokens) && item.variantTokens.length) {
+    return item.variantTokens.filter(Boolean);
+  }
+
+  return clean(item.variant || item.fullVariant || item.displayName || '')
+    .split(' ')
+    .filter(Boolean);
+};
+
+const pruneVariantMatchesByTokenSpecificity = (matches = []) => {
+  const uniqueMatches = uniqueBy(matches, (item) => `${item.modelKey || ''}:${item.variantKey || item.displayName || ''}`);
+
+  return uniqueMatches.filter((candidate, index) => {
+    const candidateTokens = getVariantSpecificityTokens(candidate);
+    if (!candidateTokens.length) return true;
+
+    return !uniqueMatches.some((other, otherIndex) => {
+      if (index === otherIndex) return false;
+      if ((other.modelKey || '') !== (candidate.modelKey || '')) return false;
+
+      const otherTokens = getVariantSpecificityTokens(other);
+      if (otherTokens.length <= candidateTokens.length) return false;
+
+      return isTokenSubset(candidateTokens, otherTokens);
+    });
+  });
+};
+
 const hasWord = (normalizedMessage, term) => {
   const cleaned = clean(term);
   if (!cleaned) return false;
@@ -569,20 +603,16 @@ const findModelScopedVariantCandidates = async ({ message = '', modelCandidates 
 
   for (const item of catalog) {
     const itemModelName = clean(item.model || item.fullModel || '');
-    const itemModelKeyClean = clean(String(item.modelKey || '').replace(/[_-]/g, ' '));
+    const itemFullModelName = clean(item.fullModel || item.model || '');
+    const itemModelKey = item.modelKey || '';
 
+    // Exact model scoping only.
+    // Do not allow "Honda City Hybrid" to match "Honda City" just because it includes the phrase.
+    // Candidate/model keys are DB-backed, so exact key/name matching is the safe path here.
     const modelMatches = (
-      modelKeys.has(item.modelKey) ||
+      modelKeys.has(itemModelKey) ||
       modelNames.has(itemModelName) ||
-      Array.from(modelNames).some((modelName) => (
-        modelName &&
-        (
-          itemModelName.includes(modelName) ||
-          modelName.includes(itemModelName) ||
-          itemModelKeyClean.includes(modelName) ||
-          modelName.includes(itemModelKeyClean)
-        )
-      ))
+      modelNames.has(itemFullModelName)
     );
 
     if (!modelMatches) continue;
@@ -597,7 +627,9 @@ const findModelScopedVariantCandidates = async ({ message = '', modelCandidates 
     });
   }
 
-  return uniqueBy(matches, (item) => `${item.modelKey}:${item.variantKey}`).slice(0, 12);
+  return pruneVariantMatchesByTokenSpecificity(
+    uniqueBy(matches, (item) => `${item.modelKey}:${item.variantKey}`),
+  ).slice(0, 12);
 };
 
 const findFeatureCandidates = async (message = '') => {
@@ -928,10 +960,16 @@ async function retrieveAciDbCandidates({
     modelCandidates: snapshot.vehicles.models,
   });
 
-  const scopedVariantMatches = [
-    ...explicitVariantMatches,
-    ...filterVariantMatchesByModels(rawVariantMatches, snapshot.vehicles.models),
-  ];
+  const broadScopedVariantMatches = filterVariantMatchesByModels(
+    rawVariantMatches,
+    snapshot.vehicles.models,
+  );
+
+  // If exact model-scoped variant mentions are found, use them and avoid dumping
+  // broad variant candidates into the parser snapshot.
+  const scopedVariantMatches = explicitVariantMatches.length
+    ? explicitVariantMatches
+    : broadScopedVariantMatches;
 
   snapshot.vehicles.variants = uniqueBy(scopedVariantMatches.map(mapVariantMatch), (item) => item.canonicalKey)
     .slice(0, limits.variants || 12);
@@ -990,6 +1028,8 @@ async function retrieveAciDbCandidates({
       models: snapshot.vehicles.models.length,
       variants: snapshot.vehicles.variants.length,
       colors: snapshot.vehicles.colors.length,
+      explicitModelScopedVariants: typeof explicitVariantMatches !== 'undefined' ? explicitVariantMatches.length : 0,
+      broadScopedVariants: typeof broadScopedVariantMatches !== 'undefined' ? broadScopedVariantMatches.length : 0,
       features: snapshot.taxonomy.features.length,
       fuelTypes: snapshot.taxonomy.fuelTypes.length,
       transmissions: snapshot.taxonomy.transmissions.length,

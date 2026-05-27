@@ -42,6 +42,7 @@ const cases = [
       minVariants: 2,
       minTasks: 1,
       expectedVariantNameParts: ['verna hx8 ivt', 'city zx cvt'],
+      maxVariants: 2,
       expectedTaskKeys: ['vehicle_comparison'],
     },
   },
@@ -154,6 +155,15 @@ const main = async () => {
       if (!taskKeys.includes(expectedTask)) {
         caseFailures.push(`expected task "${expectedTask}", got ${JSON.stringify(taskKeys)}`);
       }
+    }
+
+
+    if (typeof item.expectations.maxVariants === 'number' && snapshot.vehicles.variants.length > item.expectations.maxVariants) {
+      caseFailures.push(
+        `variants expected <= ${item.expectations.maxVariants}, got ${snapshot.vehicles.variants.length}: ${
+          JSON.stringify(snapshot.vehicles.variants.map((candidate) => candidate.displayName))
+        }`,
+      );
     }
 
     const summary = {

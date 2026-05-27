@@ -58,7 +58,9 @@
     "aci:understanding-smoke": "node src/scripts/aci-evals/runAciUnderstandingEngineSmoke.js",
     "aci:understanding-workers": "node src/scripts/aci-evals/runAciUnderstandingEvalWorkers.js",
     "aci:core-index-audit": "node src/scripts/aci-audits/auditAciCoreReadModelsAndIndexes.js",
-    "aci:candidates-smoke": "node src/scripts/aci-evals/runAciCandidateRetrieverSmoke.js"
+    "aci:candidates-smoke": "node src/scripts/aci-evals/runAciCandidateRetrieverSmoke.js",
+    "aci:meaning-parser:smoke": "node src/scripts/aci-evals/runAciGeminiMeaningFrameSmoke.js",
+    "aci:meaning-baseline:smoke": "node src/scripts/aci-evals/runAciDeterministicMeaningFrameSmoke.js"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
