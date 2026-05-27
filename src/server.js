@@ -26,6 +26,9 @@ import {
   prewarmAciAssistRuntime,
   triggerAciAssistRuntimePrewarm,
 } from "./services/aiAgent/aiAgent.runtimePrewarm.js";
+import {
+  triggerAciCoreRuntimePrewarm,
+} from "./services/aciCore/aciCore.prewarm.js";
 
 dotenv.config();
 
@@ -95,6 +98,7 @@ app.use(async (req, res, next) => {
     // Non-blocking warmup for DB-backed ACI Assist runtime caches.
     // This keeps repeated Vercel/serverless invocations warm without delaying normal routes.
     triggerAciAssistRuntimePrewarm();
+    triggerAciCoreRuntimePrewarm();
 
     next();
   } catch (error) {
@@ -161,7 +165,12 @@ async function startServer() {
     await connectDB();
 
     if (process.env.ACI_RUNTIME_PREWARM_ON_START !== "false") {
+      // ACI Core prewarm is intentionally non-blocking; it warms in parallel
+      // while the existing ACI Assist runtime prewarm keeps its current startup behavior.
+      triggerAciCoreRuntimePrewarm();
       await prewarmAciAssistRuntime();
+    } else {
+      triggerAciCoreRuntimePrewarm();
     }
 
     app.listen(PORT, () => {
