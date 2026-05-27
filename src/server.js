@@ -1,3 +1,4 @@
+import aciProgressRoutes from './routes/aciProgress.routes.cjs';
 import express from "express";
 import dotenv from "dotenv";
 import helmet from "helmet";
@@ -33,6 +34,8 @@ import {
 dotenv.config();
 
 const app = express();
+app.use('/api/aci-assist/progress', aciProgressRoutes);
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
