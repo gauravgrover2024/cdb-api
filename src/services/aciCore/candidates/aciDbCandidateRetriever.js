@@ -902,6 +902,42 @@ async function retrieveAciDbCandidates({
   return snapshot;
 }
 
+async function prewarmAciDbCandidateRetrieverCaches({ force = false } = {}) {
+  if (force) {
+    clearAciCandidateRetrieverCaches();
+  }
+
+  const startedAt = Date.now();
+
+  const [vehicleEntityIndex, makes, features, priceVariants] = await Promise.all([
+    getVehicleEntityIndex({ forceRefresh: force }),
+    loadMakeCatalog(),
+    loadFeatureCatalog(),
+    loadPriceVariantCatalog(),
+  ]);
+
+  const count = (value) => {
+    if (Array.isArray(value)) return value.length;
+    if (value && typeof value === 'object') return Object.keys(value).length;
+    return 0;
+  };
+
+  return {
+    ok: true,
+    durationMs: Date.now() - startedAt,
+    cache: {
+      vehicleEntityIndex: {
+        models: count(vehicleEntityIndex?.models),
+        variants: count(vehicleEntityIndex?.variants),
+        colors: count(vehicleEntityIndex?.colors),
+      },
+      makes: Array.isArray(makes) ? makes.length : 0,
+      features: Array.isArray(features) ? features.length : 0,
+      priceVariants: Array.isArray(priceVariants) ? priceVariants.length : 0,
+    },
+  };
+}
+
 function clearAciCandidateRetrieverCaches() {
   featureCatalogCache = {
     builtAt: 0,
@@ -919,6 +955,7 @@ function clearAciCandidateRetrieverCaches() {
 
 export {
   retrieveAciDbCandidates,
+  prewarmAciDbCandidateRetrieverCaches,
   clearAciCandidateRetrieverCaches,
 };
 
