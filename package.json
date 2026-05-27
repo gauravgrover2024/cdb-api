@@ -46,7 +46,8 @@
     "aci:read-models:build": "ACI_READ_MODEL_DRY_RUN=false node src/scripts/aci-read-models/buildAciVehicleReadModels.js",
     "aci:safety": "node src/scripts/aci-audits/runAciSafetyGateSummary.js",
     "aci:ensure-feature-matrix-indexes": "node src/scripts/aci-maintenance/ensureAciFeatureMatrixIndexes.js",
-    "aci:understanding-eval": "node src/scripts/aci-evals/runAciUnderstandingEval.js"
+    "aci:understanding-eval": "node src/scripts/aci-evals/runAciUnderstandingEval.js",
+    "aci:understanding-smoke": "node src/scripts/aci-evals/runAciUnderstandingEngineSmoke.js"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
