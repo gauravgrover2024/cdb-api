@@ -196,9 +196,9 @@ const TASK_HINTS = [
   { task: 'on_road_estimate', terms: ['on road', 'on-road', 'total on road', 'kitne ka padega'] },
   { task: 'emi_calculation', terms: ['emi', 'down payment', 'loan'] },
   { task: 'color_lookup', terms: ['color', 'colour', 'black', 'white', 'red', 'dual tone'] },
-  { task: 'feature_answer', terms: ['feature', 'sunroof', 'abs', 'adas', 'airbag', 'airbags', 'range', 'mileage'] },
+  { task: 'feature_answer', terms: ['feature', 'features', 'does it have', 'available with', 'comes with'] },
   { task: 'vehicle_comparison', terms: ['compare', 'vs', 'versus', 'better than', 'difference between'] },
-  { task: 'vehicle_discovery', terms: ['cars with', 'cars under', 'show cars', 'hyundai cars', 'tata cars'] },
+  { task: 'vehicle_discovery', terms: ['cars with', 'cars under', 'show cars', 'show me cars', 'which cars'] },
   { task: 'quotation', terms: ['quote', 'quotation', 'best price'] },
   { task: 'offer_lookup', terms: ['offer', 'discount', 'bonus'] },
   { task: 'waiting_period', terms: ['waiting', 'delivery time', 'kitne din', 'immediate delivery'] },
@@ -226,70 +226,91 @@ const extractLanguageFilterCandidates = (message = '') => {
   return candidates;
 };
 
-const ADAS_CHILD_TERMS = [
-  'lane keep assist',
-  'lane keeping assist',
-  'forward collision warning',
-  'blind spot monitor',
-  'adaptive high beam',
-  'lane departure warning',
-  'adaptive cruise control',
-  'driver attention warning',
-  'rear cross traffic alert',
-  'automatic emergency braking',
-  'aeb',
-];
+const getParentheticalAliases = (value = '') => {
+  const text = String(value || '');
+  const matches = [...text.matchAll(/\(([^)]+)\)/g)];
 
-const hasExplicitAdasChildTerm = (normalizedMessage = '') =>
-  ADAS_CHILD_TERMS.some((term) => normalizedMessage.includes(clean(term)));
-
-const ADAS_CHILD_CANONICAL_KEYS = new Set([
-  'lane_keep_assist',
-  'forward_collision_warning',
-  'blind_spot_monitor',
-  'adaptive_high_beam_assist',
-  'lane_departure_warning',
-  'adaptive_cruise_control',
-  'driver_attention_warning',
-  'rear_cross_traffic_alert',
-  'automatic_emergency_braking',
-]);
-
-const hasAbsToken = (normalizedMessage = '') =>
-  /(^|\s)abs(\s|$)/i.test(String(normalizedMessage || ''));
-
-const postProcessFeatureCandidates = ({ candidates = [], normalizedMessage = '' } = {}) => {
-  let output = Array.isArray(candidates) ? [...candidates] : [];
-
-  const mentionsAdas = /(^|\s)adas(\s|$)/i.test(normalizedMessage);
-  const mentionsExplicitAdasChild = hasExplicitAdasChildTerm(normalizedMessage);
-
-  if (mentionsAdas && !mentionsExplicitAdasChild) {
-    output = output.filter((candidate) => (
-      candidate.canonicalKey === 'adas_package' ||
-      !ADAS_CHILD_CANONICAL_KEYS.has(candidate.canonicalKey)
-    ));
-  }
-
-  if (hasAbsToken(normalizedMessage) && !output.some((item) => item.canonicalKey === 'anti_lock_braking_system')) {
-    output.push(createCandidateItem({
-      rawText: 'ABS',
-      canonicalKey: 'anti_lock_braking_system',
-      displayName: 'Anti-lock Braking System (ABS)',
-      type: 'feature',
-      source: CANDIDATE_SOURCE_TYPES.STATIC_LANGUAGE_OPERATOR,
-      confidence: 0.92,
-      metadata: {
-        reason: 'common_feature_abbreviation_post_process',
-      },
-    }));
-  }
-
-  return uniqueBy(
-    output.sort((a, b) => (b.confidence || 0) - (a.confidence || 0)),
-    (item) => item.canonicalKey,
-  ).slice(0, 8);
+  return matches
+    .map((match) => clean(match[1]))
+    .filter((item) => item && item.length >= 2);
 };
+
+const buildFeatureAliasEntries = (feature = {}) => {
+  const canonicalKey = feature.canonicalKey || feature.key || '';
+  const canonicalText = clean(String(canonicalKey).replace(/[_-]/g, ' '));
+  const displayText = clean(feature.displayName || '');
+  const normalizedText = clean(feature.normalizedName || '');
+  const groupText = clean(feature.groupKey || '');
+
+  const entries = [];
+
+  const pushEntry = (alias, source) => {
+    const aliasClean = clean(alias);
+    if (!aliasClean || aliasClean.length < 2) return;
+
+    entries.push({
+      alias,
+      aliasClean,
+      source,
+      tokenCount: aliasClean.split(' ').filter(Boolean).length,
+      exactCanonical: Boolean(canonicalText && aliasClean === canonicalText),
+      exactDisplay: Boolean(displayText && aliasClean === displayText),
+      exactNormalized: Boolean(normalizedText && aliasClean === normalizedText),
+      groupExact: Boolean(groupText && aliasClean === groupText),
+      parenthetical: source === 'display_parenthetical',
+    });
+  };
+
+  pushEntry(canonicalText, 'canonical_key');
+  pushEntry(displayText, 'display_name');
+  pushEntry(normalizedText, 'normalized_name');
+
+  for (const alias of Array.isArray(feature.aliases) ? feature.aliases : []) {
+    pushEntry(alias, 'catalog_alias');
+  }
+
+  for (const alias of getParentheticalAliases(feature.displayName || '')) {
+    pushEntry(alias, 'display_parenthetical');
+  }
+
+  return uniqueBy(entries, (item) => item.aliasClean);
+};
+
+const pruneFeatureAliasCollisions = (items = []) => {
+  const sorted = [...items].sort((a, b) =>
+    ((b.metadata?.exactScore || 0) - (a.metadata?.exactScore || 0)) ||
+    ((b.confidence || 0) - (a.confidence || 0)) ||
+    String(a.displayName || '').localeCompare(String(b.displayName || '')),
+  );
+
+  const output = [];
+  const usedAliases = new Map();
+
+  for (const item of sorted) {
+    const aliasClean = clean(item.metadata?.matchedAlias || item.rawText || '');
+    const aliasTokenCount = aliasClean.split(' ').filter(Boolean).length;
+
+    if (aliasClean && aliasTokenCount === 1 && usedAliases.has(aliasClean)) {
+      continue;
+    }
+
+    output.push(item);
+    if (aliasClean && aliasTokenCount === 1) {
+      usedAliases.set(aliasClean, item.canonicalKey);
+    }
+  }
+
+  return output;
+};
+
+const postProcessFeatureCandidates = ({ candidates = [] } = {}) =>
+  uniqueBy(
+    pruneFeatureAliasCollisions(
+      (Array.isArray(candidates) ? candidates : [])
+        .sort((a, b) => (b.confidence || 0) - (a.confidence || 0)),
+    ),
+    (item) => item.canonicalKey,
+  ).slice(0, 12);
 
 const hasComparisonLanguage = (message = '') => {
   const normalized = clean(message);
@@ -451,59 +472,50 @@ const loadFeatureCatalog = async () => {
   return items;
 };
 
-const scoreFeatureAliasMatch = ({ normalizedMessage, alias = '', feature }) => {
-  const aliasClean = clean(alias);
-  if (!aliasClean || aliasClean.length < 3) return null;
+const scoreFeatureAliasMatch = ({ normalizedMessage = '', wordSet = new Set(), entry = {}, feature = {} } = {}) => {
+  if (!entry.aliasClean || !hasWord(normalizedMessage, entry.aliasClean)) return null;
 
-  if (!hasWord(normalizedMessage, aliasClean)) return null;
+  let score = 0.68;
 
-  const canonicalKey = feature.canonicalKey || '';
-  const canonicalClean = clean(canonicalKey.replace(/_/g, ' '));
-  const displayClean = clean(feature.displayName || '');
+  if (wordSet.has(entry.aliasClean)) score += 0.1;
+  if (entry.exactCanonical) score += 0.14;
+  if (entry.exactDisplay) score += 0.14;
+  if (entry.exactNormalized) score += 0.1;
+  if (entry.groupExact) score += 0.12;
+  if (entry.parenthetical) score += 0.16;
 
-  let score = 0.72;
+  // More specific phrase matches should beat broad one-word aliases.
+  score += Math.min(0.12, Math.max(0, entry.tokenCount - 1) * 0.04);
 
-  if (normalizedMessage.split(' ').includes(aliasClean)) score += 0.1;
-  if (aliasClean === canonicalClean || aliasClean === displayClean) score += 0.08;
+  const canonicalText = clean(String(feature.canonicalKey || feature.key || '').replace(/[_-]/g, ' '));
+  const displayText = clean(feature.displayName || '');
 
-  // Avoid broad parent/child feature explosion.
-  // If user says only "ADAS", prefer the ADAS package candidate, not every ADAS child feature.
-  if (normalizedMessage.includes('adas') && !hasExplicitAdasChildTerm(normalizedMessage)) {
-    if (canonicalKey === 'adas_package' || aliasClean === 'adas') score += 0.22;
-    else if (
-      [
-        'lane_keep_assist',
-        'forward_collision_warning',
-        'blind_spot_monitor',
-        'adaptive_high_beam_assist',
-        'lane_departure_warning',
-        'adaptive_cruise_control',
-        'driver_attention_warning',
-        'rear_cross_traffic_alert',
-      ].includes(canonicalKey)
-    ) {
-      return null;
-    }
-  }
-
-  // If user says plain "sunroof", prefer canonical sunroof over voice/panoramic child features
-  // unless those child terms are explicitly mentioned.
-  if (normalizedMessage.includes('sunroof')) {
-    const explicitVoice = normalizedMessage.includes('voice');
-    const explicitPanoramic = normalizedMessage.includes('panoramic');
-
-    if (canonicalKey === 'sunroof') score += 0.18;
-
-    if (!explicitVoice && canonicalKey === 'voice_assisted_sunroof') return null;
-    if (!explicitPanoramic && canonicalKey === 'panoramic_sunroof') return null;
+  // Generic package preference when the catalog itself says the matched label is a package.
+  // This is taxonomy-shape logic, not a hardcoded feature fact.
+  if (
+    entry.tokenCount === 1 &&
+    (
+      displayText === `${entry.aliasClean} package` ||
+      canonicalText === `${entry.aliasClean} package`
+    )
+  ) {
+    score += 0.12;
   }
 
   return {
-    alias,
+    alias: entry.alias,
+    aliasClean: entry.aliasClean,
+    matchSource: entry.source,
+    tokenCount: entry.tokenCount,
+    exactScore:
+      (entry.exactCanonical ? 1 : 0) +
+      (entry.exactDisplay ? 1 : 0) +
+      (entry.exactNormalized ? 1 : 0) +
+      (entry.groupExact ? 1 : 0) +
+      (entry.parenthetical ? 1 : 0),
     score: Math.max(0, Math.min(1, score)),
   };
 };
-
 
 const loadPriceVariantCatalog = async () => {
   const now = Date.now();
@@ -606,9 +618,8 @@ const findModelScopedVariantCandidates = async ({ message = '', modelCandidates 
     const itemFullModelName = clean(item.fullModel || item.model || '');
     const itemModelKey = item.modelKey || '';
 
-    // Exact model scoping only.
-    // Do not allow "Honda City Hybrid" to match "Honda City" just because it includes the phrase.
-    // Candidate/model keys are DB-backed, so exact key/name matching is the safe path here.
+    // Exact model scoping only. Candidate/model keys are DB-backed,
+    // so exact key/name matching is the safe path here.
     const modelMatches = (
       modelKeys.has(itemModelKey) ||
       modelNames.has(itemModelName) ||
@@ -639,118 +650,25 @@ const findFeatureCandidates = async (message = '') => {
   const words = normalized.split(' ').filter(Boolean);
   const wordSet = new Set(words);
 
-  const mentionsAbs = wordSet.has('abs');
-  const mentionsAdas = wordSet.has('adas');
-  const mentionsSunroof = wordSet.has('sunroof');
-  const mentionsVoice = wordSet.has('voice');
-  const mentionsPanoramic = wordSet.has('panoramic');
-
-  const explicitAdasChildTerms = [
-    'lane keep assist',
-    'lane keeping assist',
-    'forward collision warning',
-    'blind spot',
-    'blind spot monitor',
-    'adaptive high beam',
-    'lane departure',
-    'lane departure warning',
-    'adaptive cruise',
-    'adaptive cruise control',
-    'driver attention',
-    'rear cross traffic',
-    'automatic emergency braking',
-    'traffic sign recognition',
-    'speed assist',
-    'autonomous parking',
-    'parking assist',
-    'self parking',
-    'aeb',
-  ];
-
-  const hasExplicitAdasChild = explicitAdasChildTerms.some((term) =>
-    normalized.includes(clean(term)),
-  );
-
-  const adasChildIndicators = [
-    'lane',
-    'collision',
-    'blind_spot',
-    'blind spot',
-    'traffic',
-    'adaptive',
-    'departure',
-    'warning',
-    'speed_assist',
-    'speed assist',
-    'autonomous_parking',
-    'autonomous parking',
-    'parking_assist',
-    'parking assist',
-    'self parking',
-    'driver_attention',
-    'driver attention',
-    'cross_traffic',
-    'cross traffic',
-    'avoidance',
-    'emergency_braking',
-    'emergency braking',
-  ];
-
-  const isAdasChildCandidate = (feature = {}) => {
-    const text = clean([
-      feature.canonicalKey || '',
-      feature.displayName || '',
-      feature.groupKey || '',
-      feature.category || '',
-      ...(Array.isArray(feature.aliases) ? feature.aliases : []),
-    ].join(' '));
-
-    return adasChildIndicators.some((indicator) => text.includes(clean(indicator)));
-  };
-
   const catalog = await loadFeatureCatalog();
   const scored = [];
 
   for (const feature of catalog) {
-    const canonicalKey = feature.canonicalKey || '';
-    const aliasList = Array.isArray(feature.aliases) ? feature.aliases : [];
+    const canonicalKey = feature.canonicalKey || feature.key || '';
+    if (!canonicalKey) continue;
 
-    // If user says plain ADAS, keep package-level ADAS only.
-    // Do not flood candidates with individual ADAS child features.
-    if (mentionsAdas && !hasExplicitAdasChild && canonicalKey !== 'adas_package' && isAdasChildCandidate(feature)) {
-      continue;
-    }
-
-    // If user says plain sunroof, do not infer voice/panoramic subfeatures.
-    if (mentionsSunroof && !mentionsVoice && canonicalKey === 'voice_assisted_sunroof') {
-      continue;
-    }
-    if (mentionsSunroof && !mentionsPanoramic && canonicalKey === 'panoramic_sunroof') {
-      continue;
-    }
-
+    const entries = buildFeatureAliasEntries(feature);
     let best = null;
 
-    for (const alias of aliasList) {
-      const aliasClean = clean(alias);
-      if (!aliasClean || aliasClean.length < 3) continue;
+    for (const entry of entries) {
+      const match = scoreFeatureAliasMatch({
+        normalizedMessage: normalized,
+        wordSet,
+        entry,
+        feature,
+      });
 
-      if (!hasWord(normalized, aliasClean)) continue;
-
-      let score = 0.72;
-
-      if (wordSet.has(aliasClean)) score += 0.1;
-      if (aliasClean === clean(canonicalKey.replace(/_/g, ' '))) score += 0.08;
-      if (aliasClean === clean(feature.displayName || '')) score += 0.08;
-
-      if (mentionsAdas && canonicalKey === 'adas_package') score += 0.24;
-      if (mentionsSunroof && canonicalKey === 'sunroof') score += 0.18;
-
-      const match = {
-        alias,
-        score: Math.max(0, Math.min(1, score)),
-      };
-
+      if (!match) continue;
       if (!best || match.score > best.score) {
         best = match;
       }
@@ -761,82 +679,22 @@ const findFeatureCandidates = async (message = '') => {
     scored.push(createCandidateItem({
       rawText: best.alias,
       canonicalKey,
-      displayName: feature.displayName,
+      displayName: feature.displayName || canonicalKey,
       type: 'feature',
       source: CANDIDATE_SOURCE_TYPES.DB,
       confidence: best.score,
       metadata: {
         groupKey: feature.groupKey,
         category: feature.category,
+        matchedAlias: best.aliasClean,
+        matchSource: best.matchSource,
+        exactScore: best.exactScore,
+        tokenCount: best.tokenCount,
       },
     }));
   }
 
-  // Force common short automotive feature abbreviations when present.
-  // These are language operators, not factual availability.
-  if (mentionsAbs && !scored.some((item) => item.canonicalKey === 'anti_lock_braking_system')) {
-    scored.push(createCandidateItem({
-      rawText: 'ABS',
-      canonicalKey: 'anti_lock_braking_system',
-      displayName: 'Anti-lock Braking System (ABS)',
-      type: 'feature',
-      source: CANDIDATE_SOURCE_TYPES.STATIC_LANGUAGE_OPERATOR,
-      confidence: 0.95,
-      metadata: {
-        reason: 'common_feature_abbreviation',
-      },
-    }));
-  }
-
-  if (mentionsAdas && !scored.some((item) => item.canonicalKey === 'adas_package')) {
-    scored.push(createCandidateItem({
-      rawText: 'ADAS',
-      canonicalKey: 'adas_package',
-      displayName: 'ADAS',
-      type: 'feature',
-      source: CANDIDATE_SOURCE_TYPES.STATIC_LANGUAGE_OPERATOR,
-      confidence: 0.94,
-      metadata: {
-        reason: 'common_feature_abbreviation',
-      },
-    }));
-  }
-
-  if (mentionsSunroof && !scored.some((item) => item.canonicalKey === 'sunroof')) {
-    scored.push(createCandidateItem({
-      rawText: 'sunroof',
-      canonicalKey: 'sunroof',
-      displayName: 'Sunroof',
-      type: 'feature',
-      source: CANDIDATE_SOURCE_TYPES.STATIC_LANGUAGE_OPERATOR,
-      confidence: 0.93,
-      metadata: {
-        reason: 'common_feature_name',
-      },
-    }));
-  }
-
-  let output = uniqueBy(
-    scored.sort((a, b) => (b.confidence || 0) - (a.confidence || 0)),
-    (item) => item.canonicalKey,
-  );
-
-  // Final guardrail: if the user only said ADAS generally, keep package-level ADAS
-  // and remove all child ADAS capability candidates.
-  if (mentionsAdas && !hasExplicitAdasChild) {
-    output = output.filter((candidate) => {
-      if (candidate.canonicalKey === 'adas_package') return true;
-      return !isAdasChildCandidate({
-        canonicalKey: candidate.canonicalKey,
-        displayName: candidate.displayName,
-        groupKey: candidate.metadata?.groupKey,
-        category: candidate.metadata?.category,
-        aliases: [candidate.rawText],
-      });
-    });
-  }
-
-  return output.slice(0, 8);
+  return postProcessFeatureCandidates({ candidates: scored });
 };
 
 const safeCall = async (fn, fallback = []) => {

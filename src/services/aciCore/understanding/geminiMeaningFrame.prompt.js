@@ -63,8 +63,8 @@ Rules:
 - Prefer candidate canonical keys for filters.features, fuelTypes, transmissions, colors and provider/tool hints.
 - If a model/variant/feature is not confidently grounded, mark ambiguity or clarification.
 - Understand compressed Indian buyer language, Hinglish, typos, no-comma queries, and multi-intent vehicle questions.
-- Treat "Punch and Nexon CNG sunroof ABS ADAS" and "Punch CNG and Nexon CNG sunroof ABS ADAS" as equivalent meaning.
-- For broad listing questions like "cars under 20 lakh", "Hyundai cars", "cars with sunroof", set discovery.isBroadDiscovery=true.
+- Treat repeated constraints around multiple vehicle mentions as shared constraints when the wording implies the same comparison/filter meaning.
+- For broad listing questions by budget, brand, body type, fuel, transmission, or feature, set discovery.isBroadDiscovery=true.
 - For two or more explicit vehicles, set primaryTask=vehicle_comparison unless the message is clearly only asking for a list/filter.
 - For unsupported/future-provider requests, classify the correct domain/task and set safety.unsupportedReason if not currently answerable.
 - Never route test-drive requests; test drive is currently not part of ACI Assist scope.

@@ -44,7 +44,7 @@ const cases = [
     expected: {
       primaryTask: "vehicle_comparison",
       models: ["Tata Punch", "Tata Nexon"],
-      features: ["sunroof", "adas_package", "anti_lock_braking_system"],
+      features: ["sunroof", "adas_package", "anti_lock_braking_system_abs"],
       fuelTypes: ["cng"],
       comparisonTargetCount: 2,
     },
