@@ -218,9 +218,16 @@ const buildAnswer = ({ models = [], rows = [] } = {}) => {
 
 export const maybeRunAciFeatureComparisonAnswer = async ({
   message = "",
+  toolPlan = {},
   context = {},
 } = {}) => {
-  if (!isComparisonFeatureQuestion(message)) return null;
+  const plannedFeatureComparison =
+    toolPlan?.tool === "vehicle_feature_comparison" ||
+    toolPlan?.intent === "vehicle_feature_comparison" ||
+    toolPlan?.toolIntent === "vehicle_feature_comparison" ||
+    toolPlan?.output?.canvasType === "feature_comparison_canvas";
+
+  if (!plannedFeatureComparison && !isComparisonFeatureQuestion(message)) return null;
 
   const db = getDb();
   if (!db) return null;

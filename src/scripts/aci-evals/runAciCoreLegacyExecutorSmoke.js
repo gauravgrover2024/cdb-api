@@ -57,8 +57,8 @@ const cases = [
   {
     id: "extreme-multi-intent",
     message: "Punch and Nexon CNG sunroof ABS ADAS",
-    expectedTool: "vehicle_compare",
-    expectedIntentIncludes: ["comparison"],
+    expectedTool: "vehicle_feature_comparison",
+    expectedIntentIncludes: ["feature", "comparison"],
     minMatched: 1,
     forbiddenAnswerPatterns: [
       "could not find",

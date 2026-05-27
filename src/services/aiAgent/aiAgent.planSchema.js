@@ -72,6 +72,7 @@ export const PLANNER_TOOLS = [
   "vehicle_colors",
   "vehicle_feature_lookup",
   "vehicle_compare",
+  "vehicle_feature_comparison",
   "vehicle_recommend",
   "vehicle_price_breakup",
   "vehicle_emi",
@@ -96,6 +97,7 @@ export const NEW_CAR_PLANNER_TOOLS = [
   "vehicle_colors",
   "vehicle_feature_lookup",
   "vehicle_compare",
+  "vehicle_feature_comparison",
   "vehicle_recommend",
   "vehicle_price_breakup",
   "vehicle_emi",
@@ -135,7 +137,7 @@ export const PLANNER_RANKINGS = [
 
 export const PRICE_BASIS_VALUES = ["on_road", "ex_showroom"];
 
-export const GROUP_BY_VALUES = ["model", "variant", "none"];
+export const GROUP_BY_VALUES = ["model", "variant", "feature", "none"];
 
 export const LEAD_TYPES = [
   "quotation",
@@ -205,6 +207,7 @@ export const CANVAS_TYPES = [
   "pricelist_canvas",
   "color_studio_canvas",
   "comparison_canvas",
+  "feature_comparison_canvas",
   "recommendation_results_canvas",
   "safety_advisor_canvas",
   "emi_calculator_canvas",
@@ -231,6 +234,7 @@ export const CANVAS_TYPES = [
 
 export const INLINE_TYPES = [
   "feature_answer_card",
+  "feature_comparison_summary",
   "model_ambiguity_card",
   "variant_ambiguity_card",
   "text_notice",
@@ -1153,6 +1157,11 @@ export const normalizePlannerOutput = (output = {}, tool = "") => {
       normalized.canvasType = "color_studio_canvas";
     if (tool === "vehicle_feature_lookup")
       normalized.inlineType = "feature_answer_card";
+    if (tool === "vehicle_feature_comparison") {
+      normalized.canvasType = "feature_comparison_canvas";
+      normalized.inlineType = normalized.inlineType || "feature_comparison_summary";
+      normalized.groupBy = normalized.groupBy || "feature";
+    }
     if (tool === "vehicle_compare") normalized.canvasType = "comparison_canvas";
     if (tool === "vehicle_recommend")
       normalized.canvasType = "recommendation_results_canvas";
@@ -1171,6 +1180,15 @@ export const normalizePlannerOutput = (output = {}, tool = "") => {
 
   if (tool === "vehicle_recommend" && !normalized.groupBy) {
     normalized.groupBy = "model";
+  }
+
+  if (tool === "vehicle_feature_comparison") {
+    normalized.canvasType =
+      normalized.canvasType || "feature_comparison_canvas";
+    normalized.inlineType =
+      normalized.inlineType || "feature_comparison_summary";
+    normalized.groupBy = normalized.groupBy || "feature";
+    normalized.preferredWidgetType = null;
   }
 
   return normalized;

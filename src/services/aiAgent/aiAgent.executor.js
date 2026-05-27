@@ -22,6 +22,7 @@ import {
 import { sanitizeAiAgentResponse } from "./aiAgent.responseSanitizer.js";
 import { runAciV2Tool } from "./tools/index.js";
 import { runVehiclePricelistNewCarsTool } from "./tools/newCars/vehiclePricelist.tool.js";
+import { maybeRunAciFeatureComparisonAnswer } from "./aiAgent.featureComparisonAnswer.js";
 
 /**
  * ACI Assist Executor
@@ -1865,8 +1866,10 @@ const toFeatureV2ToolPlan = (toolPlan = {}, userMessage = "") => {
 
 const isV2FeatureRuntimeResult = (item = {}) =>
   item?.meta?.resolver === "featureResolverV2" ||
+  item?.meta?.featureComparisonQuery === true ||
   item?.widget?.meta?.resolver === "featureResolverV2" ||
-  item?.tool === "vehicle_features";
+  item?.tool === "vehicle_features" ||
+  item?.tool === "vehicle_feature_comparison";
 
 const buildV2FeatureRuntimePassthrough = ({
   runtimeData = {},
@@ -1924,6 +1927,43 @@ const buildV2FeatureRuntimePassthrough = ({
 };
 
 
+const runtimeVehicleFeatureComparison = async ({
+  toolPlan = {},
+  userMessage = "",
+  context = {},
+} = {}) => {
+  const result = await maybeRunAciFeatureComparisonAnswer({
+    message: userMessage,
+    toolPlan,
+    context,
+  });
+
+  if (result) {
+    const sourceTransparency = result.sourceTransparency || {};
+    return {
+      ...result,
+      matched: Number(sourceTransparency.matched || result.rows?.length || 0),
+      count: Number(sourceTransparency.matched || result.rows?.length || 0),
+      modulesChecked: sourceTransparency.modulesChecked || result.modulesChecked || [],
+      source:
+        sourceTransparency.dataSource ||
+        result.source ||
+        "vehicle_feature_catalog_v2+vehicle_variant_feature_matrix_v2",
+      dataSource:
+        sourceTransparency.dataSource ||
+        result.dataSource ||
+        "vehicle_feature_catalog_v2+vehicle_variant_feature_matrix_v2",
+    };
+  }
+
+  return runtimeModularTool({
+    toolPlan,
+    userMessage,
+    context,
+  });
+};
+
+
 /* -------------------------------------------------------------------------- */
 /*  Runtime Tool Registry                                                     */
 /* -------------------------------------------------------------------------- */
@@ -1935,7 +1975,7 @@ export const ACI_RUNTIME_DATA_TOOLS = {
   vehicle_feature_lookup: runtimeModularTool,
   vehicle_feature_answer: runtimeModularTool,
   vehicle_feature_discovery: runtimeModularTool,
-  vehicle_feature_comparison: runtimeModularTool,
+  vehicle_feature_comparison: runtimeVehicleFeatureComparison,
   vehicle_model_features_explorer: runtimeModularTool,
   vehicle_compare: runtimeVehicleCompare,
   vehicle_recommend: runtimeVehicleRecommend,
@@ -1987,7 +2027,7 @@ export const runAciRuntimeDataTool = async ({
     });
   }
 
-  if (isFeatureV2RuntimeRequest({ toolPlan, userMessage })) {
+  if (toolPlan.tool !== "vehicle_feature_comparison" && isFeatureV2RuntimeRequest({ toolPlan, userMessage })) {
     const featureToolPlan = toFeatureV2ToolPlan(toolPlan, userMessage);
 
     return runtimeModularTool({
