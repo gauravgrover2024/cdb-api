@@ -61,6 +61,8 @@ const runCase = async (item) => {
   const canvasType = response.canvasType || response.widget?.canvasType || "";
   const matched = getMatched(response);
   const answer = String(response.answer || "");
+  const rows = response.data?.rows || response.rows || response.items || [];
+  const modelGroups = response.data?.modelGroups || response.modelGroups || [];
 
   for (const part of item.expectedIntentIncludes || []) {
     if (!intent.includes(part)) {
@@ -80,6 +82,76 @@ const runCase = async (item) => {
     failures.push(`answer says no results even though matched ${matched}`);
   }
 
+  if (item.id === "broad-feature-discovery") {
+    if (!rows.length && !modelGroups.length) {
+      failures.push("broad feature discovery returned no rows/modelGroups");
+    }
+
+    if (/^I found \d+ variants? with\b/i.test(answer.trim())) {
+      failures.push("broad feature discovery returned variant-only answer copy");
+    }
+
+    if (!/\bmodels?\b/i.test(answer)) {
+      failures.push("broad feature discovery answer should mention grouped models");
+    }
+
+    const sampleGroup = modelGroups[0] || rows[0] || {};
+    if (
+      !sampleGroup.model ||
+      !sampleGroup.startsFromVariant ||
+      !sampleGroup.bestUnderBudgetVariant ||
+      !Number(sampleGroup.qualifyingVariantCount || 0)
+    ) {
+      failures.push("broad feature discovery rows/modelGroups missing model, startsFromVariant, bestUnderBudgetVariant, or qualifyingVariantCount");
+    }
+
+    const groups = modelGroups.length ? modelGroups : rows;
+    const modelKeys = new Set();
+    for (const group of groups) {
+      if (group.modelKey) {
+        if (modelKeys.has(group.modelKey)) {
+          failures.push(`duplicate modelKey in broad feature discovery: ${group.modelKey}`);
+        }
+        modelKeys.add(group.modelKey);
+      }
+
+      const variants = Array.isArray(group.qualifyingVariants) ? group.qualifyingVariants : [];
+      if (Number(group.qualifyingVariantCount || 0) !== variants.length) {
+        failures.push(`qualifyingVariantCount mismatch for ${group.model || group.modelKey}`);
+      }
+
+      const invalidVariant = variants.find(
+        (variant) =>
+          Number(variant.foundMatrixRows || 0) <= 0 ||
+          variant.featureAvailability?.available !== true,
+      );
+      if (invalidVariant) {
+        failures.push(`broad feature discovery contains unverified variant: ${group.model || group.modelKey} ${invalidVariant.variant || invalidVariant.variantName || ""}`.trim());
+      }
+    }
+  }
+
+  if (item.id === "feature-comparison") {
+    const featureKeys = rows.map((row) => String(row.featureKey || row.key || row.feature || row.displayName || "").toLowerCase());
+    const joined = featureKeys.join(" ");
+
+    if (rows.length !== 3) {
+      failures.push(`feature comparison expected exactly 3 feature rows, got ${rows.length}`);
+    }
+
+    if (!/sunroof/.test(joined)) failures.push("feature comparison missing sunroof row");
+    if (!/abs|anti[_ -]?lock/.test(joined)) failures.push("feature comparison missing ABS row");
+    if (!/adas/.test(joined)) failures.push("feature comparison missing ADAS row");
+    if (/cng.*mileage|mileage.*cng/.test(joined)) {
+      failures.push("feature comparison treated CNG mileage as a compared feature");
+    }
+
+    const fuelFilter = String(response.fuelFilter || response.data?.fuelFilter || response.meta?.fuelFilter || "").toLowerCase();
+    if (!fuelFilter.includes("cng")) {
+      failures.push("feature comparison missing CNG fuel filter metadata");
+    }
+  }
+
   return {
     id: item.id,
     message: item.message,
@@ -94,6 +166,8 @@ const runCase = async (item) => {
       title: response.title,
       answer,
       matched,
+      rowCount: rows.length,
+      modelGroupCount: modelGroups.length,
       aciCoreBridge: response.aciCoreBridge || response.meta?.aciCoreBridge || null,
       modulesChecked:
         response.modulesChecked ||

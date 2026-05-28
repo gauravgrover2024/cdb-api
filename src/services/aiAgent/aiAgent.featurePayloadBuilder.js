@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 
+import { parseAciFeatureRequestFromMessage } from "./aiAgent.featureRequestParser.js";
+
 const cleanText = (value = "") =>
   String(value || "")
     .replace(/\s+/g, " ")
@@ -48,6 +50,9 @@ const normalizeKey = (value = "") =>
 
 const compactKey = (value = "") => normalizeKey(value).replace(/[^a-z0-9]/g, "");
 
+const normalizeFeatureKey = (value = "") =>
+  normalizeKey(String(value || "").replace(/_/g, " ")).replace(/\s+/g, "_");
+
 const titleCase = (value = "") =>
   decodeHtml(value)
     .split(" ")
@@ -84,6 +89,7 @@ const getRowModel = (row = {}) =>
 const getRowVariantFull = (row = {}) =>
   firstText(
     row.variant,
+    row.variantFull,
     row.variantName,
     row.label,
     row.name,
@@ -687,6 +693,152 @@ const getSourceRows = ({ response = {}, widget = {} } = {}) => {
   return [];
 };
 
+const buildDiscoveryVariantRow = ({
+  row = {},
+  feature = "",
+  featureKey = "",
+  index = 0,
+} = {}) => {
+  const make = getRowBrand(row);
+  const model = getRowModel(row);
+  const variant = getRowVariantLabel(row);
+  const normalizedFeatureKey = normalizeFeatureKey(featureKey || feature || row.feature || row.matchedFeature);
+  const matrixFeature = normalizedFeatureKey ? row.featuresByKey?.[normalizedFeatureKey] : null;
+  const exShowroomPrice = getDiscoveryRowPrice(row);
+  const onRoadPrice = getDiscoveryRowOnRoadPrice(row);
+  const displayName = firstText(
+    row.displayName,
+    row.fullModel,
+    row.modelDisplayName,
+    [make, model].filter(Boolean).join(" "),
+    model,
+  );
+
+  return {
+    id: String(row.id || row._id || row.raw?._id || slugify(`${make}-${model}-${variant}`, `feature-match-${index + 1}`)),
+    make,
+    brand: make,
+    model,
+    modelKey: firstText(row.modelKey, row.model_key, row.raw?.modelKey) || slugify(model, "model"),
+    variantKey: firstText(row.variantKey, row.variant_key, row.raw?.variantKey) || normalizeFeatureKey(variant),
+    displayName,
+    fullModel: displayName,
+    featureKey: normalizedFeatureKey || slugify(feature || row.feature || row.matchedFeature || "feature", "feature"),
+    featureName: firstText(matrixFeature?.displayName, row.featureName, row.matchedFeature, row.feature, feature),
+    matchedFeature: firstText(matrixFeature?.displayName, row.matchedFeature, row.feature, feature),
+    featureAvailability: matrixFeature
+      ? {
+          available: matrixFeature.available === true,
+          availabilityStatus: matrixFeature.availabilityStatus || "",
+          value: matrixFeature.value || "",
+        }
+      : null,
+    variant,
+    variantName: variant,
+    exShowroomPrice,
+    onRoadPrice,
+    price: exShowroomPrice || onRoadPrice || null,
+    startsFromPrice: exShowroomPrice || onRoadPrice || null,
+    startsFromPriceLabel:
+      firstText(row.exShowroomPriceLabel, row.priceLabel, row.onRoadPriceLabel) ||
+      formatMoney(exShowroomPrice || onRoadPrice),
+    fuel: firstText(row.fuel, row.fuelType, row.raw?.fuel_type, getMatrixFuelType(row)),
+    fuelType: firstText(row.fuelType, row.fuel, row.raw?.fuel_type, getMatrixFuelType(row)),
+    transmission: firstText(row.transmission, row.transmissionType, row.raw?.transmission),
+    rawRowId: String(row._id || row.raw?._id || ""),
+    foundMatrixRows: matrixFeature ? 1 : 0,
+    dataSource: row.dataSource || "vehicle_variant_feature_matrix_v2",
+    sourceCollection: row.sourceCollection || "vehicle_variant_feature_matrix_v2",
+  };
+};
+
+const buildFeatureDiscoveryModelGroups = ({
+  rows = [],
+  feature = "",
+  featureKey = "",
+  budgetMax = 0,
+  source = {},
+} = {}) => {
+  const groups = new Map();
+
+  rows.forEach((row, index) => {
+    const variantRow = buildDiscoveryVariantRow({ row, feature, featureKey, index });
+    const groupKey = compactKey(
+      `${variantRow.make} ${variantRow.modelKey || variantRow.model}`,
+    );
+
+    if (!groupKey || !variantRow.model || !variantRow.variant) return;
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        id: groupKey,
+        make: variantRow.make,
+        brand: variantRow.make,
+        model: variantRow.model,
+        modelKey: variantRow.modelKey,
+        displayName: variantRow.displayName,
+        fullModel: variantRow.fullModel,
+        featureKey: variantRow.featureKey,
+        featureName: variantRow.featureName,
+        matchedFeature: variantRow.matchedFeature,
+        dataSource: source.dataSource || variantRow.dataSource || "vehicle_variant_feature_matrix_v2",
+        sourceCollection: source.dataSource || variantRow.sourceCollection || "vehicle_variant_feature_matrix_v2",
+        foundMatrixRows: 0,
+        qualifyingVariants: [],
+      });
+    }
+
+    const group = groups.get(groupKey);
+    group.foundMatrixRows += Number(variantRow.foundMatrixRows || 0);
+    group.qualifyingVariants.push(variantRow);
+  });
+
+  return [...groups.values()]
+    .map((group) => {
+      const variants = sortVariantsByPrice(group.qualifyingVariants);
+      const cheapest = variants[0] || {};
+      const bestUnderBudget = [...variants]
+        .filter((variant) => {
+          const price = Number(variant.price || 0);
+          return price > 0 && (!budgetMax || price <= budgetMax);
+        })
+        .sort((a, b) => Number(b.price || 0) - Number(a.price || 0))[0] || variants[variants.length - 1] || {};
+      const prices = variants
+        .map((variant) => Number(variant.price || 0))
+        .filter((price) => Number.isFinite(price) && price > 0);
+      const minPrice = prices.length ? Math.min(...prices) : null;
+      const maxPrice = prices.length ? Math.max(...prices) : null;
+
+      return {
+        ...group,
+        startsFromVariant: cheapest.variant || "",
+        startsFromPrice: minPrice,
+        startsFromPriceLabel: formatMoney(minPrice),
+        bestUnderBudgetVariant: bestUnderBudget.variant || "",
+        bestUnderBudgetPrice: Number(bestUnderBudget.price || 0) || null,
+        bestUnderBudgetPriceLabel: formatMoney(bestUnderBudget.price),
+        minPrice,
+        maxPrice,
+        priceRangeLabel:
+          minPrice && maxPrice && minPrice !== maxPrice
+            ? `${formatMoney(minPrice)} - ${formatMoney(maxPrice)}`
+            : formatMoney(minPrice),
+        priceRange:
+          minPrice && maxPrice && minPrice !== maxPrice
+            ? `${formatMoney(minPrice)} - ${formatMoney(maxPrice)}`
+            : formatMoney(minPrice),
+        qualifyingVariantCount: variants.length,
+        qualifyingVariants: variants,
+      };
+    })
+    .sort((a, b) => {
+      const priceA = Number(a.startsFromPrice || Number.MAX_SAFE_INTEGER);
+      const priceB = Number(b.startsFromPrice || Number.MAX_SAFE_INTEGER);
+      if (priceA !== priceB) return priceA - priceB;
+      return String(a.displayName || a.model).localeCompare(String(b.displayName || b.model));
+    });
+};
+
 const dedupeVariants = (variants = []) => {
   const map = new Map();
 
@@ -725,6 +877,24 @@ const getVariantPrice = (variant = {}) => {
   );
 
   return Number.isFinite(price) && price > 0 ? price : Number.MAX_SAFE_INTEGER;
+};
+
+const formatMoney = (value) => {
+  const number = Number(value || 0);
+
+  if (!Number.isFinite(number) || number <= 0) return "";
+
+  if (number >= 10000000) {
+    const crore = number / 10000000;
+    return `₹${crore.toFixed(crore >= 10 || Number.isInteger(crore) ? 0 : 2)}Cr`;
+  }
+
+  if (number >= 100000) {
+    const lakh = number / 100000;
+    return `₹${lakh.toFixed(lakh >= 10 || Number.isInteger(lakh) ? 0 : 2)}L`;
+  }
+
+  return `₹${Math.round(number).toLocaleString("en-IN")}`;
 };
 
 const isCurrentVariant = (variant = {}) => {
@@ -835,7 +1005,9 @@ const getRequestedModel = ({ response = {}, widget = {}, selectedVariant = null 
       response.contextSnapshot?.anchorModel,
       response.contextPatch?.anchorModel,
       response.data?.model,
+      response.data?.filters?.model,
       widget.model,
+      widget.data?.filters?.model,
       selectedVariant?.model,
     ),
   );
@@ -848,8 +1020,12 @@ const getRequestedBrand = ({ response = {}, widget = {}, selectedVariant = null 
       response.contextPatch?.anchorBrand,
       response.data?.brand,
       response.data?.make,
+      response.data?.filters?.brand,
+      response.data?.filters?.make,
       widget.brand,
       widget.make,
+      widget.data?.filters?.brand,
+      widget.data?.filters?.make,
       selectedVariant?.brand,
     ),
   );
@@ -884,12 +1060,264 @@ const buildVehicle = ({ response = {}, widget = {}, selectedVariant = null } = {
 const escapeRegex = (value = "") =>
   String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const getDb = () => {
+  if (mongoose.connection?.readyState !== 1 || !mongoose.connection?.db) {
+    return null;
+  }
+
+  return mongoose.connection.db;
+};
+
+const getRequestMessage = ({ response = {}, widget = {} } = {}) =>
+  firstText(
+    response.message,
+    response.query,
+    response.userMessage,
+    response.data?.message,
+    response.meta?.message,
+    widget.message,
+    widget.data?.message,
+  );
+
+const getRequestedFeatureTerms = ({ response = {}, widget = {}, requestedFeature = "" } = {}) =>
+  [
+    requestedFeature,
+    response.data?.feature,
+    response.data?.filters?.feature,
+    response.filters?.feature,
+    widget.feature,
+    widget.data?.feature,
+    ...toArray(response.data?.filters?.mustHaveFeatures),
+    ...toArray(response.filters?.mustHaveFeatures),
+    ...toArray(response.data?.filters?.features),
+    ...toArray(response.filters?.features),
+  ]
+    .map(normalizeFeatureKey)
+    .filter(Boolean);
+
+const getBudgetMax = ({ response = {}, widget = {} } = {}) => {
+  const value = Number(
+    response.data?.filters?.budgetMax ||
+      widget.data?.filters?.budgetMax ||
+      response.filters?.budgetMax ||
+      0,
+  );
+
+  return Number.isFinite(value) && value > 0 ? value : 0;
+};
+
+const getRequestedFuelType = ({ response = {}, widget = {} } = {}) =>
+  firstText(
+    response.data?.filters?.fuelType,
+    response.filters?.fuelType,
+    widget.data?.filters?.fuelType,
+    widget.fuelType,
+  );
+
+const getMatrixFuelType = (row = {}) =>
+  firstText(
+    row.fuelType,
+    row.fuel,
+    row.featuresByKey?.fuel_type?.value,
+    ...toArray(row.fuels),
+  );
+
+const isAvailableMatrixFeature = (feature = {}) => {
+  if (!feature || typeof feature !== "object") return false;
+  if (feature.available === true) return true;
+
+  const status = normalizeKey(feature.availabilityStatus || "");
+  if (["available", "yes", "standard"].includes(status)) return true;
+
+  const value = normalizeKey(feature.value || "");
+  if (!value) return false;
+
+  return !["not available", "no", "na", "n a", "n/a", "unavailable", "absent", "false"].includes(value);
+};
+
+const resolveRequestedFeatureFromMatrix = async ({
+  response = {},
+  widget = {},
+  requestedFeature = "",
+  requestedModel = "",
+} = {}) => {
+  const message = getRequestMessage({ response, widget });
+  const termCandidates = getRequestedFeatureTerms({ response, widget, requestedFeature });
+
+  if (message) {
+    const parsed = await parseAciFeatureRequestFromMessage({
+      message,
+      modelEntity: {
+        model: requestedModel,
+        fullModel: requestedModel,
+      },
+    });
+
+    const parsedFeature = toArray(parsed.requestedFeatures)[0];
+    if (parsedFeature?.canonicalKey) {
+      return {
+        canonicalKey: parsedFeature.canonicalKey,
+        displayName: parsedFeature.displayName || titleCase(parsedFeature.canonicalKey.replace(/_/g, " ")),
+        parsed,
+      };
+    }
+  }
+
+  const canonicalKey = termCandidates[0] || normalizeFeatureKey(requestedFeature);
+  if (!canonicalKey) return null;
+
+  const db = getDb();
+  const catalogDoc = db
+    ? await db.collection("vehicle_feature_catalog_v2").findOne(
+        { canonicalKey },
+        { projection: { _id: 0, canonicalKey: 1, displayName: 1 } },
+      )
+    : null;
+
+  return {
+    canonicalKey,
+    displayName: catalogDoc?.displayName || titleCase(canonicalKey.replace(/_/g, " ")),
+    parsed: null,
+  };
+};
+
+const fetchExactFeatureDiscoveryRows = async ({
+  response = {},
+  widget = {},
+  brand = "",
+  model = "",
+  requestedFeature = "",
+} = {}) => {
+  const db = getDb();
+  if (!db) return { rows: [], feature: null };
+
+  const resolvedFeature = await resolveRequestedFeatureFromMatrix({
+    response,
+    widget,
+    requestedFeature,
+    requestedModel: model,
+  });
+
+  const featureKey = resolvedFeature?.canonicalKey || "";
+  if (!featureKey) return { rows: [], feature: null };
+
+  const budgetMax = getBudgetMax({ response, widget });
+  const fuelType = getRequestedFuelType({ response, widget });
+  const query = {
+    [`featuresByKey.${featureKey}.available`]: true,
+    $and: [
+      {
+        $or: [
+          { activeForFeatureExplorer: { $exists: false } },
+          { activeForFeatureExplorer: { $ne: false } },
+        ],
+      },
+      {
+        $or: [
+          { activePricelistMatched: true },
+          { priceMin: { $gt: 0 } },
+          { priceMax: { $gt: 0 } },
+        ],
+      },
+    ],
+  };
+
+  if (brand) {
+    query.brand = new RegExp(`^${escapeRegex(brand)}$`, "i");
+  }
+
+  if (model) {
+    query.model = new RegExp(`^${escapeRegex(model)}$`, "i");
+  }
+
+  if (budgetMax > 0) {
+    query.priceMin = { $gt: 0, $lte: budgetMax };
+  }
+
+  const projection = {
+    _id: 1,
+    brand: 1,
+    make: 1,
+    model: 1,
+    modelKey: 1,
+    brandModelKey: 1,
+    variant: 1,
+    variantKey: 1,
+    variantFull: 1,
+    priceMin: 1,
+    priceMax: 1,
+    fuels: 1,
+    activePricelistMatched: 1,
+    activeForFeatureExplorer: 1,
+    [`featuresByKey.${featureKey}`]: 1,
+    "featuresByKey.fuel_type": 1,
+  };
+
+  const rows = await db
+    .collection("vehicle_variant_feature_matrix_v2")
+    .find(query, {
+      projection,
+      limit: Number(process.env.ACI_FEATURE_DISCOVERY_MATRIX_LIMIT || 1000),
+    })
+    .toArray();
+
+  const fuelKey = normalizeKey(fuelType);
+  const exactRows = rows
+    .filter((row) => isAvailableMatrixFeature(row.featuresByKey?.[featureKey]))
+    .filter((row) => {
+      if (!fuelKey) return true;
+      return normalizeKey(getMatrixFuelType(row)) === fuelKey;
+    });
+
+  return {
+    rows: exactRows,
+    feature: resolvedFeature,
+    source: {
+      dataSource: "vehicle_variant_feature_matrix_v2",
+      featureKey,
+      foundMatrixRows: exactRows.length,
+      budgetMax,
+      fuelType,
+    },
+  };
+};
+
 const getVariantPriceFromVehicleRow = (row = {}) => {
   const price = Number(
     row.ex_showroom ||
       row.exShowroomPrice ||
       row.ex_showroom_price_cardekho ||
       row.price ||
+      0,
+  );
+
+  return Number.isFinite(price) && price > 0 ? price : null;
+};
+
+const getDiscoveryRowPrice = (row = {}) => {
+  const price = Number(
+    row.exShowroomPrice ||
+      row.priceMin ||
+      row.ex_showroom ||
+      row.ex_showroom_price_cardekho ||
+      row.price ||
+      row.priceMax ||
+      row.onRoadPrice ||
+      row.on_road_price_cardekho ||
+      row.total_on_road_with_accessories ||
+      0,
+  );
+
+  return Number.isFinite(price) && price > 0 ? price : null;
+};
+
+const getDiscoveryRowOnRoadPrice = (row = {}) => {
+  const price = Number(
+    row.onRoadPrice ||
+      row.on_road_price_cardekho ||
+      row.total_on_road_with_accessories ||
+      row.orp_without_accessories ||
+      row.priceMax ||
       0,
   );
 
@@ -1263,6 +1691,11 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
     widget,
     selectedVariant: rawVariants[0],
   });
+  const explicitRequestedModel = getRequestedModel({
+    response,
+    widget,
+    selectedVariant: null,
+  });
 
   const enrichment = await enrichVariantsWithCurrentVehicleRows({
     variants: rawVariants,
@@ -1276,6 +1709,18 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
     : enrichment.variants;
 
   const requestedFeature = getRequestedFeature({ response, widget });
+  const exactMatrixResult = await fetchExactFeatureDiscoveryRows({
+    response,
+    widget,
+    brand: requestedBrand,
+    model: explicitRequestedModel,
+    requestedFeature,
+  });
+  const exactMatrixRows = exactMatrixResult.rows || [];
+  const exactFeatureKey = exactMatrixResult.feature?.canonicalKey || normalizeFeatureKey(requestedFeature);
+  const exactFeatureName =
+    exactMatrixResult.feature?.displayName ||
+    titleCase((exactFeatureKey || requestedFeature || "feature").replace(/_/g, " "));
 
   const matchedRows = [];
 
@@ -1353,15 +1798,36 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
     Number(response.runtimeResultsMeta?.[0]?.matched || 0),
   );
 
-  const effectiveMatchedRows =
-    matchedRows.length > 0
+  const hasExactMatrixTruth = Boolean(exactMatrixResult.feature);
+  const effectiveMatchedRows = hasExactMatrixTruth
+    ? exactMatrixRows
+    : matchedRows.length > 0
       ? matchedRows
-      : requestedFeature && runtimeMatchedCount > 0
-        ? allVariants
-        : [];
+      : [];
 
   const effectiveMatchedCount =
-    effectiveMatchedRows.length || runtimeMatchedCount || matchedRows.length;
+    effectiveMatchedRows.length || (hasExactMatrixTruth ? 0 : runtimeMatchedCount || matchedRows.length);
+  const fallbackRowsForGrouping = effectiveMatchedRows;
+  const budgetMax = getBudgetMax({ response, widget });
+  const modelGroups = buildFeatureDiscoveryModelGroups({
+    rows: fallbackRowsForGrouping,
+    feature: exactFeatureName,
+    featureKey: exactFeatureKey,
+    budgetMax,
+    source: exactMatrixResult.source,
+  });
+  const responseRows = modelGroups.length ? modelGroups : effectiveMatchedRows;
+  const budgetLabel =
+    Number.isFinite(budgetMax) && budgetMax > 0
+      ? ` under ${formatMoney(budgetMax)}`
+      : "";
+  const makeLabel = brand ? `${brand} ` : "";
+  const featureLabel = exactFeatureName;
+  const modelFirstAnswer = modelGroups.length
+    ? `I found ${makeLabel}models with at least one ${featureLabel} variant${budgetLabel}. I’ll show where the feature starts and the best qualifying variant within your budget.`
+    : effectiveMatchedCount
+      ? `I found ${effectiveMatchedCount} qualifying variant${effectiveMatchedCount === 1 ? "" : "s"} with ${featureLabel}${budgetLabel}.`
+      : `I could not find variants with ${requestedFeature}.`;
 
   return {
     type: "vehicle_feature_discovery",
@@ -1369,34 +1835,65 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
     intent: "vehicle_feature_discovery",
     canvasType: response.canvasType || widget.canvasType || "feature_match_builder_canvas",
     title: `${requestedFeature || "Feature"} matches`,
-    answer: effectiveMatchedCount
-      ? `I found ${effectiveMatchedCount} variants with ${requestedFeature}.`
-      : `I could not find variants with ${requestedFeature}.`,
+    answer: modelFirstAnswer,
     vehicle,
-    feature: requestedFeature,
-    matchedFeature: requestedFeature,
-    variants: allVariants,
+    feature: exactFeatureName,
+    featureKey: exactFeatureKey,
+    matchedFeature: exactFeatureName,
+    variants: hasExactMatrixTruth ? exactMatrixRows : allVariants,
     matchedVariants: effectiveMatchedRows,
-    rows: effectiveMatchedRows,
-    items: effectiveMatchedRows,
+    modelGroups,
+    rows: responseRows,
+    items: responseRows,
     features: effectiveMatchedRows,
     featureList: effectiveMatchedRows,
-    totalVariantCount: allVariants.length,
+    totalVariantCount: hasExactMatrixTruth ? exactMatrixRows.length : allVariants.length,
     matchedVariantCount: effectiveMatchedCount,
-    activeStatusSource: enrichment.hasVehicleStatus ? "vehicles" : "feature_rows",
-    activeVariantCount: allVariants.filter((variant) => variant.active === true || variant.current === true).length,
+    modelGroupCount: modelGroups.length,
+    rowCount: responseRows.length,
+    activeStatusSource: hasExactMatrixTruth
+      ? "vehicle_variant_feature_matrix_v2"
+      : enrichment.hasVehicleStatus ? "vehicles" : "feature_rows",
+    activeVariantCount: hasExactMatrixTruth
+      ? exactMatrixRows.length
+      : allVariants.filter((variant) => variant.active === true || variant.current === true).length,
     totalRawVariantCount: rawVariants.length,
-    currentPricelistMatched: enrichment.hasVehicleStatus,
+    currentPricelistMatched: hasExactMatrixTruth || enrichment.hasVehicleStatus,
+    dataSource: exactMatrixResult.source?.dataSource || "vehicle_variant_feature_matrix_v2",
+    sourceCollection: exactMatrixResult.source?.dataSource || "vehicle_variant_feature_matrix_v2",
+    foundMatrixRows: exactMatrixRows.length,
+    sourceTransparency: {
+      responseTool: "vehicle_feature_discovery",
+      modulesChecked: ["vehicle_feature_catalog_v2", "vehicle_variant_feature_matrix_v2"],
+      dataSource: exactMatrixResult.source?.dataSource || "vehicle_variant_feature_matrix_v2",
+      recordCount: effectiveMatchedCount,
+      matched: effectiveMatchedCount,
+      featureKey: exactFeatureKey,
+      foundMatrixRows: exactMatrixRows.length,
+    },
     data: {
       vehicle,
-      feature: requestedFeature,
-      variants: allVariants,
+      feature: exactFeatureName,
+      featureKey: exactFeatureKey,
+      variants: hasExactMatrixTruth ? exactMatrixRows : allVariants,
       matchedVariants: effectiveMatchedRows,
-      rows: effectiveMatchedRows,
-      activeStatusSource: enrichment.hasVehicleStatus ? "vehicles" : "feature_rows",
-      activeVariantCount: allVariants.filter((variant) => variant.active === true || variant.current === true).length,
+      modelGroups,
+      rows: responseRows,
+      items: responseRows,
+      rowCount: responseRows.length,
+      modelGroupCount: modelGroups.length,
+      matchedVariantCount: effectiveMatchedCount,
+      activeStatusSource: hasExactMatrixTruth
+        ? "vehicle_variant_feature_matrix_v2"
+        : enrichment.hasVehicleStatus ? "vehicles" : "feature_rows",
+      activeVariantCount: hasExactMatrixTruth
+        ? exactMatrixRows.length
+        : allVariants.filter((variant) => variant.active === true || variant.current === true).length,
       totalRawVariantCount: rawVariants.length,
-      currentPricelistMatched: enrichment.hasVehicleStatus,
+      currentPricelistMatched: hasExactMatrixTruth || enrichment.hasVehicleStatus,
+      dataSource: exactMatrixResult.source?.dataSource || "vehicle_variant_feature_matrix_v2",
+      sourceCollection: exactMatrixResult.source?.dataSource || "vehicle_variant_feature_matrix_v2",
+      foundMatrixRows: exactMatrixRows.length,
     },
   };
 };

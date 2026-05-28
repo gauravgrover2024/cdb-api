@@ -226,15 +226,6 @@ const inferOutput = (tool = '', meaningFrame = {}) => {
     };
   }
 
-  if (tool === 'vehicle_feature_comparison') {
-    return {
-      canvasType: 'feature_comparison_canvas',
-      inlineType: 'feature_comparison_summary',
-      groupBy: 'feature',
-      preferredWidgetType: null,
-    };
-  }
-
   if (tool === 'vehicle_compare') {
     return {
       canvasType: 'comparison_canvas',

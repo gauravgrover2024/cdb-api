@@ -9,7 +9,7 @@ const ACI_PROGRESS_MODULES = [
     summary: "Permanent meaning-frame brain that turns customer language into validated DB-backed tool plans.",
     whatWillWork: "Candidate retrieval, deterministic parser, Gemini fallback, module registry, context graph, tool execution, answer composer, trace logs, eval compatibility.",
     currentState: "Hybrid meaning-frame router, deterministic parser, optional Gemini fallback, DB-backed candidate retrieval, prewarm, and a non-live ACI Core to legacy executor bridge are implemented. Bridge smoke now covers broad discovery, variant comparison, feature comparison, and exact variant on-road price.",
-    pending: "Test guarded bridge through the portal UI before enabling beyond local/staging, complete module/capability registry, replace fragile old early-gate behavior, expand final-answer evals, and add complete trace/audit contract.",
+    pending: "Build ACI Answer Composer v1 for premium buyer-facing language, test guarded bridge through the portal UI before enabling beyond local/staging, complete module/capability registry, replace fragile old early-gate behavior, expand final-answer evals, and add complete trace/audit contract.",
     items: [
       { key: "candidate_retrieval", name: "DB-backed candidate retrieval", status: "ready" },
       { key: "deterministic_parser", name: "Deterministic parser for clear queries", status: "ready" },
@@ -17,6 +17,8 @@ const ACI_PROGRESS_MODULES = [
       { key: "hybrid_router", name: "Hybrid router", status: "mostly_ready" },
       { key: "legacy_executor_bridge", name: "ACI Core to legacy executor bridge", status: "mostly_ready" },
       { key: "guarded_live_bridge", name: "Guarded ACI Core live bridge", status: "partial" },
+      { key: "broad_feature_discovery_truth", name: "DB-validated broad feature discovery", status: "ready" },
+      { key: "fuel_filter_feature_comparison", name: "Fuel-filtered feature comparison", status: "ready" },
       { key: "meaning_frame_contract", name: "Stable meaning-frame contract", status: "mostly_ready" },
       { key: "capability_registry", name: "Capability/module registry", status: "planned" },
       { key: "answer_composer", name: "Answer composer", status: "partial" },

@@ -432,6 +432,51 @@ const normalizeFeatureRowsForWidget = (rows = []) =>
     label: row.label || row.variant || row.variantName || row.model || `Result ${index + 1}`,
   }));
 
+const isFeatureDiscoveryGroupRow = (row = {}) => {
+  if (!row || typeof row !== "object") return false;
+
+  const hasModelIdentity = Boolean(
+    row.model ||
+      row.modelName ||
+      row.modelKey ||
+      row.displayName ||
+      row.fullModel,
+  );
+
+  const hasGroupSummary = Boolean(
+    row.startsFromVariant ||
+      row.startsFromPrice ||
+      row.startsFromPriceLabel ||
+      Number(row.qualifyingVariantCount || 0) > 0 ||
+      toArray(row.qualifyingVariants).length > 0,
+  );
+
+  return hasModelIdentity && hasGroupSummary;
+};
+
+const isCompleteFeatureDiscoveryPayload = (response = {}, widget = null) => {
+  const intent = response.intent || widget?.intent || "";
+  const canvasType = response.canvasType || widget?.canvasType || "";
+
+  if (
+    intent !== "vehicle_feature_discovery" &&
+    canvasType !== "feature_match_builder_canvas"
+  ) {
+    return false;
+  }
+
+  const modelGroups = toArray(
+    response.modelGroups ||
+      response.data?.modelGroups ||
+      widget?.modelGroups ||
+      widget?.data?.modelGroups,
+  );
+
+  if (modelGroups.some(isFeatureDiscoveryGroupRow)) return true;
+
+  return getRows(response, widget).some(isFeatureDiscoveryGroupRow);
+};
+
 const isFeatureResolverV2Response = (response = {}, widget = null) =>
   response?.meta?.passthrough === "featureResolverV2" ||
   response?.meta?.resolver === "featureResolverV2" ||
@@ -443,6 +488,7 @@ const isFeatureResolverV2Response = (response = {}, widget = null) =>
 
 const applyFeatureIntentCorrections = ({ response = {}, message = "", widget = null } = {}) => {
   if (isFeatureResolverV2Response(response, widget)) return response;
+  if (isCompleteFeatureDiscoveryPayload(response, widget)) return response;
 
   const corrected = { ...response };
   const rows = normalizeFeatureRowsForWidget(getRows(corrected, widget));
@@ -683,6 +729,10 @@ const enhanceFeaturePayloads = async (response = {}) => {
     intent === "vehicle_feature_discovery" ||
     canvasType === "feature_match_builder_canvas"
   ) {
+    if (isCompleteFeatureDiscoveryPayload(response, widget)) {
+      return response;
+    }
+
     try {
       const payload = await buildFeatureDiscoveryPayload({ response, widget });
 
@@ -712,12 +762,17 @@ const enhanceFeaturePayloads = async (response = {}) => {
           feature: payload.feature || response.data?.feature || "",
           variants: payload.variants || [],
           matchedVariants: payload.matchedVariants || [],
+          modelGroups: payload.modelGroups || [],
           rows: payload.rows || [],
+          items: payload.items || payload.rows || [],
+          rowCount: payload.rowCount || payload.rows?.length || 0,
+          modelGroupCount: payload.modelGroupCount || payload.modelGroups?.length || 0,
         },
         widget: enhancedWidget,
         widgets: [enhancedWidget],
         rows: payload.rows || [],
         items: payload.items || [],
+        modelGroups: payload.modelGroups || [],
         features: payload.features || [],
         contextPatch: {
           ...(response.contextPatch || {}),
@@ -739,6 +794,7 @@ const enhanceFeaturePayloads = async (response = {}) => {
             "new-delhi",
           feature: payload.feature || response.contextPatch?.feature || response.data?.feature || "",
         },
+        sourceTransparency: payload.sourceTransparency || response.sourceTransparency,
       };
     } catch (error) {
       return {

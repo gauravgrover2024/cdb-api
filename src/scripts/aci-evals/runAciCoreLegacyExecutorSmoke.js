@@ -109,6 +109,8 @@ const checkResponse = ({
   const tool = getFirstTool(plan);
   const runtimeMeta = getRuntimeMeta(response);
   const answerText = `${response.title || ""} ${response.answer || ""}`;
+  const rows = asArray(response.data?.rows || response.rows || response.items);
+  const modelGroups = asArray(response.data?.modelGroups || response.modelGroups);
 
   if (tool.tool !== expectedTool) {
     failures.push(`plan tool expected ${expectedTool}, got ${tool.tool}`);
@@ -160,6 +162,75 @@ const checkResponse = ({
       !answerTextLower.includes("on road")
     ) {
       failures.push("specific on-road query returned generic price-list language");
+    }
+  }
+  if (caseId === "broad-hyundai-sunroof-budget") {
+    if (!rows.length && !modelGroups.length) {
+      failures.push("broad feature discovery returned no rows/modelGroups");
+    }
+
+    if (/I found \d+ variants? with\b/i.test(answerText)) {
+      failures.push("broad feature discovery returned variant-only answer copy");
+    }
+
+    if (!/\bmodels?\b/i.test(answerText)) {
+      failures.push("broad feature discovery answer should mention grouped models");
+    }
+
+    const sampleGroup = modelGroups[0] || rows[0] || {};
+    if (
+      !sampleGroup.model ||
+      !sampleGroup.startsFromVariant ||
+      !sampleGroup.bestUnderBudgetVariant ||
+      !Number(sampleGroup.qualifyingVariantCount || 0)
+    ) {
+      failures.push("broad feature discovery rows/modelGroups missing model, startsFromVariant, bestUnderBudgetVariant, or qualifyingVariantCount");
+    }
+
+    const groups = modelGroups.length ? modelGroups : rows;
+    const modelKeys = new Set();
+    for (const group of groups) {
+      if (group.modelKey) {
+        if (modelKeys.has(group.modelKey)) {
+          failures.push(`duplicate modelKey in broad feature discovery: ${group.modelKey}`);
+        }
+        modelKeys.add(group.modelKey);
+      }
+
+      const variants = asArray(group.qualifyingVariants);
+      if (Number(group.qualifyingVariantCount || 0) !== variants.length) {
+        failures.push(`qualifyingVariantCount mismatch for ${group.model || group.modelKey}`);
+      }
+
+      const invalidVariant = variants.find(
+        (variant) =>
+          Number(variant.foundMatrixRows || 0) <= 0 ||
+          variant.featureAvailability?.available !== true,
+      );
+      if (invalidVariant) {
+        failures.push(`broad feature discovery contains unverified variant: ${group.model || group.modelKey} ${invalidVariant.variant || invalidVariant.variantName || ""}`.trim());
+      }
+    }
+  }
+
+  if (caseId === "extreme-multi-intent") {
+    const featureKeys = rows.map((row) => String(row.featureKey || row.key || row.feature || row.displayName || "").toLowerCase());
+    const joined = featureKeys.join(" ");
+
+    if (rows.length !== 3) {
+      failures.push(`feature comparison expected exactly 3 feature rows, got ${rows.length}`);
+    }
+
+    if (!/sunroof/.test(joined)) failures.push("feature comparison missing sunroof row");
+    if (!/abs|anti[_ -]?lock/.test(joined)) failures.push("feature comparison missing ABS row");
+    if (!/adas/.test(joined)) failures.push("feature comparison missing ADAS row");
+    if (/cng.*mileage|mileage.*cng/.test(joined)) {
+      failures.push("feature comparison treated CNG mileage as a compared feature");
+    }
+
+    const fuelFilter = String(response.fuelFilter || response.data?.fuelFilter || response.meta?.fuelFilter || "").toLowerCase();
+    if (!fuelFilter.includes("cng")) {
+      failures.push("feature comparison missing CNG fuel filter metadata");
     }
   }
   if (Number.isFinite(minMatched) && totalMatched < minMatched) {

@@ -43,6 +43,46 @@ const isAvailableFeatureValue = (feature = {}) => {
   return !["not available", "no", "na", "n a", "n/a"].includes(value);
 };
 
+const getFuelFilter = (toolPlan = {}) =>
+  cleanText(
+    toolPlan.filters?.fuelType ||
+      toolPlan.entities?.fuelType ||
+      toolPlan.fuelType ||
+      "",
+  );
+
+const isFuelEconomyRequest = (message = "") =>
+  /\b(mileage|range|fuel economy|fuel efficiency|efficiency|kmpl|km\/kg|kilometres per|kilometers per|running cost)\b/i.test(
+    message,
+  );
+
+const isFuelScopedFeature = ({ feature = {}, fuelFilter = "" } = {}) => {
+  const fuelKey = slugKey(fuelFilter);
+  if (!fuelKey) return false;
+
+  const featureText = slugKey(
+    `${feature.canonicalKey || ""} ${feature.displayName || ""}`,
+  );
+
+  return Boolean(featureText.includes(fuelKey));
+};
+
+const rowMatchesFuelFilter = (row = {}, fuelFilter = "") => {
+  const fuelKey = normalizeAciContextText(fuelFilter);
+  if (!fuelKey) return true;
+
+  const fuelValue = normalizeAciContextText(
+    row.featuresByKey?.fuel_type?.value ||
+      row.fuelType ||
+      row.fuel ||
+      "",
+  );
+
+  if (fuelValue) return fuelValue === fuelKey;
+
+  return normalizeAciContextText(row.variant || row.variantFull || "").includes(fuelKey);
+};
+
 const buildComparisonModelEntity = (entry = {}) => {
   const model = cleanText(entry.model || entry.rawModel || "");
   const brand = cleanText(entry.brand || entry.make || "");
@@ -198,8 +238,9 @@ const buildFeatureComparisonRows = ({ models = [], features = [], rowsByModel = 
     };
   });
 
-const buildAnswer = ({ models = [], rows = [] } = {}) => {
+const buildAnswer = ({ models = [], rows = [], fuelFilter = "" } = {}) => {
   const names = models.map((model) => model.fullModel || model.model).join(" vs ");
+  const fuelScope = fuelFilter ? ` for ${fuelFilter} variants` : "";
   const lines = rows.map((row) => {
     const parts = row.models.map((model) => {
       if (model.status === "unknown") return `${model.model}: unknown`;
@@ -213,7 +254,7 @@ const buildAnswer = ({ models = [], rows = [] } = {}) => {
     return `${row.displayName}: ${parts.join(" | ")}`;
   });
 
-  return `I compared ${names} on ${rows.length} features.\n${lines.join("\n")}`;
+  return `I compared ${names}${fuelScope} on ${rows.length} features.\n${lines.join("\n")}`;
 };
 
 export const maybeRunAciFeatureComparisonAnswer = async ({
@@ -248,7 +289,15 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
     modelEntity: models[0],
   });
 
-  if (!parsed.requestedFeatures?.length) return null;
+  const fuelFilter = getFuelFilter(toolPlan);
+  const compareFeatures =
+    fuelFilter && !isFuelEconomyRequest(message)
+      ? (parsed.requestedFeatures || []).filter(
+          (feature) => !isFuelScopedFeature({ feature, fuelFilter }),
+        )
+      : (parsed.requestedFeatures || []);
+
+  if (!compareFeatures.length) return null;
 
   const projection = {
     brand: 1,
@@ -266,6 +315,7 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
   for (const featureKey of parsed.featureKeys) {
     projection[`featuresByKey.${featureKey}`] = 1;
   }
+  projection["featuresByKey.fuel_type"] = 1;
 
   const modelOr = models.flatMap((modelEntity) =>
     [
@@ -302,10 +352,12 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
     const matchingRows = allRows.filter((row) => {
       const rowBrandModelKey = cleanText(row.brandModelKey || "");
       const rowModelKey = cleanText(row.modelKey || "");
-      return (
+      const modelMatches = (
         (modelEntity.brandModelKey && rowBrandModelKey === modelEntity.brandModelKey) ||
         (modelEntity.modelKey && rowModelKey === modelEntity.modelKey)
       );
+
+      return modelMatches && rowMatchesFuelFilter(row, fuelFilter);
     });
 
     rowsByModel.set(key, matchingRows);
@@ -313,7 +365,7 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
 
   const rows = buildFeatureComparisonRows({
     models,
-    features: parsed.requestedFeatures,
+    features: compareFeatures,
     rowsByModel,
   });
 
@@ -338,11 +390,21 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
     inlineType: "feature_comparison_summary",
     canvasType: "feature_comparison_canvas",
     title: `${models.map((model) => model.model).join(" vs ")} feature comparison`,
-    answer: buildAnswer({ models, rows }),
+    answer: buildAnswer({ models, rows, fuelFilter }),
     models,
     features: rows,
     rows,
     items: rows,
+    fuelFilter: fuelFilter || "",
+    fuelTypes: fuelFilter ? [fuelFilter] : [],
+    data: {
+      rows,
+      items: rows,
+      features: rows,
+      models,
+      fuelFilter: fuelFilter || "",
+      fuelTypes: fuelFilter ? [fuelFilter] : [],
+    },
     contextPatch: {
       selectedVehicle,
       anchorMake: selectedVehicle.make,
@@ -362,7 +424,8 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
       recordCount: allRows.length,
       matched: rows.length,
       modelCount: models.length,
-      featureKeys: parsed.featureKeys,
+      featureKeys: compareFeatures.map((feature) => feature.canonicalKey),
+      fuelFilter: fuelFilter || "",
     },
     runtimeResultsMeta: [
       {
@@ -379,6 +442,13 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
     meta: {
       featureComparisonQuery: true,
       featureRequestCatalogCounts: parsed.catalogCounts,
+      fuelFilter: fuelFilter || "",
+      filteredFuelScopedFeatures:
+        fuelFilter && !isFuelEconomyRequest(message)
+          ? parsed.requestedFeatures
+              .filter((feature) => isFuelScopedFeature({ feature, fuelFilter }))
+              .map((feature) => feature.canonicalKey)
+          : [],
     },
   };
 };
