@@ -1,4 +1,5 @@
 import { buildFeatureExplorerPayload, buildFeatureDiscoveryPayload } from "./aiAgent.featurePayloadBuilder.js";
+import { composeAciAnswer } from "./aiAgent.answerComposer.js";
 const cleanText = (value = "") =>
   String(value || "")
     .replace(/\s+/g, " ")
@@ -1078,13 +1079,13 @@ export const normalizeAciFinalResponse = async (response = {}, options = {}) => 
             },
         };
 
-  return {
+  return composeAciAnswer({
     ...normalized,
     sourceTransparency,
     runtimeResultsMeta,
     contextSnapshot,
     contextPatch: finalContextPatch,
-  };
+  });
 };
 
 export default normalizeAciFinalResponse;

@@ -6,6 +6,7 @@ import { runAciUnderstandingEngine } from "../understanding/aciUnderstandingEngi
 import { buildLegacyPlanFromAciMeaningFrame } from "./aciCoreToLegacyPlan.adapter.js";
 import { executeAciPlannerPlan } from "../../aiAgent/aiAgent.executor.js";
 import { normalizeAciFinalResponse } from "../../aiAgent/aiAgent.contractNormalizer.js";
+import { composeAciAnswer } from "../../aiAgent/aiAgent.answerComposer.js";
 
 const truthy = (value = "") =>
   ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -278,7 +279,7 @@ export const runAciCoreLiveBridge = async ({
     context: isolatedContext,
   });
 
-  return {
+  return composeAciAnswer({
     ...normalized,
     aciCoreBridge: {
       enabled: true,
@@ -307,7 +308,7 @@ export const runAciCoreLiveBridge = async ({
         effectiveMessage,
       },
     },
-  };
+  });
 };
 
 export {

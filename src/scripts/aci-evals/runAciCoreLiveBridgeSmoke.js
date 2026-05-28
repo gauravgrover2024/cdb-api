@@ -33,6 +33,50 @@ const CASES = [
     expectedIntentIncludes: ["price"],
     minMatched: 1,
   },
+  {
+    id: "budget-cars-under-20l",
+    message: "cars under 20 lakhs",
+    expectedIntentIncludes: ["recommendation"],
+    expectedCanvasType: "recommendation_results_canvas",
+    minMatched: 1,
+    budgetMax: 2000000,
+  },
+  {
+    id: "budget-best-cars-under-20l",
+    message: "best cars under 20 lakhs",
+    expectedIntentIncludes: ["recommendation"],
+    expectedCanvasType: "recommendation_results_canvas",
+    minMatched: 1,
+    budgetMax: 2000000,
+  },
+  {
+    id: "budget-suvs-under-20l",
+    message: "SUVs under 20 lakhs",
+    expectedIntentIncludes: ["recommendation"],
+    expectedCanvasType: "recommendation_results_canvas",
+    minMatched: 1,
+    budgetMax: 2000000,
+    bodyType: "suv",
+  },
+  {
+    id: "budget-automatic-cars-under-20l",
+    message: "automatic cars under 20 lakhs",
+    expectedIntentIncludes: ["recommendation"],
+    expectedCanvasType: "recommendation_results_canvas",
+    minMatched: 1,
+    budgetMax: 2000000,
+    transmission: "automatic",
+  },
+  {
+    id: "budget-best-automatic-suvs-under-20l",
+    message: "best automatic SUVs under 20 lakhs",
+    expectedIntentIncludes: ["recommendation"],
+    expectedCanvasType: "recommendation_results_canvas",
+    minMatched: 1,
+    budgetMax: 2000000,
+    bodyType: "suv",
+    transmission: "automatic",
+  },
 ];
 
 const text = (value = "") => String(value || "").toLowerCase();
@@ -74,6 +118,30 @@ const getModelNames = (response = {}) => {
     })
     .filter(Boolean);
 };
+
+const numberFromValue = (value = 0) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const textValue = String(value || "").replace(/,/g, "").trim().toLowerCase();
+  const number = Number((textValue.match(/\d+(?:\.\d+)?/) || [])[0] || 0);
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  if (/\bcr|crore/.test(textValue)) return Math.round(number * 10000000);
+  if (/\bl|lakh|lakhs|lac|lacs/.test(textValue) && number <= 300) {
+    return Math.round(number * 100000);
+  }
+  return Math.round(number);
+};
+
+const getResponseModules = (response = {}) =>
+  response.modulesChecked ||
+  response.sourceTransparency?.modulesChecked ||
+  response.runtimeResultsMeta?.[0]?.modulesChecked ||
+  [];
+
+const activeComparisonFrom = (response = {}) =>
+  response.contextPatch?.activeComparison ||
+  response.data?.activeComparison ||
+  response.activeComparison ||
+  null;
 
 const runSequentialContextIsolationCases = async () => {
   const results = [];
@@ -314,6 +382,69 @@ const runCase = async (item) => {
     }
   }
 
+  if (item.budgetMax) {
+    if (!intent.includes("recommendation")) {
+      failures.push(`budget discovery expected recommendation intent, got ${response.intent}`);
+    }
+
+    if (canvasType !== "recommendation_results_canvas") {
+      failures.push(`budget discovery expected recommendation_results_canvas, got ${canvasType}`);
+    }
+
+    if (!modelGroups.length) {
+      failures.push("budget discovery returned no modelGroups");
+    }
+
+    if (activeComparisonFrom(response)) {
+      failures.push("budget discovery should not write activeComparison");
+    }
+
+    const composer = response.answerComposer || response.meta?.answerComposer || null;
+    if (!composer?.applied || composer.intent !== "vehicle_recommendation") {
+      failures.push("budget discovery did not apply vehicle_recommendation answer composer");
+    }
+
+    if (!/\bmodels?\b/i.test(answer) || !/\bunder\b/i.test(answer)) {
+      failures.push("budget discovery answer should be model-first and budget-aware");
+    }
+
+    const modules = getResponseModules(response);
+    if (!modules.includes("aci_vehicle_price_rows")) {
+      failures.push(`budget discovery should use aci_vehicle_price_rows, got ${modules.join(", ")}`);
+    }
+
+    for (const group of modelGroups) {
+      const variants = Array.isArray(group.qualifyingVariants) ? group.qualifyingVariants : [];
+      if (!group.startsFromVariant || !group.bestUnderBudgetVariant) {
+        failures.push(`budget model group missing start/best variants for ${group.displayName || group.modelKey}`);
+      }
+
+      for (const variant of variants) {
+        const price = numberFromValue(variant.exShowroomPrice || variant.exShowroomPriceLabel);
+        if (!price || price > item.budgetMax) {
+          failures.push(`budget discovery returned over-budget variant: ${group.displayName || group.modelKey} ${variant.variant || ""} ${variant.exShowroomPriceLabel || variant.exShowroomPrice}`.trim());
+        }
+      }
+
+      if (item.bodyType) {
+        const bodyText = text(`${group.bodyType || ""} ${group.bodyTypeKey || ""}`);
+        if (item.bodyType === "suv" && !/\bsuv\b|sport/.test(bodyText)) {
+          failures.push(`SUV budget discovery returned non-SUV group: ${group.displayName || group.modelKey} (${bodyText})`);
+        }
+      }
+
+      if (item.transmission) {
+        const transmissionText = text([
+          ...(Array.isArray(group.transmissions) ? group.transmissions : []),
+          ...variants.map((variant) => variant.transmission),
+        ].filter(Boolean).join(" "));
+        if (!/\bautomatic\b|\bauto\b|\bamt\b|\bcvt\b|\bdct\b|\bivt\b|\bat\b|\bdsg\b/.test(transmissionText)) {
+          failures.push(`automatic budget discovery returned group without automatic variants: ${group.displayName || group.modelKey}`);
+        }
+      }
+    }
+  }
+
   return {
     id: item.id,
     message: item.message,
@@ -332,10 +463,7 @@ const runCase = async (item) => {
       modelGroupCount: modelGroups.length,
       aciCoreBridge: response.aciCoreBridge || response.meta?.aciCoreBridge || null,
       modulesChecked:
-        response.modulesChecked ||
-        response.sourceTransparency?.modulesChecked ||
-        response.runtimeResultsMeta?.[0]?.modulesChecked ||
-        [],
+        getResponseModules(response),
     },
   };
 };

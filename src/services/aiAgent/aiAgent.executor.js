@@ -1891,6 +1891,32 @@ export const runtimeVehicleRecommend = async ({
   toolPlan = {},
   context = {},
 } = {}) => {
+  const filters = toolPlan.filters || {};
+  const mustHaveFeatures = asArray(filters.mustHaveFeatures);
+  const hasBroadBudgetDiscoveryFilters =
+    !mustHaveFeatures.length &&
+    !getModel(toolPlan, context) &&
+    !getVariant(toolPlan, context) &&
+    Boolean(
+      filters.budgetMax ||
+        filters.bodyType ||
+        filters.transmission ||
+        filters.fuelType ||
+        filters.make ||
+        filters.brand,
+    );
+
+  if (hasBroadBudgetDiscoveryFilters) {
+    const budgetDiscovery = await runtimeBudgetVehicleDiscovery({
+      toolPlan,
+      context,
+    });
+
+    if (budgetDiscovery.dataSource === "aci_vehicle_read_models") {
+      return budgetDiscovery;
+    }
+  }
+
   const data = await runtimeVehiclePricelist({ toolPlan, context });
 
   const grouped = uniqueBy(
@@ -1905,6 +1931,349 @@ export const runtimeVehicleRecommend = async ({
     count: grouped.length,
     matched: grouped.length,
     ranking: toolPlan.ranking || "value",
+  };
+};
+
+const slugForReadModel = (value = "") =>
+  searchKey(value)
+    .replace(/\s+/g, "-")
+    .replace(/^-|-$/g, "");
+
+const normalizeBodyTypeForMatch = (value = "") =>
+  searchKey(value)
+    .replace(/-/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const bodyTypeMatchesBudgetFilter = (row = {}, requestedBodyType = "") => {
+  const requested = normalizeBodyTypeForMatch(requestedBodyType);
+  if (!requested) return true;
+
+  const haystack = normalizeBodyTypeForMatch(
+    [
+      row.bodyType,
+      row.bodyTypeKey,
+      row.segment,
+      row.category,
+    ].filter(Boolean).join(" "),
+  );
+
+  if (!haystack) return false;
+  if (haystack.includes(requested)) return true;
+
+  if (requested === "suv") {
+    return /\bsuv\b|\bsport utilit/.test(haystack);
+  }
+
+  if (requested === "sedan") {
+    return /\bsedan/.test(haystack);
+  }
+
+  if (requested === "hatchback") {
+    return /\bhatch/.test(haystack);
+  }
+
+  if (requested === "mpv" || requested === "muv") {
+    return /\bmpv\b|\bmuv\b|\bmini\s*van|\bminivan/.test(haystack);
+  }
+
+  return false;
+};
+
+const transmissionMatchesBudgetFilter = (row = {}, requestedTransmission = "") => {
+  const requested = searchKey(requestedTransmission);
+  if (!requested) return true;
+
+  const haystack = searchKey(
+    [
+      row.transmission,
+      row.transmissionKey,
+      row.gearbox,
+      row.gearboxKey,
+    ].filter(Boolean).join(" "),
+  );
+
+  if (!haystack) return false;
+  if (haystack.includes(requested)) return true;
+
+  if (requested === "automatic" || requested === "auto") {
+    return /\bautomatic\b|\bauto\b|\bamt\b|\bcvt\b|\bdct\b|\bivt\b|\bat\b|\bdsg\b/.test(haystack);
+  }
+
+  if (requested === "manual") {
+    return /\bmanual\b|\bmt\b/.test(haystack);
+  }
+
+  return false;
+};
+
+const fuelTypeMatchesBudgetFilter = (row = {}, requestedFuelType = "") => {
+  const requested = searchKey(requestedFuelType);
+  if (!requested) return true;
+
+  const haystack = searchKey([row.fuel, row.fuelType, row.fuelKey].filter(Boolean).join(" "));
+  return Boolean(haystack && haystack.includes(requested));
+};
+
+const normalizeBudgetDiscoveryRow = (row = {}) => {
+  const exShowroomPrice = firstNumber(row.exShowroomPrice, row.exShowroomPriceLabel);
+  const onRoadPrice = firstNumber(row.onRoadPrice, row.onRoadPriceLabel);
+  const make = displayName(firstMeaningful(row.make, row.brand));
+  const model = displayName(row.model);
+  const fullModel = displayName(firstMeaningful(row.fullModel, [make, model].filter(Boolean).join(" ")));
+  const variant = displayName(row.variant);
+
+  return compactObject({
+    id: String(row._id || row.id || ""),
+    make,
+    brand: make,
+    model,
+    fullModel,
+    displayName: fullModel,
+    modelKey: row.modelKey || slugForReadModel(model),
+    makeKey: row.makeKey || slugForReadModel(make),
+    variant,
+    variantKey: row.variantKey || slugForReadModel(variant),
+    city: row.city,
+    citySlug: row.citySlug,
+    fuelType: displayName(firstMeaningful(row.fuel, row.fuelType)),
+    fuel: displayName(firstMeaningful(row.fuel, row.fuelType)),
+    fuelKey: row.fuelKey || slugForReadModel(firstMeaningful(row.fuel, row.fuelType)),
+    transmission: displayName(row.transmission),
+    transmissionKey: row.transmissionKey || slugForReadModel(row.transmission),
+    gearbox: displayName(row.gearbox),
+    gearboxKey: row.gearboxKey || slugForReadModel(row.gearbox),
+    bodyType: displayName(row.bodyType),
+    bodyTypeKey: row.bodyTypeKey || slugForReadModel(row.bodyType),
+    segment: displayName(firstMeaningful(row.segment, row.bodyType)),
+    exShowroomPrice,
+    exShowroomPriceLabel: row.exShowroomPriceLabel || formatMoney(exShowroomPrice),
+    onRoadPrice,
+    onRoadPriceLabel: row.onRoadPriceLabel || (onRoadPrice ? formatMoney(onRoadPrice) : ""),
+    dataSource: "aci_vehicle_price_rows",
+  });
+};
+
+const buildBudgetDiscoveryModelGroups = ({
+  rows = [],
+  budgetMax = 0,
+  variantLimit = 8,
+} = {}) => {
+  const groups = new Map();
+
+  for (const row of rows) {
+    const groupKey = `${row.makeKey || slugForReadModel(row.make)}|${row.modelKey || slugForReadModel(row.model)}`;
+    if (!groupKey.replace(/\|/g, "")) continue;
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        make: row.make,
+        brand: row.make,
+        model: row.model,
+        modelKey: row.modelKey,
+        makeKey: row.makeKey,
+        fullModel: row.fullModel,
+        displayName: row.fullModel || [row.make, row.model].filter(Boolean).join(" "),
+        bodyType: row.bodyType,
+        bodyTypeKey: row.bodyTypeKey,
+        segment: row.segment || row.bodyType,
+        city: row.city,
+        citySlug: row.citySlug,
+        rows: [],
+      });
+    }
+
+    groups.get(groupKey).rows.push(row);
+  }
+
+  return [...groups.values()]
+    .map((group) => {
+      const variants = group.rows
+        .filter((row) => row.exShowroomPrice > 0 && (!budgetMax || row.exShowroomPrice <= budgetMax))
+        .sort((left, right) => left.exShowroomPrice - right.exShowroomPrice);
+
+      const startsFrom = variants[0] || {};
+      const bestUnderBudget = variants[variants.length - 1] || startsFrom;
+      const fuelTypes = unique(variants.map((row) => row.fuelType || row.fuel).filter(Boolean));
+      const transmissions = unique(variants.map((row) => row.transmission).filter(Boolean));
+
+      return compactObject({
+        make: group.make,
+        brand: group.brand,
+        model: group.model,
+        modelKey: group.modelKey,
+        makeKey: group.makeKey,
+        fullModel: group.fullModel,
+        displayName: group.displayName,
+        bodyType: group.bodyType,
+        bodyTypeKey: group.bodyTypeKey,
+        segment: group.segment,
+        city: group.city,
+        citySlug: group.citySlug,
+        startsFromVariant: startsFrom.variant,
+        startsFromPrice: startsFrom.exShowroomPrice,
+        startsFromPriceLabel: startsFrom.exShowroomPriceLabel,
+        bestUnderBudgetVariant: bestUnderBudget.variant,
+        bestUnderBudgetPrice: bestUnderBudget.exShowroomPrice,
+        bestUnderBudgetPriceLabel: bestUnderBudget.exShowroomPriceLabel,
+        qualifyingVariantCount: variants.length,
+        fuelTypes,
+        transmissions,
+        priceRangeLabel:
+          startsFrom.exShowroomPriceLabel && bestUnderBudget.exShowroomPriceLabel
+            ? startsFrom.exShowroomPrice === bestUnderBudget.exShowroomPrice
+              ? startsFrom.exShowroomPriceLabel
+              : `${startsFrom.exShowroomPriceLabel} – ${bestUnderBudget.exShowroomPriceLabel}`
+            : "",
+        qualifyingVariants: variants.slice(0, variantLimit).map((row) => compactObject({
+          make: row.make,
+          model: row.model,
+          fullModel: row.fullModel,
+          modelKey: row.modelKey,
+          variant: row.variant,
+          variantKey: row.variantKey,
+          fuelType: row.fuelType,
+          transmission: row.transmission,
+          bodyType: row.bodyType,
+          exShowroomPrice: row.exShowroomPrice,
+          exShowroomPriceLabel: row.exShowroomPriceLabel,
+          onRoadPrice: row.onRoadPrice,
+          onRoadPriceLabel: row.onRoadPriceLabel,
+          dataSource: row.dataSource,
+        })),
+        dataSource: "aci_vehicle_price_rows",
+      });
+    })
+    .filter((group) => group.qualifyingVariantCount > 0)
+    .sort((left, right) => {
+      const rightBest = Number(right.bestUnderBudgetPrice || 0);
+      const leftBest = Number(left.bestUnderBudgetPrice || 0);
+      if (rightBest !== leftBest) return rightBest - leftBest;
+      return Number(left.startsFromPrice || 0) - Number(right.startsFromPrice || 0);
+    });
+};
+
+export const runtimeBudgetVehicleDiscovery = async ({
+  toolPlan = {},
+  context = {},
+} = {}) => {
+  const db = await getMongooseDb();
+  if (!db) {
+    return {
+      rows: [],
+      modelGroups: [],
+      count: 0,
+      matched: 0,
+      modulesChecked: ["aci_vehicle_price_rows"],
+      dataSource: "unavailable",
+    };
+  }
+
+  const filters = toolPlan.filters || {};
+  const budgetMax = Number(filters.budgetMax || 0);
+  const city = getCity(toolPlan, context);
+  const citySlug = slugForReadModel(city || DEFAULT_CITY);
+  const make = firstMeaningful(filters.make, filters.brand, toolPlan.entities?.make, toolPlan.entities?.brand);
+  const query = {
+    exShowroomPrice: budgetMax > 0 ? { $gt: 0, $lte: budgetMax } : { $gt: 0 },
+  };
+
+  if (citySlug) query.citySlug = citySlug;
+  if (make) query.makeKey = slugForReadModel(make);
+
+  const collection = db.collection("aci_vehicle_price_rows");
+  const projection = {
+    make: 1,
+    makeKey: 1,
+    model: 1,
+    modelKey: 1,
+    fullModel: 1,
+    variant: 1,
+    variantKey: 1,
+    city: 1,
+    citySlug: 1,
+    fuel: 1,
+    fuelType: 1,
+    fuelKey: 1,
+    transmission: 1,
+    transmissionKey: 1,
+    gearbox: 1,
+    gearboxKey: 1,
+    bodyType: 1,
+    bodyTypeKey: 1,
+    segment: 1,
+    exShowroomPrice: 1,
+    exShowroomPriceLabel: 1,
+    onRoadPrice: 1,
+    onRoadPriceLabel: 1,
+  };
+
+  let rawRows = await collection
+    .find(query, { projection })
+    .sort({ exShowroomPrice: 1, make: 1, model: 1, variant: 1 })
+    .limit(6000)
+    .toArray();
+
+  if (!rawRows.length && query.citySlug) {
+    const fallbackQuery = { ...query };
+    delete fallbackQuery.citySlug;
+    rawRows = await collection
+      .find(fallbackQuery, { projection })
+      .sort({ exShowroomPrice: 1, make: 1, model: 1, variant: 1 })
+      .limit(6000)
+      .toArray();
+  }
+
+  const rows = rawRows
+    .map(normalizeBudgetDiscoveryRow)
+    .filter((row) => row.exShowroomPrice > 0)
+    .filter((row) => !budgetMax || row.exShowroomPrice <= budgetMax)
+    .filter((row) => bodyTypeMatchesBudgetFilter(row, filters.bodyType))
+    .filter((row) => transmissionMatchesBudgetFilter(row, filters.transmission))
+    .filter((row) => fuelTypeMatchesBudgetFilter(row, filters.fuelType));
+
+  const allModelGroups = buildBudgetDiscoveryModelGroups({
+    rows,
+    budgetMax,
+    variantLimit: 8,
+  });
+  const modelGroups = allModelGroups.slice(0, DEFAULT_LIMITS.recommend);
+  const matchedVariantCount = allModelGroups.reduce(
+    (total, group) => total + Number(group.qualifyingVariantCount || 0),
+    0,
+  );
+
+  return {
+    rows: modelGroups,
+    items: modelGroups,
+    cars: modelGroups,
+    modelGroups,
+    allModelGroupCount: allModelGroups.length,
+    matchedVariantCount,
+    count: modelGroups.length,
+    matched: modelGroups.length,
+    ranking: toolPlan.ranking || "value",
+    filters: compactObject({
+      city,
+      citySlug,
+      budgetMax,
+      bodyType: filters.bodyType,
+      transmission: filters.transmission,
+      fuelType: filters.fuelType,
+      make,
+    }),
+    budgetDiscovery: {
+      enabled: true,
+      budgetBasis: "ex_showroom",
+      budgetMax,
+      strictBudget: true,
+      matchedVariantCount,
+      allModelGroupCount: allModelGroups.length,
+      returnedModelGroupCount: modelGroups.length,
+    },
+    modulesChecked: ["aci_vehicle_price_rows"],
+    source: "aci_vehicle_price_rows",
+    dataSource: "aci_vehicle_read_models",
   };
 };
 

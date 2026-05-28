@@ -1106,8 +1106,13 @@ export const buildVehicleRecommendResponse = ({
 } = {}) => {
   const city = getCity(toolPlan, context);
   const rows = getRuntimeRows(runtimeData);
+  const modelGroups = asArray(runtimeData.modelGroups || runtimeData.data?.modelGroups);
   const ranking = toolPlan.ranking || "value";
   const filters = getToolFilters(toolPlan);
+  const isBudgetDiscovery = Boolean(runtimeData.budgetDiscovery?.enabled);
+  const effectiveRows = !modelGroups.length || runtimeData.budgetDiscovery?.isFeatureDiscovery
+    ? rows
+    : modelGroups;
 
   const budgetLabel = filters.budgetMax ? ` under ${formatMoney(filters.budgetMax)}` : "";
   const bodyLabel = filters.bodyType ? ` ${displayName(filters.bodyType)}` : "";
@@ -1134,11 +1139,13 @@ export const buildVehicleRecommendResponse = ({
     ? rows.length
       ? `I found ${rows.length} matching option${rows.length === 1 ? "" : "s"}${featureLabel ? ` with ${featureLabel}` : ""}${budgetLabel}. I’ll show the best model cards first instead of overwhelming you with every variant.`
       : `I could not find strong matches${featureLabel ? ` with ${featureLabel}` : ""}${budgetLabel}. Try relaxing budget, body type, transmission, or must-have features.`
-    : rows.length
-      ? `I found matching cars for your filters. I’ll show the best model cards first instead of overwhelming you with every variant.`
+    : effectiveRows.length
+      ? isBudgetDiscovery
+        ? `I found ${effectiveRows.length} model${effectiveRows.length === 1 ? "" : "s"} with variants${budgetLabel}. I grouped them by model and highlighted the strongest qualifying variant within budget.`
+        : `I found matching cars for your filters. I’ll show the best model cards first instead of overwhelming you with every variant.`
       : `I could not find strong matches for these filters yet. Try relaxing budget, body type, transmission, or must-have features.`;
 
-  return baseResponse({
+  const response = baseResponse({
     toolPlan,
     context,
     runtimeData,
@@ -1161,20 +1168,42 @@ export const buildVehicleRecommendResponse = ({
       featureName: featureLabel || primaryFeature,
       features: mustHaveFeatures.length ? mustHaveFeatures : asArray(toolPlan.entities?.features),
       mustHaveFeatures,
-      rows,
+      rows: effectiveRows,
+      items: effectiveRows,
+      modelGroups,
+      modelGroupCount: modelGroups.length,
       matchedVariants: rows,
       variants: rows,
       groupBy: toolPlan.output?.groupBy || "model",
       summary: runtimeData.summary || {},
+      budgetDiscovery: runtimeData.budgetDiscovery || null,
+      matchedVariantCount: runtimeData.matchedVariantCount || 0,
     },
     feature: primaryFeature,
     featureName: featureLabel || primaryFeature,
     features: mustHaveFeatures.length ? mustHaveFeatures : asArray(toolPlan.entities?.features),
-    rows,
-    items: rows,
     actions: recommendationActions({ city }),
     leadingQuestions: buildRecommendationLeadingQuestions({ toolPlan }),
+    sourceTransparency: runtimeData.sourceTransparency || {
+      ...(runtimeData.modulesChecked ? { modulesChecked: runtimeData.modulesChecked } : {}),
+      ...(runtimeData.matched !== undefined ? { matched: runtimeData.matched } : {}),
+      ...(runtimeData.dataSource ? { dataSource: runtimeData.dataSource } : {}),
+    },
+    meta: {
+      budgetDiscovery: runtimeData.budgetDiscovery || null,
+      matchedVariantCount: runtimeData.matchedVariantCount || 0,
+    },
   });
+
+  return {
+    ...response,
+    rows: effectiveRows,
+    items: effectiveRows,
+    modelGroups,
+    modelGroupCount: modelGroups.length,
+    budgetDiscovery: runtimeData.budgetDiscovery || null,
+    matched: runtimeData.matched ?? effectiveRows.length,
+  };
 };
 
 export const buildRecommendationLeadingQuestions = ({ toolPlan = {} } = {}) => {

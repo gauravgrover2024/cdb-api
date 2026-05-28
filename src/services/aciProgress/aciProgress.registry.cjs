@@ -9,7 +9,7 @@ const ACI_PROGRESS_MODULES = [
     summary: "Permanent meaning-frame brain that turns customer language into validated DB-backed tool plans.",
     whatWillWork: "Candidate retrieval, deterministic parser, Gemini fallback, module registry, context graph, tool execution, answer composer, trace logs, eval compatibility.",
     currentState: "Hybrid meaning-frame router, deterministic parser, optional Gemini fallback, DB-backed candidate retrieval, prewarm, and a non-live ACI Core to legacy executor bridge are implemented. Bridge smoke now covers broad discovery, variant comparison, feature comparison, and exact variant on-road price.",
-    pending: "Build ACI Answer Composer v1 for premium buyer-facing language, fix on-road breakup integrity, render comparison enrichment cleanly in frontend, test guarded bridge through the portal UI before enabling beyond local/staging, complete module/capability registry, replace fragile old early-gate behavior, expand final-answer evals, and add complete trace/audit contract. Stale context contamination, comparison follow-ups, and variant decision comparison enrichment are now protected in the backend contract.",
+    pending: "Improve ACI Answer Composer with richer verdict language, fix on-road breakup integrity, render budget discovery and comparison enrichment cleanly in frontend, test guarded bridge through the portal UI before enabling beyond local/staging, complete module/capability registry, replace fragile old early-gate behavior, expand final-answer evals, and add complete trace/audit contract. Stale context contamination, comparison follow-ups, variant decision comparison enrichment, deterministic Answer Composer v1, and read-model budget discovery are now protected in the backend contract.",
     items: [
       { key: "candidate_retrieval", name: "DB-backed candidate retrieval", status: "ready" },
       { key: "deterministic_parser", name: "Deterministic parser for clear queries", status: "ready" },
@@ -23,6 +23,8 @@ const ACI_PROGRESS_MODULES = [
       { key: "comparison_context_contract", name: "Comparison context contract", status: "ready" },
       { key: "comparison_followup_routing", name: "Comparison follow-up routing", status: "ready" },
       { key: "variant_decision_comparison_enrichment", name: "Variant decision comparison enrichment", status: "ready" },
+      { key: "answer_composer_v1", name: "ACI Answer Composer v1", status: "ready" },
+      { key: "budget_discovery_read_model", name: "Read-model budget discovery", status: "ready" },
       { key: "meaning_frame_contract", name: "Stable meaning-frame contract", status: "mostly_ready" },
       { key: "capability_registry", name: "Capability/module registry", status: "planned" },
       { key: "answer_composer", name: "Answer composer", status: "partial" },

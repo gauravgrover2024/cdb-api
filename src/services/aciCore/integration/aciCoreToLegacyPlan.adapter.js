@@ -197,6 +197,10 @@ const inferTool = (meaningFrame = {}) => {
     return 'vehicle_feature_comparison';
   }
 
+  if (isBroadDiscovery && !hasComparisonTargets && !hasTwoOrMoreModels) {
+    return 'vehicle_recommend';
+  }
+
   if (requestedFacts.comparison || hasComparisonTargets || task.includes('comparison') || task.includes('compare')) {
     return 'vehicle_compare';
   }
