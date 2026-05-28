@@ -115,6 +115,37 @@ const getTransmission = (meaningFrame = {}) =>
 const getBodyType = (meaningFrame = {}) =>
   firstArrayValue(meaningFrame.filters?.bodyTypes);
 
+const getComparisonVehicles = (meaningFrame = {}) => {
+  const primaryVehicle = getPrimaryVehicle(meaningFrame);
+  const targets = getComparisonTargets(meaningFrame);
+
+  const vehicles = [
+    primaryVehicle,
+    ...targets,
+  ]
+    .filter(Boolean)
+    .map((vehicle = {}) => compactObject({
+      make: vehicle.make,
+      brand: vehicle.make,
+      model: firstMeaningful(vehicle.fullModel, vehicle.model),
+      fullModel: firstMeaningful(vehicle.fullModel, vehicle.model),
+      variant: firstMeaningful(vehicle.fullVariant, vehicle.variant),
+      variantName: firstMeaningful(vehicle.fullVariant, vehicle.variant),
+      fuel: vehicle.fuel,
+      transmission: vehicle.transmission,
+      city: vehicle.city,
+    }))
+    .filter((vehicle) => vehicle.model);
+
+  const seen = new Set();
+  return vehicles.filter((vehicle) => {
+    const key = cleanText(`${vehicle.model}|${vehicle.variant}`).toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 const getFeatures = (meaningFrame = {}) =>
   unique([
     ...(meaningFrame.filters?.features || []),
@@ -323,12 +354,13 @@ const buildEntities = (meaningFrame = {}, context = {}) => {
     variants,
     primaryModel: getPrimaryModel(meaningFrame),
     primaryVariant: getPrimaryVariant(meaningFrame),
-    comparisonModels: getComparisonTargets(meaningFrame)
+    comparisonModels: getComparisonVehicles(meaningFrame)
       .map((target) => firstMeaningful(target.fullModel, target.model))
       .filter(Boolean),
-    comparisonVariants: getComparisonTargets(meaningFrame)
-      .map((target) => firstMeaningful(target.fullVariant, target.variant))
+    comparisonVariants: getComparisonVehicles(meaningFrame)
+      .map((target) => firstMeaningful(target.variantName, target.variant))
       .filter(Boolean),
+    comparisonVehicles: getComparisonVehicles(meaningFrame),
     city,
     fuelType: getFuelType(meaningFrame),
     transmission: getTransmission(meaningFrame),
@@ -391,7 +423,33 @@ const buildContextPatch = (meaningFrame = {}, context = {}) => {
   const model = getPrimaryModel(meaningFrame);
   const variant = getPrimaryVariant(meaningFrame);
   const city = getCity(meaningFrame, context);
-  const comparisonTargets = getComparisonTargets(meaningFrame);
+  const tool = inferTool(meaningFrame);
+  const comparisonVehicles = getComparisonVehicles(meaningFrame).map((vehicle) =>
+    compactObject({
+      ...vehicle,
+      city: vehicle.city || city,
+    }),
+  );
+  const isComparison =
+    ["vehicle_compare", "vehicle_feature_comparison"].includes(tool) &&
+    comparisonVehicles.length >= 2;
+
+  if (isComparison) {
+    return compactObject({
+      anchorCity: city,
+      activeComparison: {
+        type: tool,
+        vehicles: comparisonVehicles,
+        fuelFilter: getFuelType(meaningFrame),
+        features: getFeatures(meaningFrame),
+        city,
+      },
+      selectedComparisonSet: {
+        vehicles: comparisonVehicles,
+      },
+      conversationMode: inferConversationMode(tool, meaningFrame),
+    });
+  }
 
   return compactObject({
     anchorBrand: make,
@@ -406,20 +464,7 @@ const buildContextPatch = (meaningFrame = {}, context = {}) => {
       variant,
       city,
     }),
-    selectedComparisonSet: comparisonTargets.length
-      ? {
-          vehicles: comparisonTargets.map((target) => compactObject({
-            make: target.make,
-            brand: target.make,
-            model: firstMeaningful(target.fullModel, target.model),
-            variant: firstMeaningful(target.fullVariant, target.variant),
-            fuel: target.fuel,
-            transmission: target.transmission,
-            city: target.city || city,
-          })),
-        }
-      : {},
-    conversationMode: inferConversationMode(inferTool(meaningFrame), meaningFrame),
+    conversationMode: inferConversationMode(tool, meaningFrame),
   });
 };
 
@@ -444,6 +489,7 @@ function buildLegacyPlanFromAciMeaningFrame({
       variantSelectionMode: getPrimaryVariant(meaningFrame) ? 'exact' : 'not_required',
       selectedModels: getModels(meaningFrame).map((model) => ({ model })),
       selectedVariants: getVariants(meaningFrame).map((variant) => ({ variant })),
+      selectedComparisonVehicles: getComparisonVehicles(meaningFrame),
       changeAllowed: true,
       note: 'Generated from ACI Core meaning frame.',
     },

@@ -849,38 +849,241 @@ export const normalizeAciFinalResponse = async (response = {}, options = {}) => 
           context,
         });
 
+  const comparisonContextPatch = normalized.contextPatch || {};
+  const comparisonContextIntent = firstText(
+    normalized.intent,
+    normalized.tool,
+    widget?.intent,
+    widget?.tool,
+  );
+  const comparisonContextCanvasType = firstText(
+    normalized.canvasType,
+    widget?.canvasType,
+  );
+
+  const comparisonContextToArray = (value) => {
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (value === undefined || value === null || value === "") return [];
+    return [value];
+  };
+
+  const normalizeComparisonVehicle = (vehicle = {}) => {
+    if (typeof vehicle === "string") {
+      const fullModel = firstText(vehicle);
+      return fullModel
+        ? {
+            model: fullModel,
+            fullModel,
+          }
+        : null;
+    }
+
+    if (!vehicle || typeof vehicle !== "object") return null;
+
+    const make = firstText(vehicle.make, vehicle.brand);
+    const model = firstText(
+      vehicle.model,
+      vehicle.rawModel,
+      vehicle.modelName,
+      vehicle.displayModel,
+      vehicle.fullModel,
+      vehicle.displayName,
+      vehicle.modelDisplayName,
+    );
+    const fullModel = firstText(
+      vehicle.fullModel,
+      vehicle.displayName,
+      vehicle.modelDisplayName,
+      make && model ? `${make} ${model}` : "",
+      model,
+    );
+    const variant = firstText(
+      vehicle.variant,
+      vehicle.variantName,
+      vehicle.selectedVariant,
+      vehicle.fullVariant,
+    );
+
+    if (!model && !fullModel) return null;
+
+    return {
+      make,
+      brand: firstText(vehicle.brand, make),
+      model: model || fullModel,
+      fullModel: fullModel || model,
+      modelKey: firstText(vehicle.modelKey),
+      brandModelKey: firstText(vehicle.brandModelKey),
+      variant,
+      variantName: firstText(vehicle.variantName, variant),
+      variantKey: firstText(vehicle.variantKey),
+      fuel: firstText(vehicle.fuel, vehicle.fuelType),
+      transmission: firstText(vehicle.transmission),
+      city: firstText(vehicle.city, vehicle.citySlug, contextSnapshot.anchorCity, "new-delhi"),
+    };
+  };
+
+  const comparisonRows = comparisonContextToArray(
+    normalized.data?.rows || normalized.rows || normalized.items || widget?.rows || widget?.items,
+  ).filter((row) => !row?.featureKey && !row?.feature);
+
+  const comparisonModels = comparisonContextToArray(
+    normalized.data?.models || normalized.models || widget?.models,
+  );
+
+  const explicitComparisonVehicles = comparisonContextToArray(
+    comparisonContextPatch.activeComparison?.vehicles ||
+      comparisonContextPatch.selectedComparisonSet?.vehicles ||
+      normalized.selectedComparisonSet?.vehicles ||
+      normalized.data?.selectedComparisonSet?.vehicles,
+  );
+
+  const comparisonContextIntentForSources = firstText(
+    normalized.intent,
+    normalized.tool,
+    widget?.intent,
+    widget?.tool,
+  );
+  const comparisonContextCanvasForSources = firstText(
+    normalized.canvasType,
+    widget?.canvasType,
+  );
+  const isFeatureComparisonForSources =
+    comparisonContextIntentForSources === "vehicle_feature_comparison" ||
+    comparisonContextCanvasForSources === "feature_comparison_canvas";
+
+  const comparisonVehicleSource =
+    isFeatureComparisonForSources && comparisonModels.length >= 2
+      ? comparisonModels
+      : comparisonRows.length >= 2
+        ? comparisonRows
+        : explicitComparisonVehicles.length >= 2
+          ? explicitComparisonVehicles
+          : comparisonModels;
+
+  const comparisonVehicleCandidates = comparisonVehicleSource
+    .map(normalizeComparisonVehicle)
+    .filter(Boolean);
+
+  const seenComparisonVehicles = new Set();
+  const comparisonVehicles = comparisonVehicleCandidates.filter((vehicle) => {
+    const cleanModelKey = firstText(vehicle.fullModel, vehicle.model).toLowerCase();
+    const cleanVariantKey = firstText(vehicle.variant, vehicle.variantName).toLowerCase();
+
+    // Prefer exact row-level vehicles. Drop loose model-only duplicates when an
+    // exact variant for the same full model already exists.
+    if (
+      !cleanVariantKey &&
+      comparisonVehicleCandidates.some((candidate) => {
+        const normalizedCandidate = normalizeComparisonVehicle(candidate);
+        return (
+          normalizedCandidate &&
+          firstText(normalizedCandidate.fullModel, normalizedCandidate.model).toLowerCase() === cleanModelKey &&
+          firstText(normalizedCandidate.variant, normalizedCandidate.variantName)
+        );
+      })
+    ) {
+      return false;
+    }
+
+    const key = `${cleanModelKey}|${cleanVariantKey}`;
+
+    if (!key || seenComparisonVehicles.has(key)) return false;
+    seenComparisonVehicles.add(key);
+    return true;
+  });
+
+  const isComparisonResponse =
+    [
+      "vehicle_comparison",
+      "vehicle_compare",
+      "vehicle_feature_comparison",
+    ].includes(comparisonContextIntent) ||
+    [
+      "comparison_canvas",
+      "feature_comparison_canvas",
+      "variant_comparison_canvas",
+    ].includes(comparisonContextCanvasType);
+
+  const finalContextPatch =
+    isComparisonResponse && comparisonVehicles.length >= 2
+      ? {
+          ...comparisonContextPatch,
+          activeComparison: {
+            ...(comparisonContextPatch.activeComparison || {}),
+            type:
+              comparisonContextIntent === "vehicle_feature_comparison"
+                ? "vehicle_feature_comparison"
+                : "vehicle_comparison",
+            vehicles: comparisonVehicles,
+            fuelFilter: firstText(
+              normalized.fuelFilter,
+              normalized.data?.fuelFilter,
+              comparisonContextPatch.activeComparison?.fuelFilter,
+            ),
+            features:
+              comparisonContextToArray(normalized.data?.features || normalized.features)
+                .map((feature) =>
+                  typeof feature === "string"
+                    ? feature
+                    : firstText(feature.featureKey, feature.key, feature.feature, feature.displayName),
+                )
+                .filter(Boolean),
+            city: firstText(
+              comparisonContextPatch.anchorCity,
+              contextSnapshot.anchorCity,
+              "new-delhi",
+            ),
+          },
+          selectedComparisonSet: {
+            ...(comparisonContextPatch.selectedComparisonSet || {}),
+            vehicles: comparisonVehicles,
+          },
+          anchorCity: firstText(
+            comparisonContextPatch.anchorCity,
+            contextSnapshot.anchorCity,
+            "new-delhi",
+          ),
+          selectedVehicle: null,
+          anchorMake: "",
+          anchorBrand: "",
+          anchorModel: "",
+          anchorFullModel: "",
+          anchorVariant: "",
+        }
+      : {
+          ...(normalized.contextPatch || {}),
+          anchorMake:
+            normalized.contextPatch?.anchorMake ||
+            normalized.contextPatch?.anchorBrand ||
+            contextSnapshot.anchorMake ||
+            "",
+          anchorModel:
+            normalized.contextPatch?.anchorModel || contextSnapshot.anchorModel || "",
+          anchorVariant: hasOwn(normalized.contextPatch, "anchorVariant")
+            ? String(normalized.contextPatch.anchorVariant || "")
+            : contextSnapshot.anchorVariant || "",
+          anchorCity:
+            normalized.contextPatch?.anchorCity || contextSnapshot.anchorCity || "new-delhi",
+          selectedVehicle:
+            normalized.contextPatch?.selectedVehicle ||
+            normalized.vehicle ||
+            normalized.data?.vehicle ||
+            widget?.vehicle ||
+            {
+              make: contextSnapshot.anchorMake,
+              brand: contextSnapshot.anchorMake,
+              model: contextSnapshot.anchorModel,
+              variant: contextSnapshot.anchorVariant,
+              city: contextSnapshot.anchorCity,
+            },
+        };
+
   return {
     ...normalized,
     sourceTransparency,
     runtimeResultsMeta,
     contextSnapshot,
-    contextPatch: {
-      ...(normalized.contextPatch || {}),
-      anchorMake:
-        normalized.contextPatch?.anchorMake ||
-        normalized.contextPatch?.anchorBrand ||
-        contextSnapshot.anchorMake ||
-        "",
-      anchorModel:
-        normalized.contextPatch?.anchorModel || contextSnapshot.anchorModel || "",
-      anchorVariant: hasOwn(normalized.contextPatch, "anchorVariant")
-        ? String(normalized.contextPatch.anchorVariant || "")
-        : contextSnapshot.anchorVariant || "",
-      anchorCity:
-        normalized.contextPatch?.anchorCity || contextSnapshot.anchorCity || "new-delhi",
-      selectedVehicle:
-        normalized.contextPatch?.selectedVehicle ||
-        normalized.vehicle ||
-        normalized.data?.vehicle ||
-        widget?.vehicle ||
-        {
-          make: contextSnapshot.anchorMake,
-          brand: contextSnapshot.anchorMake,
-          model: contextSnapshot.anchorModel,
-          variant: contextSnapshot.anchorVariant,
-          city: contextSnapshot.anchorCity,
-        },
-    },
+    contextPatch: finalContextPatch,
   };
 };
 

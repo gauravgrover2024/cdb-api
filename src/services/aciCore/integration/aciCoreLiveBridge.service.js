@@ -36,10 +36,81 @@ const getSnapshotKeys = (items = []) =>
   );
 
 const hasContextReference = (message = "") =>
-  /\b(this|that|it|its|same|current|selected|previous|earlier|above)\b/i.test(message);
+  /\b(this|that|it|its|one|same|current|selected|previous|earlier|above)\b/i.test(message);
 
 const hasComparisonLanguage = (message = "") =>
-  /\b(vs|v\/s|versus|compare|comparison|compared|better than|difference between)\b/i.test(message);
+  /\b(vs|v\/s|versus|compare|comparison|compared|better|better than|difference between|which one|which should|choose|pick|recommend|verdict)\b/i.test(message);
+
+const hasActiveComparisonFollowUp = ({ message = "", context = {} } = {}) => {
+  const vehicles =
+    context?.activeComparison?.vehicles ||
+    context?.selectedComparisonSet?.vehicles ||
+    [];
+
+  if (!Array.isArray(vehicles) || vehicles.length < 2) return false;
+
+  return /\b(which one|which is better|better|which should i|should i buy|choose|pick|recommend|verdict|final choice)\b/i.test(
+    message,
+  );
+};
+
+const expandActiveComparisonFollowUpMessage = ({ message = "", context = {} } = {}) => {
+  if (!hasActiveComparisonFollowUp({ message, context })) return message;
+
+  const activeComparison =
+    context?.activeComparison ||
+    context?.selectedComparisonSet ||
+    {};
+
+  const vehicles =
+    activeComparison?.vehicles ||
+    context?.selectedComparisonSet?.vehicles ||
+    [];
+
+  const labels = vehicles
+    .map((vehicle = {}) =>
+      cleanText(
+        [
+          vehicle.fullModel || [vehicle.make, vehicle.model].filter(Boolean).join(" "),
+          vehicle.variant || vehicle.variantName,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      ),
+    )
+    .filter(Boolean);
+
+  if (labels.length < 2) return message;
+
+  const fuelFilter = cleanText(
+    activeComparison.fuelFilter ||
+      activeComparison.fuelType ||
+      activeComparison.fuel ||
+      "",
+  );
+
+  const featureText = asArray(activeComparison.features)
+    .map((feature) =>
+      cleanText(
+        typeof feature === "string"
+          ? feature
+          : feature?.displayName || feature?.feature || feature?.featureKey || feature?.key || "",
+      )
+        .replace(/_/g, " "),
+    )
+    .filter(Boolean)
+    .join(" ");
+
+  const scopeText = [
+    labels.join(" vs "),
+    fuelFilter ? `${fuelFilter} variants` : "",
+    featureText ? `based on ${featureText}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return `${message} ${scopeText}`;
+};
 
 const hasBroadVehicleLanguage = (message = "") =>
   /\b(cars?|vehicles?|models?|options?|suvs?|sedans?|hatchbacks?|mpvs?|muvs?)\b/i.test(message);
@@ -158,6 +229,12 @@ export const runAciCoreLiveBridge = async ({
   meta = {},
 } = {}) => {
   const startedAt = Date.now();
+  const originalMessage = message;
+  message = expandActiveComparisonFollowUpMessage({
+    message,
+    context,
+  });
+  const effectiveMessage = message;
   const rawMessage = String(message || "");
   const normalizedMessage = cleanText(rawMessage);
   const candidateSnapshot = await retrieveAciDbCandidates({
@@ -212,6 +289,8 @@ export const runAciCoreLiveBridge = async ({
       tool: plan.tools?.[0]?.tool || "",
       planMode: plan.mode || "",
       contextIsolation: isolation,
+      originalMessage,
+      effectiveMessage,
     },
     meta: {
       ...(normalized.meta || {}),
@@ -224,6 +303,8 @@ export const runAciCoreLiveBridge = async ({
         tool: plan.tools?.[0]?.tool || "",
         planMode: plan.mode || "",
         contextIsolation: isolation,
+        originalMessage,
+        effectiveMessage,
       },
     },
   };

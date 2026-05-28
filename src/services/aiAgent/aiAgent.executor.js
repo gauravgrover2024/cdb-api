@@ -1258,9 +1258,111 @@ export const runtimeVehicleCompare = async ({
   toolPlan = {},
   context = {},
 } = {}) => {
-  const models = getModels(toolPlan, context);
+  const isVariantComparison =
+    toolPlan.resolution?.comparisonLevel === "variant" ||
+    toolPlan.output?.canvasType === "variant_comparison_canvas";
 
-  if (models.length <= 1) {
+  const text = (...values) => {
+    for (const value of values) {
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    return "";
+  };
+
+  const asList = (value) => {
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (value === undefined || value === null || value === "") return [];
+    return [value];
+  };
+
+  const normalizeVehicleTarget = (target = {}) => {
+    if (!target || typeof target !== "object") return null;
+
+    const model = text(
+      target.fullModel,
+      target.model,
+      target.displayName,
+      target.name,
+    );
+
+    if (!model) return null;
+
+    return {
+      make: text(target.make, target.brand),
+      brand: text(target.brand, target.make),
+      model,
+      fullModel: model,
+      variant: text(
+        target.variantName,
+        target.variant,
+        target.fullVariant,
+        target.selectedVariant,
+      ),
+      variantName: text(
+        target.variantName,
+        target.variant,
+        target.fullVariant,
+        target.selectedVariant,
+      ),
+      fuel: text(target.fuel, target.fuelType),
+      transmission: text(target.transmission),
+      city: text(target.city, target.citySlug),
+    };
+  };
+
+  const explicitTargets = [
+    ...asList(toolPlan.entities?.comparisonVehicles),
+    ...asList(toolPlan.resolution?.selectedComparisonVehicles),
+    ...asList(toolPlan.contextPatch?.activeComparison?.vehicles),
+    ...asList(toolPlan.contextPatch?.selectedComparisonSet?.vehicles),
+  ]
+    .map(normalizeVehicleTarget)
+    .filter(Boolean);
+
+  const seenTargets = new Set();
+  const uniqueTargets = explicitTargets.filter((target) => {
+    const key = `${target.model}|${target.variant}`.toLowerCase();
+    if (seenTargets.has(key)) return false;
+    seenTargets.add(key);
+    return true;
+  });
+
+  const fallbackModels = getModels(toolPlan, context);
+  const fallbackVariants = [
+    ...asList(toolPlan.entities?.variants),
+    ...asList(toolPlan.filters?.variants),
+    ...asList(toolPlan.resolution?.selectedVariants).map((item) =>
+      typeof item === "string" ? item : item?.variant,
+    ),
+  ].filter(Boolean);
+
+  const targets = uniqueTargets.length >= 2
+    ? uniqueTargets
+    : fallbackModels.map((model, index) => ({
+        model,
+        fullModel: model,
+        variant:
+          fallbackVariants[index] ||
+          (index === 0
+            ? text(
+                toolPlan.entities?.variant,
+                toolPlan.entities?.primaryVariant,
+                toolPlan.filters?.variant,
+              )
+            : ""),
+        variantName:
+          fallbackVariants[index] ||
+          (index === 0
+            ? text(
+                toolPlan.entities?.variant,
+                toolPlan.entities?.primaryVariant,
+                toolPlan.filters?.variant,
+              )
+            : ""),
+        city: text(toolPlan.filters?.city, context?.anchorCity, context?.selectedVehicle?.city),
+      }));
+
+  if (targets.length <= 1) {
     const data = await runtimeVehiclePricelist({ toolPlan, context });
     return {
       ...data,
@@ -1271,10 +1373,9 @@ export const runtimeVehicleCompare = async ({
 
   const rows = [];
 
-  for (const model of models) {
-    const isVariantComparison =
-      toolPlan.resolution?.comparisonLevel === "variant" ||
-      toolPlan.output?.canvasType === "variant_comparison_canvas";
+  for (const target of targets) {
+    const model = text(target.fullModel, target.model);
+    const variant = text(target.variantName, target.variant);
 
     const modelTool = {
       ...toolPlan,
@@ -1289,24 +1390,29 @@ export const runtimeVehicleCompare = async ({
       },
     };
 
-    if (!isVariantComparison) {
+    if (isVariantComparison && variant) {
+      modelTool.entities.variant = variant;
+      modelTool.entities.primaryVariant = variant;
+      modelTool.filters.variant = variant;
+    } else if (!isVariantComparison) {
       delete modelTool.entities.variant;
       delete modelTool.entities.primaryVariant;
       delete modelTool.filters.variant;
     }
 
-    const comparisonContext = isVariantComparison
-      ? context
-      : {
-          ...(context || {}),
-          anchorVariant: "",
-          variant: "",
-          selectedVehicle: {
-            ...((context || {}).selectedVehicle || {}),
-            model,
-            variant: "",
-          },
-        };
+    const comparisonContext = {
+      ...(context || {}),
+      anchorModel: model,
+      anchorVariant: isVariantComparison ? variant : "",
+      variant: isVariantComparison ? variant : "",
+      selectedVehicle: {
+        ...((context || {}).selectedVehicle || {}),
+        model,
+        variant: isVariantComparison ? variant : "",
+        selectedVariant: isVariantComparison ? variant : "",
+        city: target.city || context?.anchorCity || context?.selectedVehicle?.city || "new-delhi",
+      },
+    };
 
     const data = await runtimeVehiclePricelist({
       toolPlan: modelTool,
@@ -1316,6 +1422,7 @@ export const runtimeVehicleCompare = async ({
     rows.push(
       data.rows[0] || {
         model,
+        variant,
         unavailable: true,
         variantResolution: data.variantResolution || null,
         candidateVariants: data.candidateVariants || [],
@@ -1328,9 +1435,22 @@ export const runtimeVehicleCompare = async ({
     count: rows.length,
     matched: rows.filter((row) => !row.unavailable).length,
     selectedComparisonSet: {
-      models,
+      vehicles: targets,
+      models: targets.map((target) => text(target.fullModel, target.model)).filter(Boolean),
       variantSelectionMode:
-        toolPlan.resolution?.variantSelectionMode || "representative_default",
+        toolPlan.resolution?.variantSelectionMode ||
+        (isVariantComparison ? "exact" : "representative_default"),
+    },
+    contextPatch: {
+      activeComparison: {
+        type: "vehicle_compare",
+        vehicles: targets,
+        city: text(toolPlan.filters?.city, context?.anchorCity, "new-delhi"),
+      },
+      selectedComparisonSet: {
+        vehicles: targets,
+      },
+      anchorCity: text(toolPlan.filters?.city, context?.anchorCity, "new-delhi"),
     },
     modulesChecked: ["vehicle_compare", "vehicle_pricelist"],
     dataSource: "executor_composed",
