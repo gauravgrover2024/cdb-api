@@ -1044,7 +1044,7 @@ export const buildVehicleCompareResponse = ({
     canvasType: "comparison_canvas",
     title: compareLabel,
     answer: rows.length
-      ? `Here is the comparison for ${compareLabel}.`
+      ? `I compared ${compareLabel} with price and feature/spec differences.`
       : `I’ll compare representative/popular variants for ${compareLabel}. You can change variants anytime.`,
     data: {
       models,
@@ -1054,7 +1054,19 @@ export const buildVehicleCompareResponse = ({
       comparisonLevel: toolPlan.resolution?.comparisonLevel || "model",
       rows,
       selectedComparisonSet: runtimeData.selectedComparisonSet || {},
+      comparisonSummary: runtimeData.comparisonSummary || {},
+      differenceSummary: runtimeData.differenceSummary || {},
+      featureDifferences: runtimeData.featureDifferences || [],
+      commonHighlights: runtimeData.commonHighlights || [],
+      decisionHighlights: runtimeData.decisionHighlights || [],
+      matrixCoverage: runtimeData.matrixCoverage || [],
     },
+    comparisonSummary: runtimeData.comparisonSummary || {},
+    differenceSummary: runtimeData.differenceSummary || {},
+    featureDifferences: runtimeData.featureDifferences || [],
+    commonHighlights: runtimeData.commonHighlights || [],
+    decisionHighlights: runtimeData.decisionHighlights || [],
+    matrixCoverage: runtimeData.matrixCoverage || [],
     actions: [
       makeAction({
         id: "change-variants",

@@ -23,6 +23,7 @@ import { sanitizeAiAgentResponse } from "./aiAgent.responseSanitizer.js";
 import { runAciV2Tool } from "./tools/index.js";
 import { runVehiclePricelistNewCarsTool } from "./tools/newCars/vehiclePricelist.tool.js";
 import { maybeRunAciFeatureComparisonAnswer } from "./aiAgent.featureComparisonAnswer.js";
+import mongoose from "mongoose";
 
 /**
  * ACI Assist Executor
@@ -1254,6 +1255,415 @@ export const runtimeVehicleFeatureLookup = async ({
   };
 };
 
+
+const compareCleanText = (value = "") =>
+  String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const compareFirstText = (...values) => {
+  for (const value of values) {
+    const text = compareCleanText(value);
+    if (text) return text;
+  }
+  return "";
+};
+
+const compareSlug = (value = "") =>
+  compareCleanText(value)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+const compareEscapeRegex = (value = "") =>
+  compareCleanText(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const compareAsArray = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (value === undefined || value === null || value === "") return [];
+  return [value];
+};
+
+const compareUnique = (items = []) =>
+  [...new Set(items.map(compareCleanText).filter(Boolean))];
+
+const parseIndianPriceValue = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const text = compareCleanText(value).toLowerCase();
+  if (!text) return null;
+
+  const numeric = Number(text.replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(numeric)) return null;
+
+  if (text.includes("cr")) return Math.round(numeric * 10000000);
+  if (text.includes("l")) return Math.round(numeric * 100000);
+  return numeric > 10000 ? Math.round(numeric) : null;
+};
+
+const getComparablePriceValue = (row = {}) =>
+  parseIndianPriceValue(
+    row.onRoadPriceValue ??
+      row.onRoadPriceNumeric ??
+      row.onRoadPrice ??
+      row.onRoadPriceLabel ??
+      row.priceValue ??
+      row.priceNumeric ??
+      row.priceLabel,
+  );
+
+const formatInrShort = (value) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "";
+
+  if (amount >= 10000000) {
+    const cr = amount / 10000000;
+    return `₹${cr.toFixed(cr >= 10 || Number.isInteger(cr) ? 0 : 2)}Cr`;
+  }
+
+  if (amount >= 100000) {
+    const lakh = amount / 100000;
+    return `₹${lakh.toFixed(lakh >= 10 || Number.isInteger(lakh) ? 0 : 2)}L`;
+  }
+
+  return `₹${Math.round(amount).toLocaleString("en-IN")}`;
+};
+
+const getComparisonVehicleLabel = (row = {}, target = {}) =>
+  compareCleanText(
+    [
+      compareFirstText(
+        row.fullModel,
+        row.displayName,
+        row.modelDisplayName,
+        target.fullModel,
+        target.model,
+        row.model,
+      ),
+      compareFirstText(row.variant, row.variantName, target.variant, target.variantName),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+
+const getFeatureEntryValue = (entry = {}) => {
+  if (entry === undefined || entry === null) return "Not Available";
+  if (typeof entry !== "object") return compareCleanText(entry) || "Not Available";
+
+  return compareFirstText(
+    entry.displayValue,
+    entry.value,
+    entry.availabilityStatus,
+    entry.available === true ? "Yes" : "",
+    entry.available === false ? "Not Available" : "",
+  ) || "Not Available";
+};
+
+const isFeatureEntryAvailable = (entry = {}) => {
+  if (!entry || typeof entry !== "object") return false;
+
+  const status = compareCleanText(
+    entry.displayValue || entry.value || entry.availabilityStatus || "",
+  ).toLowerCase();
+
+  // Display/value truth must override stale boolean flags from scraped data.
+  if (
+    status.includes("not available") ||
+    status === "no" ||
+    status === "false" ||
+    status === "na" ||
+    status === "n/a" ||
+    status === "-"
+  ) {
+    return false;
+  }
+
+  if (entry.available === true) return true;
+  if (entry.present === true) return true;
+  if (entry.included === true) return true;
+
+  if (!status) return false;
+
+  return ["yes", "available", "standard", "single pane", "panoramic", "front", "rear"].some((token) =>
+    status.includes(token),
+  );
+};
+
+const getFeatureDisplayName = (key = "", entry = {}, catalog = {}) =>
+  compareFirstText(
+    catalog.displayName,
+    catalog.name,
+    catalog.label,
+    entry.displayName,
+    entry.name,
+    key
+      .split("_")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" "),
+  );
+
+const fetchComparisonFeatureDoc = async ({ row = {}, target = {} } = {}) => {
+  const db = mongoose.connection?.db;
+  if (!db) return null;
+
+  const modelKeys = compareUnique([
+    row.modelKey,
+    target.modelKey,
+    compareSlug(row.model),
+    compareSlug(target.model),
+  ]);
+
+  const variantTexts = compareUnique([
+    row.variantKey,
+    target.variantKey,
+    compareSlug(row.variant),
+    compareSlug(row.variantName),
+    compareSlug(target.variant),
+    compareSlug(target.variantName),
+    row.variant,
+    row.variantName,
+    target.variant,
+    target.variantName,
+  ]);
+
+  if (!modelKeys.length || !variantTexts.length) return null;
+
+  const variantRegexes = variantTexts
+    .filter((value) => !value.includes("_"))
+    .map((value) => new RegExp(`^${compareEscapeRegex(value)}$`, "i"));
+
+  const variantKeys = variantTexts
+    .map(compareSlug)
+    .filter(Boolean);
+
+  const query = {
+    modelKey: { $in: modelKeys },
+    $or: [
+      { variantKey: { $in: variantKeys } },
+      ...(variantRegexes.length ? [{ variant: { $in: variantRegexes } }] : []),
+    ],
+  };
+
+  return mongoose.connection.db
+    .collection("vehicle_variant_feature_matrix_v2")
+    .find(query)
+    .limit(1)
+    .next();
+};
+
+const buildVehicleComparisonEnrichment = async ({ rows = [], targets = [], city = "new-delhi" } = {}) => {
+  if (!Array.isArray(rows) || rows.length < 2) {
+    return {
+      comparisonSummary: {},
+      featureDifferences: [],
+      commonHighlights: [],
+      decisionHighlights: [],
+      matrixCoverage: [],
+    };
+  }
+
+  const compared = rows.slice(0, 2).map((row, index) => ({
+    row,
+    target: targets[index] || {},
+    label: getComparisonVehicleLabel(row, targets[index] || {}),
+    priceValue: getComparablePriceValue(row),
+  }));
+
+  const matrixDocs = [];
+  for (const item of compared) {
+    const doc = await fetchComparisonFeatureDoc({ row: item.row, target: item.target });
+    matrixDocs.push(doc);
+  }
+
+  const allFeatureKeys = compareUnique(
+    matrixDocs.flatMap((doc) => Object.keys(doc?.featuresByKey || {})),
+  );
+
+  let catalogByKey = new Map();
+  if (allFeatureKeys.length && mongoose.connection?.db) {
+    const catalogRows = await mongoose.connection.db
+      .collection("vehicle_feature_catalog_v2")
+      .find({
+        $or: [
+          { canonicalKey: { $in: allFeatureKeys } },
+          { key: { $in: allFeatureKeys } },
+          { featureKey: { $in: allFeatureKeys } },
+        ],
+      })
+      .project({
+        canonicalKey: 1,
+        key: 1,
+        featureKey: 1,
+        displayName: 1,
+        name: 1,
+        label: 1,
+        category: 1,
+        group: 1,
+        priority: 1,
+      })
+      .toArray();
+
+    catalogByKey = new Map(
+      catalogRows.flatMap((row) =>
+        [row.canonicalKey, row.key, row.featureKey]
+          .filter(Boolean)
+          .map((key) => [key, row]),
+      ),
+    );
+  }
+
+  const featureComparisons = allFeatureKeys.map((featureKey) => {
+    const entries = matrixDocs.map((doc) => doc?.featuresByKey?.[featureKey] || null);
+    const catalog = catalogByKey.get(featureKey) || {};
+    const values = {};
+    const availability = {};
+
+    compared.forEach((item, index) => {
+      values[item.label] = getFeatureEntryValue(entries[index]);
+      availability[item.label] = isFeatureEntryAvailable(entries[index]);
+    });
+
+    const valueSet = new Set(Object.values(values).map((value) => compareCleanText(value).toLowerCase()));
+    const availabilitySet = new Set(Object.values(availability));
+
+    return {
+      featureKey,
+      feature: getFeatureDisplayName(featureKey, entries.find(Boolean) || {}, catalog),
+      category: compareFirstText(catalog.category, catalog.group),
+      values,
+      availability,
+      differs: valueSet.size > 1 || availabilitySet.size > 1,
+      anyAvailable: Object.values(availability).some(Boolean),
+      allAvailable: Object.values(availability).every(Boolean),
+      priority: Number.isFinite(Number(catalog.priority)) ? Number(catalog.priority) : 999,
+    };
+  });
+
+  const featureDifferences = featureComparisons
+    .filter((item) => item.differs && item.anyAvailable)
+    .sort((a, b) => {
+      const availabilityScoreA = Object.values(a.availability).filter(Boolean).length;
+      const availabilityScoreB = Object.values(b.availability).filter(Boolean).length;
+      if (availabilityScoreA !== availabilityScoreB) return availabilityScoreA - availabilityScoreB;
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.feature.localeCompare(b.feature);
+    })
+    .slice(0, 24)
+    .map(({ differs, anyAvailable, allAvailable, priority, ...item }) => item);
+
+  const commonHighlights = featureComparisons
+    .filter((item) => !item.differs && item.allAvailable)
+    .sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.feature.localeCompare(b.feature);
+    })
+    .slice(0, 16)
+    .map(({ differs, anyAvailable, allAvailable, priority, ...item }) => item);
+
+  const priceA = compared[0]?.priceValue;
+  const priceB = compared[1]?.priceValue;
+  const priceDelta = Number.isFinite(priceA) && Number.isFinite(priceB)
+    ? Math.abs(priceA - priceB)
+    : null;
+  const cheaperIndex = Number.isFinite(priceA) && Number.isFinite(priceB)
+    ? priceA <= priceB ? 0 : 1
+    : null;
+
+  const uniqueAvailableDifferences = compared.map((item) => {
+    const uniqueFeatures = [];
+
+    for (const diff of featureComparisons.filter((entry) => entry.differs)) {
+      const isAvailableHere = diff.availability[item.label] === true;
+      const availableElsewhere = compared.some((other) =>
+        other.label !== item.label && diff.availability[other.label] === true,
+      );
+
+      if (isAvailableHere && !availableElsewhere) {
+        uniqueFeatures.push({
+          featureKey: diff.featureKey,
+          feature: diff.feature,
+          value: diff.values?.[item.label] || "",
+        });
+      }
+    }
+
+    return {
+      label: item.label,
+      uniqueAvailableFeatureCount: uniqueFeatures.length,
+      uniqueAvailableFeatures: uniqueFeatures.slice(0, 12),
+    };
+  });
+
+  const differenceSummary = {
+    featureDifferenceCount: featureDifferences.length,
+    commonHighlightCount: commonHighlights.length,
+    uniqueAvailableByVehicle: uniqueAvailableDifferences,
+  };
+
+  const decisionHighlights = [
+    priceDelta !== null && cheaperIndex !== null
+      ? {
+          type: "price_difference",
+          label: "Price difference",
+          text: `${compared[cheaperIndex].label} is cheaper by about ${formatInrShort(priceDelta)} on-road.`,
+          cheaperVehicle: compared[cheaperIndex].label,
+          priceDelta,
+          priceDeltaLabel: formatInrShort(priceDelta),
+        }
+      : null,
+    featureDifferences.length
+      ? {
+          type: "feature_difference_summary",
+          label: "Feature/spec differences",
+          text: `I found ${featureDifferences.length} feature/spec differences between the compared variants.`,
+          featureDifferenceCount: featureDifferences.length,
+        }
+      : null,
+    ...uniqueAvailableDifferences
+      .filter((item) => item.uniqueAvailableFeatureCount > 0)
+      .map((item) => ({
+        type: "unique_available_differences",
+        label: item.label,
+        text: `${item.label} has ${item.uniqueAvailableFeatureCount} features/specs marked available where the other compared variant does not.`,
+        count: item.uniqueAvailableFeatureCount,
+        features: item.uniqueAvailableFeatures,
+      })),
+  ].filter(Boolean);
+
+  return {
+    comparisonSummary: {
+      city,
+      comparedVehicles: compared.map((item) => ({
+        label: item.label,
+        model: compareFirstText(item.row.fullModel, item.row.displayName, item.row.model),
+        variant: compareFirstText(item.row.variant, item.row.variantName),
+        exShowroomPriceLabel: compareFirstText(item.row.exShowroomPriceLabel),
+        onRoadPriceLabel: compareFirstText(item.row.onRoadPriceLabel),
+        fuelType: compareFirstText(item.row.fuelType, item.row.fuel),
+        transmission: compareFirstText(item.row.transmission),
+      })),
+      priceDelta,
+      priceDeltaLabel: priceDelta !== null ? formatInrShort(priceDelta) : "",
+      cheaperVehicle: cheaperIndex !== null ? compared[cheaperIndex].label : "",
+      featureDifferenceCount: featureDifferences.length,
+      commonHighlightCount: commonHighlights.length,
+    },
+    differenceSummary,
+    featureDifferences,
+    commonHighlights,
+    decisionHighlights,
+    matrixCoverage: compared.map((item, index) => ({
+      label: item.label,
+      modelKey: matrixDocs[index]?.modelKey || "",
+      variant: matrixDocs[index]?.variant || "",
+      variantKey: matrixDocs[index]?.variantKey || "",
+      featureKeyCount: Object.keys(matrixDocs[index]?.featuresByKey || {}).length,
+      found: Boolean(matrixDocs[index]),
+    })),
+  };
+};
+
 export const runtimeVehicleCompare = async ({
   toolPlan = {},
   context = {},
@@ -1430,10 +1840,30 @@ export const runtimeVehicleCompare = async ({
     );
   }
 
+  const comparisonEnrichment = isVariantComparison
+    ? await buildVehicleComparisonEnrichment({
+        rows,
+        targets,
+        city: text(toolPlan.filters?.city, context?.anchorCity, "new-delhi"),
+      })
+    : {
+        comparisonSummary: {},
+        featureDifferences: [],
+        commonHighlights: [],
+        decisionHighlights: [],
+        matrixCoverage: [],
+      };
+
   return {
     rows,
     count: rows.length,
     matched: rows.filter((row) => !row.unavailable).length,
+    comparisonSummary: comparisonEnrichment.comparisonSummary,
+    differenceSummary: comparisonEnrichment.differenceSummary,
+    featureDifferences: comparisonEnrichment.featureDifferences,
+    commonHighlights: comparisonEnrichment.commonHighlights,
+    decisionHighlights: comparisonEnrichment.decisionHighlights,
+    matrixCoverage: comparisonEnrichment.matrixCoverage,
     selectedComparisonSet: {
       vehicles: targets,
       models: targets.map((target) => text(target.fullModel, target.model)).filter(Boolean),
