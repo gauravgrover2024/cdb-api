@@ -49,6 +49,168 @@ const getMatched = (response = {}) =>
   Number(response.data?.rows?.length || 0) ||
   Number(response.data?.items?.length || 0);
 
+const getRows = (response = {}) =>
+  response.data?.rows || response.rows || response.items || response.data?.items || [];
+
+const getModelGroups = (response = {}) =>
+  response.data?.modelGroups || response.modelGroups || response.widget?.modelGroups || [];
+
+const getBridgeIsolation = (response = {}) =>
+  response.aciCoreBridge?.contextIsolation ||
+  response.meta?.aciCoreBridge?.contextIsolation ||
+  "";
+
+const mergeContextPatch = (context = {}, response = {}) => ({
+  ...(context || {}),
+  ...(response.contextPatch || {}),
+});
+
+const getModelNames = (response = {}) => {
+  const models = response.data?.models || response.models || [];
+  return models
+    .map((model) => {
+      if (typeof model === "string") return model;
+      return model.fullModel || model.displayName || [model.make || model.brand, model.model].filter(Boolean).join(" ");
+    })
+    .filter(Boolean);
+};
+
+const runSequentialContextIsolationCases = async () => {
+  const results = [];
+
+  {
+    const failures = [];
+    let context = {};
+    const setupResponse = await runAciCoreLiveBridge({
+      message: "Creta SX on-road price Delhi",
+      context,
+    });
+    context = mergeContextPatch(context, setupResponse);
+
+    const response = await runAciCoreLiveBridge({
+      message: "Hyundai cars with sunroof under 20 lakh",
+      context,
+    });
+
+    const modelGroups = getModelGroups(response);
+    const rows = getRows(response);
+    const groups = modelGroups.length ? modelGroups : rows;
+    const modelKeys = new Set(groups.map((group) => group.modelKey || group.model || group.displayName).filter(Boolean));
+    const vehicle = response.data?.vehicle || response.vehicle || response.widget?.vehicle || {};
+    const selectedVehicle = response.contextPatch?.selectedVehicle || {};
+    const selectedVehicleText = text([
+      selectedVehicle.model,
+      selectedVehicle.variant,
+      selectedVehicle.fullModel,
+      selectedVehicle.displayName,
+      vehicle.model,
+      vehicle.variant,
+      vehicle.fullModel,
+      vehicle.displayName,
+    ].filter(Boolean).join(" "));
+
+    if (response.canvasType !== "feature_match_builder_canvas") {
+      failures.push(`expected feature_match_builder_canvas, got ${response.canvasType}`);
+    }
+
+    if (getBridgeIsolation(response) !== "broad_discovery_without_model") {
+      failures.push(`expected broad_discovery_without_model isolation, got ${getBridgeIsolation(response)}`);
+    }
+
+    if (modelKeys.size <= 1) {
+      failures.push(`expected broad discovery across multiple model groups, got ${modelKeys.size}`);
+    }
+
+    if (/\bcreta\b|\bsx\b/.test(selectedVehicleText)) {
+      failures.push("broad discovery contextPatch/vehicle retained the previous selected model or variant");
+    }
+
+    results.push({
+      id: "sequential-broad-discovery-context-isolation",
+      message: "Creta SX on-road price Delhi -> Hyundai cars with sunroof under 20 lakh",
+      pass: failures.length === 0,
+      failures,
+      summary: {
+        setupIntent: setupResponse.intent,
+        intent: response.intent,
+        canvasType: response.canvasType,
+        matched: getMatched(response),
+        modelGroupCount: modelGroups.length,
+        rowCount: rows.length,
+        modelKeys: [...modelKeys].slice(0, 10),
+        selectedVehicle: response.contextPatch?.selectedVehicle || null,
+        aciCoreBridge: response.aciCoreBridge || response.meta?.aciCoreBridge || null,
+      },
+    });
+  }
+
+  {
+    const failures = [];
+    let context = {};
+    const setupResponse = await runAciCoreLiveBridge({
+      message: "Punch and Nexon CNG sunroof ABS ADAS",
+      context,
+    });
+    context = mergeContextPatch(context, setupResponse);
+
+    const response = await runAciCoreLiveBridge({
+      message: "Verna HX8 iVT vs City ZX CVT",
+      context,
+    });
+
+    const modelNames = getModelNames(response);
+    const rows = getRows(response);
+    const visibleComparisonText = text([
+      response.title,
+      response.answer,
+      ...modelNames,
+      ...rows.map((row) => row.displayName || row.fullModel || row.model || row.vehicle?.model),
+    ].filter(Boolean).join(" "));
+
+    if (!text(response.intent).includes("comparison")) {
+      failures.push(`expected comparison intent, got ${response.intent}`);
+    }
+
+    if (response.canvasType !== "comparison_canvas") {
+      failures.push(`expected comparison_canvas, got ${response.canvasType}`);
+    }
+
+    if (getBridgeIsolation(response) !== "explicit_comparison_targets") {
+      failures.push(`expected explicit_comparison_targets isolation, got ${getBridgeIsolation(response)}`);
+    }
+
+    if (modelNames.length !== 2) {
+      failures.push(`expected exactly two compared models, got ${modelNames.length}`);
+    }
+
+    if (!/\bverna\b/.test(visibleComparisonText) || !/\bcity\b/.test(visibleComparisonText)) {
+      failures.push("explicit comparison did not keep the current two requested models");
+    }
+
+    if (/\bpunch\b|\bnexon\b/.test(visibleComparisonText)) {
+      failures.push("explicit comparison retained previous comparison models");
+    }
+
+    results.push({
+      id: "sequential-comparison-context-isolation",
+      message: "Punch and Nexon CNG sunroof ABS ADAS -> Verna HX8 iVT vs City ZX CVT",
+      pass: failures.length === 0,
+      failures,
+      summary: {
+        setupIntent: setupResponse.intent,
+        intent: response.intent,
+        canvasType: response.canvasType,
+        matched: getMatched(response),
+        modelNames,
+        rowCount: rows.length,
+        aciCoreBridge: response.aciCoreBridge || response.meta?.aciCoreBridge || null,
+      },
+    });
+  }
+
+  return results;
+};
+
 const runCase = async (item) => {
   const startedAt = Date.now();
   const response = await runAciCoreLiveBridge({
@@ -61,8 +223,8 @@ const runCase = async (item) => {
   const canvasType = response.canvasType || response.widget?.canvasType || "";
   const matched = getMatched(response);
   const answer = String(response.answer || "");
-  const rows = response.data?.rows || response.rows || response.items || [];
-  const modelGroups = response.data?.modelGroups || response.modelGroups || [];
+  const rows = getRows(response);
+  const modelGroups = getModelGroups(response);
 
   for (const part of item.expectedIntentIncludes || []) {
     if (!intent.includes(part)) {
@@ -186,6 +348,7 @@ const main = async () => {
   for (const item of CASES) {
     results.push(await runCase(item));
   }
+  results.push(...await runSequentialContextIsolationCases());
 
   const failed = results.filter((item) => !item.pass);
 

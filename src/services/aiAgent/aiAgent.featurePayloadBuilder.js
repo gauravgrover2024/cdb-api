@@ -1776,7 +1776,6 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
     }) || allVariants[0]?.brand || "";
 
   const vehicle = {
-    ...(response.contextPatch?.selectedVehicle || widget.vehicle || {}),
     id: slugify(`${brand}-${model}`, "feature-discovery"),
     make: brand,
     brand,

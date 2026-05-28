@@ -26,6 +26,15 @@ export const repairAciResponseContextFromActiveContext = async ({
   if (!response || typeof response !== "object") return response;
   if (!context || typeof context !== "object") return response;
 
+  const bridgeContextIsolation =
+    response.aciCoreBridge?.contextIsolation ||
+    response.meta?.aciCoreBridge?.contextIsolation ||
+    "";
+
+  if (bridgeContextIsolation && bridgeContextIsolation !== "preserve_context") {
+    return response;
+  }
+
   const contextVehicle = context.selectedVehicle || {};
   const patch = response.contextPatch || {};
   const patchVehicle = patch.selectedVehicle || {};
@@ -391,4 +400,3 @@ export const applyAciExplicitMessageModelContextOverride = ({
 
   return context;
 };
-

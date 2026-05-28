@@ -783,10 +783,11 @@ const enhanceFeaturePayloads = async (response = {}) => {
             response.contextPatch?.anchorBrand ||
             "",
           anchorModel:
-            payload.vehicle?.model ||
-            response.contextPatch?.anchorModel ||
-            response.data?.model ||
-            "",
+            payload.vehicle
+              ? payload.vehicle.model || ""
+              : response.contextPatch?.anchorModel ||
+                response.data?.model ||
+                "",
           anchorCity:
             payload.vehicle?.city ||
             response.contextPatch?.anchorCity ||
