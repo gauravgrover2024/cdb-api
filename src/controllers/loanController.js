@@ -4871,6 +4871,18 @@ const getLoanById = asyncHandler(async (req, res) => {
         ) {
           return;
         }
+
+        // Skip document URLs to keep loan-specific uploads completely independent
+        if (
+          key.endsWith("DocUrl") ||
+          key.endsWith("DocUrlPage2") ||
+          key.endsWith("DocUrlPage3") ||
+          key === "photoUrl" ||
+          key === "signatureUrl"
+        ) {
+          return;
+        }
+
         // Only fill if loan doesn't have this field or it's empty
         // Use strict checks to avoid overwriting falsy values like 0 or false
         if (
@@ -5051,19 +5063,91 @@ const createLoan = asyncHandler(async (req, res) => {
   if (numberOfCars && Number(numberOfCars) > 1) {
     const count = Number(numberOfCars);
     const createdLoans = [];
+    const companyBase = String(
+      loanPayload.companyName ||
+      loanPayload.customerName ||
+      "VehicleFinance"
+    ).trim();
+
+    // Define all document fields that must be isolated and initialized empty for each vehicle
+    const DOCUMENT_FIELDS = [
+      "aadhaarCardDocUrl",
+      "aadhaarCardBackDocUrl",
+      "panCardDocUrl",
+      "passportDocUrl",
+      "dlDocUrl",
+      "gstDocUrl",
+      "gstDocUrlPage2",
+      "gstDocUrlPage3",
+      "addressProofDocUrl",
+      "co_aadhaarCardDocUrl",
+      "co_panCardDocUrl",
+      "co_passportDocUrl",
+      "co_dlDocUrl",
+      "co_addressProofDocUrl",
+      "gu_aadhaarCardDocUrl",
+      "gu_panCardDocUrl",
+      "gu_passportDocUrl",
+      "gu_dlDocUrl",
+      "gu_addressProofDocUrl",
+      "vehiclePhotoUrl",
+      "vehicleRCUrl",
+      "insurancePolicyUrl",
+      "hypothecationDocUrl",
+      "delivery_invoiceFile",
+      "delivery_rcFile",
+      "postfile_documents",
+      "postfile_documents_ledger",
+      "photoUrl",
+      "signatureUrl"
+    ];
 
     for (let i = 0; i < count; i++) {
       try {
         const uniqueLoanId = await reserveNextLoanId();
+        
+        // Clone the base payload for this specific vehicle file
+        const currentLoanPayload = { ...loanPayload };
+
+        // 1. Assign unique Loan Reference ID (e.g. CompanyName-V1, CompanyName-V2)
+        currentLoanPayload.referenceNumber = `${companyBase}-V${i + 1}`;
+
+        // 2. Clear all document slots to enforce independent, empty upload placeholders
+        DOCUMENT_FIELDS.forEach((field) => {
+          if (field.endsWith("ledger") || field.endsWith("documents")) {
+            currentLoanPayload[field] = [];
+          } else {
+            currentLoanPayload[field] = "";
+          }
+        });
+
+        // 3. If isSameVehicle is false, clear vehicle technical and pricing details
+        if (loanPayload.isSameVehicle === false) {
+          const vehicleFields = [
+            "vehicleMake", "vehicleModel", "vehicleVariant", "vehicleFuelType", "vehicleFuel",
+            "vehicleTransmission", "vehicleColor", "manufacturingYear", "yearOfManufacture",
+            "registrationNumber", "chassisNumber", "engineNumber", "policyType", "insuranceExpiry",
+            "exShowroom", "insurance", "tcs", "accessories", "epc", "fastag", "extendedWarranty",
+            "exchange", "additionsOthers", "discountsOthers", "schemeDiscount", "corporate",
+            "loyalty", "insuranceCashback", "exShowroomPrice", "insuranceCost", "roadTax",
+            "accessoriesAmount", "valuation", "dealerDiscount", "manufacturerDiscount",
+            "marginMoney", "advanceEmi", "tradeInValue", "otherDiscounts", "onRoadPrice"
+          ];
+          vehicleFields.forEach((field) => {
+            currentLoanPayload[field] = undefined;
+          });
+        }
+
         const loan = await Loan.create({
-          ...loanPayload,
+          ...currentLoanPayload,
           loanId: uniqueLoanId,
           isBulk: true,
           bulkCount: count,
         });
+
         try {
           await upsertChannelPartnerFromLoan({
-            ...loanPayload,
+            ...currentLoanPayload,
             ...loan.toObject(),
           });
         } catch (channelErr) {
