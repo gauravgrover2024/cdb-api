@@ -96,15 +96,17 @@ const ACI_PROGRESS_MODULES = [
     status: "mostly_ready",
     summary: "DB-backed price answers, price list table, city context, price breakups and quote conversion.",
     whatWillWork: "Price list, ex-showroom, on-road, variant price cards, price comparison, city selection, quote CTA.",
-    currentState: "Vehicle price read models exist and price list screen is functional. Exact variant price lookup is improving through aci_vehicle_price_rows. Supported pricing cities are currently Delhi, Noida and Gurgaon only; unsupported cities must be answered honestly without fabricated prices.",
-    pending: "Fix Creta SX on-road breakup integrity, validate exact variant breakup line items, add unsupported-city honesty for cities outside Delhi/Noida/Gurgaon, improve price answer cards, and later expand city coverage and quote conversion from price intent.",
+    currentState: "Vehicle price read models exist, price list screen is functional, exact variant lookup works through aci_vehicle_price_rows, and backend price breakup now separates mandatory charges from optional accessories. Default on-road excludes optional add-ons, while optional-inclusive total is exposed separately for frontend checkbox selection. Supported pricing cities are currently Delhi, Noida and Gurgaon only; unsupported cities must be answered honestly without fabricated prices.",
+    pending: "Render price breakup cleanly in frontend with optional add-on checkboxes, add unsupported-city honesty for cities outside Delhi/Noida/Gurgaon, improve price answer cards, validate more variants/cities, and later expand city coverage and quote conversion from price intent.",
     items: [
       { key: "price_read_model", name: "Ex-showroom price read model", status: "ready" },
       { key: "price_list_screen", name: "Price list screen", status: "mostly_ready" },
       { key: "price_filters", name: "Fuel/transmission/budget filters", status: "partial" },
       { key: "city_selector", name: "City selector", status: "partial" },
       { key: "on_road_price", name: "On-road price", status: "mostly_ready" },
-      { key: "price_breakup", name: "Price breakup", status: "partial" },
+      { key: "price_breakup", name: "Price breakup", status: "mostly_ready" },
+      { key: "optional_accessory_breakup", name: "Optional accessory breakup contract", status: "ready" },
+      { key: "mandatory_charge_breakup", name: "Mandatory charge breakup contract", status: "ready" },
       { key: "supported_city_honesty", name: "Supported-city honesty: Delhi/Noida/Gurgaon only", status: "planned" },
       { key: "quote_conversion", name: "Quote conversion", status: "planned" },
       { key: "historical_pricing", name: "Historical discontinued pricing", status: "planned" }
@@ -403,7 +405,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "lead_seriousness_scoring", name: "Lead seriousness scoring", status: "planned" },
       { key: "aci_learning_engine", name: "Controlled ACI Learning Engine", status: "planned" }
     ]
-  },,
+  },
 
   {
     id: "chat-autosuggest-context-ux",
