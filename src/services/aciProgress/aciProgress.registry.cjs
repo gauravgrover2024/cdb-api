@@ -5,11 +5,11 @@ const ACI_PROGRESS_MODULES = [
     group: "Backend Brain",
     priority: "P0",
     owner: "Backend",
-    status: "partial",
-    summary: "Permanent meaning-frame brain that turns customer language into validated DB-backed tool plans.",
+    status: "mostly_ready",
+    summary: "Permanent meaning-frame brain that turns customer language into validated DB-backed tool plans, structured answer contracts, and buyer-facing composed answers.",
     whatWillWork: "Candidate retrieval, deterministic parser, Gemini fallback, module registry, context graph, tool execution, answer composer, trace logs, eval compatibility.",
-    currentState: "Hybrid meaning-frame router, deterministic parser, optional Gemini fallback, DB-backed candidate retrieval, prewarm, and a non-live ACI Core to legacy executor bridge are implemented. Bridge smoke now covers broad discovery, variant comparison, feature comparison, and exact variant on-road price.",
-    pending: "Improve ACI Answer Composer with richer verdict language, fix on-road breakup integrity, render budget discovery and comparison enrichment cleanly in frontend, test guarded bridge through the portal UI before enabling beyond local/staging, complete module/capability registry, replace fragile old early-gate behavior, expand final-answer evals, and add complete trace/audit contract. Stale context contamination, comparison follow-ups, variant decision comparison enrichment, deterministic Answer Composer v1, and read-model budget discovery are now protected in the backend contract.",
+    currentState: "Hybrid meaning-frame router, deterministic parser, optional Gemini fallback, DB-backed candidate retrieval, guarded live bridge, context isolation, comparison context, answer composer v1, variant decision enrichment, broad feature discovery, fuel-filtered feature comparison, read-model budget discovery, truthful budget totals, preview groups, and budget explorer backend metadata are implemented. ACI Core live bridge smoke now covers 11 cases and safety gates are green.",
+    pending: "Improve ACI Answer Composer with richer verdict language, fix on-road breakup integrity, render budget discovery and comparison enrichment cleanly in frontend, test guarded bridge through the portal UI before enabling beyond local/staging, complete module/capability registry, reduce ACI Core prewarm/cold-start time, automate the first 40 customer corpus cases, replace fragile old early-gate behavior, expand final-answer evals, and add complete trace/audit contract. Stale context contamination, comparison follow-ups, variant decision comparison enrichment, deterministic Answer Composer v1, and read-model budget discovery are now protected in the backend contract.",
     items: [
       { key: "candidate_retrieval", name: "DB-backed candidate retrieval", status: "ready" },
       { key: "deterministic_parser", name: "Deterministic parser for clear queries", status: "ready" },
@@ -24,6 +24,11 @@ const ACI_PROGRESS_MODULES = [
       { key: "comparison_followup_routing", name: "Comparison follow-up routing", status: "ready" },
       { key: "variant_decision_comparison_enrichment", name: "Variant decision comparison enrichment", status: "ready" },
       { key: "answer_composer_v1", name: "ACI Answer Composer v1", status: "ready" },
+      { key: "budget_explorer_preview_contract", name: "Budget explorer preview contract", status: "ready" },
+      { key: "budget_facets_contract", name: "Budget facets and slider metadata contract", status: "ready" },
+      { key: "customer_corpus_v1_draft", name: "40-question customer corpus draft", status: "ready" },
+      { key: "prewarm_optimization_pass_1", name: "ACI Core prewarm optimization pass 1", status: "mostly_ready" },
+      { key: "budget_discovery_total_count_integrity", name: "Budget discovery total-count integrity", status: "ready" },
       { key: "budget_discovery_read_model", name: "Read-model budget discovery", status: "ready" },
       { key: "meaning_frame_contract", name: "Stable meaning-frame contract", status: "mostly_ready" },
       { key: "capability_registry", name: "Capability/module registry", status: "planned" },
@@ -40,8 +45,8 @@ const ACI_PROGRESS_MODULES = [
     status: "partial",
     summary: "Main customer experience where users ask natural questions and receive answers plus embedded canvases/cards.",
     whatWillWork: "Natural-language chat, context persistence, follow-ups, explicit car switching, multi-intent cards, clarification only when needed, safe response streaming.",
-    currentState: "Chat-first direction is locked. Context handling has improved significantly. Final live integration and answer quality still need work.",
-    pending: "Wire new ACI Core into the live chat path, improve premium answer language, add streaming status, and standardize embedded canvas behavior.",
+    currentState: "Chat-first direction is locked. Context handling has improved significantly through live bridge context isolation, activeComparison handling, selectedVehicle safeguards, and Answer Composer v1. Final portal UI rendering and richer answer language still need work.",
+    pending: "Test guarded ACI Core through the portal UI, improve premium answer language, add streaming status, standardize embedded canvas behavior, add visible context chip, add DB-backed chat autosuggest, add smart clarification cards, add session buyer memory, add recently compared/shortlist tray, and decide/remove/commit the temporary frontend debug renderer separately.",
     items: [
       { key: "chat_first_direction", name: "Chat-first direction", status: "ready" },
       { key: "context_persistence", name: "Context persistence", status: "mostly_ready" },
@@ -49,7 +54,13 @@ const ACI_PROGRESS_MODULES = [
       { key: "multi_intent_responses", name: "Multi-intent responses", status: "partial" },
       { key: "safe_streaming", name: "Safe first response streaming", status: "planned" },
       { key: "clarification_policy", name: "Clarifying question policy", status: "partial" },
-      { key: "answer_variations", name: "Premium answer variations", status: "partial" }
+      { key: "answer_variations", name: "Premium answer variations", status: "partial" },
+      { key: "context_chip", name: "Visible context chip near chat bar", status: "planned" },
+      { key: "smart_disambiguation_cards", name: "Smart disambiguation cards", status: "planned" },
+      { key: "chat_autosuggest", name: "DB-backed chat autosuggest", status: "planned" },
+      { key: "frontend_debug_renderer_decision", name: "Temporary frontend debug renderer decision", status: "pending" },
+      { key: "contextual_next_actions", name: "Contextual next-best actions", status: "planned" },
+      { key: "recently_compared_shortlist", name: "Recently compared / shortlist tray", status: "planned" },
     ]
   },
   {
@@ -58,16 +69,19 @@ const ACI_PROGRESS_MODULES = [
     group: "Core Car Research",
     priority: "P0",
     owner: "Backend + Frontend",
-    status: "partial",
-    summary: "Broad discovery for cars by budget, body type, brand, fuel, transmission and features.",
+    status: "mostly_ready",
+    summary: "Broad discovery for cars by budget, body type, brand, fuel, transmission and features, backed by read-model price rows and strict budget filtering.",
     whatWillWork: "Cars under budget, Hyundai cars, automatic SUVs under 20L, CNG cars with ABS, cars with sunroof/ADAS/airbags, ranked recommendations.",
-    currentState: "Broad discovery is supported in the new understanding path, but ranking and final canvas output need strengthening.",
-    pending: "Formal discovery tool, ranking engine, result explanation, shortlist support, and polished recommendation canvas.",
+    currentState: "Budget discovery now uses aci_vehicle_price_rows with strict ex-showroom budget filtering, truthful total counts, preview model groups, full budget explorer metadata, body type/transmission filters, and live bridge regression coverage. Ranking and final frontend budget canvas rendering still need strengthening.",
+    pending: "Improve ranking/why-this-car logic, build polished frontend Budget Explorer canvas with min-max slider and filters, add shortlist support, automate the 40-question customer corpus, and improve no-result recovery for low-supply filters.",
     items: [
-      { key: "budget_discovery", name: "Budget discovery", status: "partial" },
+      { key: "budget_discovery", name: "Budget discovery", status: "ready" },
+      { key: "budget_total_counts", name: "Budget total-count integrity", status: "ready" },
+      { key: "budget_preview_groups", name: "Budget preview model groups", status: "ready" },
+      { key: "budget_explorer_contract", name: "Budget explorer backend contract", status: "ready" },
       { key: "brand_discovery", name: "Brand discovery", status: "partial" },
-      { key: "body_type_discovery", name: "Body-type discovery", status: "partial" },
-      { key: "fuel_transmission_filters", name: "Fuel/transmission filters", status: "partial" },
+      { key: "body_type_discovery", name: "Body-type discovery", status: "mostly_ready" },
+      { key: "fuel_transmission_filters", name: "Fuel/transmission filters", status: "mostly_ready" },
       { key: "feature_discovery", name: "Feature-based discovery", status: "mostly_ready" },
       { key: "messy_queries", name: "No-comma messy queries", status: "mostly_ready" },
       { key: "ranking_logic", name: "Ranking and why-this-car logic", status: "pending" }
@@ -82,15 +96,16 @@ const ACI_PROGRESS_MODULES = [
     status: "mostly_ready",
     summary: "DB-backed price answers, price list table, city context, price breakups and quote conversion.",
     whatWillWork: "Price list, ex-showroom, on-road, variant price cards, price comparison, city selection, quote CTA.",
-    currentState: "Vehicle price read models exist and price list screen is functional. On-road and quote-grade accuracy still need stronger validation.",
-    pending: "Finalize on-road calculations, price breakup, price answer cards, city expansion, and quote conversion from price intent.",
+    currentState: "Vehicle price read models exist and price list screen is functional. Exact variant price lookup is improving through aci_vehicle_price_rows. Supported pricing cities are currently Delhi, Noida and Gurgaon only; unsupported cities must be answered honestly without fabricated prices.",
+    pending: "Fix Creta SX on-road breakup integrity, validate exact variant breakup line items, add unsupported-city honesty for cities outside Delhi/Noida/Gurgaon, improve price answer cards, and later expand city coverage and quote conversion from price intent.",
     items: [
       { key: "price_read_model", name: "Ex-showroom price read model", status: "ready" },
       { key: "price_list_screen", name: "Price list screen", status: "mostly_ready" },
       { key: "price_filters", name: "Fuel/transmission/budget filters", status: "partial" },
       { key: "city_selector", name: "City selector", status: "partial" },
-      { key: "on_road_price", name: "On-road price", status: "partial" },
+      { key: "on_road_price", name: "On-road price", status: "mostly_ready" },
       { key: "price_breakup", name: "Price breakup", status: "partial" },
+      { key: "supported_city_honesty", name: "Supported-city honesty: Delhi/Noida/Gurgaon only", status: "planned" },
       { key: "quote_conversion", name: "Quote conversion", status: "planned" },
       { key: "historical_pricing", name: "Historical discontinued pricing", status: "planned" }
     ]
@@ -143,16 +158,18 @@ const ACI_PROGRESS_MODULES = [
     group: "Core Car Research",
     priority: "P0",
     owner: "Backend + Frontend",
-    status: "partial",
-    summary: "Model-vs-model and variant-vs-variant comparison across price, features, safety, EMI and value.",
+    status: "mostly_ready",
+    summary: "Model-vs-model and variant-vs-variant comparison across price, feature differences, common highlights, context, and follow-up routing.",
     whatWillWork: "Verna vs City, Verna SX IVT vs City ZX CVT, Creta S(O) IVT vs Seltos HTX IVT, feature-specific comparisons.",
-    currentState: "Feature-specific comparison is now routed through the ACI Core bridge in non-live smoke, including messy two-model multi-feature queries. Full value comparison and exact variant-vs-variant comparison still need work.",
-    pending: "Formal comparison tool, variant anchor separation, value conclusion, safety/EMI comparison and polished comparison canvas.",
+    currentState: "Feature-specific comparison, fuel-filtered feature comparison, exact Verna HX8 iVT vs City ZX CVT variant matching, comparison context preservation, follow-up routing, and structured variant decision enrichment are implemented. Frontend rendering and richer buyer verdicts still need work.",
+    pending: "Render comparisonSummary, differenceSummary, featureDifferences and commonHighlights in the frontend; improve buyer verdict language; add safety/EMI comparison; and build polished comparison canvas.",
     items: [
       { key: "model_comparison", name: "Model-vs-model comparison", status: "partial" },
-      { key: "variant_comparison", name: "Variant-vs-variant comparison", status: "partial" },
+      { key: "variant_comparison", name: "Variant-vs-variant comparison", status: "mostly_ready" },
       { key: "feature_specific_comparison", name: "Feature-specific comparison", status: "ready" },
-      { key: "price_comparison", name: "Price comparison", status: "partial" },
+      { key: "price_comparison", name: "Price comparison", status: "mostly_ready" },
+      { key: "feature_difference_enrichment", name: "Feature/spec difference enrichment", status: "ready" },
+      { key: "comparison_followups", name: "Comparison follow-up routing", status: "ready" },
       { key: "emi_comparison", name: "EMI comparison", status: "planned" },
       { key: "value_conclusion", name: "Value conclusion", status: "pending" }
     ]
@@ -187,10 +204,10 @@ const ACI_PROGRESS_MODULES = [
     status: "partial",
     summary: "Need-based and budget-based car recommendations with explainable ranking.",
     whatWillWork: "Best family car, automatic SUV under 20L, safest car, best value variant, cheapest car with required features.",
-    currentState: "Basic recommendation/discovery exists, but advisor-grade scoring is not ready.",
-    pending: "Build scoring engine, explainability, value-for-money logic, use-case profiles, safety weighting and advisor canvas.",
+    currentState: "Budget and filter-based discovery are now read-model backed with preview groups and truthful counts. Advisor-grade scoring, value ranking and why-this-car reasoning are not ready yet.",
+    pending: "Build ranking/scoring engine, why-this-car explanations, value-for-money logic, use-case profiles, safety weighting, no-result recovery and advisor canvas.",
     items: [
-      { key: "budget_recommendations", name: "Budget recommendations", status: "partial" },
+      { key: "budget_recommendations", name: "Budget recommendations", status: "mostly_ready" },
       { key: "feature_recommendations", name: "Feature-based recommendations", status: "partial" },
       { key: "need_recommendations", name: "Need-based recommendations", status: "pending" },
       { key: "vfm_scoring", name: "VFM scoring", status: "pending" },
@@ -360,7 +377,105 @@ const ACI_PROGRESS_MODULES = [
       { key: "pii_handling", name: "PII handling", status: "pending" },
       { key: "prompt_guards", name: "Prompt-injection guardrails", status: "partial" }
     ]
-  }
+  },
+
+  {
+    id: "locked-intelligence-roadmap",
+    title: "Locked Intelligence & UX Roadmap",
+    group: "Product Strategy",
+    priority: "P0",
+    owner: "Product + Backend + Frontend",
+    status: "planned",
+    summary: "Locked product-grade intelligence and UX layers that make ACI Assist a buyer decision-intelligence product rather than a generic chatbot or listing portal.",
+    whatWillWork: "Context chip, DB-backed autosuggest, clarification cards, no-result recovery, missing-data honesty, shortlist/recently compared tray, fair deal assistant, lead seriousness scoring and controlled learning engine.",
+    currentState: "Scope is locked in docs and now represented in dedicated progress modules for autosuggest/context UX, trust/recovery/confidence, and decision/conversion intelligence. Implementation should start only after backend correctness, price breakup integrity, contract rendering and customer corpus coverage are stronger.",
+    pending: "Build backend contracts first for contextState, confidence, clarification, missingData, recoveryOptions, decisionInsights, shortlist, leadScore, suggestedNextActions and trace; then render premium frontend experiences from those contracts.",
+    items: [
+      { key: "db_backed_autosuggest", name: "DB-backed chat autosuggest", status: "planned" },
+      { key: "context_chip", name: "Visible context chip", status: "planned" },
+      { key: "clarification_cards", name: "Smart clarification cards", status: "planned" },
+      { key: "lose_gain_engine", name: "What changed / lose-gain engine", status: "partial" },
+      { key: "session_buyer_memory", name: "Session-level buyer intent memory", status: "planned" },
+      { key: "missing_data_honesty", name: "Missing-data honesty/source confidence", status: "planned" },
+      { key: "no_result_recovery", name: "No-result recovery", status: "planned" },
+      { key: "shortlist_tray", name: "Recently compared / shortlist tray", status: "planned" },
+      { key: "fair_deal_assistant", name: "Fair deal / negotiation assistant", status: "planned" },
+      { key: "lead_seriousness_scoring", name: "Lead seriousness scoring", status: "planned" },
+      { key: "aci_learning_engine", name: "Controlled ACI Learning Engine", status: "planned" }
+    ]
+  },,
+
+  {
+    id: "chat-autosuggest-context-ux",
+    title: "Chat Autosuggest, Context Chip & Buyer Memory",
+    group: "User Experience",
+    priority: "P0",
+    owner: "Frontend + Backend",
+    status: "planned",
+    summary: "Fast DB-backed chat-bar intelligence that helps users type car names, variants, features and next actions without turning the product into a form-heavy chatbot.",
+    whatWillWork: "Brand/model/variant/feature autosuggest, visible selected context chip, clear/change context action, contextual next actions, session buyer memory, recently compared and shortlist state.",
+    currentState: "Scope is locked. Generic question-template suggestions are explicitly excluded. Implementation has not started because backend answer contracts and core correctness are being stabilized first.",
+    pending: "Build DB/read-model suggestion index, create fast autosuggest API, prewarm/cache suggestions, add frontend chat-bar dropdown, add context chip near composer, add clear/change context action, and later add personalized suggestions from session buyer memory.",
+    items: [
+      { key: "exclude_question_templates", name: "Exclude generic question-template suggestions", status: "ready" },
+      { key: "brand_suggestions", name: "DB-backed brand suggestions", status: "planned" },
+      { key: "model_suggestions", name: "DB-backed model suggestions", status: "planned" },
+      { key: "variant_suggestions", name: "DB-backed variant suggestions", status: "planned" },
+      { key: "feature_suggestions", name: "DB-backed feature suggestions", status: "planned" },
+      { key: "context_action_suggestions", name: "Contextual next-action suggestions", status: "planned" },
+      { key: "suggestion_api", name: "Fast autosuggest API", status: "planned" },
+      { key: "suggestion_prewarm_cache", name: "Prewarmed/cached suggestion index", status: "planned" },
+      { key: "chatbar_dropdown", name: "Frontend chat-bar autosuggest dropdown", status: "planned" },
+      { key: "context_chip", name: "Visible selected context chip", status: "planned" },
+      { key: "clear_change_context", name: "Clear/change context action", status: "planned" },
+      { key: "session_buyer_memory", name: "Session buyer memory", status: "planned" },
+      { key: "recently_compared_shortlist", name: "Recently compared / shortlist tray", status: "planned" }
+    ]
+  },,
+
+  {
+    id: "trust-recovery-confidence",
+    title: "Trust, Missing Data & Recovery Layer",
+    group: "Backend Brain",
+    priority: "P0",
+    owner: "Backend + Frontend",
+    status: "planned",
+    summary: "Trust layer that prevents ACI Assist from guessing, fabricating prices, hiding missing data, or dead-ending when exact results are unavailable.",
+    whatWillWork: "Missing-data honesty, source confidence, unsupported-city honesty, no-result recovery, clarification cards, trace/debug metadata and recovery options.",
+    currentState: "Scope is locked. Some pieces exist indirectly through safety gates and city-pricing notes, but a formal trust/recovery contract is not built yet.",
+    pending: "Add backend fields for confidence, missingData, sourceConfidence, unsupportedCity, recoveryOptions, clarificationChoices and trace; then render them cleanly in frontend cards.",
+    items: [
+      { key: "missing_data_honesty", name: "Missing-data honesty", status: "planned" },
+      { key: "source_confidence", name: "Source-confidence metadata", status: "planned" },
+      { key: "unsupported_city_honesty", name: "Unsupported-city honesty", status: "planned" },
+      { key: "no_result_recovery", name: "No-result recovery", status: "planned" },
+      { key: "clarification_choices", name: "Clarification choice cards", status: "planned" },
+      { key: "trace_metadata", name: "Trace/debug metadata", status: "partial" },
+      { key: "recovery_options", name: "Nearby alternatives / recovery options", status: "planned" }
+    ]
+  },,
+
+  {
+    id: "decision-conversion-intelligence",
+    title: "Decision & Conversion Intelligence",
+    group: "Conversion Engine",
+    priority: "P0",
+    owner: "Product + Backend + CRM",
+    status: "planned",
+    summary: "Buyer-decision layer that helps users avoid variant regret, judge dealer quotes, understand trade-offs and convert into higher-quality leads.",
+    whatWillWork: "What changed / what do I lose-gain engine, fair deal assistant, negotiation guidance, lead seriousness scoring, quote readiness and CRM handoff signals.",
+    currentState: "Variant comparison enrichment is partly ready and can power future lose/gain answers. Fair deal assistant and lead scoring are not built yet.",
+    pending: "Build lose/gain decision contract, fair-deal quote checker, negotiation guidance, lead seriousness scoring, quote-readiness state and CRM-ready lead payloads.",
+    items: [
+      { key: "lose_gain_engine", name: "What changed / lose-gain engine", status: "partial" },
+      { key: "variant_regret_prevention", name: "Variant regret-prevention advice", status: "planned" },
+      { key: "fair_deal_assistant", name: "Fair deal / negotiation assistant", status: "planned" },
+      { key: "dealer_quote_checker", name: "Dealer quote checker", status: "planned" },
+      { key: "lead_seriousness_scoring", name: "Lead seriousness scoring", status: "planned" },
+      { key: "quote_readiness_state", name: "Quote-readiness state", status: "planned" },
+      { key: "crm_handoff_payload", name: "CRM handoff payload", status: "planned" }
+    ]
+  },
 ];
 
 module.exports = {

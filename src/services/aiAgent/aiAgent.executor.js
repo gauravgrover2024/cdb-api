@@ -69,6 +69,10 @@ export const DEFAULT_LIMITS = {
   history: 120,
 };
 
+export const BUDGET_DISCOVERY_PREVIEW_GROUP_LIMIT = 8;
+export const BUDGET_DISCOVERY_FULL_GROUP_LIMIT = 200;
+export const BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT = 6;
+
 export const VEHICLE_COLLECTION_CANDIDATES = [
   "vehicles",
   "vehicle_master_records",
@@ -2057,7 +2061,7 @@ const normalizeBudgetDiscoveryRow = (row = {}) => {
 const buildBudgetDiscoveryModelGroups = ({
   rows = [],
   budgetMax = 0,
-  variantLimit = 8,
+  variantLimit = BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
 } = {}) => {
   const groups = new Map();
 
@@ -2091,6 +2095,10 @@ const buildBudgetDiscoveryModelGroups = ({
       const variants = group.rows
         .filter((row) => row.exShowroomPrice > 0 && (!budgetMax || row.exShowroomPrice <= budgetMax))
         .sort((left, right) => left.exShowroomPrice - right.exShowroomPrice);
+      const previewVariants = uniqueBy(
+        variants,
+        (row) => row.variantKey || row.variant || `${row.exShowroomPrice}|${row.transmission}`,
+      );
 
       const startsFrom = variants[0] || {};
       const bestUnderBudget = variants[variants.length - 1] || startsFrom;
@@ -2125,7 +2133,7 @@ const buildBudgetDiscoveryModelGroups = ({
               ? startsFrom.exShowroomPriceLabel
               : `${startsFrom.exShowroomPriceLabel} – ${bestUnderBudget.exShowroomPriceLabel}`
             : "",
-        qualifyingVariants: variants.slice(0, variantLimit).map((row) => compactObject({
+        qualifyingVariants: previewVariants.slice(0, variantLimit).map((row) => compactObject({
           make: row.make,
           model: row.model,
           fullModel: row.fullModel,
@@ -2153,6 +2161,29 @@ const buildBudgetDiscoveryModelGroups = ({
     });
 };
 
+const buildBudgetDiscoveryFacets = ({ rows = [] } = {}) => {
+  const prices = rows
+    .map((row) => Number(row.exShowroomPrice || 0))
+    .filter((price) => Number.isFinite(price) && price > 0);
+
+  const uniqueFacet = (values = []) =>
+    unique(values.map(displayName).filter(Boolean)).sort((left, right) =>
+      left.localeCompare(right),
+    );
+
+  return {
+    bodyTypes: uniqueFacet(rows.map((row) => row.bodyType)),
+    fuelTypes: uniqueFacet(rows.map((row) => row.fuelType || row.fuel)),
+    transmissions: uniqueFacet(rows.map((row) => row.transmission)),
+    priceRange: {
+      min: prices.length ? Math.min(...prices) : 0,
+      max: prices.length ? Math.max(...prices) : 0,
+      minLabel: prices.length ? formatMoney(Math.min(...prices)) : "",
+      maxLabel: prices.length ? formatMoney(Math.max(...prices)) : "",
+    },
+  };
+};
+
 export const runtimeBudgetVehicleDiscovery = async ({
   toolPlan = {},
   context = {},
@@ -2170,15 +2201,18 @@ export const runtimeBudgetVehicleDiscovery = async ({
   }
 
   const filters = toolPlan.filters || {};
+  const budgetMin = Number(filters.budgetMin || 0) || 0;
   const budgetMax = Number(filters.budgetMax || 0);
   const city = getCity(toolPlan, context);
   const citySlug = slugForReadModel(city || DEFAULT_CITY);
   const make = firstMeaningful(filters.make, filters.brand, toolPlan.entities?.make, toolPlan.entities?.brand);
   const query = {
-    exShowroomPrice: budgetMax > 0 ? { $gt: 0, $lte: budgetMax } : { $gt: 0 },
+    exShowroomPrice: {
+      $gt: budgetMin > 0 ? budgetMin : 0,
+      ...(budgetMax > 0 ? { $lte: budgetMax } : {}),
+    },
   };
 
-  if (citySlug) query.citySlug = citySlug;
   if (make) query.makeKey = slugForReadModel(make);
 
   const collection = db.collection("aci_vehicle_price_rows");
@@ -2214,19 +2248,10 @@ export const runtimeBudgetVehicleDiscovery = async ({
     .limit(6000)
     .toArray();
 
-  if (!rawRows.length && query.citySlug) {
-    const fallbackQuery = { ...query };
-    delete fallbackQuery.citySlug;
-    rawRows = await collection
-      .find(fallbackQuery, { projection })
-      .sort({ exShowroomPrice: 1, make: 1, model: 1, variant: 1 })
-      .limit(6000)
-      .toArray();
-  }
-
   const rows = rawRows
     .map(normalizeBudgetDiscoveryRow)
     .filter((row) => row.exShowroomPrice > 0)
+    .filter((row) => !budgetMin || row.exShowroomPrice > budgetMin)
     .filter((row) => !budgetMax || row.exShowroomPrice <= budgetMax)
     .filter((row) => bodyTypeMatchesBudgetFilter(row, filters.bodyType))
     .filter((row) => transmissionMatchesBudgetFilter(row, filters.transmission))
@@ -2235,23 +2260,35 @@ export const runtimeBudgetVehicleDiscovery = async ({
   const allModelGroups = buildBudgetDiscoveryModelGroups({
     rows,
     budgetMax,
-    variantLimit: 8,
+    variantLimit: BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
   });
-  const modelGroups = allModelGroups.slice(0, DEFAULT_LIMITS.recommend);
-  const matchedVariantCount = allModelGroups.reduce(
+  const fullModelGroups = allModelGroups.slice(0, BUDGET_DISCOVERY_FULL_GROUP_LIMIT);
+  const previewModelGroups = allModelGroups.slice(0, BUDGET_DISCOVERY_PREVIEW_GROUP_LIMIT);
+  const totalQualifyingModels = allModelGroups.length;
+  const totalQualifyingVariants = allModelGroups.reduce(
     (total, group) => total + Number(group.qualifyingVariantCount || 0),
     0,
   );
+  const hasMore = totalQualifyingModels > previewModelGroups.length;
+  const facets = buildBudgetDiscoveryFacets({ rows });
 
   return {
-    rows: modelGroups,
-    items: modelGroups,
-    cars: modelGroups,
-    modelGroups,
-    allModelGroupCount: allModelGroups.length,
-    matchedVariantCount,
-    count: modelGroups.length,
-    matched: modelGroups.length,
+    rows: previewModelGroups,
+    items: previewModelGroups,
+    cars: previewModelGroups,
+    previewModelGroups,
+    modelGroups: fullModelGroups,
+    fullModelGroupCount: fullModelGroups.length,
+    allModelGroupCount: totalQualifyingModels,
+    totalModelGroupCount: totalQualifyingModels,
+    returnedPreviewGroups: previewModelGroups.length,
+    returnedModelGroups: previewModelGroups.length,
+    matchedVariantCount: totalQualifyingVariants,
+    totalQualifyingModels,
+    totalQualifyingVariants,
+    count: previewModelGroups.length,
+    matched: totalQualifyingModels,
+    facets,
     ranking: toolPlan.ranking || "value",
     filters: compactObject({
       city,
@@ -2264,12 +2301,26 @@ export const runtimeBudgetVehicleDiscovery = async ({
     }),
     budgetDiscovery: {
       enabled: true,
-      budgetBasis: "ex_showroom",
+      budgetMin,
       budgetMax,
+      priceBasis: "ex_showroom",
+      budgetBasis: "ex_showroom",
       strictBudget: true,
-      matchedVariantCount,
-      allModelGroupCount: allModelGroups.length,
-      returnedModelGroupCount: modelGroups.length,
+      totalQualifyingModels,
+      totalQualifyingVariants,
+      matchedVariantCount: totalQualifyingVariants,
+      returnedPreviewGroups: previewModelGroups.length,
+      returnedModelGroups: previewModelGroups.length,
+      fullModelGroupCount: fullModelGroups.length,
+      allModelGroupCount: totalQualifyingModels,
+      totalModelGroupCount: totalQualifyingModels,
+      hasMore,
+    },
+    sourceTransparency: {
+      responseTool: "vehicle_recommend",
+      modulesChecked: ["aci_vehicle_price_rows"],
+      matched: totalQualifyingModels,
+      dataSource: "aci_vehicle_read_models",
     },
     modulesChecked: ["aci_vehicle_price_rows"],
     source: "aci_vehicle_price_rows",

@@ -38,6 +38,11 @@ import {
 } from '../taxonomy/aciCanonicalFeature.schema.js';
 
 const CACHE_TTL_MS = Number(process.env.ACI_CANDIDATE_CACHE_TTL_MS || 5 * 60 * 1000);
+const PRICE_VARIANT_CATALOG_CITY_SLUG =
+  process.env.ACI_CANDIDATE_PRICE_VARIANT_CITY_SLUG || 'new-delhi';
+const PRICE_VARIANT_CATALOG_LIMIT = Number(
+  process.env.ACI_CANDIDATE_PRICE_VARIANT_LIMIT || 5000,
+);
 
 let featureCatalogCache = {
   builtAt: 0,
@@ -527,8 +532,8 @@ const loadPriceVariantCatalog = async () => {
   const db = getDb();
   if (!db) return [];
 
-  const docs = await db.collection('aci_vehicle_price_rows')
-    .find({})
+  let docs = await db.collection('aci_vehicle_price_rows')
+    .find({ citySlug: PRICE_VARIANT_CATALOG_CITY_SLUG })
     .project({
       _id: 0,
       make: 1,
@@ -542,9 +547,30 @@ const loadPriceVariantCatalog = async () => {
       variantKey: 1,
       citySlug: 1,
     })
+    .limit(PRICE_VARIANT_CATALOG_LIMIT)
     .toArray();
 
-  const items = docs
+  if (!docs.length) {
+    docs = await db.collection('aci_vehicle_price_rows')
+      .find({})
+      .project({
+        _id: 0,
+        make: 1,
+        brand: 1,
+        model: 1,
+        variant: 1,
+        fullModel: 1,
+        fullVariant: 1,
+        makeKey: 1,
+        modelKey: 1,
+        variantKey: 1,
+        citySlug: 1,
+      })
+      .limit(PRICE_VARIANT_CATALOG_LIMIT)
+      .toArray();
+  }
+
+  const items = uniqueBy(docs, (doc) => `${doc.modelKey || doc.fullModel || doc.model}:${doc.variantKey || doc.fullVariant || doc.variant}`)
     .map((doc) => {
       const modelKey = doc.modelKey || normalizeFeatureKey(doc.fullModel || doc.model || '');
       const variantKey = doc.variantKey || normalizeFeatureKey(doc.fullVariant || doc.variant || '');

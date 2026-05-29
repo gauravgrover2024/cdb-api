@@ -1107,12 +1107,29 @@ export const buildVehicleRecommendResponse = ({
   const city = getCity(toolPlan, context);
   const rows = getRuntimeRows(runtimeData);
   const modelGroups = asArray(runtimeData.modelGroups || runtimeData.data?.modelGroups);
+  const previewModelGroups = asArray(
+    runtimeData.previewModelGroups ||
+      runtimeData.data?.previewModelGroups ||
+      runtimeData.rows,
+  );
   const ranking = toolPlan.ranking || "value";
   const filters = getToolFilters(toolPlan);
   const isBudgetDiscovery = Boolean(runtimeData.budgetDiscovery?.enabled);
-  const effectiveRows = !modelGroups.length || runtimeData.budgetDiscovery?.isFeatureDiscovery
-    ? rows
-    : modelGroups;
+  const effectiveRows = isBudgetDiscovery
+    ? previewModelGroups
+    : !modelGroups.length || runtimeData.budgetDiscovery?.isFeatureDiscovery
+      ? rows
+      : modelGroups;
+  const totalQualifyingModels =
+    runtimeData.budgetDiscovery?.totalQualifyingModels ||
+    runtimeData.totalQualifyingModels ||
+    modelGroups.length ||
+    effectiveRows.length;
+  const totalQualifyingVariants =
+    runtimeData.budgetDiscovery?.totalQualifyingVariants ||
+    runtimeData.totalQualifyingVariants ||
+    runtimeData.matchedVariantCount ||
+    0;
 
   const budgetLabel = filters.budgetMax ? ` under ${formatMoney(filters.budgetMax)}` : "";
   const bodyLabel = filters.bodyType ? ` ${displayName(filters.bodyType)}` : "";
@@ -1141,7 +1158,7 @@ export const buildVehicleRecommendResponse = ({
       : `I could not find strong matches${featureLabel ? ` with ${featureLabel}` : ""}${budgetLabel}. Try relaxing budget, body type, transmission, or must-have features.`
     : effectiveRows.length
       ? isBudgetDiscovery
-        ? `I found ${effectiveRows.length} model${effectiveRows.length === 1 ? "" : "s"} with variants${budgetLabel}. I grouped them by model and highlighted the strongest qualifying variant within budget.`
+        ? `I found ${totalQualifyingModels} model${totalQualifyingModels === 1 ? "" : "s"} with ${totalQualifyingVariants} qualifying variant${totalQualifyingVariants === 1 ? "" : "s"}${budgetLabel}. Showing the top ${effectiveRows.length} first.`
         : `I found matching cars for your filters. I’ll show the best model cards first instead of overwhelming you with every variant.`
       : `I could not find strong matches for these filters yet. Try relaxing budget, body type, transmission, or must-have features.`;
 
@@ -1171,13 +1188,22 @@ export const buildVehicleRecommendResponse = ({
       rows: effectiveRows,
       items: effectiveRows,
       modelGroups,
-      modelGroupCount: modelGroups.length,
+      previewModelGroups: effectiveRows,
+      modelGroupCount: effectiveRows.length,
+      previewModelGroupCount: effectiveRows.length,
+      fullModelGroupCount: runtimeData.budgetDiscovery?.fullModelGroupCount || modelGroups.length,
+      returnedPreviewGroups: runtimeData.budgetDiscovery?.returnedPreviewGroups || effectiveRows.length,
+      returnedModelGroups: runtimeData.budgetDiscovery?.returnedModelGroups || effectiveRows.length,
+      totalModelGroupCount: totalQualifyingModels,
+      totalQualifyingModels,
+      totalQualifyingVariants,
       matchedVariants: rows,
       variants: rows,
       groupBy: toolPlan.output?.groupBy || "model",
       summary: runtimeData.summary || {},
       budgetDiscovery: runtimeData.budgetDiscovery || null,
       matchedVariantCount: runtimeData.matchedVariantCount || 0,
+      facets: runtimeData.facets || {},
     },
     feature: primaryFeature,
     featureName: featureLabel || primaryFeature,
@@ -1192,6 +1218,8 @@ export const buildVehicleRecommendResponse = ({
     meta: {
       budgetDiscovery: runtimeData.budgetDiscovery || null,
       matchedVariantCount: runtimeData.matchedVariantCount || 0,
+      totalQualifyingModels,
+      totalQualifyingVariants,
     },
   });
 
@@ -1199,10 +1227,17 @@ export const buildVehicleRecommendResponse = ({
     ...response,
     rows: effectiveRows,
     items: effectiveRows,
-    modelGroups,
-    modelGroupCount: modelGroups.length,
+    modelGroups: isBudgetDiscovery ? effectiveRows : modelGroups,
+    previewModelGroups: effectiveRows,
+    modelGroupCount: effectiveRows.length,
+    returnedPreviewGroups: runtimeData.budgetDiscovery?.returnedPreviewGroups || effectiveRows.length,
+    returnedModelGroups: runtimeData.budgetDiscovery?.returnedModelGroups || effectiveRows.length,
+    totalModelGroupCount: totalQualifyingModels,
+    totalQualifyingModels,
+    totalQualifyingVariants,
     budgetDiscovery: runtimeData.budgetDiscovery || null,
-    matched: runtimeData.matched ?? effectiveRows.length,
+    facets: runtimeData.facets || {},
+    matched: runtimeData.matched ?? totalQualifyingModels,
   };
 };
 

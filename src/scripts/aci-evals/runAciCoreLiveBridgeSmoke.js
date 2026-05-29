@@ -99,6 +99,14 @@ const getRows = (response = {}) =>
 const getModelGroups = (response = {}) =>
   response.data?.modelGroups || response.modelGroups || response.widget?.modelGroups || [];
 
+const getPreviewModelGroups = (response = {}) =>
+  response.data?.previewModelGroups ||
+  response.previewModelGroups ||
+  response.data?.rows ||
+  response.rows ||
+  response.items ||
+  [];
+
 const getBridgeIsolation = (response = {}) =>
   response.aciCoreBridge?.contextIsolation ||
   response.meta?.aciCoreBridge?.contextIsolation ||
@@ -383,6 +391,32 @@ const runCase = async (item) => {
   }
 
   if (item.budgetMax) {
+    const budgetDiscovery =
+      response.data?.budgetDiscovery ||
+      response.budgetDiscovery ||
+      response.meta?.budgetDiscovery ||
+      {};
+    const previewGroups = getPreviewModelGroups(response);
+    const totalQualifyingModels = Number(
+      budgetDiscovery.totalQualifyingModels ||
+        response.data?.totalQualifyingModels ||
+        response.totalQualifyingModels ||
+        0,
+    );
+    const totalQualifyingVariants = Number(
+      budgetDiscovery.totalQualifyingVariants ||
+        response.data?.totalQualifyingVariants ||
+        response.totalQualifyingVariants ||
+        0,
+    );
+    const returnedPreviewGroups = Number(
+      budgetDiscovery.returnedPreviewGroups ||
+        response.data?.returnedPreviewGroups ||
+        response.returnedPreviewGroups ||
+        previewGroups.length ||
+        0,
+    );
+
     if (!intent.includes("recommendation")) {
       failures.push(`budget discovery expected recommendation intent, got ${response.intent}`);
     }
@@ -391,8 +425,8 @@ const runCase = async (item) => {
       failures.push(`budget discovery expected recommendation_results_canvas, got ${canvasType}`);
     }
 
-    if (!modelGroups.length) {
-      failures.push("budget discovery returned no modelGroups");
+    if (!previewGroups.length) {
+      failures.push("budget discovery returned no preview groups");
     }
 
     if (activeComparisonFrom(response)) {
@@ -404,8 +438,12 @@ const runCase = async (item) => {
       failures.push("budget discovery did not apply vehicle_recommendation answer composer");
     }
 
-    if (!/\bmodels?\b/i.test(answer) || !/\bunder\b/i.test(answer)) {
-      failures.push("budget discovery answer should be model-first and budget-aware");
+    if (!/\bmodels?\b/i.test(answer) || !/\bunder\b/i.test(answer) || !/showing the top/i.test(answer)) {
+      failures.push("budget discovery answer should be model-first, budget-aware, and preview-aware");
+    }
+
+    if (/I found 24 models/i.test(answer)) {
+      failures.push("budget discovery answer is using preview count as total model count");
     }
 
     const modules = getResponseModules(response);
@@ -413,7 +451,24 @@ const runCase = async (item) => {
       failures.push(`budget discovery should use aci_vehicle_price_rows, got ${modules.join(", ")}`);
     }
 
-    for (const group of modelGroups) {
+    if (item.id === "budget-cars-under-20l") {
+      if (!(totalQualifyingModels > returnedPreviewGroups)) {
+        failures.push(`expected totalQualifyingModels > returnedPreviewGroups, got ${totalQualifyingModels} <= ${returnedPreviewGroups}`);
+      }
+      if (!(totalQualifyingVariants > totalQualifyingModels)) {
+        failures.push(`expected totalQualifyingVariants > totalQualifyingModels, got ${totalQualifyingVariants} <= ${totalQualifyingModels}`);
+      }
+    }
+
+    if (returnedPreviewGroups > 10 || previewGroups.length > 10) {
+      failures.push(`budget discovery preview should be <=10 groups, got returned=${returnedPreviewGroups}, rows=${previewGroups.length}`);
+    }
+
+    if (response.modelGroupCount > 10 || response.data?.modelGroupCount > 10) {
+      failures.push(`budget discovery modelGroupCount should represent preview count <=10, got top=${response.modelGroupCount}, data=${response.data?.modelGroupCount}`);
+    }
+
+    for (const group of previewGroups) {
       const variants = Array.isArray(group.qualifyingVariants) ? group.qualifyingVariants : [];
       if (!group.startsFromVariant || !group.bestUnderBudgetVariant) {
         failures.push(`budget model group missing start/best variants for ${group.displayName || group.modelKey}`);

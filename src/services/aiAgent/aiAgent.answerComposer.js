@@ -139,13 +139,37 @@ const formatBudgetLabel = (value = 0) => {
 const composeVehicleRecommendationAnswer = (response = {}) => {
   const groups = getModelGroups(response);
   const rows = getRows(response);
-  const modelCount = groups.length || rows.length || Number(response.matched || 0);
   const filters = response.data?.filters || response.filters || {};
+  const budgetDiscovery =
+    response.data?.budgetDiscovery ||
+    response.budgetDiscovery ||
+    response.meta?.budgetDiscovery ||
+    {};
+  const returnedPreviewGroups =
+    budgetDiscovery.returnedPreviewGroups ||
+    response.data?.returnedPreviewGroups ||
+    response.returnedPreviewGroups ||
+    groups.length ||
+    rows.length ||
+    0;
+  const totalQualifyingModels =
+    budgetDiscovery.totalQualifyingModels ||
+    response.data?.totalQualifyingModels ||
+    response.totalQualifyingModels ||
+    Number(response.matched || 0) ||
+    groups.length ||
+    rows.length ||
+    0;
+  const totalQualifyingVariants =
+    budgetDiscovery.totalQualifyingVariants ||
+    response.data?.totalQualifyingVariants ||
+    response.totalQualifyingVariants ||
+    response.data?.matchedVariantCount ||
+    response.meta?.matchedVariantCount ||
+    0;
   const budgetMax =
     filters.budgetMax ||
-    response.data?.budgetDiscovery?.budgetMax ||
-    response.budgetDiscovery?.budgetMax ||
-    response.meta?.budgetDiscovery?.budgetMax ||
+    budgetDiscovery.budgetMax ||
     0;
   const budgetLabel = formatBudgetLabel(budgetMax);
   const bodyType = firstText(filters.bodyType);
@@ -156,13 +180,24 @@ const composeVehicleRecommendationAnswer = (response = {}) => {
     "models",
   ].join("").replace(/\s+/g, " ").trim();
 
-  if (!modelCount) return response.answer;
+  if (!totalQualifyingModels) return response.answer;
 
-  const scoped = budgetLabel
-    ? `${filterParts} with variants under ${budgetLabel}`
-    : filterParts;
+  const modelCountLabel = Number(totalQualifyingModels).toLocaleString("en-IN");
+  const variantCountLabel = Number(totalQualifyingVariants || 0).toLocaleString("en-IN");
+  const previewLabel = Number(returnedPreviewGroups || 0).toLocaleString("en-IN");
+  const hasMore = Boolean(budgetDiscovery.hasMore);
+  const variantText = totalQualifyingVariants
+    ? ` with ${variantCountLabel} qualifying variant${Number(totalQualifyingVariants) === 1 ? "" : "s"}`
+    : "";
+  const budgetText = budgetLabel ? ` under ${budgetLabel}` : "";
+  const previewText = returnedPreviewGroups
+    ? ` Showing the top ${previewLabel} first.`
+    : "";
+  const moreText = hasMore
+    ? " Open the complete budget list to adjust filters."
+    : "";
 
-  return `I found ${modelCount} ${scoped}. I grouped them by model, showing where each model starts and the strongest qualifying variant within budget.`;
+  return `I found ${modelCountLabel} ${filterParts}${variantText}${budgetText}.${previewText}${moreText}`;
 };
 
 const humanizeFeatureKey = (value = "") =>
