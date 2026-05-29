@@ -1127,9 +1127,14 @@ export const buildVehicleRecommendResponse = ({
     modelGroups.length ||
     effectiveRows.length;
   const totalQualifyingVariants =
+    runtimeData.budgetDiscovery?.totalUniqueQualifyingVariants ||
     runtimeData.budgetDiscovery?.totalQualifyingVariants ||
     runtimeData.totalQualifyingVariants ||
     runtimeData.matchedVariantCount ||
+    0;
+  const totalQualifyingPriceRows =
+    runtimeData.budgetDiscovery?.totalQualifyingPriceRows ||
+    runtimeData.totalQualifyingPriceRows ||
     0;
 
   const budgetLabel = filters.budgetMax ? ` under ${formatMoney(filters.budgetMax)}` : "";
@@ -1159,7 +1164,7 @@ export const buildVehicleRecommendResponse = ({
       : `I could not find strong matches${featureLabel ? ` with ${featureLabel}` : ""}${budgetLabel}. Try relaxing budget, body type, transmission, or must-have features.`
     : effectiveRows.length
       ? isBudgetDiscovery
-        ? `I found ${totalQualifyingModels} model${totalQualifyingModels === 1 ? "" : "s"} with ${totalQualifyingVariants} qualifying variant${totalQualifyingVariants === 1 ? "" : "s"}${budgetLabel}. Showing the top ${effectiveRows.length} first.`
+        ? `I found ${totalQualifyingModels} model${totalQualifyingModels === 1 ? "" : "s"}${budgetLabel}. Showing the top ${effectiveRows.length} first.`
         : `I found matching cars for your filters. I’ll show the best model cards first instead of overwhelming you with every variant.`
       : `I could not find strong matches for these filters yet. Try relaxing budget, body type, transmission, or must-have features.`;
 
@@ -1198,6 +1203,8 @@ export const buildVehicleRecommendResponse = ({
       totalModelGroupCount: totalQualifyingModels,
       totalQualifyingModels,
       totalQualifyingVariants,
+      totalUniqueQualifyingVariants: totalQualifyingVariants,
+      totalQualifyingPriceRows,
       matchedVariants: rows,
       variants: rows,
       groupBy: toolPlan.output?.groupBy || "model",
@@ -1221,6 +1228,8 @@ export const buildVehicleRecommendResponse = ({
       matchedVariantCount: runtimeData.matchedVariantCount || 0,
       totalQualifyingModels,
       totalQualifyingVariants,
+      totalUniqueQualifyingVariants: totalQualifyingVariants,
+      totalQualifyingPriceRows,
     },
   });
 
@@ -1236,6 +1245,8 @@ export const buildVehicleRecommendResponse = ({
     totalModelGroupCount: totalQualifyingModels,
     totalQualifyingModels,
     totalQualifyingVariants,
+    totalUniqueQualifyingVariants: totalQualifyingVariants,
+    totalQualifyingPriceRows,
     budgetDiscovery: runtimeData.budgetDiscovery || null,
     facets: runtimeData.facets || {},
     matched: runtimeData.matched ?? totalQualifyingModels,

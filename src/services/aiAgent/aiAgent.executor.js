@@ -1949,6 +1949,54 @@ const normalizeBodyTypeForMatch = (value = "") =>
     .replace(/\s+/g, " ")
     .trim();
 
+
+const normalizeBudgetBodyTypeGroup = (value = "") => {
+  const key = normalizeBodyTypeForMatch(value);
+  if (!key) return "unknown";
+
+  if (
+    /\bsuv\b/.test(key) ||
+    key.includes("sport util") ||
+    key.includes("sports util") ||
+    key.includes("utility vehicle") ||
+    key.includes("compact suv") ||
+    key.includes("crossover")
+  ) {
+    return "suv";
+  }
+
+  if (key.includes("sedan")) return "sedan";
+  if (key.includes("hatch")) return "hatchback";
+
+  if (
+    /\bmpv\b/.test(key) ||
+    /\bmuv\b/.test(key) ||
+    key.includes("multi utility") ||
+    key.includes("minivan") ||
+    key.includes("mini van") ||
+    key === "van" ||
+    key.endsWith(" van")
+  ) {
+    return "mpv";
+  }
+
+  if (key.includes("pickup") || key.includes("pick up")) return "pickup";
+  if (key.includes("coupe")) return "coupe";
+  if (key.includes("convertible")) return "convertible";
+
+  return key;
+};
+
+const getBudgetBodyTypeGroup = (value = "", fallback = "") =>
+  normalizeBudgetBodyTypeGroup(firstMeaningful(value, fallback));
+
+const withBudgetBodyTypeGroup = (group = {}) => ({
+  ...group,
+  bodyTypeGroup:
+    group.bodyTypeGroup ||
+    getBudgetBodyTypeGroup(group.bodyType, group.bodyTypeKey || group.segment),
+});
+
 const bodyTypeMatchesBudgetFilter = (row = {}, requestedBodyType = "") => {
   const requested = normalizeBodyTypeForMatch(requestedBodyType);
   if (!requested) return true;
@@ -2019,43 +2067,233 @@ const fuelTypeMatchesBudgetFilter = (row = {}, requestedFuelType = "") => {
   return Boolean(haystack && haystack.includes(requested));
 };
 
-const normalizeBudgetDiscoveryRow = (row = {}) => {
-  const exShowroomPrice = firstNumber(row.exShowroomPrice, row.exShowroomPriceLabel);
-  const onRoadPrice = firstNumber(row.onRoadPrice, row.onRoadPriceLabel);
-  const make = displayName(firstMeaningful(row.make, row.brand));
-  const model = displayName(row.model);
-  const fullModel = displayName(firstMeaningful(row.fullModel, [make, model].filter(Boolean).join(" ")));
-  const variant = displayName(row.variant);
 
-  return compactObject({
-    id: String(row._id || row.id || ""),
+const normalizeBudgetDiscoveryRow = (row = {}) => {
+  const make = displayName(firstMeaningful(row.make, row.brand));
+  const model = displayName(firstMeaningful(row.model, row.fullModel));
+  const fullModel = displayName(
+    firstMeaningful(
+      row.fullModel,
+      [make, model].filter(Boolean).join(" "),
+      model,
+    ),
+  );
+
+  const bodyType = displayName(
+    firstMeaningful(row.bodyType, row.body_type, row.segment, row.category),
+  );
+  const bodyTypeKey = row.bodyTypeKey || slugForReadModel(bodyType);
+  const segment = displayName(firstMeaningful(row.segment, bodyType));
+
+  const fuelType = displayName(firstMeaningful(row.fuelType, row.fuel, row.fuelKey));
+  const transmission = displayName(
+    firstMeaningful(row.transmission, row.gearbox, row.transmissionKey, row.gearboxKey),
+  );
+
+  const exShowroomPrice = firstNumber(
+    row.exShowroomPrice,
+    row.ex_showroom,
+    row.exShowroomPriceValue,
+    row.price,
+  );
+
+  const onRoadPrice = firstNumber(
+    row.onRoadPrice,
+    row.total_on_road_with_accessories,
+    row.on_road_price_cardekho,
+  );
+
+  return {
+    ...row,
     make,
     brand: make,
-    model,
-    fullModel,
-    displayName: fullModel,
-    modelKey: row.modelKey || slugForReadModel(model),
     makeKey: row.makeKey || slugForReadModel(make),
-    variant,
-    variantKey: row.variantKey || slugForReadModel(variant),
-    city: row.city,
-    citySlug: row.citySlug,
-    fuelType: displayName(firstMeaningful(row.fuel, row.fuelType)),
-    fuel: displayName(firstMeaningful(row.fuel, row.fuelType)),
-    fuelKey: row.fuelKey || slugForReadModel(firstMeaningful(row.fuel, row.fuelType)),
-    transmission: displayName(row.transmission),
-    transmissionKey: row.transmissionKey || slugForReadModel(row.transmission),
-    gearbox: displayName(row.gearbox),
-    gearboxKey: row.gearboxKey || slugForReadModel(row.gearbox),
-    bodyType: displayName(row.bodyType),
-    bodyTypeKey: row.bodyTypeKey || slugForReadModel(row.bodyType),
-    segment: displayName(firstMeaningful(row.segment, row.bodyType)),
+    model,
+    modelKey: row.modelKey || slugForReadModel(model || fullModel),
+    fullModel,
+    displayName: fullModel || [make, model].filter(Boolean).join(" "),
+    variant: displayName(firstMeaningful(row.variant, row.variantName)),
+    variantName: displayName(firstMeaningful(row.variantName, row.variant)),
+    variantKey: row.variantKey || slugForReadModel(firstMeaningful(row.variantKey, row.variant, row.variantName)),
+    city: displayName(row.city),
+    citySlug: row.citySlug || slugForReadModel(row.city || DEFAULT_CITY),
+    fuelType,
+    fuel: fuelType,
+    fuelKey: row.fuelKey || slugForReadModel(fuelType),
+    transmission,
+    transmissionKey: row.transmissionKey || slugForReadModel(transmission),
+    gearbox: displayName(firstMeaningful(row.gearbox, transmission)),
+    gearboxKey: row.gearboxKey || slugForReadModel(firstMeaningful(row.gearbox, transmission)),
+    bodyType,
+    bodyTypeKey,
+    bodyTypeGroup: getBudgetBodyTypeGroup(bodyType, bodyTypeKey || segment),
+    segment,
     exShowroomPrice,
-    exShowroomPriceLabel: row.exShowroomPriceLabel || formatMoney(exShowroomPrice),
+    exShowroomPriceLabel: row.exShowroomPriceLabel || (exShowroomPrice ? formatMoney(exShowroomPrice) : ""),
     onRoadPrice,
     onRoadPriceLabel: row.onRoadPriceLabel || (onRoadPrice ? formatMoney(onRoadPrice) : ""),
-    dataSource: "aci_vehicle_price_rows",
+  };
+};
+
+const getBudgetVariantUniqueKey = (row = {}) =>
+  [
+    row.makeKey || row.make || row.brand,
+    row.modelKey || row.fullModel || row.model,
+    row.variantKey || row.variantName || row.variant,
+    row.fuelKey || row.fuelType || row.fuel,
+    row.transmissionKey || row.transmission,
+  ]
+    .map((part) => slugForReadModel(part))
+    .filter(Boolean)
+    .join("|");
+
+const pickBudgetCityPreferenceScore = (row = {}, preferredCitySlug = DEFAULT_CITY) => {
+  const citySlug = slugForReadModel(row.citySlug || row.city);
+  const preferred = slugForReadModel(preferredCitySlug || DEFAULT_CITY);
+
+  if (citySlug && preferred && citySlug === preferred) return 0;
+  if (citySlug === DEFAULT_CITY) return 1;
+  return 2;
+};
+
+const dedupeBudgetRowsByVariant = ({
+  rows = [],
+  preferredCitySlug = DEFAULT_CITY,
+} = {}) => {
+  const byVariant = new Map();
+
+  for (const row of rows) {
+    const key = getBudgetVariantUniqueKey(row);
+    if (!key) continue;
+
+    const existing = byVariant.get(key);
+    if (!existing) {
+      byVariant.set(key, row);
+      continue;
+    }
+
+    const currentScore = pickBudgetCityPreferenceScore(row, preferredCitySlug);
+    const existingScore = pickBudgetCityPreferenceScore(existing, preferredCitySlug);
+
+    if (
+      currentScore < existingScore ||
+      (currentScore === existingScore &&
+        Number(row.exShowroomPrice || 0) < Number(existing.exShowroomPrice || Number.MAX_SAFE_INTEGER))
+    ) {
+      byVariant.set(key, row);
+    }
+  }
+
+  return [...byVariant.values()];
+};
+
+const getBudgetBodyBucket = (group = {}) => {
+  const bodyText = normalizeBodyTypeForMatch(
+    [
+      group.bodyType,
+      group.bodyTypeKey,
+      group.segment,
+    ].filter(Boolean).join(" "),
+  );
+  const fuelText = searchKey(asArray(group.fuelTypes).join(" "));
+
+  if (/\bsuv\b|\bsport utilit/.test(bodyText)) return "suv";
+  if (/\bhatch/.test(bodyText)) return "hatchback";
+  if (/\bsedan/.test(bodyText)) return "sedan";
+  if (/\bmpv\b|\bmuv\b|\bmini\s*van|\bminivan/.test(bodyText)) return "mpv";
+  if (/\belectric\b|\bev\b/.test(fuelText)) return "ev";
+  return bodyText || "other";
+};
+
+const buildDiverseBudgetPreviewGroups = ({
+  groups = [],
+  filters = {},
+  limit = BUDGET_DISCOVERY_PREVIEW_GROUP_LIMIT,
+} = {}) => {
+  const safeLimit = Math.max(1, Number(limit || BUDGET_DISCOVERY_PREVIEW_GROUP_LIMIT));
+  const normalizedGroups = groups.map(withBudgetBodyTypeGroup);
+
+  if (!normalizedGroups.length) return [];
+
+  // Body-type-specific discovery must remain inside that body type.
+  // Example: "SUVs under 20 lakhs" should not be diversified into sedans/hatchbacks.
+  if (filters.bodyType) {
+    return normalizedGroups.slice(0, safeLimit);
+  }
+
+  const buckets = new Map();
+
+  normalizedGroups.forEach((group, index) => {
+    const bodyTypeGroup = group.bodyTypeGroup || "unknown";
+    if (!buckets.has(bodyTypeGroup)) buckets.set(bodyTypeGroup, []);
+    buckets.get(bodyTypeGroup).push({ group, index });
   });
+
+  const bucketEntries = Array.from(buckets.entries())
+    .map(([key, entries]) => ({
+      key,
+      entries,
+      firstIndex: Math.min(...entries.map((entry) => entry.index)),
+    }))
+    .sort((left, right) => left.firstIndex - right.firstIndex);
+
+  const selected = [];
+  const selectedKeys = new Set();
+
+  let cursor = 0;
+
+  while (
+    selected.length < safeLimit &&
+    bucketEntries.some((bucket) => bucket.entries.length > cursor)
+  ) {
+    for (const bucket of bucketEntries) {
+      const entry = bucket.entries[cursor];
+      if (!entry) continue;
+
+      const group = entry.group;
+      const uniqueKey = searchKey(
+        `${firstMeaningful(group.make, group.brand, "")}|${firstMeaningful(
+          group.modelKey,
+          group.fullModel,
+          group.displayName,
+          group.model,
+          "",
+        )}`,
+      );
+
+      if (uniqueKey && selectedKeys.has(uniqueKey)) continue;
+
+      selected.push(group);
+      if (uniqueKey) selectedKeys.add(uniqueKey);
+
+      if (selected.length >= safeLimit) break;
+    }
+
+    cursor += 1;
+  }
+
+  if (selected.length < safeLimit) {
+    for (const group of normalizedGroups) {
+      const uniqueKey = searchKey(
+        `${firstMeaningful(group.make, group.brand, "")}|${firstMeaningful(
+          group.modelKey,
+          group.fullModel,
+          group.displayName,
+          group.model,
+          "",
+        )}`,
+      );
+
+      if (uniqueKey && selectedKeys.has(uniqueKey)) continue;
+
+      selected.push(group);
+      if (uniqueKey) selectedKeys.add(uniqueKey);
+
+      if (selected.length >= safeLimit) break;
+    }
+  }
+
+  return selected.slice(0, safeLimit);
 };
 
 const buildBudgetDiscoveryModelGroups = ({
@@ -2080,6 +2318,7 @@ const buildBudgetDiscoveryModelGroups = ({
         displayName: row.fullModel || [row.make, row.model].filter(Boolean).join(" "),
         bodyType: row.bodyType,
         bodyTypeKey: row.bodyTypeKey,
+        bodyTypeGroup: row.bodyTypeGroup || getBudgetBodyTypeGroup(row.bodyType, row.bodyTypeKey || row.segment),
         segment: row.segment || row.bodyType,
         city: row.city,
         citySlug: row.citySlug,
@@ -2092,12 +2331,11 @@ const buildBudgetDiscoveryModelGroups = ({
 
   return [...groups.values()]
     .map((group) => {
-      const variants = group.rows
+      const variants = uniqueBy(
+        group.rows
         .filter((row) => row.exShowroomPrice > 0 && (!budgetMax || row.exShowroomPrice <= budgetMax))
-        .sort((left, right) => left.exShowroomPrice - right.exShowroomPrice);
-      const previewVariants = uniqueBy(
-        variants,
-        (row) => row.variantKey || row.variant || `${row.exShowroomPrice}|${row.transmission}`,
+        .sort((left, right) => left.exShowroomPrice - right.exShowroomPrice),
+        getBudgetVariantUniqueKey,
       );
 
       const startsFrom = variants[0] || {};
@@ -2133,13 +2371,15 @@ const buildBudgetDiscoveryModelGroups = ({
               ? startsFrom.exShowroomPriceLabel
               : `${startsFrom.exShowroomPriceLabel} – ${bestUnderBudget.exShowroomPriceLabel}`
             : "",
-        qualifyingVariants: previewVariants.slice(0, variantLimit).map((row) => compactObject({
+        qualifyingVariants: variants.slice(0, variantLimit).map((row) => compactObject({
           make: row.make,
           model: row.model,
           fullModel: row.fullModel,
           modelKey: row.modelKey,
           variant: row.variant,
           variantKey: row.variantKey,
+          city: row.city,
+          citySlug: row.citySlug,
           fuelType: row.fuelType,
           transmission: row.transmission,
           bodyType: row.bodyType,
@@ -2256,21 +2496,42 @@ export const runtimeBudgetVehicleDiscovery = async ({
     .filter((row) => bodyTypeMatchesBudgetFilter(row, filters.bodyType))
     .filter((row) => transmissionMatchesBudgetFilter(row, filters.transmission))
     .filter((row) => fuelTypeMatchesBudgetFilter(row, filters.fuelType));
+  const totalQualifyingPriceRows = rows.length;
+  const uniqueVariantRows = dedupeBudgetRowsByVariant({
+    rows,
+    preferredCitySlug: citySlug,
+  });
 
   const allModelGroups = buildBudgetDiscoveryModelGroups({
-    rows,
+    rows: uniqueVariantRows,
     budgetMax,
     variantLimit: BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
   });
   const fullModelGroups = allModelGroups.slice(0, BUDGET_DISCOVERY_FULL_GROUP_LIMIT);
-  const previewModelGroups = allModelGroups.slice(0, BUDGET_DISCOVERY_PREVIEW_GROUP_LIMIT);
+  const previewModelGroups = buildDiverseBudgetPreviewGroups({
+    groups: allModelGroups,
+    filters,
+    limit: BUDGET_DISCOVERY_PREVIEW_GROUP_LIMIT,
+  });
+  const previewBodyTypeGroups = unique(
+    previewModelGroups
+      .map((group) => group.bodyTypeGroup || getBudgetBodyTypeGroup(group.bodyType, group.bodyTypeKey || group.segment))
+      .filter((group) => group && group !== "unknown"),
+  );
+  const allBodyTypeGroups = unique(
+    allModelGroups
+      .map((group) => group.bodyTypeGroup || getBudgetBodyTypeGroup(group.bodyType, group.bodyTypeKey || group.segment))
+      .filter((group) => group && group !== "unknown"),
+  );
+  const diversifiedPreview = !filters.bodyType && previewBodyTypeGroups.length > 1;
   const totalQualifyingModels = allModelGroups.length;
-  const totalQualifyingVariants = allModelGroups.reduce(
+  const totalUniqueQualifyingVariants = allModelGroups.reduce(
     (total, group) => total + Number(group.qualifyingVariantCount || 0),
     0,
   );
+  const totalQualifyingVariants = totalUniqueQualifyingVariants;
   const hasMore = totalQualifyingModels > previewModelGroups.length;
-  const facets = buildBudgetDiscoveryFacets({ rows });
+  const facets = buildBudgetDiscoveryFacets({ rows: uniqueVariantRows });
 
   return {
     rows: previewModelGroups,
@@ -2283,8 +2544,13 @@ export const runtimeBudgetVehicleDiscovery = async ({
     totalModelGroupCount: totalQualifyingModels,
     returnedPreviewGroups: previewModelGroups.length,
     returnedModelGroups: previewModelGroups.length,
-    matchedVariantCount: totalQualifyingVariants,
+    diversifiedPreview,
+    previewBodyTypeGroups,
+    allBodyTypeGroups,
+    matchedVariantCount: totalUniqueQualifyingVariants,
     totalQualifyingModels,
+    totalUniqueQualifyingVariants,
+    totalQualifyingPriceRows,
     totalQualifyingVariants,
     count: previewModelGroups.length,
     matched: totalQualifyingModels,
@@ -2307,13 +2573,18 @@ export const runtimeBudgetVehicleDiscovery = async ({
       budgetBasis: "ex_showroom",
       strictBudget: true,
       totalQualifyingModels,
+      totalUniqueQualifyingVariants,
+      totalQualifyingPriceRows,
       totalQualifyingVariants,
-      matchedVariantCount: totalQualifyingVariants,
+      matchedVariantCount: totalUniqueQualifyingVariants,
       returnedPreviewGroups: previewModelGroups.length,
       returnedModelGroups: previewModelGroups.length,
       fullModelGroupCount: fullModelGroups.length,
       allModelGroupCount: totalQualifyingModels,
       totalModelGroupCount: totalQualifyingModels,
+      diversifiedPreview,
+      previewBodyTypeGroups,
+      allBodyTypeGroups,
       hasMore,
     },
     sourceTransparency: {

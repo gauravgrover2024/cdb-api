@@ -120,10 +120,19 @@ const composePriceAnswer = (response = {}) => {
 
 const composeFeatureDiscoveryAnswer = (response = {}) => {
   const groups = getModelGroups(response);
-  const matched =
-    response.matched ||
-    response.data?.matched ||
-    response.sourceTransparency?.recordCount ||
+  const featureDiscovery =
+    response.data?.featureDiscovery ||
+    response.featureDiscovery ||
+    response.meta?.featureDiscovery ||
+    {};
+  const totalQualifyingModels =
+    featureDiscovery.totalQualifyingModels ||
+    response.data?.totalQualifyingModels ||
+    groups.length ||
+    0;
+  const returnedPreviewGroups =
+    featureDiscovery.returnedPreviewGroups ||
+    response.data?.returnedPreviewGroups ||
     groups.length ||
     0;
 
@@ -150,7 +159,20 @@ const composeFeatureDiscoveryAnswer = (response = {}) => {
     })
     .filter(Boolean);
 
-  const intro = `I found ${matched} qualifying ${feature.trim()} variants, grouped by model so you can see where the feature starts and what fits best in budget.`;
+  const budgetMax =
+    featureDiscovery.budgetMax ||
+    response.data?.filters?.budgetMax ||
+    response.filters?.budgetMax ||
+    0;
+  const budgetLabel = formatBudgetLabel(budgetMax);
+  const make = firstText(response.data?.vehicle?.make, response.vehicle?.make);
+  const modelCountLabel = Number(totalQualifyingModels || groups.length).toLocaleString("en-IN");
+  const makeText = make ? `${make} ` : "";
+  const budgetText = budgetLabel ? ` under ${budgetLabel}` : "";
+  const previewText = returnedPreviewGroups
+    ? " Showing the top matches first."
+    : "";
+  const intro = `I found ${modelCountLabel} ${makeText}model${Number(totalQualifyingModels || groups.length) === 1 ? "" : "s"} with ${feature.trim()}${budgetText}.${previewText}`;
 
   return firstGroups.length
     ? `${intro} Top matches: ${firstGroups.join("; ")}.`
@@ -195,6 +217,7 @@ const composeVehicleRecommendationAnswer = (response = {}) => {
     rows.length ||
     0;
   const totalQualifyingVariants =
+    budgetDiscovery.totalUniqueQualifyingVariants ||
     budgetDiscovery.totalQualifyingVariants ||
     response.data?.totalQualifyingVariants ||
     response.totalQualifyingVariants ||
@@ -217,21 +240,24 @@ const composeVehicleRecommendationAnswer = (response = {}) => {
   if (!totalQualifyingModels) return response.answer;
 
   const modelCountLabel = Number(totalQualifyingModels).toLocaleString("en-IN");
-  const variantCountLabel = Number(totalQualifyingVariants || 0).toLocaleString("en-IN");
   const previewLabel = Number(returnedPreviewGroups || 0).toLocaleString("en-IN");
   const hasMore = Boolean(budgetDiscovery.hasMore);
-  const variantText = totalQualifyingVariants
-    ? ` with ${variantCountLabel} qualifying variant${Number(totalQualifyingVariants) === 1 ? "" : "s"}`
-    : "";
   const budgetText = budgetLabel ? ` under ${budgetLabel}` : "";
+  const isActuallyDiversified =
+    Boolean(budgetDiscovery.diversifiedPreview) &&
+    Array.isArray(budgetDiscovery.previewBodyTypeGroups) &&
+    budgetDiscovery.previewBodyTypeGroups.length > 1;
+
   const previewText = returnedPreviewGroups
-    ? ` Showing the top ${previewLabel} first.`
+    ? isActuallyDiversified
+      ? ` Showing ${previewLabel} good starting points across body styles.`
+      : ` Showing the top ${previewLabel} first.`
     : "";
   const moreText = hasMore
     ? " Open the complete budget list to adjust filters."
     : "";
 
-  return `I found ${modelCountLabel} ${filterParts}${variantText}${budgetText}.${previewText}${moreText}`;
+  return `I found ${modelCountLabel} ${filterParts}${budgetText}.${previewText}${moreText}`;
 };
 
 const humanizeFeatureKey = (value = "") =>

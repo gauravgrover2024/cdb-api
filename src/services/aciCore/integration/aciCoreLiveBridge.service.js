@@ -278,6 +278,11 @@ export const runAciCoreLiveBridge = async ({
     message,
     context: isolatedContext,
   });
+  const bridgeTool = plan.tools?.[0]?.tool || "";
+  const bridgePrimaryTask =
+    bridgeTool === "vehicle_recommend" && isolation === "broad_discovery_without_model"
+      ? "vehicle_discovery"
+      : understanding.meaningFrame?.primaryTask || "";
 
   return composeAciAnswer({
     ...normalized,
@@ -286,8 +291,8 @@ export const runAciCoreLiveBridge = async ({
       durationMs: Date.now() - startedAt,
       selectedParser: understanding.selectedParser || "",
       usedGemini: Boolean(understanding.usedGemini),
-      primaryTask: understanding.meaningFrame?.primaryTask || "",
-      tool: plan.tools?.[0]?.tool || "",
+      primaryTask: bridgePrimaryTask,
+      tool: bridgeTool,
       planMode: plan.mode || "",
       contextIsolation: isolation,
       originalMessage,
@@ -300,8 +305,8 @@ export const runAciCoreLiveBridge = async ({
         durationMs: Date.now() - startedAt,
         selectedParser: understanding.selectedParser || "",
         usedGemini: Boolean(understanding.usedGemini),
-        primaryTask: understanding.meaningFrame?.primaryTask || "",
-        tool: plan.tools?.[0]?.tool || "",
+        primaryTask: bridgePrimaryTask,
+        tool: bridgeTool,
         planMode: plan.mode || "",
         contextIsolation: isolation,
         originalMessage,
