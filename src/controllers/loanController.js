@@ -5138,6 +5138,32 @@ const createLoan = asyncHandler(async (req, res) => {
           });
         }
 
+        // 4. Strip out any fields from stages after pre-file to ensure fresh state
+        const postPrefilePrefixes = [
+          "approval_",
+          "postfile_",
+          "delivery_",
+          "payout_",
+          "rc_",
+          "invoice_",
+          "disburse_",
+          "cheque_",
+          "ecs_",
+          "nach_",
+          "si_"
+        ];
+        
+        Object.keys(currentLoanPayload).forEach(key => {
+          if (postPrefilePrefixes.some(prefix => key.startsWith(prefix))) {
+            delete currentLoanPayload[key];
+          }
+        });
+
+        // Reset stage and specific keys to start fresh at Pre-file
+        currentLoanPayload.currentStage = "Pre-file";
+        delete currentLoanPayload.status;
+        delete currentLoanPayload.instrumentType;
+
         const loan = await Loan.create({
           ...currentLoanPayload,
           loanId: uniqueLoanId,
