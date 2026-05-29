@@ -5106,8 +5106,8 @@ const createLoan = asyncHandler(async (req, res) => {
       try {
         const uniqueLoanId = await reserveNextLoanId();
         
-        // Clone the base payload for this specific vehicle file
-        const currentLoanPayload = { ...loanPayload };
+        // Deep clone the base payload for this specific vehicle file to break shared nested references
+        const currentLoanPayload = JSON.parse(JSON.stringify(loanPayload));
 
         // 1. Assign unique Loan Reference ID (e.g. CompanyName-V1, CompanyName-V2)
         currentLoanPayload.referenceNumber = `${companyBase}-V${i + 1}`;
