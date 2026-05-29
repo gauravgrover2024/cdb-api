@@ -615,17 +615,18 @@ export const buildVehiclePricelistResponse = ({
 
   /* ACI_PRICE_V2_PASSTHROUGH_START */
   if (
-    runtimeData?.canvasType === "pricelist_canvas" &&
-    runtimeData?.widget?.canvasType === "pricelist_canvas" &&
+    ["pricelist_canvas", "price_breakup_canvas"].includes(runtimeData?.canvasType) &&
+    ["pricelist_canvas", "price_breakup_canvas"].includes(runtimeData?.widget?.canvasType) &&
     Array.isArray(runtimeData?.widget?.rows)
   ) {
     const widget = runtimeData.widget;
     const rows = widget.rows || runtimeData.rows || [];
+    const canvasType = runtimeData.canvasType || widget.canvasType || "pricelist_canvas";
 
     return {
       intent: runtimeData.intent || "vehicle_pricelist",
       displayMode: "canvas",
-      canvasType: "pricelist_canvas",
+      canvasType,
       inlineType: null,
       title: widget.title || runtimeData.title || "Price list",
       answer:

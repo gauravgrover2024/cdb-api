@@ -55,10 +55,12 @@ const normalizeChargeItem = (item = {}, index = 0, section = "other") => {
     label,
     amount,
     value: amount,
+    formatted: amount ? formatMoney(amount) : "",
     displayValue: amount ? formatMoney(amount) : "",
     rawDisplayValue: item.price || "",
     type: section,
     source: section === "optional" ? "optional_list" : "other_list",
+    selectedByDefault: false,
     raw: item,
   };
 };
@@ -114,15 +116,16 @@ export const buildV2PriceBreakup = (row = {}) => {
     0,
   );
 
-  const optionalTotal =
-    optionalTotalFromItems ||
-    parsePriceAmount(
-      row.optional_total,
-      row.optional_totalAccessories,
-      raw.optional_total,
-      raw.optional_totalAccessories,
-      raw.optional_totalAccessoriesInRs,
-    );
+  const explicitOptionalTotal = parsePriceAmount(
+    row.optional_total,
+    row.optional_totalAccessories,
+    raw.optional_total,
+    raw.optional_totalAccessories,
+    raw.optional_totalAccessoriesInRs,
+  );
+
+  const optionalTotal = explicitOptionalTotal || 0;
+  const effectiveOptionalItems = optionalTotal ? optionalItems : [];
 
   const otherTotal =
     otherTotalFromItems ||
@@ -134,22 +137,50 @@ export const buildV2PriceBreakup = (row = {}) => {
       raw.other_totalOtherChargesInRsFormat,
     );
 
+  const mandatoryChargesTotal = rto + insurance + otherTotal;
   const otherCharges = optionalTotal + otherTotal;
 
-  const computedOnRoadPrice = exShowroom + rto + insurance + otherCharges;
+  const computedOnRoadWithoutOptional = exShowroom + mandatoryChargesTotal;
+  const computedOnRoadWithOptional = computedOnRoadWithoutOptional + optionalTotal;
 
-  const dbOnRoadPrice = parsePriceAmount(
-    row.onRoadPrice,
-    row.on_road_price,
+  const explicitOnRoadWithOptional = parsePriceAmount(
     row.total_on_road_with_accessories,
-    raw.onRoadPrice,
+    row.on_road_price_cardekho,
     raw.on_road_price_cardekho,
     raw.total_on_road_with_accessories,
   );
+  const genericOnRoadPrice = parsePriceAmount(
+    row.onRoadPrice,
+    row.on_road_price,
+    raw.onRoadPrice,
+    raw.on_road_price,
+  );
+  const dbOnRoadWithOptional =
+    explicitOnRoadWithOptional ||
+    (!optionalTotal ? genericOnRoadPrice : 0);
 
-  const onRoadPrice = dbOnRoadPrice || computedOnRoadPrice;
-  const difference = computedOnRoadPrice - onRoadPrice;
-  const isValid = onRoadPrice > 0 ? Math.abs(difference) <= 1 : computedOnRoadPrice > 0;
+  const dbOnRoadWithoutOptional = parsePriceAmount(
+    row.orp_without_accessories,
+    row.ORPWithoutOptionAccessoriesDoubleType,
+    raw.orp_without_accessories,
+    raw.ORPWithoutOptionAccessoriesDoubleType,
+  );
+
+  const hasMandatoryComponents = Boolean(exShowroom || rto || insurance || otherTotal);
+  const onRoadPriceWithoutOptional =
+    dbOnRoadWithoutOptional ||
+    (hasMandatoryComponents ? computedOnRoadWithoutOptional : 0) ||
+    (!optionalTotal ? dbOnRoadWithOptional : 0) ||
+    (optionalTotal ? genericOnRoadPrice : 0);
+  const onRoadPriceWithOptional =
+    dbOnRoadWithOptional ||
+    (onRoadPriceWithoutOptional ? onRoadPriceWithoutOptional + optionalTotal : 0);
+  const onRoadPrice = onRoadPriceWithoutOptional || onRoadPriceWithOptional;
+  const difference = computedOnRoadWithOptional - onRoadPriceWithOptional;
+  const incomplete = !dbOnRoadWithoutOptional && !hasMandatoryComponents && Boolean(dbOnRoadWithOptional);
+  const isValid = onRoadPriceWithOptional > 0
+    ? Math.abs(difference) <= 1 || incomplete
+    : computedOnRoadWithOptional > 0;
 
   const detailSections = [
     {
@@ -158,7 +189,8 @@ export const buildV2PriceBreakup = (row = {}) => {
       amount: optionalTotal,
       total: optionalTotal,
       displayValue: optionalTotal ? formatMoney(optionalTotal) : "",
-      items: optionalItems,
+      items: effectiveOptionalItems,
+      selectedByDefault: false,
     },
     {
       key: "other_list",
@@ -171,7 +203,7 @@ export const buildV2PriceBreakup = (row = {}) => {
   ].filter((section) => section.items.length || section.amount > 0);
 
   const allOtherChargeItems = [
-    ...optionalItems,
+    ...effectiveOptionalItems,
     ...otherItems,
   ];
 
@@ -200,9 +232,9 @@ export const buildV2PriceBreakup = (row = {}) => {
     {
       key: "other_charges",
       label: "Other charges",
-      amount: otherCharges,
-      value: otherCharges,
-      displayValue: otherCharges ? formatMoney(otherCharges) : "",
+      amount: otherTotal,
+      value: otherTotal,
+      displayValue: otherTotal ? formatMoney(otherTotal) : "",
       hasDetails: allOtherChargeItems.length > 0,
       items: allOtherChargeItems,
       children: allOtherChargeItems,
@@ -216,30 +248,97 @@ export const buildV2PriceBreakup = (row = {}) => {
     insurance,
 
     optionalTotal,
-    optionalItems,
+    optionalItems: effectiveOptionalItems,
 
     otherTotal,
     otherItems,
 
     otherCharges,
     otherChargeItems: allOtherChargeItems,
+    mandatoryChargesTotal,
 
     visibleLines,
     detailSections,
 
-    computedOnRoadPrice,
+    computedOnRoadPrice: computedOnRoadWithOptional,
+    computedOnRoadWithoutOptional,
+    computedOnRoadWithOptional,
     canonicalOnRoadPrice: onRoadPrice,
     onRoadPrice,
+    onRoadPriceWithoutOptional,
+    onRoadPriceWithOptional,
     difference,
     isValid,
+    incomplete,
+
+    contract: {
+      priceBasis: "ex_showroom_plus_mandatory_charges",
+      city: cleanText(row.city || raw.city),
+      currency: "INR",
+      incomplete,
+      exShowroom: {
+        key: "ex_showroom",
+        label: "Ex-showroom",
+        value: exShowroom,
+        formatted: exShowroom ? formatMoney(exShowroom) : "",
+      },
+      mandatoryCharges: {
+        total: mandatoryChargesTotal,
+        formatted: mandatoryChargesTotal ? formatMoney(mandatoryChargesTotal) : "",
+        items: [
+          {
+            key: "rto",
+            label: "RTO",
+            value: rto,
+            amount: rto,
+            formatted: rto ? formatMoney(rto) : "",
+          },
+          {
+            key: "insurance",
+            label: "Insurance",
+            value: insurance,
+            amount: insurance,
+            formatted: insurance ? formatMoney(insurance) : "",
+          },
+          ...otherItems.map((item) => ({
+            ...item,
+            type: "mandatory",
+            selectedByDefault: true,
+          })),
+        ].filter((item) => Number(item.value || item.amount || 0) > 0),
+      },
+      optionalCharges: {
+        selectedByDefault: false,
+        total: optionalTotal,
+        formatted: optionalTotal ? formatMoney(optionalTotal) : "",
+        items: effectiveOptionalItems.map((item) => ({
+          ...item,
+          selectedByDefault: false,
+        })),
+      },
+      totals: {
+        onRoadWithoutOptional: onRoadPriceWithoutOptional,
+        onRoadWithoutOptionalFormatted: onRoadPriceWithoutOptional ? formatMoney(onRoadPriceWithoutOptional) : "",
+        onRoadWithOptional: onRoadPriceWithOptional,
+        onRoadWithOptionalFormatted: onRoadPriceWithOptional ? formatMoney(onRoadPriceWithOptional) : "",
+        optionalDelta: optionalTotal,
+        optionalDeltaFormatted: optionalTotal ? formatMoney(optionalTotal) : "",
+      },
+    },
 
     priceIntegrity: {
       isValid,
       difference,
-      computedOnRoad: computedOnRoadPrice,
+      incomplete,
+      computedOnRoad: computedOnRoadWithOptional,
+      computedOnRoadWithoutOptional,
+      computedOnRoadWithOptional,
       canonicalOnRoadPrice: onRoadPrice,
-      formula: "ex_showroom + rto + insurance + optional_list + other_list",
-      warnings: isValid ? [] : ["Computed on-road price does not match database onRoadPrice."],
+      formula: "ex_showroom + rto + insurance + other_list + optional_list",
+      warnings: [
+        ...(incomplete ? ["Only aggregate on-road price is available; breakup fields are incomplete."] : []),
+        ...(!isValid ? ["Computed on-road price does not match database onRoadPrice."] : []),
+      ],
     },
 
     tooltip: {

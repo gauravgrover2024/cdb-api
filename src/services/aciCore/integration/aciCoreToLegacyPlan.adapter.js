@@ -235,8 +235,13 @@ const inferConversationMode = (tool = '', meaningFrame = {}) => {
 
 const inferOutput = (tool = '', meaningFrame = {}) => {
   if (tool === 'vehicle_pricelist') {
+    const wantsPriceBreakup =
+      meaningFrame.requestedFacts?.onRoad ||
+      meaningFrame.primaryTask === 'price_breakdown' ||
+      asArray(meaningFrame.secondaryTasks).includes('price_breakdown');
+
     return {
-      canvasType: meaningFrame.requestedFacts?.onRoad ? 'price_breakup_canvas' : 'pricelist_canvas',
+      canvasType: wantsPriceBreakup ? 'price_breakup_canvas' : 'pricelist_canvas',
       inlineType: null,
       groupBy: 'variant',
       preferredWidgetType: null,
@@ -393,7 +398,12 @@ const buildFilters = (meaningFrame = {}, context = {}) => {
     city,
     budgetMin: getBudgetMin(meaningFrame),
     budgetMax: getBudgetMax(meaningFrame),
-    priceBasis: meaningFrame.requestedFacts?.onRoad ? 'on_road' : undefined,
+    priceBasis:
+      meaningFrame.requestedFacts?.onRoad ||
+      meaningFrame.primaryTask === 'price_breakdown' ||
+      asArray(meaningFrame.secondaryTasks).includes('price_breakdown')
+        ? 'on_road'
+        : undefined,
     bodyType: getBodyType(meaningFrame),
     fuelType: getFuelType(meaningFrame),
     transmission: getTransmission(meaningFrame),

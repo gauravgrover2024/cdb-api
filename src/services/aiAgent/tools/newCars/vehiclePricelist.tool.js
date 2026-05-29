@@ -543,6 +543,10 @@ const normalizePriceRow = (row = {}, index = 0) => {
   const insurance = breakup.insurance;
   const otherCharges = breakup.otherCharges;
   const onRoadPrice = breakup.onRoadPrice;
+  const onRoadPriceWithoutOptional = breakup.onRoadPriceWithoutOptional;
+  const onRoadPriceWithOptional = breakup.onRoadPriceWithOptional;
+  const mandatoryChargesTotal = breakup.mandatoryChargesTotal;
+  const optionalChargesTotal = breakup.optionalTotal;
 
   const id = cleanText(
     first(
@@ -577,6 +581,7 @@ const normalizePriceRow = (row = {}, index = 0) => {
     transmission,
 
     exShowroomPrice,
+    exShowroomPriceValue: exShowroomPrice,
     exShowroomPriceLabel: formatMoney(exShowroomPrice),
 
     rto,
@@ -599,19 +604,32 @@ const normalizePriceRow = (row = {}, index = 0) => {
 
     onRoadPrice,
     onRoadPriceLabel: formatMoney(onRoadPrice),
+    onRoadPriceWithoutOptional,
+    onRoadPriceWithoutOptionalLabel: formatMoney(onRoadPriceWithoutOptional),
+    onRoadPriceWithOptional,
+    onRoadPriceWithOptionalLabel: formatMoney(onRoadPriceWithOptional),
+    mandatoryChargesTotal,
+    mandatoryChargesTotalLabel: formatMoney(mandatoryChargesTotal),
+    optionalChargesTotal,
+    optionalChargesTotalLabel: formatMoney(optionalChargesTotal),
 
     computedOnRoadPrice: breakup.computedOnRoadPrice,
     canonicalOnRoadPrice: breakup.canonicalOnRoadPrice,
     priceIntegrity: breakup.priceIntegrity,
 
     priceBreakup: {
-      exShowroom: breakup.exShowroom,
-      rto: breakup.rto,
-      insurance: breakup.insurance,
-      otherCharges: breakup.otherCharges,
+      ...breakup.contract,
+      legacyExShowroom: breakup.exShowroom,
+      legacyRto: breakup.rto,
+      legacyInsurance: breakup.insurance,
+      legacyOtherCharges: breakup.otherCharges,
       optionalTotal: breakup.optionalTotal,
       otherTotal: breakup.otherTotal,
-      onRoadPrice: breakup.onRoadPrice,
+      legacyOnRoadPrice: breakup.onRoadPrice,
+      onRoadPriceWithoutOptional: breakup.onRoadPriceWithoutOptional,
+      onRoadPriceWithOptional: breakup.onRoadPriceWithOptional,
+      mandatoryChargesTotal: breakup.mandatoryChargesTotal,
+      optionalChargesTotal: breakup.optionalTotal,
       computedOnRoadPrice: breakup.computedOnRoadPrice,
       canonicalOnRoadPrice: breakup.canonicalOnRoadPrice,
       visibleLines: breakup.visibleLines,
@@ -1156,6 +1174,91 @@ const READ_MODEL_SUMMARY_PROJECTION = {
   colorCount: 1,
 };
 
+const SOURCE_PRICE_BREAKUP_PROJECTION = {
+  brand: 1,
+  make: 1,
+  model: 1,
+  variant: 1,
+  variant_short: 1,
+  variant_normalized: 1,
+  city: 1,
+  ex_showroom: 1,
+  exShowroomPrice: 1,
+  ex_showroom_price_cardekho: 1,
+  rto: 1,
+  rto_amount_cardekho: 1,
+  insurance: 1,
+  insurance_amount_cardekho: 1,
+  other_list: 1,
+  other_totalOtherCharges: 1,
+  other_totalOtherChargesInRsFormat: 1,
+  otherCharges: 1,
+  optional_list: 1,
+  optional_total: 1,
+  optional_totalAccessories: 1,
+  optional_totalAccessoriesInRs: 1,
+  orp_without_accessories: 1,
+  ORPWithoutOptionAccessoriesDoubleType: 1,
+  onRoadPrice: 1,
+  on_road_price_cardekho: 1,
+  total_on_road_with_accessories: 1,
+};
+
+let priceCityCatalogPromise = null;
+
+const getPriceCityCatalog = async () => {
+  if (priceCityCatalogPromise) return priceCityCatalogPromise;
+
+  priceCityCatalogPromise = mongoose.connection.db
+    .collection(ACI_PRICE_ROWS_COLLECTION)
+    .aggregate([
+      {
+        $group: {
+          _id: "$citySlug",
+          citySlug: { $first: "$citySlug" },
+          city: { $first: "$city" },
+        },
+      },
+      { $match: { citySlug: { $type: "string", $ne: "" } } },
+      { $limit: 1000 },
+    ])
+    .toArray()
+    .then((rows) =>
+      rows
+        .map((row) => ({
+          citySlug: cleanText(row.citySlug),
+          city: cleanText(row.city),
+        }))
+        .filter((row) => row.citySlug),
+    );
+
+  return priceCityCatalogPromise;
+};
+
+const resolveRequestedCityFromMessage = async ({
+  requestedCity = DEFAULT_CITY,
+  userMessage = "",
+} = {}) => {
+  const messageKey = normalizeKey(userMessage);
+  if (!messageKey) return requestedCity || DEFAULT_CITY;
+
+  const cityCatalog = await getPriceCityCatalog();
+  const matches = cityCatalog
+    .flatMap((city) => {
+      const cityNameKey = normalizeKey(city.city);
+      const citySlugKey = normalizeKey(city.citySlug);
+
+      return [
+        { ...city, key: cityNameKey },
+        { ...city, key: citySlugKey },
+      ];
+    })
+    .filter((city) => city.key && ` ${messageKey} `.includes(` ${city.key} `))
+    .sort((a, b) => b.key.length - a.key.length);
+
+  return matches[0]?.citySlug || requestedCity || DEFAULT_CITY;
+};
+
 const slugifyStrict = (value = "") => {
   const key = normalizeKey(value).replace(/\s+/g, "-");
   return key || "";
@@ -1361,6 +1464,7 @@ const fetchVehiclePricelistRowsFromReadModels = async ({
             bodyType: 1,
             bodyTypeKey: 1,
             sortOrder: 1,
+            sourceVehicleId: 1,
           },
         },
       )
@@ -1390,32 +1494,73 @@ const fetchVehiclePricelistRowsFromReadModels = async ({
     const visual = buildReadModelVisual(effectiveSummary);
     const visualGallery = visual ? [visual] : [];
     const vehicle = buildReadModelVehicleFromSummary(effectiveSummary, visual);
+    const sourceVehicleIds = [
+      ...new Map(
+        priceRows
+          .flatMap((row) => {
+            const value = row.sourceVehicleId;
+            const text = cleanText(value);
+            if (!value && !text) return [];
 
-    const rows = priceRows.map((row) => ({
-      ...row,
-      brand: row.make,
-      displayName: effectiveSummary.displayName || row.fullModel || buildVehicleDisplayName(row.make, row.model),
-      city: row.city || effectiveSummary.city || displayCity(citySlug),
-      citySlug: row.citySlug || citySlug,
-      price: row.onRoadPrice || row.exShowroomPrice || 0,
-      priceLabel: formatMoney(row.onRoadPrice || row.exShowroomPrice || 0),
-      imageUrl: visual?.imageUrl || "",
-      normalizedImageUrl: visual?.normalizedImageUrl || visual?.imageUrl || "",
-      imageFrame: visual?.imageFrame || null,
-      colorName: visual?.colorName || "",
-      selectedColor: visual || null,
-      visualGallery,
-      vehicle: {
-        ...vehicle,
-        make: row.make || vehicle.make,
-        brand: row.make || vehicle.brand,
-        model: row.model || vehicle.model,
-        city: row.city || vehicle.city,
-        citySlug: row.citySlug || vehicle.citySlug,
-      },
-      source: "aci_vehicle_read_models",
-      dataSource: "aci_vehicle_read_models",
-    }));
+            return [
+              value,
+              text,
+              mongoose.Types.ObjectId.isValid(text)
+                ? new mongoose.Types.ObjectId(text)
+                : null,
+            ].filter(Boolean);
+          })
+          .map((value) => [String(value), value]),
+      ).values(),
+    ];
+    const sourceVehicles = sourceVehicleIds.length
+      ? await db
+          .collection("vehicles")
+          .find(
+            { _id: { $in: sourceVehicleIds } },
+            { projection: SOURCE_PRICE_BREAKUP_PROJECTION },
+          )
+          .toArray()
+      : [];
+    const sourceVehicleById = new Map(
+      sourceVehicles.map((sourceRow) => [String(sourceRow._id), sourceRow]),
+    );
+
+    const rows = priceRows.map((row) => {
+      const sourceVehicle = sourceVehicleById.get(String(row.sourceVehicleId)) || null;
+      const normalized = normalizePriceRow({
+        ...(sourceVehicle || {}),
+        ...row,
+        raw: sourceVehicle || row,
+      });
+
+      return {
+        ...row,
+        ...normalized,
+        brand: row.make,
+        displayName: effectiveSummary.displayName || row.fullModel || buildVehicleDisplayName(row.make, row.model),
+        city: row.city || effectiveSummary.city || displayCity(citySlug),
+        citySlug: row.citySlug || citySlug,
+        price: normalized.onRoadPriceWithoutOptional || normalized.onRoadPrice || row.onRoadPrice || row.exShowroomPrice || 0,
+        priceLabel: formatMoney(normalized.onRoadPriceWithoutOptional || normalized.onRoadPrice || row.onRoadPrice || row.exShowroomPrice || 0),
+        imageUrl: visual?.imageUrl || "",
+        normalizedImageUrl: visual?.normalizedImageUrl || visual?.imageUrl || "",
+        imageFrame: visual?.imageFrame || null,
+        colorName: visual?.colorName || "",
+        selectedColor: visual || null,
+        visualGallery,
+        vehicle: {
+          ...vehicle,
+          make: row.make || vehicle.make,
+          brand: row.make || vehicle.brand,
+          model: row.model || vehicle.model,
+          city: row.city || vehicle.city,
+          citySlug: row.citySlug || vehicle.citySlug,
+        },
+        source: "aci_vehicle_read_models",
+        dataSource: "aci_vehicle_read_models",
+      };
+    });
 
     return {
       rows,
@@ -2529,7 +2674,11 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
       break;
     }
   }
-  const requestedCity = getRequestedCity(args);
+  let requestedCity = getRequestedCity(args);
+  requestedCity = await resolveRequestedCityFromMessage({
+    requestedCity,
+    userMessage,
+  });
   let effectiveRequestedMake = requestedMake;
 
   let rawResult = await fetchVehiclePricelistRows({
@@ -2728,14 +2877,32 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
   );
   const wantsOnRoadPrice =
     normalizeKey(`${requestedPriceBasis} ${userMessage}`).includes("on road");
+  const asksForVariantList =
+    /\b(price\s*list|pricelist|variants?\s+price|variant[-\s]*wise|all\s+variants?)\b/i.test(
+      userMessage || "",
+    );
+  const hasRequestedVariant = Boolean(cleanText(requestedVariant || rawRequestedVariant));
+  const isExactVariantResult = rows.length === 1 && hasRequestedVariant;
+  const isModelLevelListResult =
+    rows.length > 1 && (!hasRequestedVariant || asksForVariantList);
+  const wantsPriceBreakup =
+    !isModelLevelListResult &&
+    isExactVariantResult &&
+    (wantsOnRoadPrice ||
+      /\b(price\s*)?(break\s*up|breakup|breakdown)\b/i.test(userMessage || ""));
+  const outputCanvasType = wantsPriceBreakup
+    ? "price_breakup_canvas"
+    : "pricelist_canvas";
   const displayVariant = cleanVehicleText(
-    sanitizeRequestedVariant(rows[0]?.variant || requestedVariant, {
+    isExactVariantResult
+      ? sanitizeRequestedVariant(rows[0]?.variant || requestedVariant, {
       requestedModel: vehicle.model || requestedModel,
       requestedMake: vehicle.make || effectiveRequestedMake || requestedMake,
       requestedDisplayName: vehicle.displayName,
-    }) ||
-      rows[0]?.variant ||
-      requestedVariant,
+        }) ||
+          rows[0]?.variant ||
+          requestedVariant
+      : "",
   );
   const vehicleLabel =
     vehicle.displayName ||
@@ -2745,6 +2912,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     ? `${vehicleLabel} ${displayVariant} ${wantsOnRoadPrice ? "on-road price" : "price"}`
     : `${vehicleLabel} price list`;
   const subtitle = `${vehicle.city || displayCity(requestedCity)} · ${rows.length} variants · ${wantsOnRoadPrice ? "On-road" : "Ex-showroom"}`;
+  const listAnswer = `I found ${rows.length} ${vehicleLabel} variants in ${vehicle.city || displayCity(requestedCity)}. Default on-road prices exclude optional add-ons; optional add-on totals are available in each variant breakup.`;
 
   const actions = buildActions({
     vehicle,
@@ -2779,12 +2947,15 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
   const widget = {
     type: "vehicle_pricelist",
     widgetType: "vehicle_pricelist",
-    canvasType: "pricelist_canvas",
+    canvasType: outputCanvasType,
+    priceBreakupCanvas: wantsPriceBreakup,
     title,
     heading: title,
     subtitle,
     answer: rows.length
-      ? `I found the ${title} for ${vehicle.city || displayCity(requestedCity)}.`
+      ? isModelLevelListResult
+        ? listAnswer
+        : `I found the ${title} for ${vehicle.city || displayCity(requestedCity)}.`
       : `I could not find live price rows for ${requestedModel || "this model"} in ${displayCity(requestedCity)}.`,
     city: vehicle.city || displayCity(requestedCity),
     citySlug: vehicle.citySlug || slugify(requestedCity || DEFAULT_CITY),
@@ -2833,7 +3004,8 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     ...rawResult,
     tool: "vehicle_pricelist",
     intent: "vehicle_pricelist",
-    canvasType: "pricelist_canvas",
+    canvasType: outputCanvasType,
+    priceBreakupCanvas: wantsPriceBreakup,
     answer: widget.answer,
     title,
     subtitle,

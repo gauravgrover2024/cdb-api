@@ -62,12 +62,46 @@ const getPriceLabel = (row = {}) =>
 const composePriceAnswer = (response = {}) => {
   const rows = getRows(response);
   const row = rows[0] || {};
-  const vehicle = getRowVehicleLabel(row) || firstText(response.title, response.data?.title);
+  const responseVehicle = response.vehicle || response.widget?.vehicle || response.data?.vehicle || {};
+  const rowVehicle = getRowVehicleLabel(row);
+  const responseVehicleLabel =
+    getVehicleLabel(responseVehicle) ||
+    firstText(response.title, response.data?.title);
+  const vehicle = rowVehicle || responseVehicleLabel;
   const city = firstText(row.cityName, row.city, response.contextPatch?.anchorCity, "Delhi");
-  const onRoad = firstText(row.onRoadPriceLabel, row.onRoadPrice);
+  const isListResponse = rows.length > 1 || response.canvasType === "pricelist_canvas";
+
+  if (isListResponse && rows.length) {
+    return `I found ${rows.length} ${responseVehicleLabel || vehicle || "vehicle"} variants in ${city}. Default on-road prices exclude optional add-ons; optional add-on totals are available in each variant breakup.`;
+  }
+
+  const onRoadWithoutOptional = firstText(
+    row.onRoadPriceWithoutOptionalLabel,
+    row.priceBreakup?.totals?.onRoadWithoutOptionalFormatted,
+    row.onRoadPriceWithoutOptional,
+  );
+  const onRoadWithOptional = firstText(
+    row.onRoadPriceWithOptionalLabel,
+    row.priceBreakup?.totals?.onRoadWithOptionalFormatted,
+    row.onRoadPriceWithOptional,
+  );
+  const optionalTotal = firstText(
+    row.optionalChargesTotalLabel,
+    row.priceBreakup?.optionalCharges?.formatted,
+    row.priceBreakup?.totals?.optionalDeltaFormatted,
+  );
+  const onRoad = onRoadWithoutOptional || firstText(row.onRoadPriceLabel, row.onRoadPrice);
   const exShowroom = firstText(row.exShowroomPriceLabel, row.exShowroomPrice);
 
   if (!vehicle) return response.answer;
+
+  if (onRoadWithoutOptional && exShowroom) {
+    const optionalLine = onRoadWithOptional && onRoadWithOptional !== onRoadWithoutOptional
+      ? ` Optional add-ons are separate (${optionalTotal || "available separately"}), taking it to ${onRoadWithOptional} if selected.`
+      : " Optional add-ons are not included in this default on-road figure.";
+
+    return `For ${vehicle} in ${city}, the on-road price excluding optional add-ons is ${onRoadWithoutOptional}. The ex-showroom price is ${exShowroom}.${optionalLine}`;
+  }
 
   if (onRoad && exShowroom) {
     return `For ${vehicle} in ${city}, the on-road price is ${onRoad}. The ex-showroom price is ${exShowroom}.`;
