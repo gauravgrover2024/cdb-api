@@ -203,7 +203,7 @@ const TASK_HINTS = [
   { task: 'color_lookup', terms: ['color', 'colour', 'black', 'white', 'red', 'dual tone'] },
   { task: 'feature_answer', terms: ['feature', 'features', 'does it have', 'available with', 'comes with'] },
   { task: 'vehicle_comparison', terms: ['compare', 'vs', 'versus', 'better than', 'difference between'] },
-  { task: 'vehicle_discovery', terms: ['cars with', 'cars under', 'show cars', 'show me cars', 'which cars'] },
+  { task: 'vehicle_discovery', terms: ['cars with', 'cars under', 'suvs under', 'sedans under', 'hatchbacks under', 'models under', 'options under', 'show cars', 'show me cars', 'which cars'] },
   { task: 'quotation', terms: ['quote', 'quotation', 'best price'] },
   { task: 'offer_lookup', terms: ['offer', 'discount', 'bonus'] },
   { task: 'waiting_period', terms: ['waiting', 'delivery time', 'kitne din', 'immediate delivery'] },
@@ -276,6 +276,16 @@ const buildFeatureAliasEntries = (feature = {}) => {
 
   for (const alias of getParentheticalAliases(feature.displayName || '')) {
     pushEntry(alias, 'display_parenthetical');
+  }
+
+  if (
+    canonicalText === 'turbo charger' ||
+    displayText === 'turbo charger' ||
+    entries.some((entry) => entry.aliasClean === 'turbo charger')
+  ) {
+    pushEntry('turbo', 'catalog_synonym');
+    pushEntry('turbocharged', 'catalog_synonym');
+    pushEntry('turbo charged', 'catalog_synonym');
   }
 
   return uniqueBy(entries, (item) => item.aliasClean);
@@ -792,6 +802,54 @@ const mapVariantMatch = (match = {}) => createCandidateItem({
   },
 });
 
+const FEATURE_ALIAS_VARIANT_BLOCKLIST = [
+  'turbo',
+  'turbocharged',
+  'turbo charged',
+  'turbo charger',
+  'sunroof',
+  'adas',
+  'abs',
+  'airbag',
+  'airbags',
+  'six airbags',
+  '6 airbags',
+  'camera',
+  '360 camera',
+  'ventilated seats',
+  'wireless charging',
+];
+
+const getFeatureAliasVariantBlocklist = (featureMatches = []) => {
+  const keys = new Set(FEATURE_ALIAS_VARIANT_BLOCKLIST.map(clean).filter(Boolean));
+
+  for (const feature of featureMatches || []) {
+    [
+      feature?.rawText,
+      feature?.displayName,
+      feature?.canonicalKey,
+      feature?.metadata?.matchedAlias,
+    ]
+      .map((value) => clean(String(value || '').replace(/[_-]/g, ' ')))
+      .filter(Boolean)
+      .forEach((value) => keys.add(value));
+  }
+
+  return keys;
+};
+
+const isFeatureAliasOnlyVariantMatch = (match = {}, blocklist = new Set()) => {
+  const matchedAlias = clean(match.matchedAlias || match.rawText || '');
+  const rawVariant = clean(match.rawVariant || match.variant || '');
+  const shortVariantKey = clean(match.shortVariantKey || '');
+
+  return Boolean(
+    (matchedAlias && blocklist.has(matchedAlias)) ||
+      (rawVariant && blocklist.has(rawVariant)) ||
+      (shortVariantKey && blocklist.has(shortVariantKey)),
+  );
+};
+
 const mapColorMatch = (match = {}) => createCandidateItem({
   rawText: match.matchedAlias || match.color || match.name || match.displayName || null,
   canonicalKey: normalizeFeatureKey(match.color || match.name || match.displayName || ''),
@@ -844,10 +902,17 @@ async function retrieveAciDbCandidates({
     modelCandidates: snapshot.vehicles.models,
   });
 
-  const broadScopedVariantMatches = filterVariantMatchesByModels(
+  let broadScopedVariantMatches = filterVariantMatchesByModels(
     rawVariantMatches,
     snapshot.vehicles.models,
   );
+
+  if (!snapshot.vehicles.models.length && featureMatches.length) {
+    const featureAliasBlocklist = getFeatureAliasVariantBlocklist(featureMatches);
+    broadScopedVariantMatches = broadScopedVariantMatches.filter(
+      (match) => !isFeatureAliasOnlyVariantMatch(match, featureAliasBlocklist),
+    );
+  }
 
   // If exact model-scoped variant mentions are found, use them and avoid dumping
   // broad variant candidates into the parser snapshot.

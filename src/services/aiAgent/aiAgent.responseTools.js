@@ -613,6 +613,63 @@ export const buildVehiclePricelistResponse = ({
   context = {},
 } = {}) => {
 
+  if (
+    runtimeData?.canvasType === "unsupported_city_canvas" ||
+    runtimeData?.unsupportedCity ||
+    runtimeData?.widget?.unsupportedCity
+  ) {
+    const unsupportedCity = runtimeData.unsupportedCity || runtimeData.widget?.unsupportedCity || null;
+    const widget = runtimeData.widget || {
+      type: "vehicle_pricelist",
+      widgetType: "unsupported_city",
+      canvasType: "unsupported_city_canvas",
+      title: runtimeData.title || "Pricing unavailable",
+      answer: runtimeData.answer || "",
+      unsupportedCity,
+      rows: [],
+      variants: [],
+    };
+
+    return {
+      intent: runtimeData.intent || "vehicle_pricelist",
+      displayMode: "canvas",
+      canvasType: "unsupported_city_canvas",
+      inlineType: null,
+      title: runtimeData.title || widget.title || "Pricing unavailable",
+      answer: runtimeData.answer || widget.answer || "",
+      data: {
+        ...runtimeData,
+        widget,
+        rows: [],
+        records: [],
+        variants: [],
+        unsupportedCity,
+      },
+      widget,
+      widgets: [widget],
+      rows: [],
+      records: [],
+      variants: [],
+      unsupportedCity,
+      actions: runtimeData.actions || [],
+      leadingQuestions: runtimeData.leadingQuestions || [],
+      conversationSuggestions: runtimeData.leadingQuestions || [],
+      contextPatch: runtimeData.contextPatch || widget.contextPatch || {},
+      sourceTransparency: runtimeData.sourceTransparency || {
+        modulesChecked: runtimeData.modulesChecked || [],
+        matched: 0,
+        dataSource: runtimeData.dataSource || "unsupported_city",
+      },
+      meta: {
+        ...(runtimeData.meta || {}),
+        unsupportedCity,
+        source: runtimeData.source,
+        dataSource: runtimeData.dataSource,
+        modulesChecked: runtimeData.modulesChecked || [],
+      },
+    };
+  }
+
   /* ACI_PRICE_V2_PASSTHROUGH_START */
   if (
     ["pricelist_canvas", "price_breakup_canvas"].includes(runtimeData?.canvasType) &&
@@ -1150,17 +1207,25 @@ export const buildVehicleRecommendResponse = ({
       runtimeData.data?.feature,
     ),
   );
-  const featureLabel = primaryFeature ? displayName(primaryFeature) : "";
+  const resolvedFeatureLabel = cleanText(
+    runtimeData.budgetDiscovery?.featureResolution?.resolvedFeatures?.[0]?.displayName ||
+      runtimeData.featureResolution?.resolvedFeatures?.[0]?.displayName ||
+      "",
+  );
+  const featureLabel = resolvedFeatureLabel || (primaryFeature ? displayName(primaryFeature.replace(/_/g, " ")) : "");
   const isFeatureMatch = ranking === "feature_match" || mustHaveFeatures.length > 0;
 
   const title = isFeatureMatch
     ? `${featureLabel || "Feature"} matches${budgetLabel}`.replace(/\s+/g, " ").trim()
     : runtimeData.title ||
       `Best${transmissionLabel}${bodyLabel} cars${budgetLabel}`.replace(/\s+/g, " ").trim();
+  const featureModelAnswer = isFeatureMatch && rows.length
+    ? `I found ${totalQualifyingModels || rows.length} ${filters.bodyType && String(filters.bodyType).toLowerCase() === "suv" ? "SUV " : bodyLabel.trim() ? `${displayName(filters.bodyType)} ` : ""}model${(totalQualifyingModels || rows.length) === 1 ? "" : "s"} with ${featureLabel || "this feature"}${budgetLabel}. Showing the best matches first.`
+    : "";
 
   const answer = isFeatureMatch
     ? rows.length
-      ? `I found ${rows.length} matching option${rows.length === 1 ? "" : "s"}${featureLabel ? ` with ${featureLabel}` : ""}${budgetLabel}. I’ll show the best model cards first instead of overwhelming you with every variant.`
+      ? featureModelAnswer
       : `I could not find strong matches${featureLabel ? ` with ${featureLabel}` : ""}${budgetLabel}. Try relaxing budget, body type, transmission, or must-have features.`
     : effectiveRows.length
       ? isBudgetDiscovery
@@ -1210,6 +1275,7 @@ export const buildVehicleRecommendResponse = ({
       groupBy: toolPlan.output?.groupBy || "model",
       summary: runtimeData.summary || {},
       budgetDiscovery: runtimeData.budgetDiscovery || null,
+      noResultRecovery: runtimeData.noResultRecovery || runtimeData.budgetDiscovery?.noResultRecovery || null,
       matchedVariantCount: runtimeData.matchedVariantCount || 0,
       facets: runtimeData.facets || {},
     },
@@ -1225,6 +1291,7 @@ export const buildVehicleRecommendResponse = ({
     },
     meta: {
       budgetDiscovery: runtimeData.budgetDiscovery || null,
+      noResultRecovery: runtimeData.noResultRecovery || runtimeData.budgetDiscovery?.noResultRecovery || null,
       matchedVariantCount: runtimeData.matchedVariantCount || 0,
       totalQualifyingModels,
       totalQualifyingVariants,
@@ -1248,6 +1315,7 @@ export const buildVehicleRecommendResponse = ({
     totalUniqueQualifyingVariants: totalQualifyingVariants,
     totalQualifyingPriceRows,
     budgetDiscovery: runtimeData.budgetDiscovery || null,
+    noResultRecovery: runtimeData.noResultRecovery || runtimeData.budgetDiscovery?.noResultRecovery || null,
     facets: runtimeData.facets || {},
     matched: runtimeData.matched ?? totalQualifyingModels,
   };
@@ -1304,6 +1372,14 @@ export const buildVehiclePriceBreakupResponse = ({
   runtimeData = {},
   context = {},
 } = {}) => {
+  if (
+    runtimeData?.canvasType === "unsupported_city_canvas" ||
+    runtimeData?.unsupportedCity ||
+    runtimeData?.widget?.unsupportedCity
+  ) {
+    return buildVehiclePricelistResponse({ toolPlan, runtimeData, context });
+  }
+
   const model = getModel(toolPlan, context);
   const variant = getVariant(toolPlan, context);
   const city = getCity(toolPlan, context);

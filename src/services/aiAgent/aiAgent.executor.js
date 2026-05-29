@@ -1898,11 +1898,11 @@ export const runtimeVehicleRecommend = async ({
   const filters = toolPlan.filters || {};
   const mustHaveFeatures = asArray(filters.mustHaveFeatures);
   const hasBroadBudgetDiscoveryFilters =
-    !mustHaveFeatures.length &&
     !getModel(toolPlan, context) &&
     !getVariant(toolPlan, context) &&
     Boolean(
-      filters.budgetMax ||
+      mustHaveFeatures.length ||
+        filters.budgetMax ||
         filters.bodyType ||
         filters.transmission ||
         filters.fuelType ||
@@ -1916,7 +1916,11 @@ export const runtimeVehicleRecommend = async ({
       context,
     });
 
-    if (budgetDiscovery.dataSource === "aci_vehicle_read_models") {
+    if (
+      budgetDiscovery.dataSource === "aci_vehicle_read_models" ||
+      budgetDiscovery.budgetDiscovery?.enabled ||
+      budgetDiscovery.noResultRecovery
+    ) {
       return budgetDiscovery;
     }
   }
@@ -2149,6 +2153,10 @@ let budgetDiscoveryRowCache = {
 };
 
 const budgetDiscoveryResultCache = new Map();
+let featureDiscoveryCatalogCache = {
+  expiresAt: 0,
+  rows: null,
+};
 
 const cloneBudgetDiscoveryPayload = (value) => {
   if (!value) return value;
@@ -2178,6 +2186,9 @@ const getBudgetDiscoveryResultCacheKey = ({
     bodyType: slugForReadModel(filters.bodyType || ""),
     transmission: slugForReadModel(filters.transmission || ""),
     fuelType: slugForReadModel(filters.fuelType || ""),
+    mustHaveFeatures: asArray(filters.mustHaveFeatures).map((feature) =>
+      slugForReadModel(feature),
+    ),
     ranking: slugForReadModel(ranking || "value"),
   });
 
@@ -2256,6 +2267,249 @@ const getCachedBudgetDiscoveryRows = async ({ collection, projection } = {}) => 
   };
 
   return rows;
+};
+
+const getCachedFeatureDiscoveryCatalog = async (db) => {
+  const now = getBudgetDiscoveryNow();
+
+  if (
+    featureDiscoveryCatalogCache.rows &&
+    Array.isArray(featureDiscoveryCatalogCache.rows) &&
+    featureDiscoveryCatalogCache.expiresAt > now
+  ) {
+    return featureDiscoveryCatalogCache.rows;
+  }
+
+  const rows = await db
+    .collection("vehicle_feature_catalog_v2")
+    .find({})
+    .project({
+      canonicalKey: 1,
+      key: 1,
+      featureKey: 1,
+      displayName: 1,
+      normalizedName: 1,
+      aliases: 1,
+      groupKey: 1,
+      category: 1,
+    })
+    .toArray();
+
+  featureDiscoveryCatalogCache = {
+    expiresAt: now + BUDGET_DISCOVERY_CACHE_TTL_MS,
+    rows,
+  };
+
+  return rows;
+};
+
+const buildFeatureDiscoveryAliasKeys = (row = {}) => {
+  const aliases = [
+    row.canonicalKey,
+    row.key,
+    row.featureKey,
+    row.displayName,
+    row.normalizedName,
+    ...(Array.isArray(row.aliases) ? row.aliases : []),
+  ];
+
+  const baseKeys = aliases
+    .map((alias) => searchKey(String(alias || "").replace(/[_-]+/g, " ")))
+    .filter(Boolean);
+
+  if (baseKeys.includes("turbo charger")) {
+    baseKeys.push("turbo", "turbocharged", "turbo charged");
+  }
+
+  return unique(baseKeys);
+};
+
+const resolveBudgetDiscoveryFeatureFilters = async ({
+  db,
+  mustHaveFeatures = [],
+} = {}) => {
+  const requestedFeatures = asArray(mustHaveFeatures)
+    .map((feature) => cleanText(feature))
+    .filter(Boolean);
+
+  if (!requestedFeatures.length) {
+    return {
+      requestedFeatures: [],
+      featureKeys: [],
+      resolvedFeatures: [],
+      unresolvedFeatures: [],
+    };
+  }
+
+  const catalog = await getCachedFeatureDiscoveryCatalog(db);
+  const catalogEntries = catalog.map((row) => ({
+    row,
+    aliasKeys: buildFeatureDiscoveryAliasKeys(row),
+  }));
+
+  const resolvedFeatures = [];
+  const unresolvedFeatures = [];
+
+  for (const requestedFeature of requestedFeatures) {
+    const requestedKey = searchKey(String(requestedFeature).replace(/[_-]+/g, " "));
+    const match = catalogEntries.find((entry) =>
+      entry.aliasKeys.includes(requestedKey),
+    );
+
+    if (!match) {
+      unresolvedFeatures.push(requestedFeature);
+      continue;
+    }
+
+    const featureKey = firstMeaningful(
+      match.row.canonicalKey,
+      match.row.key,
+      match.row.featureKey,
+    );
+
+    if (!featureKey) {
+      unresolvedFeatures.push(requestedFeature);
+      continue;
+    }
+
+    resolvedFeatures.push({
+      requestedFeature,
+      featureKey,
+      displayName: firstMeaningful(match.row.displayName, featureKey).replace(/_/g, " "),
+      groupKey: match.row.groupKey || "",
+      category: match.row.category || "",
+    });
+  }
+
+  return {
+    requestedFeatures,
+    featureKeys: unique(resolvedFeatures.map((feature) => feature.featureKey)),
+    resolvedFeatures: uniqueBy(resolvedFeatures, (feature) => feature.featureKey),
+    unresolvedFeatures,
+  };
+};
+
+const buildBudgetDiscoveryNoResultRecovery = ({
+  reason = "no_confident_feature_budget_matches",
+  filters = {},
+  budgetMax = 0,
+  budgetMin = 0,
+  featureResolution = {},
+} = {}) => {
+  const featureNames = asArray(featureResolution.resolvedFeatures)
+    .map((feature) => feature.displayName || feature.featureKey)
+    .filter(Boolean);
+  const unresolved = asArray(featureResolution.unresolvedFeatures);
+
+  return {
+    reason,
+    appliedFilters: compactObject({
+      features: featureNames.length ? featureNames : featureResolution.requestedFeatures,
+      featureKeys: featureResolution.featureKeys,
+      unresolvedFeatures: unresolved,
+      budgetMin,
+      budgetMax,
+      bodyType: filters.bodyType,
+      transmission: filters.transmission,
+      fuelType: filters.fuelType,
+      make: firstMeaningful(filters.make, filters.brand),
+    }),
+    suggestedRelaxations: [
+      budgetMax ? "Try a higher budget." : "",
+      featureNames.length ? `Remove ${featureNames.join(", ")} as a must-have feature.` : "",
+      filters.bodyType ? "Try all body types instead of only this body type." : "",
+      filters.transmission ? "Try both manual and automatic options." : "",
+    ].filter(Boolean),
+  };
+};
+
+const fetchFeatureMatchedVariantKeys = async ({
+  db,
+  featureKeys = [],
+} = {}) => {
+  const keys = asArray(featureKeys).filter(Boolean);
+  if (!db || !keys.length) return new Map();
+
+  const query = Object.fromEntries(
+    keys.map((featureKey) => [`featuresByKey.${featureKey}.available`, true]),
+  );
+  const projection = {
+    modelKey: 1,
+    variantKey: 1,
+    variant: 1,
+  };
+
+  const docs = await db
+    .collection("vehicle_variant_feature_matrix_v2")
+    .find(query, { projection })
+    .limit(12000)
+    .toArray();
+
+  const matches = new Map();
+
+  docs.forEach((doc = {}) => {
+    [
+      `${slugForReadModel(doc.modelKey)}|${slugForReadModel(doc.variantKey)}`,
+      `${slugForReadModel(doc.modelKey)}|${slugForReadModel(doc.variant)}`,
+    ]
+      .filter((key) => key.replace(/\|/g, ""))
+      .forEach((key) => {
+        matches.set(key, {
+          modelKey: doc.modelKey || "",
+          variantKey: doc.variantKey || "",
+          variant: doc.variant || "",
+          featureKeys: keys,
+        });
+      });
+  });
+
+  return matches;
+};
+
+const getFeatureVariantMatch = (row = {}, featureVariantKeys = new Map()) => {
+  if (!featureVariantKeys?.size) return false;
+
+  const keys = [
+    `${slugForReadModel(row.modelKey || row.model)}|${slugForReadModel(row.variantKey)}`,
+    `${slugForReadModel(row.modelKey || row.model)}|${slugForReadModel(row.variant)}`,
+    `${slugForReadModel(row.modelKey || row.model)}|${slugForReadModel(row.variantName)}`,
+  ];
+
+  for (const key of keys) {
+    const match = featureVariantKeys.get(key);
+    if (match) return match;
+  }
+
+  return null;
+};
+
+const rowMatchesFeatureVariantKeys = (row = {}, featureVariantKeys = new Map()) =>
+  Boolean(getFeatureVariantMatch(row, featureVariantKeys));
+
+const attachFeatureMatchMetadata = ({
+  row = {},
+  featureVariantKeys = new Map(),
+  featureResolution = {},
+} = {}) => {
+  const match = getFeatureVariantMatch(row, featureVariantKeys);
+  if (!match) return row;
+
+  const feature = asArray(featureResolution.resolvedFeatures)[0] || {};
+  const featureKey = feature.featureKey || asArray(featureResolution.featureKeys)[0] || "";
+  const featureName = feature.displayName || featureKey.replace(/_/g, " ");
+
+  return {
+    ...row,
+    featureKey,
+    featureName,
+    matchedFeature: featureName,
+    foundMatrixRows: 1,
+    featureAvailability: {
+      available: true,
+      source: "vehicle_variant_feature_matrix_v2",
+    },
+    featureMatchSource: "vehicle_variant_feature_matrix_v2",
+  };
 };
 
 const getBudgetVariantUniqueKey = (row = {}) =>
@@ -2510,6 +2764,12 @@ const buildBudgetDiscoveryModelGroups = ({
           exShowroomPriceLabel: row.exShowroomPriceLabel,
           onRoadPrice: row.onRoadPrice,
           onRoadPriceLabel: row.onRoadPriceLabel,
+          featureKey: row.featureKey,
+          featureName: row.featureName,
+          matchedFeature: row.matchedFeature,
+          foundMatrixRows: row.foundMatrixRows,
+          featureAvailability: row.featureAvailability,
+          featureMatchSource: row.featureMatchSource,
           dataSource: row.dataSource,
         })),
         dataSource: "aci_vehicle_price_rows",
@@ -2656,6 +2916,7 @@ export const runtimeBudgetVehicleDiscovery = async ({
   const city = getCity(toolPlan, context);
   const citySlug = slugForReadModel(city || DEFAULT_CITY);
   const make = firstMeaningful(filters.make, filters.brand, toolPlan.entities?.make, toolPlan.entities?.brand);
+  const mustHaveFeatures = asArray(filters.mustHaveFeatures);
   const query = {
     exShowroomPrice: {
       $gt: budgetMin > 0 ? budgetMin : 0,
@@ -2704,21 +2965,100 @@ export const runtimeBudgetVehicleDiscovery = async ({
   const cachedResult = getCachedBudgetDiscoveryResult(cacheKey);
   if (cachedResult) return cachedResult;
 
+  const featureResolution = await resolveBudgetDiscoveryFeatureFilters({
+    db,
+    mustHaveFeatures,
+  });
+  const isFeatureDiscovery = mustHaveFeatures.length > 0;
+
+  if (isFeatureDiscovery && featureResolution.unresolvedFeatures.length) {
+    const noResultRecovery = buildBudgetDiscoveryNoResultRecovery({
+      reason: "feature_filter_unavailable",
+      filters,
+      budgetMax,
+      budgetMin,
+      featureResolution,
+    });
+
+    return setCachedBudgetDiscoveryResult(cacheKey, {
+      rows: [],
+      items: [],
+      cars: [],
+      previewModelGroups: [],
+      modelGroups: [],
+      count: 0,
+      matched: 0,
+      filters: compactObject({
+        city,
+        citySlug,
+        budgetMax,
+        bodyType: filters.bodyType,
+        transmission: filters.transmission,
+        fuelType: filters.fuelType,
+        make,
+        mustHaveFeatures,
+      }),
+      featureResolution,
+      noResultRecovery,
+      budgetDiscovery: {
+        enabled: true,
+        isFeatureDiscovery: true,
+        budgetMin,
+        budgetMax,
+        priceBasis: "ex_showroom",
+        budgetBasis: "ex_showroom",
+        strictBudget: true,
+        totalQualifyingModels: 0,
+        totalUniqueQualifyingVariants: 0,
+        totalQualifyingPriceRows: 0,
+        totalQualifyingVariants: 0,
+        matchedVariantCount: 0,
+        noResultRecovery,
+        featureResolution,
+      },
+      sourceTransparency: {
+        responseTool: "vehicle_recommend",
+        modulesChecked: ["vehicle_feature_catalog_v2"],
+        matched: 0,
+        dataSource: "feature_filter_unavailable",
+      },
+      modulesChecked: ["vehicle_feature_catalog_v2"],
+      source: "vehicle_feature_catalog_v2",
+      dataSource: "feature_filter_unavailable",
+    });
+  }
+
   const normalizedRows = await getCachedBudgetDiscoveryRows({
     collection,
     projection,
   });
 
   const makeKey = slugForReadModel(make);
+  const featureVariantKeys = isFeatureDiscovery
+    ? await fetchFeatureMatchedVariantKeys({
+        db,
+        featureKeys: featureResolution.featureKeys,
+      })
+    : new Set();
 
-  const rows = normalizedRows
+  const filteredRows = normalizedRows
     .filter((row) => row.exShowroomPrice > 0)
     .filter((row) => !budgetMin || row.exShowroomPrice > budgetMin)
     .filter((row) => !budgetMax || row.exShowroomPrice <= budgetMax)
     .filter((row) => !makeKey || row.makeKey === makeKey)
     .filter((row) => bodyTypeMatchesBudgetFilter(row, filters.bodyType))
     .filter((row) => transmissionMatchesBudgetFilter(row, filters.transmission))
-    .filter((row) => fuelTypeMatchesBudgetFilter(row, filters.fuelType));
+    .filter((row) => fuelTypeMatchesBudgetFilter(row, filters.fuelType))
+    .filter((row) => !isFeatureDiscovery || rowMatchesFeatureVariantKeys(row, featureVariantKeys));
+  const rows = isFeatureDiscovery
+    ? filteredRows.map((row) =>
+        attachFeatureMatchMetadata({
+          row,
+          featureVariantKeys,
+          featureResolution,
+        }),
+      )
+    : filteredRows;
   const totalQualifyingPriceRows = rows.length;
   const uniqueVariantRows = dedupeBudgetRowsByVariant({
     rows,
@@ -2728,7 +3068,7 @@ export const runtimeBudgetVehicleDiscovery = async ({
   const allModelGroups = buildBudgetDiscoveryModelGroups({
     rows: uniqueVariantRows,
     budgetMax,
-    variantLimit: BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
+    variantLimit: isFeatureDiscovery ? 200 : BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
   });
   const fullModelGroups = allModelGroups.slice(0, BUDGET_DISCOVERY_FULL_GROUP_LIMIT);
   const previewModelGroups = buildDiverseBudgetPreviewGroups({
@@ -2755,6 +3095,16 @@ export const runtimeBudgetVehicleDiscovery = async ({
   const totalQualifyingVariants = totalUniqueQualifyingVariants;
   const hasMore = totalQualifyingModels > previewModelGroups.length;
   const facets = buildBudgetDiscoveryFacets({ rows: uniqueVariantRows });
+  const noResultRecovery =
+    isFeatureDiscovery && totalQualifyingModels === 0
+      ? buildBudgetDiscoveryNoResultRecovery({
+          reason: "no_confident_feature_budget_matches",
+          filters,
+          budgetMax,
+          budgetMin,
+          featureResolution,
+        })
+      : null;
 
   const result = {
     rows: previewModelGroups,
@@ -2778,6 +3128,8 @@ export const runtimeBudgetVehicleDiscovery = async ({
     count: previewModelGroups.length,
     matched: totalQualifyingModels,
     facets,
+    featureResolution: isFeatureDiscovery ? featureResolution : null,
+    noResultRecovery,
     ranking: toolPlan.ranking || "value",
     filters: compactObject({
       city,
@@ -2787,9 +3139,11 @@ export const runtimeBudgetVehicleDiscovery = async ({
       transmission: filters.transmission,
       fuelType: filters.fuelType,
       make,
+      mustHaveFeatures,
     }),
     budgetDiscovery: {
       enabled: true,
+      isFeatureDiscovery,
       budgetMin,
       budgetMax,
       priceBasis: "ex_showroom",
@@ -2809,14 +3163,20 @@ export const runtimeBudgetVehicleDiscovery = async ({
       previewBodyTypeGroups,
       allBodyTypeGroups,
       hasMore,
+      featureResolution: isFeatureDiscovery ? featureResolution : null,
+      noResultRecovery,
     },
     sourceTransparency: {
       responseTool: "vehicle_recommend",
-      modulesChecked: ["aci_vehicle_price_rows"],
+      modulesChecked: isFeatureDiscovery
+        ? ["aci_vehicle_price_rows", "vehicle_feature_catalog_v2", "vehicle_variant_feature_matrix_v2"]
+        : ["aci_vehicle_price_rows"],
       matched: totalQualifyingModels,
       dataSource: "aci_vehicle_read_models",
     },
-    modulesChecked: ["aci_vehicle_price_rows"],
+    modulesChecked: isFeatureDiscovery
+      ? ["aci_vehicle_price_rows", "vehicle_feature_catalog_v2", "vehicle_variant_feature_matrix_v2"]
+      : ["aci_vehicle_price_rows"],
     source: "aci_vehicle_price_rows",
     dataSource: "aci_vehicle_read_models",
   };

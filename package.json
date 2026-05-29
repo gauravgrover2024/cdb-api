@@ -53,6 +53,7 @@
     "aci:post-data-refresh:full": "npm run aci:post-data-refresh && npm run aci:understanding-workers && npm run aci:safety",
     "vehicle:data-pipeline:aci": "npm run vehicle:data-pipeline && npm run aci:post-data-refresh",
     "aci:safety": "node src/scripts/aci-audits/runAciSafetyGateSummary.js",
+    "aci:backend-freeze": "node src/scripts/aci-audits/auditAciBackendFreezeTrust.js",
     "aci:ensure-feature-matrix-indexes": "node src/scripts/aci-maintenance/ensureAciFeatureMatrixIndexes.js",
     "aci:understanding-eval": "node src/scripts/aci-evals/runAciUnderstandingEval.js",
     "aci:understanding-smoke": "node src/scripts/aci-evals/runAciUnderstandingEngineSmoke.js",

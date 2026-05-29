@@ -88,6 +88,12 @@ const tasks = [
     command: "node",
     args: ["src/scripts/aci-audits/auditAciContextSwitch.js"],
   },
+  {
+    key: "backendFreezeTrust",
+    label: "Backend freeze trust audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciBackendFreezeTrust.js"],
+  },
 ];
 
 const runTask = (task) =>
@@ -213,6 +219,7 @@ const summary = {
   modelAliasFeatureQueriesExitCode: byKey.modelAliasFeatureQueries?.status ?? 1,
   embarrassmentQueriesExitCode: byKey.embarrassmentQueries?.status ?? 1,
   contextSwitchExitCode: byKey.contextSwitch?.status ?? 1,
+  backendFreezeTrustExitCode: byKey.backendFreezeTrust?.status ?? 1,
 
   passedMentions: count(/"pass"\s*:\s*true/g),
   failedMentions: count(/"pass"\s*:\s*false/g),
@@ -232,6 +239,7 @@ const summary = {
     modelAliasFeatureQueries: byKey.modelAliasFeatureQueries?.durationMs ?? 0,
     embarrassmentQueries: byKey.embarrassmentQueries?.durationMs ?? 0,
     contextSwitch: byKey.contextSwitch?.durationMs ?? 0,
+    backendFreezeTrust: byKey.backendFreezeTrust?.durationMs ?? 0,
     total: totalDurationMs,
   },
 
