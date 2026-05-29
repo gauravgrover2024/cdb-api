@@ -2,6 +2,16 @@ const fs = require("fs");
 const path = require("path");
 const { ACI_PROGRESS_MODULES } = require("./aciProgress.registry.cjs");
 
+const getSafeProgressModules = () =>
+  (ACI_PROGRESS_MODULES || []).filter(
+    (module) =>
+      module &&
+      typeof module === "object" &&
+      typeof module.id === "string" &&
+      Array.isArray(module.items),
+  );
+
+
 const REPORT_DIR = path.resolve(process.cwd(), "reports/aci");
 
 function clone(value) {
@@ -142,13 +152,15 @@ function applyReportSignals(modules, reports) {
     setItemStatus(modules, "comparison", "feature_specific_comparison", "mostly_ready");
   }
 
-  modules.forEach((module) => {
-    module.status = recomputeModuleStatus(module);
-  });
+  modules
+    .filter((module) => module && Array.isArray(module.items))
+    .forEach((module) => {
+      module.status = recomputeModuleStatus(module);
+    });
 }
 
 function getAciProgressSnapshot() {
-  const modules = clone(ACI_PROGRESS_MODULES);
+  const modules = clone(getSafeProgressModules());
   const reports = listReports();
 
   applyReportSignals(modules, reports);
