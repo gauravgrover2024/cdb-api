@@ -14,6 +14,8 @@ import {
   prewarmAciDbCandidateRetrieverCaches,
 } from './candidates/aciDbCandidateRetriever.js';
 
+import { prewarmBudgetDiscoveryCache } from '../aiAgent/aiAgent.executor.js';
+
 const DEFAULT_PREWARM_TTL_MS = Number(
   process.env.ACI_CORE_PREWARM_TTL_MS || 10 * 60 * 1000,
 );
@@ -77,6 +79,10 @@ async function prewarmAciCoreRuntime({ force = false } = {}) {
       [
         'candidate_retriever_catalogs',
         prewarmAciDbCandidateRetrieverCaches({ force }),
+      ],
+      [
+        'budget_discovery_cache',
+        prewarmBudgetDiscoveryCache({ force }),
       ],
     ];
 

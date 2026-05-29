@@ -2135,6 +2135,129 @@ const normalizeBudgetDiscoveryRow = (row = {}) => {
   };
 };
 
+
+const BUDGET_DISCOVERY_CACHE_TTL_MS = Number(
+  process.env.ACI_BUDGET_DISCOVERY_CACHE_TTL_MS || 5 * 60 * 1000,
+);
+const BUDGET_DISCOVERY_RESULT_CACHE_MAX = Number(
+  process.env.ACI_BUDGET_DISCOVERY_RESULT_CACHE_MAX || 80,
+);
+
+let budgetDiscoveryRowCache = {
+  expiresAt: 0,
+  rows: null,
+};
+
+const budgetDiscoveryResultCache = new Map();
+
+const cloneBudgetDiscoveryPayload = (value) => {
+  if (!value) return value;
+
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+
+  return JSON.parse(JSON.stringify(value));
+};
+
+const getBudgetDiscoveryNow = () => Date.now();
+
+const getBudgetDiscoveryResultCacheKey = ({
+  budgetMin = 0,
+  budgetMax = 0,
+  citySlug = "",
+  make = "",
+  filters = {},
+  ranking = "",
+} = {}) =>
+  JSON.stringify({
+    budgetMin: Number(budgetMin || 0) || 0,
+    budgetMax: Number(budgetMax || 0) || 0,
+    citySlug: slugForReadModel(citySlug || DEFAULT_CITY),
+    makeKey: slugForReadModel(make),
+    bodyType: slugForReadModel(filters.bodyType || ""),
+    transmission: slugForReadModel(filters.transmission || ""),
+    fuelType: slugForReadModel(filters.fuelType || ""),
+    ranking: slugForReadModel(ranking || "value"),
+  });
+
+const getCachedBudgetDiscoveryResult = (cacheKey = "") => {
+  if (!cacheKey) return null;
+
+  const cached = budgetDiscoveryResultCache.get(cacheKey);
+  if (!cached) return null;
+
+  if (cached.expiresAt <= getBudgetDiscoveryNow()) {
+    budgetDiscoveryResultCache.delete(cacheKey);
+    return null;
+  }
+
+  return cloneBudgetDiscoveryPayload({
+    ...cached.value,
+    cache: {
+      ...(cached.value.cache || {}),
+      hit: true,
+      key: cacheKey,
+      type: "budget_discovery_result",
+    },
+    budgetDiscovery: {
+      ...(cached.value.budgetDiscovery || {}),
+      cacheHit: true,
+      cacheType: "budget_discovery_result",
+    },
+  });
+};
+
+const setCachedBudgetDiscoveryResult = (cacheKey = "", value = {}) => {
+  if (!cacheKey || !BUDGET_DISCOVERY_CACHE_TTL_MS) return value;
+
+  if (budgetDiscoveryResultCache.size >= BUDGET_DISCOVERY_RESULT_CACHE_MAX) {
+    const oldestKey = budgetDiscoveryResultCache.keys().next().value;
+    if (oldestKey) budgetDiscoveryResultCache.delete(oldestKey);
+  }
+
+  budgetDiscoveryResultCache.set(cacheKey, {
+    expiresAt: getBudgetDiscoveryNow() + BUDGET_DISCOVERY_CACHE_TTL_MS,
+    value: cloneBudgetDiscoveryPayload(value),
+  });
+
+  return value;
+};
+
+const getCachedBudgetDiscoveryRows = async ({ collection, projection } = {}) => {
+  const now = getBudgetDiscoveryNow();
+
+  if (
+    budgetDiscoveryRowCache.rows &&
+    Array.isArray(budgetDiscoveryRowCache.rows) &&
+    budgetDiscoveryRowCache.expiresAt > now
+  ) {
+    return budgetDiscoveryRowCache.rows;
+  }
+
+  const rawRows = await collection
+    .find(
+      {
+        exShowroomPrice: { $gt: 0 },
+      },
+      { projection },
+    )
+    .sort({ exShowroomPrice: 1, make: 1, model: 1, variant: 1 })
+    .limit(10000)
+    .toArray();
+
+  const rows = rawRows
+    .map(normalizeBudgetDiscoveryRow)
+    .filter((row) => Number(row.exShowroomPrice || 0) > 0);
+
+  budgetDiscoveryRowCache = {
+    expiresAt: now + BUDGET_DISCOVERY_CACHE_TTL_MS,
+    rows,
+  };
+
+  return rows;
+};
+
 const getBudgetVariantUniqueKey = (row = {}) =>
   [
     row.makeKey || row.make || row.brand,
@@ -2424,6 +2547,93 @@ const buildBudgetDiscoveryFacets = ({ rows = [] } = {}) => {
   };
 };
 
+
+export const prewarmBudgetDiscoveryCache = async ({ force = false } = {}) => {
+  const db = await getMongooseDb();
+  if (!db) {
+    return {
+      ok: false,
+      status: "skipped",
+      reason: "mongodb_unavailable",
+      cache: {
+        rows: 0,
+        cacheHit: false,
+      },
+    };
+  }
+
+  const now = getBudgetDiscoveryNow();
+
+  if (
+    !force &&
+    budgetDiscoveryRowCache.rows &&
+    Array.isArray(budgetDiscoveryRowCache.rows) &&
+    budgetDiscoveryRowCache.expiresAt > now
+  ) {
+    return {
+      ok: true,
+      status: "ready",
+      cache: {
+        rows: budgetDiscoveryRowCache.rows.length,
+        cacheHit: true,
+        ttlMs: Math.max(0, budgetDiscoveryRowCache.expiresAt - now),
+      },
+    };
+  }
+
+  if (force) {
+    budgetDiscoveryRowCache = {
+      expiresAt: 0,
+      rows: null,
+    };
+    budgetDiscoveryResultCache.clear();
+  }
+
+  const collection = db.collection("aci_vehicle_price_rows");
+  const projection = {
+    make: 1,
+    makeKey: 1,
+    model: 1,
+    modelKey: 1,
+    fullModel: 1,
+    variant: 1,
+    variantKey: 1,
+    city: 1,
+    citySlug: 1,
+    fuel: 1,
+    fuelType: 1,
+    fuelKey: 1,
+    transmission: 1,
+    transmissionKey: 1,
+    gearbox: 1,
+    gearboxKey: 1,
+    bodyType: 1,
+    bodyTypeKey: 1,
+    segment: 1,
+    exShowroomPrice: 1,
+    exShowroomPriceLabel: 1,
+    onRoadPrice: 1,
+    onRoadPriceLabel: 1,
+  };
+
+  const startedAt = Date.now();
+  const rows = await getCachedBudgetDiscoveryRows({
+    collection,
+    projection,
+  });
+
+  return {
+    ok: true,
+    status: "ready",
+    durationMs: Date.now() - startedAt,
+    cache: {
+      rows: rows.length,
+      cacheHit: false,
+      ttlMs: Math.max(0, budgetDiscoveryRowCache.expiresAt - getBudgetDiscoveryNow()),
+    },
+  };
+};
+
 export const runtimeBudgetVehicleDiscovery = async ({
   toolPlan = {},
   context = {},
@@ -2482,17 +2692,30 @@ export const runtimeBudgetVehicleDiscovery = async ({
     onRoadPriceLabel: 1,
   };
 
-  let rawRows = await collection
-    .find(query, { projection })
-    .sort({ exShowroomPrice: 1, make: 1, model: 1, variant: 1 })
-    .limit(6000)
-    .toArray();
+  const cacheKey = getBudgetDiscoveryResultCacheKey({
+    budgetMin,
+    budgetMax,
+    citySlug,
+    make,
+    filters,
+    ranking: toolPlan.ranking || "value",
+  });
 
-  const rows = rawRows
-    .map(normalizeBudgetDiscoveryRow)
+  const cachedResult = getCachedBudgetDiscoveryResult(cacheKey);
+  if (cachedResult) return cachedResult;
+
+  const normalizedRows = await getCachedBudgetDiscoveryRows({
+    collection,
+    projection,
+  });
+
+  const makeKey = slugForReadModel(make);
+
+  const rows = normalizedRows
     .filter((row) => row.exShowroomPrice > 0)
     .filter((row) => !budgetMin || row.exShowroomPrice > budgetMin)
     .filter((row) => !budgetMax || row.exShowroomPrice <= budgetMax)
+    .filter((row) => !makeKey || row.makeKey === makeKey)
     .filter((row) => bodyTypeMatchesBudgetFilter(row, filters.bodyType))
     .filter((row) => transmissionMatchesBudgetFilter(row, filters.transmission))
     .filter((row) => fuelTypeMatchesBudgetFilter(row, filters.fuelType));
@@ -2533,7 +2756,7 @@ export const runtimeBudgetVehicleDiscovery = async ({
   const hasMore = totalQualifyingModels > previewModelGroups.length;
   const facets = buildBudgetDiscoveryFacets({ rows: uniqueVariantRows });
 
-  return {
+  const result = {
     rows: previewModelGroups,
     items: previewModelGroups,
     cars: previewModelGroups,
@@ -2597,6 +2820,8 @@ export const runtimeBudgetVehicleDiscovery = async ({
     source: "aci_vehicle_price_rows",
     dataSource: "aci_vehicle_read_models",
   };
+
+  return setCachedBudgetDiscoveryResult(cacheKey, result);
 };
 
 export const runtimeVehiclePriceBreakup = async ({
