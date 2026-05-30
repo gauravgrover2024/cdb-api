@@ -222,7 +222,7 @@ const TASK_HINTS = [
   { task: 'color_lookup', terms: ['color', 'colour', 'black', 'white', 'red', 'dual tone'] },
   { task: 'feature_answer', terms: ['feature', 'features', 'does it have', 'available with', 'comes with'] },
   { task: 'vehicle_comparison', terms: ['compare', 'vs', 'versus', 'better than', 'difference between'] },
-  { task: 'vehicle_discovery', terms: ['cars with', 'cars under', 'suvs under', 'sedans under', 'hatchbacks under', 'models under', 'options under', 'show cars', 'show me cars', 'which cars'] },
+  { task: 'vehicle_discovery', terms: ['cars with', 'cars under', 'suvs under', 'sedans under', 'hatchbacks under', 'models under', 'options under', 'show cars', 'show me cars', 'which cars', 'cheapest cars', 'cheapest cng cars', 'lowest price cars', 'most affordable cars'] },
   { task: 'quotation', terms: ['quote', 'quotation', 'best price'] },
   { task: 'offer_lookup', terms: ['offer', 'discount', 'bonus'] },
   { task: 'waiting_period', terms: ['waiting', 'delivery time', 'kitne din', 'immediate delivery'] },
@@ -405,7 +405,7 @@ const isBroadDiscoveryCandidateQuery = ({
 
 const isGenericBroadBudgetQuery = (message = '') => {
   const normalized = clean(message);
-  return /^(best\s+)?((automatic|manual|electric|ev|cng|petrol|diesel)\s+)?(cars?|suvs?|sedans?|hatchbacks?|mpvs?|options?|models?)\b/.test(normalized);
+  return /^(best|cheapest|lowest price|lowest|most affordable)?\s*((automatic|manual|electric|ev|cng|petrol|diesel)\s+)?(cars?|suvs?|sedans?|hatchbacks?|mpvs?|options?|models?)\b/.test(normalized);
 };
 
 const shouldLookupFeatureCatalogForBroadQuery = (message = '') => {
