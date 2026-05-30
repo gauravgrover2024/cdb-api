@@ -448,3 +448,38 @@ Then let frontend render premium UI from structured data.
 This protects ACI Assist from becoming a pile of features and keeps it as a serious buyer decision-intelligence product.
 <!-- ACI_LOCKED_SCOPE_2026_05_28_END -->
 
+<!-- ACI_LAUNCH_DISTRIBUTION_REVENUE_2026_05_30_START -->
+
+## Launch Distribution, Social Presence & Revenue Systems — Locked
+
+### Status
+Planned / locked into roadmap. This must not be missed during backend/frontend freeze planning.
+
+### Launch distribution and trust setup
+- Instagram page setup.
+- Instagram first launch / awareness post for ACI Assist.
+- Facebook page setup.
+- Google Business Profile setup.
+- Relevant local/business/listing profiles where useful.
+- WhatsApp Business presence.
+- WhatsApp green tick / official business account eligibility tracking.
+- Consistent brand/business identity across website, social pages, Google profile, WhatsApp, and listings.
+- Launch-time content/distribution checklist before public release.
+
+### Revenue models to support later
+- Consent-based dealer/showroom lead monetization.
+- Lead routing by pincode, city, brand, model, variant, and customer intent.
+- Lead seriousness / quality scoring before showroom handoff.
+- CRM/dealer partner routing readiness.
+- Lead delivery logs and audit trail.
+- Billing / monetization records for sold leads.
+- Sponsored brand banner campaigns.
+- Time-bound launch/campaign banner inventory, for example a brand buying banner space for a few days during a new-car launch.
+- Sponsored placement targeting, caps, approval workflow, disclosure, and tracking.
+- Impression, click, lead, and conversion tracking.
+- Strict separation from ACI Assist’s neutral recommendation brain.
+
+### Product rule
+Sponsored placements and revenue systems must never manipulate organic answers, recommendations, rankings, comparisons, price verdicts, safest/best-value advice, or buyer decision logic. Paid inventory must be clearly labeled, auditable, capped, and separated in backend contracts and UI.
+
+<!-- ACI_LAUNCH_DISTRIBUTION_REVENUE_2026_05_30_END -->
