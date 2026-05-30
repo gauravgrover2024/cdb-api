@@ -5150,7 +5150,12 @@ const createLoan = asyncHandler(async (req, res) => {
           "cheque_",
           "ecs_",
           "nach_",
-          "si_"
+          "si_",
+          "loan_",
+          "bill_",
+          "do_",
+          "insurance_",
+          "dispatch_"
         ];
         
         Object.keys(currentLoanPayload).forEach(key => {
@@ -5163,6 +5168,30 @@ const createLoan = asyncHandler(async (req, res) => {
         currentLoanPayload.currentStage = "Pre-file";
         delete currentLoanPayload.status;
         delete currentLoanPayload.instrumentType;
+        delete currentLoanPayload.id;
+        delete currentLoanPayload._id;
+        delete currentLoanPayload.completedDate;
+        delete currentLoanPayload.emiPlan;
+        delete currentLoanPayload.emiMode;
+        delete currentLoanPayload.payoutStatus;
+        delete currentLoanPayload.deliveryStatus;
+        delete currentLoanPayload.postFileStatus;
+        delete currentLoanPayload.billNumber;
+        delete currentLoanPayload.billDate;
+        delete currentLoanPayload.disbursedDate;
+        delete currentLoanPayload.disbursementDate;
+        delete currentLoanPayload.disburseAmount;
+        delete currentLoanPayload.disbursementStatus;
+        delete currentLoanPayload.payoutPercentage;
+        delete currentLoanPayload.payoutAmount;
+        delete currentLoanPayload.rc_inv_storage_number;
+        delete currentLoanPayload.createdAt;
+        delete currentLoanPayload.updatedAt;
+        delete currentLoanPayload.approval_statusHistory;
+        delete currentLoanPayload.statusHistory;
+        delete currentLoanPayload.latestBusinessDate;
+        delete currentLoanPayload.receivingDate;
+        currentLoanPayload.leadDate = new Date();
 
         const loan = await Loan.create({
           ...currentLoanPayload,
