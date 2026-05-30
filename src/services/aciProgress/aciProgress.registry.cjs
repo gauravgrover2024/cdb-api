@@ -198,6 +198,37 @@ const ACI_PROGRESS_MODULES = [
     ]
   },
   {
+    id: "variant-decision-data-foundation",
+    title: "Variant Decision Data Foundation",
+    group: "Advisory Layer",
+    priority: "P0",
+    owner: "Backend + Data",
+    status: "mostly_ready",
+    summary: "DB-backed variant intelligence foundation for instant buyer advice, variant regret prevention, upgrade decisions, city pricing, and later scoring.",
+    whatWillWork: "Full variant universe, city-specific price overlay, same-model/fuel/transmission upgrade ladder, gain/loss evidence, data-quality gaps, and controlled external evidence workflow.",
+    currentState: "Full supported-city global variant profile universe is built with 2,114 profiles. City price overlay is written with 6,002 rows across New Delhi, Gurgaon and Noida with zero unmatched rows, zero missing prices and zero duplicate variant-city pairs. Upgrade ladder is written for 2,114 variants with priceRank, equipmentRank and variantRole. Dual-tone/cosmetic variants remain ranked and searchable but are not selected as default upgrade targets. Data gap queue is written with 3,823 open evidence gaps and zero duplicate gap keys.",
+    pending: "Build external evidence collection, fill P0 feature/transmission gaps, add crash-rating evidence model, build controlled evidence-to-profile patcher, rerun coverage audits, then design score config and compute recommendation/value/regret/safety scores. Do not scrape directly into decision profiles.",
+    items: [
+      { key: "variant_profile_universe", name: "Full variant decision profile universe: 2,114 profiles", status: "ready" },
+      { key: "variant_profile_quality", name: "Profile quality: 1,404 high, 710 medium, 0 low, 0 duplicate keys", status: "ready" },
+      { key: "city_price_overlay", name: "City price overlay: 6,002 variant-city rows", status: "ready" },
+      { key: "supported_city_coverage", name: "Supported city coverage: New Delhi 2,114, Gurgaon 2,044, Noida 1,844", status: "ready" },
+      { key: "price_integrity", name: "City price integrity: 0 missing ex-showroom/on-road, 0 duplicate variant-city pairs", status: "ready" },
+      { key: "variant_rank_equipment_rank", name: "Variant priceRank and equipmentRank", status: "ready" },
+      { key: "upgrade_ladder", name: "Same-model/fuel/transmission upgrade ladder", status: "ready" },
+      { key: "non_dual_tone_upgrade_rule", name: "Non-dual-tone/non-cosmetic default upgrade rule", status: "ready" },
+      { key: "upgrade_edge_quality", name: "Upgrade edge quality flags: clean / needs review / no higher variant", status: "ready" },
+      { key: "data_gap_queue", name: "Auditable data gap queue: 3,823 open gaps", status: "ready" },
+      { key: "feature_matrix_gap_queue", name: "Feature-matrix gap queue: 85 variants", status: "ready" },
+      { key: "unknown_transmission_gap_queue", name: "Unknown-transmission gap queue: 52 variants", status: "ready" },
+      { key: "crash_rating_gap_queue", name: "Crash-rating gap queue: 2,114 variants", status: "ready" },
+      { key: "external_evidence_collection", name: "External evidence collection", status: "planned" },
+      { key: "evidence_to_profile_patcher", name: "Controlled evidence-to-profile patcher", status: "planned" },
+      { key: "score_config", name: "Score config for safety/value/regret/recommendation", status: "pending" },
+      { key: "score_computation", name: "Score computation", status: "pending" }
+    ]
+  },
+  {
     id: "recommendations",
     title: "Recommendations & Car Advisor",
     group: "Advisory Layer",
