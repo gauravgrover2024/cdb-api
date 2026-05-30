@@ -68,7 +68,11 @@
     "aci:core-prewarm-smoke": "node src/scripts/aci-evals/runAciCorePrewarmSmoke.js",
     "aci:core-plan-adapter:smoke": "node src/scripts/aci-evals/runAciCoreLegacyPlanAdapterSmoke.js",
     "aci:core-legacy-executor:smoke": "node src/scripts/aci-evals/runAciCoreLegacyExecutorSmoke.js",
-    "aci:core-live-bridge:smoke": "node src/scripts/aci-evals/runAciCoreLiveBridgeSmoke.js"
+    "aci:core-live-bridge:smoke": "node src/scripts/aci-evals/runAciCoreLiveBridgeSmoke.js",
+    "aci:prewarm-profile": "node src/scripts/aci-evals/profileAciCorePrewarm.js",
+    "aci:safety:fast": "ACI_SAFETY_MODE=fast ACI_SAFETY_WORKERS=6 node src/scripts/aci-audits/runAciSafetyGateSummary.js",
+    "aci:safety:freeze": "ACI_SAFETY_MODE=freeze ACI_SAFETY_WORKERS=4 node src/scripts/aci-audits/runAciSafetyGateSummary.js",
+    "aci:safety:full": "ACI_SAFETY_MODE=full ACI_SAFETY_WORKERS=4 node src/scripts/aci-audits/runAciSafetyGateSummary.js"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

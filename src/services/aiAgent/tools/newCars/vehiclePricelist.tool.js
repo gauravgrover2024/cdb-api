@@ -287,14 +287,31 @@ const getRequestedModel = ({
   toolPlan = {},
   context = {},
   userMessage = "",
+  message = "",
+  query = "",
+  model = "",
+  requestedModel = "",
+  input = {},
+  parameters = {},
 } = {}) => {
   const entities = getEntities(toolPlan);
   const filters = getFilters(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
-  const requestedMake = getRequestedMake({ toolPlan, context });
+  const requestedMake = getRequestedMake({
+    toolPlan,
+    context,
+    make: input.make || parameters.make,
+    requestedMake: input.requestedMake || parameters.requestedMake,
+  });
 
   return sanitizeRequestedModelText(
     first(
+      requestedModel,
+      model,
+      input.requestedModel,
+      input.model,
+      parameters.requestedModel,
+      parameters.model,
       entities.model,
       entities.models?.[0],
       filters.model,
@@ -304,21 +321,42 @@ const getRequestedModel = ({
       context.anchorModel,
       context.model,
       userMessage,
+      message,
+      query,
     ),
     { requestedMake },
   );
 };
 
-const getRequestedMake = ({ toolPlan = {}, context = {} } = {}) => {
+const getRequestedMake = ({
+  toolPlan = {},
+  context = {},
+  make = "",
+  brand = "",
+  requestedMake = "",
+  input = {},
+  parameters = {},
+} = {}) => {
   const entities = getEntities(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
 
   return cleanText(
     first(
+      requestedMake,
+      make,
+      brand,
+      input.requestedMake,
+      input.make,
+      input.brand,
+      parameters.requestedMake,
+      parameters.make,
+      parameters.brand,
       entities.make,
       entities.brand,
       toolPlan.make,
       toolPlan.brand,
+      toolPlan.input?.make,
+      toolPlan.input?.brand,
       selectedVehicle.make,
       selectedVehicle.brand,
       context.anchorMake,
@@ -328,13 +366,27 @@ const getRequestedMake = ({ toolPlan = {}, context = {} } = {}) => {
   );
 };
 
-const getRequestedVariant = ({ toolPlan = {}, context = {} } = {}) => {
+const getRequestedVariant = ({
+  toolPlan = {},
+  context = {},
+  variant = "",
+  requestedVariant = "",
+  input = {},
+  parameters = {},
+} = {}) => {
   const entities = getEntities(toolPlan);
   const filters = getFilters(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
 
   return cleanText(
     first(
+      requestedVariant,
+      variant,
+      input.requestedVariant,
+      input.variant,
+      parameters.requestedVariant,
+      parameters.variant,
+      entities.primaryVariant,
       entities.variant,
       filters.variant,
       toolPlan.variant,
@@ -347,16 +399,30 @@ const getRequestedVariant = ({ toolPlan = {}, context = {} } = {}) => {
   );
 };
 
-const getRequestedCity = ({ toolPlan = {}, context = {} } = {}) => {
+const getRequestedCity = ({
+  toolPlan = {},
+  context = {},
+  city = "",
+  requestedCity = "",
+  input = {},
+  parameters = {},
+} = {}) => {
   const entities = getEntities(toolPlan);
   const filters = getFilters(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
 
   return cleanText(
     first(
+      requestedCity,
+      city,
+      input.requestedCity,
+      input.city,
+      parameters.requestedCity,
+      parameters.city,
       filters.city,
       entities.city,
       toolPlan.city,
+      toolPlan.input?.city,
       selectedVehicle.city,
       context.anchorCity,
       context.city,
@@ -2782,7 +2848,25 @@ const resultAttemptedStrictVariantLookup = (result = {}) =>
   );
 
 export const runVehiclePricelistNewCarsTool = async (args = {}) => {
-  const { toolPlan = {}, context = {}, userMessage = "" } = args;
+  const {
+    toolPlan = {},
+    context = {},
+    userMessage: rawUserMessage = "",
+    message = "",
+    query = "",
+  } = args;
+
+  const userMessage = cleanText(
+    first(
+      rawUserMessage,
+      message,
+      query,
+      toolPlan.message,
+      toolPlan.query,
+      toolPlan.input?.message,
+      toolPlan.input?.query,
+    ),
+  );
 
   const rawRequestedMake = getRequestedMake(args);
   const requestedModel = getRequestedModel(args);

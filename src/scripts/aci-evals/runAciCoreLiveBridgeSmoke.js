@@ -496,8 +496,14 @@ const runCase = async (item) => {
       if (!(totalQualifyingVariants > totalQualifyingModels)) {
         failures.push(`expected totalQualifyingVariants > totalQualifyingModels, got ${totalQualifyingVariants} <= ${totalQualifyingModels}`);
       }
-      if (!(totalQualifyingPriceRows > totalQualifyingVariants)) {
-        failures.push(`expected price-row count > unique variant count, got ${totalQualifyingPriceRows} <= ${totalQualifyingVariants}`);
+      if (!(totalQualifyingVariants > 0)) {
+        failures.push(`expected totalUniqueQualifyingVariants > 0, got ${totalQualifyingVariants}`);
+      }
+      if (!(totalQualifyingPriceRows >= totalQualifyingVariants)) {
+        failures.push(`expected price-row count >= unique variant count for city-scoped cache, got ${totalQualifyingPriceRows} < ${totalQualifyingVariants}`);
+      }
+      if (budgetDiscovery.cityScoped === false) {
+        failures.push("budget discovery should indicate city-scoped/default-city behavior when available");
       }
     }
 
