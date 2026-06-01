@@ -659,6 +659,13 @@ const enhanceFeaturePayloads = async (response = {}) => {
         features: payload.features || [],
         featureList: payload.featureList || payload.features || [],
       };
+      const payloadVehicle = payload.vehicle || {};
+      const isFeatureDiscoveryPlaceholder =
+        payloadVehicle.id === "feature-discovery" ||
+        (
+          (payload.canvasType || response.canvasType) === "feature_match_builder_canvas" &&
+          !firstText(payloadVehicle.model, payloadVehicle.fullModel)
+        );
 
       return {
         ...response,
@@ -794,6 +801,14 @@ const enhanceFeaturePayloads = async (response = {}) => {
             response.contextPatch?.anchorCity ||
             response.data?.city ||
             "new-delhi",
+          anchorVariant: isFeatureDiscoveryPlaceholder
+            ? ""
+            : firstText(
+                payloadVehicle.variant,
+                payloadVehicle.variantName,
+                payloadVehicle.selectedVariant,
+                response.contextPatch?.anchorVariant,
+              ),
           feature: payload.feature || response.contextPatch?.feature || response.data?.feature || "",
         },
         sourceTransparency: payload.sourceTransparency || response.sourceTransparency,

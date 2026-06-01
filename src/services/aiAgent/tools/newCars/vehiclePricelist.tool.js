@@ -6,6 +6,49 @@ const DEFAULT_CITY = "new-delhi";
 const VEHICLE_COLORS_COLLECTION = "vehicle_colors_v2";
 const ACI_MODEL_SUMMARY_COLLECTION = "aci_vehicle_model_summary";
 const ACI_PRICE_ROWS_COLLECTION = "aci_vehicle_price_rows";
+const SUPPORTED_PRICE_CITIES = [
+  {
+    city: "New Delhi",
+    citySlug: "new-delhi",
+    aliases: ["new delhi", "delhi"],
+  },
+  {
+    city: "Noida",
+    citySlug: "noida",
+    aliases: ["noida"],
+  },
+  {
+    city: "Gurgaon",
+    citySlug: "gurgaon",
+    aliases: ["gurgaon", "gurugram"],
+  },
+];
+const SUPPORTED_PRICE_CITY_LABELS = SUPPORTED_PRICE_CITIES.map((city) => city.city);
+const KNOWN_PRICING_CITY_ALIASES = [
+  ...SUPPORTED_PRICE_CITIES.flatMap((city) =>
+    city.aliases.map((alias) => ({
+      alias,
+      city: city.city,
+      citySlug: city.citySlug,
+      supported: true,
+    })),
+  ),
+  { alias: "mumbai", city: "Mumbai", supported: false },
+  { alias: "bombay", city: "Mumbai", supported: false },
+  { alias: "bangalore", city: "Bangalore", supported: false },
+  { alias: "bengaluru", city: "Bangalore", supported: false },
+  { alias: "pune", city: "Pune", supported: false },
+  { alias: "chennai", city: "Chennai", supported: false },
+  { alias: "hyderabad", city: "Hyderabad", supported: false },
+  { alias: "kolkata", city: "Kolkata", supported: false },
+  { alias: "calcutta", city: "Kolkata", supported: false },
+  { alias: "ahmedabad", city: "Ahmedabad", supported: false },
+  { alias: "jaipur", city: "Jaipur", supported: false },
+  { alias: "lucknow", city: "Lucknow", supported: false },
+  { alias: "chandigarh", city: "Chandigarh", supported: false },
+  { alias: "faridabad", city: "Faridabad", supported: false },
+  { alias: "ghaziabad", city: "Ghaziabad", supported: false },
+];
 
 const asArray = (value) => {
   if (!value) return [];
@@ -244,14 +287,31 @@ const getRequestedModel = ({
   toolPlan = {},
   context = {},
   userMessage = "",
+  message = "",
+  query = "",
+  model = "",
+  requestedModel = "",
+  input = {},
+  parameters = {},
 } = {}) => {
   const entities = getEntities(toolPlan);
   const filters = getFilters(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
-  const requestedMake = getRequestedMake({ toolPlan, context });
+  const requestedMake = getRequestedMake({
+    toolPlan,
+    context,
+    make: input.make || parameters.make,
+    requestedMake: input.requestedMake || parameters.requestedMake,
+  });
 
   return sanitizeRequestedModelText(
     first(
+      requestedModel,
+      model,
+      input.requestedModel,
+      input.model,
+      parameters.requestedModel,
+      parameters.model,
       entities.model,
       entities.models?.[0],
       filters.model,
@@ -261,21 +321,42 @@ const getRequestedModel = ({
       context.anchorModel,
       context.model,
       userMessage,
+      message,
+      query,
     ),
     { requestedMake },
   );
 };
 
-const getRequestedMake = ({ toolPlan = {}, context = {} } = {}) => {
+const getRequestedMake = ({
+  toolPlan = {},
+  context = {},
+  make = "",
+  brand = "",
+  requestedMake = "",
+  input = {},
+  parameters = {},
+} = {}) => {
   const entities = getEntities(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
 
   return cleanText(
     first(
+      requestedMake,
+      make,
+      brand,
+      input.requestedMake,
+      input.make,
+      input.brand,
+      parameters.requestedMake,
+      parameters.make,
+      parameters.brand,
       entities.make,
       entities.brand,
       toolPlan.make,
       toolPlan.brand,
+      toolPlan.input?.make,
+      toolPlan.input?.brand,
       selectedVehicle.make,
       selectedVehicle.brand,
       context.anchorMake,
@@ -285,13 +366,27 @@ const getRequestedMake = ({ toolPlan = {}, context = {} } = {}) => {
   );
 };
 
-const getRequestedVariant = ({ toolPlan = {}, context = {} } = {}) => {
+const getRequestedVariant = ({
+  toolPlan = {},
+  context = {},
+  variant = "",
+  requestedVariant = "",
+  input = {},
+  parameters = {},
+} = {}) => {
   const entities = getEntities(toolPlan);
   const filters = getFilters(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
 
   return cleanText(
     first(
+      requestedVariant,
+      variant,
+      input.requestedVariant,
+      input.variant,
+      parameters.requestedVariant,
+      parameters.variant,
+      entities.primaryVariant,
       entities.variant,
       filters.variant,
       toolPlan.variant,
@@ -304,16 +399,30 @@ const getRequestedVariant = ({ toolPlan = {}, context = {} } = {}) => {
   );
 };
 
-const getRequestedCity = ({ toolPlan = {}, context = {} } = {}) => {
+const getRequestedCity = ({
+  toolPlan = {},
+  context = {},
+  city = "",
+  requestedCity = "",
+  input = {},
+  parameters = {},
+} = {}) => {
   const entities = getEntities(toolPlan);
   const filters = getFilters(toolPlan);
   const selectedVehicle = context.selectedVehicle || {};
 
   return cleanText(
     first(
+      requestedCity,
+      city,
+      input.requestedCity,
+      input.city,
+      parameters.requestedCity,
+      parameters.city,
       filters.city,
       entities.city,
       toolPlan.city,
+      toolPlan.input?.city,
       selectedVehicle.city,
       context.anchorCity,
       context.city,
@@ -324,6 +433,108 @@ const getRequestedCity = ({ toolPlan = {}, context = {} } = {}) => {
 
 const displayCity = (city = DEFAULT_CITY) =>
   titleCase(String(city || DEFAULT_CITY).replace(/[-_]+/g, " "));
+
+const resolveSupportedPricingCity = (value = "") => {
+  const key = normalizeKey(String(value || "").replace(/[-_]+/g, " "));
+  if (!key) return null;
+
+  return (
+    SUPPORTED_PRICE_CITIES.find((city) =>
+      normalizeKey(city.city) === key ||
+      normalizeKey(city.citySlug) === key ||
+      city.aliases.some((alias) => normalizeKey(alias) === key),
+    ) || null
+  );
+};
+
+const detectExplicitPricingCityMention = (message = "") => {
+  const messageKey = normalizeKey(message);
+  if (!messageKey) return null;
+
+  const padded = ` ${messageKey} `;
+  const matches = KNOWN_PRICING_CITY_ALIASES
+    .filter((entry) => {
+      const aliasKey = normalizeKey(entry.alias);
+      return aliasKey && padded.includes(` ${aliasKey} `);
+    })
+    .sort((left, right) => normalizeKey(right.alias).length - normalizeKey(left.alias).length);
+
+  return matches[0] || null;
+};
+
+const buildUnsupportedCityPricingResponse = ({
+  requestedCity = "",
+  requestedMake = "",
+  requestedModel = "",
+  requestedVariant = "",
+} = {}) => {
+  const displayRequestedCity = cleanText(requestedCity) || "that city";
+  const vehicleLabel =
+    buildVehicleDisplayName(requestedMake, requestedModel) ||
+    cleanText(requestedModel) ||
+    "this vehicle";
+  const title = `${vehicleLabel} pricing unavailable in ${displayRequestedCity}`;
+  const answer = `I don't have live on-road pricing for ${displayRequestedCity} yet. Pricing is currently available for Delhi, Noida, and Gurgaon.`;
+  const unsupportedCity = {
+    requestedCity: displayRequestedCity,
+    supportedCities: SUPPORTED_PRICE_CITY_LABELS,
+    reason: "pricing_city_not_supported",
+    canRetryWithSupportedCity: true,
+  };
+
+  const widget = {
+    type: "vehicle_pricelist",
+    widgetType: "unsupported_city",
+    canvasType: "unsupported_city_canvas",
+    title,
+    heading: title,
+    answer,
+    city: displayRequestedCity,
+    rows: [],
+    records: [],
+    variants: [],
+    count: 0,
+    matched: 0,
+    unsupportedCity,
+    supportedCities: SUPPORTED_PRICE_CITY_LABELS,
+  };
+
+  return {
+    tool: "vehicle_pricelist",
+    intent: "vehicle_pricelist",
+    canvasType: "unsupported_city_canvas",
+    answer,
+    title,
+    rows: [],
+    records: [],
+    variants: [],
+    count: 0,
+    matched: 0,
+    widget,
+    unsupportedCity,
+    supportedCities: SUPPORTED_PRICE_CITY_LABELS,
+    contextPatch: {
+      anchorMake: requestedMake,
+      anchorModel: requestedModel,
+      anchorVariant: requestedVariant,
+      unsupportedCity,
+    },
+    requested: {
+      make: requestedMake,
+      model: cleanVehicleText(requestedModel),
+      variant: requestedVariant,
+      city: displayRequestedCity,
+    },
+    sourceTransparency: {
+      modulesChecked: [ACI_PRICE_ROWS_COLLECTION],
+      matched: 0,
+      dataSource: "unsupported_city",
+    },
+    meta: {
+      unsupportedCity,
+    },
+  };
+};
 
 const normalizeFuel = (row = {}) =>
   cleanText(
@@ -993,6 +1204,7 @@ const fetchVehiclePricelistRowsFromVehicles = async ({
   requestedCity = DEFAULT_CITY,
   userMessage = "",
   limit = 240,
+  allowCityFallback = true,
 } = {}) => {
   if (!mongoose.connection?.db) {
     return {
@@ -1064,7 +1276,8 @@ const fetchVehiclePricelistRowsFromVehicles = async ({
     ].filter((item) => Object.keys(item).length),
   };
 
-  const queries = [withCity, withoutCity].filter((query) => query.$and?.length);
+  const queries = (allowCityFallback ? [withCity, withoutCity] : [withCity])
+    .filter((query) => query.$and?.length);
 
   let rows = [];
   let queryUsed = null;
@@ -2635,7 +2848,25 @@ const resultAttemptedStrictVariantLookup = (result = {}) =>
   );
 
 export const runVehiclePricelistNewCarsTool = async (args = {}) => {
-  const { toolPlan = {}, context = {}, userMessage = "" } = args;
+  const {
+    toolPlan = {},
+    context = {},
+    userMessage: rawUserMessage = "",
+    message = "",
+    query = "",
+  } = args;
+
+  const userMessage = cleanText(
+    first(
+      rawUserMessage,
+      message,
+      query,
+      toolPlan.message,
+      toolPlan.query,
+      toolPlan.input?.message,
+      toolPlan.input?.query,
+    ),
+  );
 
   const rawRequestedMake = getRequestedMake(args);
   const requestedModel = getRequestedModel(args);
@@ -2675,10 +2906,32 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     }
   }
   let requestedCity = getRequestedCity(args);
-  requestedCity = await resolveRequestedCityFromMessage({
-    requestedCity,
-    userMessage,
-  });
+  const explicitCityMention = detectExplicitPricingCityMention(userMessage);
+  const supportedExplicitCity = explicitCityMention?.supported
+    ? resolveSupportedPricingCity(explicitCityMention.citySlug || explicitCityMention.city)
+    : null;
+
+  if (explicitCityMention && !supportedExplicitCity) {
+    return buildUnsupportedCityPricingResponse({
+      requestedCity: explicitCityMention.city || displayCity(explicitCityMention.alias),
+      requestedMake,
+      requestedModel,
+      requestedVariant,
+    });
+  }
+
+  if (supportedExplicitCity) {
+    requestedCity = supportedExplicitCity.citySlug;
+  } else {
+    const supportedRequestedCity = resolveSupportedPricingCity(requestedCity);
+    requestedCity = supportedRequestedCity?.citySlug || DEFAULT_CITY;
+    requestedCity = await resolveRequestedCityFromMessage({
+      requestedCity,
+      userMessage,
+    });
+  }
+
+  const allowCityFallback = !explicitCityMention;
   let effectiveRequestedMake = requestedMake;
 
   let rawResult = await fetchVehiclePricelistRows({
@@ -2687,6 +2940,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     requestedVariant,
     requestedCity,
     userMessage,
+    allowCityFallback,
     limit: toolPlan.limit || toolPlan.input?.limit || 240,
   });
 
@@ -2701,6 +2955,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
       requestedVariant: "",
       requestedCity,
       userMessage,
+      allowCityFallback,
       limit: toolPlan.limit || toolPlan.input?.limit || 240,
     });
 
@@ -2719,6 +2974,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
       requestedVariant,
       requestedCity,
       userMessage,
+      allowCityFallback,
       limit: toolPlan.limit || toolPlan.input?.limit || 240,
     });
 
@@ -2733,6 +2989,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
         requestedVariant: "",
         requestedCity,
         userMessage,
+        allowCityFallback,
         limit: toolPlan.limit || toolPlan.input?.limit || 240,
       });
       rawResult.variantFilterRelaxed = true;

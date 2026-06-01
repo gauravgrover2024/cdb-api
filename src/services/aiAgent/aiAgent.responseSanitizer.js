@@ -43,6 +43,23 @@ const displayName = (value = "") => {
     .join(" ");
 };
 
+const formatCompactInr = (amount = 0) => {
+  const value = Number(amount || 0);
+  if (!Number.isFinite(value) || value <= 0) return "";
+
+  if (value >= 10000000) {
+    const crore = value / 10000000;
+    return `₹${Number.isInteger(crore) ? crore : crore.toFixed(1)}Cr`;
+  }
+
+  if (value >= 100000) {
+    const lakh = value / 100000;
+    return `₹${Number.isInteger(lakh) ? lakh : lakh.toFixed(1)}L`;
+  }
+
+  return `₹${Math.round(value).toLocaleString("en-IN")}`;
+};
+
 const getResponseModel = (response = {}, context = {}) => {
   const selected = selectedVehicleFrom(context);
   const tool = firstToolFrom(response);
@@ -297,6 +314,44 @@ const extractCompareTarget = (message = "") => {
 
 const patchFeatureMatchResponse = (response = {}, message = "") => {
   if (response.intent !== "vehicle_must_have_feature_builder") return response;
+  const data = response.data || {};
+  const filters = data.filters || response.filters || {};
+  const budgetDiscovery = response.budgetDiscovery || data.budgetDiscovery || {};
+  const featureResolution =
+    response.featureResolution ||
+    data.featureResolution ||
+    budgetDiscovery.featureResolution ||
+    {};
+  const resolvedFeature = asArray(featureResolution.resolvedFeatures)[0] || {};
+  const featureLabel = displayName(
+    firstMeaningful(
+      resolvedFeature.displayName,
+      data.featureName,
+      response.featureName,
+      asArray(filters.mustHaveFeatures)[0],
+      "this feature",
+    ).replace(/[_-]+/g, " "),
+  );
+  const bodyType = key(filters.bodyType);
+  const bodyLabel = bodyType === "suv"
+    ? "SUV "
+    : filters.bodyType
+      ? `${displayName(filters.bodyType)} `
+      : "";
+  const modelCount =
+    Number(
+      response.totalQualifyingModels ||
+        data.totalQualifyingModels ||
+        budgetDiscovery.totalQualifyingModels ||
+        response.modelGroupCount ||
+        data.modelGroupCount ||
+        asArray(response.modelGroups || data.modelGroups || response.rows || data.rows).length ||
+        0,
+    ) || 0;
+  const budgetLabel = formatCompactInr(filters.budgetMax || budgetDiscovery.budgetMax);
+  const featureBudgetAnswer = modelCount
+    ? `I found ${modelCount} ${bodyLabel}model${modelCount === 1 ? "" : "s"} with ${featureLabel}${budgetLabel ? ` under ${budgetLabel}` : ""}. Showing the best matches first.`
+    : "";
 
   const actions = [
     makeAction({
@@ -388,6 +443,7 @@ const patchFeatureMatchResponse = (response = {}, message = "") => {
   return {
     ...response,
     answer:
+      featureBudgetAnswer ||
       "I found matching cars for your filters. Since you already gave budget/body type/features, I’ll show the best matches first instead of asking the same questions again.",
     actions,
     leadingQuestions: leadingQuestions.slice(0, 1),

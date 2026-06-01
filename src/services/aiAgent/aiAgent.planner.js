@@ -359,6 +359,8 @@ const extractRecommendationFilters = (message = "") => {
     mustHaveFeatures.push("ventilated seats");
   if (/\bwireless charger|wireless charging\b/.test(text))
     mustHaveFeatures.push("wireless charging");
+  if (/\bturbo(?:\s*charged|charged)?\b|\bturbo\s+charger\b/.test(text))
+    mustHaveFeatures.push("turbo charger");
 
   if (mustHaveFeatures.length) filters.mustHaveFeatures = mustHaveFeatures;
 

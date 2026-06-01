@@ -14,8 +14,17 @@ import {
   prewarmAciDbCandidateRetrieverCaches,
 } from './candidates/aciDbCandidateRetriever.js';
 
+import {
+  prewarmBudgetDiscoveryCache,
+  triggerBudgetDiscoveryCacheWarm,
+} from '../aiAgent/aiAgent.executor.js';
+
 const DEFAULT_PREWARM_TTL_MS = Number(
   process.env.ACI_CORE_PREWARM_TTL_MS || 10 * 60 * 1000,
+);
+
+const ACI_CORE_PREWARM_WARN_MS = Number(
+  process.env.ACI_CORE_PREWARM_WARN_MS || 10000,
 );
 
 let prewarmState = {
@@ -23,9 +32,21 @@ let prewarmState = {
   completedAt: 0,
   durationMs: 0,
   status: 'idle',
+  mode: 'light',
+  backgroundWarmTriggered: false,
   error: '',
   promise: null,
   results: [],
+};
+
+const normalizePrewarmMode = (mode = '') => {
+  const normalized = String(mode || process.env.ACI_CORE_PREWARM_MODE || 'light').trim().toLowerCase();
+  return normalized === 'full' ? 'full' : 'light';
+};
+
+const shouldTriggerBackgroundWarm = ({ background = null } = {}) => {
+  if (typeof background === 'boolean') return background;
+  return process.env.ACI_CORE_PREWARM_BACKGROUND === 'true';
 };
 
 const isMongoReady = () =>
@@ -49,7 +70,28 @@ const normalizeSettled = (item, label) => ({
     : item.value?.error || '',
 });
 
-async function prewarmAciCoreRuntime({ force = false } = {}) {
+const skippedResult = (label, reason, mode) => ({
+  label,
+  ok: true,
+  durationMs: 0,
+  cache: {
+    skipped: true,
+    reason,
+    mode,
+  },
+  error: '',
+});
+
+const triggerHeavyBackgroundWarm = ({ force = false } = {}) => {
+  prewarmAciDbCandidateRetrieverCaches({ force })
+    .catch((error) => {
+      console.warn(`[ACI Core] background candidate warm failed: ${error?.message || error}`);
+    });
+
+  triggerBudgetDiscoveryCacheWarm({ force });
+};
+
+async function prewarmAciCoreRuntime({ force = false, mode = null, background = null } = {}) {
   if (!isMongoReady()) {
     return {
       ...prewarmState,
@@ -58,7 +100,10 @@ async function prewarmAciCoreRuntime({ force = false } = {}) {
     };
   }
 
-  if (shouldSkipPrewarm({ force })) {
+  const prewarmMode = normalizePrewarmMode(mode);
+  const backgroundWarm = prewarmMode === 'light' && shouldTriggerBackgroundWarm({ background });
+
+  if (shouldSkipPrewarm({ force }) && prewarmState.mode === prewarmMode) {
     return prewarmState.promise || prewarmState;
   }
 
@@ -68,20 +113,40 @@ async function prewarmAciCoreRuntime({ force = false } = {}) {
     ...prewarmState,
     startedAt,
     status: 'running',
+    mode: prewarmMode,
+    backgroundWarmTriggered: false,
     error: '',
     promise: null,
   };
 
   prewarmState.promise = (async () => {
-    const tasks = [
-      [
-        'candidate_retriever_catalogs',
-        prewarmAciDbCandidateRetrieverCaches({ force }),
-      ],
-    ];
+    let results = [];
 
-    const settled = await Promise.allSettled(tasks.map(([, promise]) => promise));
-    const results = settled.map((item, index) => normalizeSettled(item, tasks[index][0]));
+    if (prewarmMode === 'full') {
+      const tasks = [
+        [
+          'candidate_retriever_catalogs',
+          prewarmAciDbCandidateRetrieverCaches({ force }),
+        ],
+        [
+          'budget_discovery_cache',
+          prewarmBudgetDiscoveryCache({ force }),
+        ],
+      ];
+
+      const settled = await Promise.allSettled(tasks.map(([, promise]) => promise));
+      results = settled.map((item, index) => normalizeSettled(item, tasks[index][0]));
+    } else {
+      results = [
+        skippedResult('candidate_retriever_catalogs', 'light_prewarm_skips_heavy_candidate_catalogs', prewarmMode),
+        skippedResult('budget_discovery_cache', 'light_prewarm_skips_heavy_budget_cache', prewarmMode),
+      ];
+
+      if (backgroundWarm) {
+        triggerHeavyBackgroundWarm({ force: false });
+      }
+    }
+
     const failed = results.filter((item) => !item.ok);
     const completedAt = Date.now();
 
@@ -90,6 +155,8 @@ async function prewarmAciCoreRuntime({ force = false } = {}) {
       completedAt,
       durationMs: completedAt - startedAt,
       status: failed.length ? 'partial' : 'ready',
+      mode: prewarmMode,
+      backgroundWarmTriggered: Boolean(backgroundWarm),
       error: failed.map((item) => `${item.label}: ${item.error}`).join(' | '),
       promise: null,
       results,
@@ -101,8 +168,22 @@ async function prewarmAciCoreRuntime({ force = false } = {}) {
         .join(', ');
 
       console.log(
-        `[ACI Core] prewarm ${prewarmState.status} in ${prewarmState.durationMs}ms (${summary})`,
+        `[ACI Core] prewarm ${prewarmState.status} in ${prewarmState.durationMs}ms mode=${prewarmMode} background=${Boolean(backgroundWarm)} (${summary})`,
       );
+
+      results.forEach((item) => {
+        if (Number(item.durationMs || 0) > ACI_CORE_PREWARM_WARN_MS) {
+          console.warn(
+            `[ACI Core] slow prewarm step ${item.label}: ${item.durationMs}ms`,
+          );
+        }
+      });
+
+      if (prewarmState.durationMs > ACI_CORE_PREWARM_WARN_MS) {
+        console.warn(
+          `[ACI Core] slow total prewarm: ${prewarmState.durationMs}ms. Target is < ${ACI_CORE_PREWARM_WARN_MS}ms.`,
+        );
+      }
 
       if (prewarmState.error) {
         console.warn(`[ACI Core] prewarm warnings: ${prewarmState.error}`);
@@ -115,19 +196,22 @@ async function prewarmAciCoreRuntime({ force = false } = {}) {
   return prewarmState.promise;
 }
 
-const triggerAciCoreRuntimePrewarm = ({ force = false } = {}) => {
+const triggerAciCoreRuntimePrewarm = ({ force = false, mode = null, background = null } = {}) => {
   if (!isMongoReady()) return null;
 
-  if (shouldSkipPrewarm({ force })) {
+  const prewarmMode = normalizePrewarmMode(mode);
+
+  if (shouldSkipPrewarm({ force }) && prewarmState.mode === prewarmMode) {
     return prewarmState.promise || null;
   }
 
-  return prewarmAciCoreRuntime({ force }).catch((error) => {
+  return prewarmAciCoreRuntime({ force, mode: prewarmMode, background }).catch((error) => {
     prewarmState = {
       ...prewarmState,
       completedAt: Date.now(),
       durationMs: Date.now() - (prewarmState.startedAt || Date.now()),
       status: 'failed',
+      mode: prewarmMode,
       error: error?.message || String(error || ''),
       promise: null,
     };
@@ -145,6 +229,7 @@ export {
   prewarmAciCoreRuntime,
   triggerAciCoreRuntimePrewarm,
   getAciCoreRuntimePrewarmState,
+  normalizePrewarmMode,
 };
 
 export default prewarmAciCoreRuntime;

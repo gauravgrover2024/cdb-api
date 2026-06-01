@@ -198,6 +198,37 @@ const ACI_PROGRESS_MODULES = [
     ]
   },
   {
+    id: "variant-decision-data-foundation",
+    title: "Variant Decision Data Foundation",
+    group: "Advisory Layer",
+    priority: "P0",
+    owner: "Backend + Data",
+    status: "mostly_ready",
+    summary: "DB-backed variant intelligence foundation for instant buyer advice, variant regret prevention, upgrade decisions, city pricing, and later scoring.",
+    whatWillWork: "Full variant universe, city-specific price overlay, same-model/fuel/transmission upgrade ladder, gain/loss evidence, data-quality gaps, and controlled external evidence workflow.",
+    currentState: "Full supported-city global variant profile universe is built with 2,114 profiles. City price overlay is written with 6,002 rows across New Delhi, Gurgaon and Noida with zero unmatched rows, zero missing prices and zero duplicate variant-city pairs. Upgrade ladder is written for 2,114 variants with priceRank, equipmentRank and variantRole. Dual-tone/cosmetic variants remain ranked and searchable but are not selected as default upgrade targets. Data gap queue is written with 3,823 open evidence gaps and zero duplicate gap keys.",
+    pending: "Build external evidence collection, fill P0 feature/transmission gaps, add crash-rating evidence model, build controlled evidence-to-profile patcher, rerun coverage audits, then design score config and compute recommendation/value/regret/safety scores. Do not scrape directly into decision profiles.",
+    items: [
+      { key: "variant_profile_universe", name: "Full variant decision profile universe: 2,114 profiles", status: "ready" },
+      { key: "variant_profile_quality", name: "Profile quality: 1,404 high, 710 medium, 0 low, 0 duplicate keys", status: "ready" },
+      { key: "city_price_overlay", name: "City price overlay: 6,002 variant-city rows", status: "ready" },
+      { key: "supported_city_coverage", name: "Supported city coverage: New Delhi 2,114, Gurgaon 2,044, Noida 1,844", status: "ready" },
+      { key: "price_integrity", name: "City price integrity: 0 missing ex-showroom/on-road, 0 duplicate variant-city pairs", status: "ready" },
+      { key: "variant_rank_equipment_rank", name: "Variant priceRank and equipmentRank", status: "ready" },
+      { key: "upgrade_ladder", name: "Same-model/fuel/transmission upgrade ladder", status: "ready" },
+      { key: "non_dual_tone_upgrade_rule", name: "Non-dual-tone/non-cosmetic default upgrade rule", status: "ready" },
+      { key: "upgrade_edge_quality", name: "Upgrade edge quality flags: clean / needs review / no higher variant", status: "ready" },
+      { key: "data_gap_queue", name: "Auditable data gap queue: 3,823 open gaps", status: "ready" },
+      { key: "feature_matrix_gap_queue", name: "Feature-matrix gap queue: 85 variants", status: "ready" },
+      { key: "unknown_transmission_gap_queue", name: "Unknown-transmission gap queue: 52 variants", status: "ready" },
+      { key: "crash_rating_gap_queue", name: "Crash-rating gap queue: 2,114 variants", status: "ready" },
+      { key: "external_evidence_collection", name: "External evidence collection", status: "planned" },
+      { key: "evidence_to_profile_patcher", name: "Controlled evidence-to-profile patcher", status: "planned" },
+      { key: "score_config", name: "Score config for safety/value/regret/recommendation", status: "pending" },
+      { key: "score_computation", name: "Score computation", status: "pending" }
+    ]
+  },
+  {
     id: "recommendations",
     title: "Recommendations & Car Advisor",
     group: "Advisory Layer",
@@ -433,7 +464,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "session_buyer_memory", name: "Session buyer memory", status: "planned" },
       { key: "recently_compared_shortlist", name: "Recently compared / shortlist tray", status: "planned" }
     ]
-  },,
+  },
 
   {
     id: "trust-recovery-confidence",
@@ -455,7 +486,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "trace_metadata", name: "Trace/debug metadata", status: "partial" },
       { key: "recovery_options", name: "Nearby alternatives / recovery options", status: "planned" }
     ]
-  },,
+  },
 
   {
     id: "decision-conversion-intelligence",
@@ -478,6 +509,79 @@ const ACI_PROGRESS_MODULES = [
       { key: "crm_handoff_payload", name: "CRM handoff payload", status: "planned" }
     ]
   },
+
+  {
+    id: "launch-distribution-social",
+    title: "Launch Distribution, Social Presence & Trust Setup",
+    group: "Launch Readiness",
+    priority: "P1",
+    owner: "Product + Marketing + Backend",
+    status: "planned",
+    summary: "Locked launch-readiness workstream for Instagram, Facebook, Google Business Profile, WhatsApp Business/green tick eligibility, business listings, and first launch/awareness content.",
+    done: "Launch distribution requirement locked into roadmap and progress tracker.",
+    pending: "Create social pages, prepare first Instagram launch/awareness post, configure Google Business Profile, WhatsApp Business identity, listing profiles, and launch-time content checklist.",
+    items: [
+      { key: "instagram_page", name: "Instagram page setup", status: "planned" },
+      { key: "instagram_first_post", name: "Instagram first launch / awareness post", status: "planned" },
+      { key: "facebook_page", name: "Facebook page setup", status: "planned" },
+      { key: "google_business_profile", name: "Google Business Profile", status: "planned" },
+      { key: "business_listings", name: "Relevant business/local listings", status: "planned" },
+      { key: "whatsapp_business_presence", name: "WhatsApp Business presence", status: "planned" },
+      { key: "whatsapp_green_tick", name: "WhatsApp green tick / official business eligibility", status: "planned" },
+      { key: "brand_identity_consistency", name: "Consistent business identity across channels", status: "planned" },
+      { key: "launch_content_checklist", name: "Launch content/distribution checklist", status: "planned" }
+    ]
+  },
+  {
+    id: "revenue-monetization-systems",
+    title: "Revenue & Monetization Backend Systems",
+    group: "Revenue Systems",
+    priority: "P1",
+    owner: "Backend + Product + CRM",
+    status: "planned",
+    summary: "Locked backend roadmap for consent-based dealer lead monetization and clearly labeled sponsored brand/banner campaigns without touching ACI Assist's neutral decision brain.",
+    done: "Revenue model requirements locked into roadmap and progress tracker.",
+    pending: "Design dealer lead routing, lead scoring, CRM/dealer partner delivery, billing records, sponsored campaign management, disclosure, tracking, caps, and audit logs.",
+    items: [
+      { key: "dealer_lead_monetization", name: "Consent-based dealer/showroom lead monetization", status: "planned" },
+      { key: "lead_routing_pincode_city", name: "Lead routing by pincode/city/brand/model/variant", status: "planned" },
+      { key: "lead_quality_scoring", name: "Lead quality / seriousness scoring", status: "planned" },
+      { key: "crm_dealer_partner_routing", name: "CRM/dealer partner routing", status: "planned" },
+      { key: "lead_delivery_audit_logs", name: "Lead delivery and audit logs", status: "planned" },
+      { key: "billing_records", name: "Billing / monetization records", status: "planned" },
+      { key: "sponsored_banner_campaigns", name: "Sponsored brand banner campaigns", status: "planned" },
+      { key: "time_bound_launch_inventory", name: "Time-bound launch/campaign banner inventory", status: "planned" },
+      { key: "campaign_targeting_caps_approval", name: "Campaign targeting, caps and approval", status: "planned" },
+      { key: "impression_click_conversion_tracking", name: "Impression/click/lead/conversion tracking", status: "planned" },
+      { key: "brain_separation_rule", name: "Strict separation from recommendation brain", status: "planned" }
+    ]
+  },
+
+  {
+    id: "living-documentation-pack",
+    title: "Living Documentation Pack",
+    group: "Product Governance",
+    priority: "P0",
+    owner: "Product + Backend + Frontend",
+    status: "planned",
+    summary: "Formal repo documentation pack so ACI Assist decisions, architecture, contracts, QA gates, launch readiness, monetization, security, and handoff do not remain scattered across chat.",
+    done: "Documentation pack requirement locked into roadmap. Placeholder repo files created for the required documents.",
+    pending: "Fill and maintain PRD, TRD, app flows, UI/UX brief, backend schema/data contracts, response contracts, implementation plan, eval/QA plan, SEO/launch plan, monetization plan, security/privacy/guardrails plan, and WhatsApp/CRM/lead routing plan.",
+    items: [
+      { key: "prd", name: "PRD", status: "planned" },
+      { key: "trd", name: "TRD", status: "planned" },
+      { key: "app_flows", name: "App Flows", status: "planned" },
+      { key: "ui_ux_brief", name: "UI/UX Brief", status: "planned" },
+      { key: "backend_schema_data_contracts", name: "Backend Schema & Data Contracts", status: "planned" },
+      { key: "backend_response_contracts", name: "Backend Response Contracts", status: "planned" },
+      { key: "implementation_plan", name: "Implementation Plan", status: "planned" },
+      { key: "eval_qa_plan", name: "Eval & QA Plan", status: "planned" },
+      { key: "seo_launch_readiness_plan", name: "SEO & Launch Readiness Plan", status: "planned" },
+      { key: "monetization_revenue_plan", name: "Monetization & Revenue Systems Plan", status: "planned" },
+      { key: "security_privacy_guardrails_plan", name: "Security, Privacy & Guardrails Plan", status: "planned" },
+      { key: "whatsapp_crm_lead_routing_plan", name: "WhatsApp, CRM & Lead Routing Plan", status: "planned" }
+    ]
+  }
 ];
 
 module.exports = {

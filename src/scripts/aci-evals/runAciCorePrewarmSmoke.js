@@ -44,7 +44,7 @@ async function main() {
 
   clearAciCandidateRetrieverCaches();
 
-  const prewarm = await prewarmAciCoreRuntime({ force: true });
+  const prewarm = await prewarmAciCoreRuntime({ force: true, mode: "full" });
 
   const firstQueryResults = [];
   for (const message of cases) {

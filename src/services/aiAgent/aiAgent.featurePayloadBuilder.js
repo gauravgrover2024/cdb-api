@@ -795,7 +795,16 @@ const buildFeatureDiscoveryModelGroups = ({
 
   return [...groups.values()]
     .map((group) => {
-      const variants = sortVariantsByPrice(group.qualifyingVariants);
+      const variants = uniqueByKey(
+        sortVariantsByPrice(group.qualifyingVariants),
+        (variant) => compactKey([
+          variant.make,
+          variant.modelKey || variant.model,
+          variant.variantKey || variant.variantName || variant.variant,
+          variant.fuelType || variant.fuel,
+          variant.transmission,
+        ].filter(Boolean).join(" ")),
+      );
       const cheapest = variants[0] || {};
       const bestUnderBudget = [...variants]
         .filter((variant) => {
@@ -1816,6 +1825,12 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
     source: exactMatrixResult.source,
   });
   const responseRows = modelGroups.length ? modelGroups : effectiveMatchedRows;
+  const totalQualifyingModels = modelGroups.length;
+  const totalUniqueQualifyingVariants = modelGroups.length
+    ? modelGroups.reduce((total, group) => total + Number(group.qualifyingVariantCount || 0), 0)
+    : effectiveMatchedRows.length;
+  const returnedPreviewGroups = responseRows.length;
+  const hasMore = totalQualifyingModels > returnedPreviewGroups;
   const budgetLabel =
     Number.isFinite(budgetMax) && budgetMax > 0
       ? ` under ${formatMoney(budgetMax)}`
@@ -1823,10 +1838,23 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
   const makeLabel = brand ? `${brand} ` : "";
   const featureLabel = exactFeatureName;
   const modelFirstAnswer = modelGroups.length
-    ? `I found ${makeLabel}models with at least one ${featureLabel} variant${budgetLabel}. I’ll show where the feature starts and the best qualifying variant within your budget.`
+    ? `I found ${modelGroups.length} ${makeLabel}model${modelGroups.length === 1 ? "" : "s"} with ${featureLabel}${budgetLabel}. Showing the top matches first.`
     : effectiveMatchedCount
       ? `I found ${effectiveMatchedCount} qualifying variant${effectiveMatchedCount === 1 ? "" : "s"} with ${featureLabel}${budgetLabel}.`
       : `I could not find variants with ${requestedFeature}.`;
+  const featureDiscovery = {
+    enabled: true,
+    featureKey: exactFeatureKey,
+    featureName: exactFeatureName,
+    budgetMax,
+    totalQualifyingModels,
+    totalUniqueQualifyingVariants,
+    totalQualifyingVariants: totalUniqueQualifyingVariants,
+    returnedModelGroups: returnedPreviewGroups,
+    returnedPreviewGroups,
+    fullModelGroupCount: modelGroups.length,
+    hasMore,
+  };
 
   return {
     type: "vehicle_feature_discovery",
@@ -1847,7 +1875,14 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
     features: effectiveMatchedRows,
     featureList: effectiveMatchedRows,
     totalVariantCount: hasExactMatrixTruth ? exactMatrixRows.length : allVariants.length,
-    matchedVariantCount: effectiveMatchedCount,
+    matchedVariantCount: totalUniqueQualifyingVariants || effectiveMatchedCount,
+    totalQualifyingModels,
+    totalUniqueQualifyingVariants,
+    totalQualifyingVariants: totalUniqueQualifyingVariants,
+    returnedPreviewGroups,
+    returnedModelGroups: returnedPreviewGroups,
+    fullModelGroupCount: modelGroups.length,
+    featureDiscovery,
     modelGroupCount: modelGroups.length,
     rowCount: responseRows.length,
     activeStatusSource: hasExactMatrixTruth
@@ -1866,7 +1901,7 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
       modulesChecked: ["vehicle_feature_catalog_v2", "vehicle_variant_feature_matrix_v2"],
       dataSource: exactMatrixResult.source?.dataSource || "vehicle_variant_feature_matrix_v2",
       recordCount: effectiveMatchedCount,
-      matched: effectiveMatchedCount,
+      matched: totalUniqueQualifyingVariants || effectiveMatchedCount,
       featureKey: exactFeatureKey,
       foundMatrixRows: exactMatrixRows.length,
     },
@@ -1881,7 +1916,14 @@ export const buildFeatureDiscoveryPayload = async ({ response = {}, widget = {} 
       items: responseRows,
       rowCount: responseRows.length,
       modelGroupCount: modelGroups.length,
-      matchedVariantCount: effectiveMatchedCount,
+      matchedVariantCount: totalUniqueQualifyingVariants || effectiveMatchedCount,
+      totalQualifyingModels,
+      totalUniqueQualifyingVariants,
+      totalQualifyingVariants: totalUniqueQualifyingVariants,
+      returnedPreviewGroups,
+      returnedModelGroups: returnedPreviewGroups,
+      fullModelGroupCount: modelGroups.length,
+      featureDiscovery,
       activeStatusSource: hasExactMatrixTruth
         ? "vehicle_variant_feature_matrix_v2"
         : enrichment.hasVehicleStatus ? "vehicles" : "feature_rows",

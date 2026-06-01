@@ -118,6 +118,7 @@ const detectFeatures = (message = "") => {
   add(/\brear\s+camera\b/.test(text), "rear camera");
   add(/\bventilated\s+seats?\b/.test(text), "ventilated seats");
   add(/\bwireless\s+charg/.test(text), "wireless charging");
+  add(/\bturbo(?:\s*charged|charged)?\b|\bturbo\s+charger\b/.test(text), "turbo charger");
   add(/\bcruise\s+control\b/.test(text), "cruise control");
   add(/\btpms\b/.test(text), "TPMS");
   add(/\besc\b/.test(text), "ESC");
@@ -1965,6 +1966,7 @@ export const compileSemanticPlan = async ({
         "ADAS",
         "360 camera",
         "ventilated seats",
+        "turbo charger",
       ].includes(feature),
     );
 

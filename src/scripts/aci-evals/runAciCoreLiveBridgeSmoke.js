@@ -333,6 +333,31 @@ const runCase = async (item) => {
       failures.push("broad feature discovery answer should mention grouped models");
     }
 
+    if (/\bqualifying variants?\b/i.test(answer)) {
+      failures.push("broad feature discovery answer should be model-focused and not expose variant-count wording");
+    }
+
+    const featureDiscovery =
+      response.data?.featureDiscovery ||
+      response.featureDiscovery ||
+      response.meta?.featureDiscovery ||
+      {};
+    const totalFeatureModels = Number(
+      featureDiscovery.totalQualifyingModels ||
+        response.data?.totalQualifyingModels ||
+        0,
+    );
+    const totalFeatureUniqueVariants = Number(
+      featureDiscovery.totalUniqueQualifyingVariants ||
+        featureDiscovery.totalQualifyingVariants ||
+        response.data?.totalUniqueQualifyingVariants ||
+        0,
+    );
+
+    if (!totalFeatureModels || !totalFeatureUniqueVariants) {
+      failures.push("broad feature discovery missing total model/unique variant metadata");
+    }
+
     const sampleGroup = modelGroups[0] || rows[0] || {};
     if (
       !sampleGroup.model ||
@@ -404,9 +429,16 @@ const runCase = async (item) => {
         0,
     );
     const totalQualifyingVariants = Number(
-      budgetDiscovery.totalQualifyingVariants ||
+      budgetDiscovery.totalUniqueQualifyingVariants ||
+        budgetDiscovery.totalQualifyingVariants ||
         response.data?.totalQualifyingVariants ||
         response.totalQualifyingVariants ||
+        0,
+    );
+    const totalQualifyingPriceRows = Number(
+      budgetDiscovery.totalQualifyingPriceRows ||
+        response.data?.totalQualifyingPriceRows ||
+        response.totalQualifyingPriceRows ||
         0,
     );
     const returnedPreviewGroups = Number(
@@ -439,11 +471,17 @@ const runCase = async (item) => {
     }
 
     if (!/\bmodels?\b/i.test(answer) || !/\bunder\b/i.test(answer) || !/showing the top/i.test(answer)) {
-      failures.push("budget discovery answer should be model-first, budget-aware, and preview-aware");
+      if (!/showing \d+ good starting points/i.test(answer)) {
+        failures.push("budget discovery answer should be model-first, budget-aware, and preview-aware");
+      }
     }
 
     if (/I found 24 models/i.test(answer)) {
       failures.push("budget discovery answer is using preview count as total model count");
+    }
+
+    if (/\bqualifying variants?\b/i.test(answer)) {
+      failures.push("budget discovery buyer-facing answer should not mention qualifying variant counts");
     }
 
     const modules = getResponseModules(response);
@@ -458,17 +496,40 @@ const runCase = async (item) => {
       if (!(totalQualifyingVariants > totalQualifyingModels)) {
         failures.push(`expected totalQualifyingVariants > totalQualifyingModels, got ${totalQualifyingVariants} <= ${totalQualifyingModels}`);
       }
+      if (!(totalQualifyingVariants > 0)) {
+        failures.push(`expected totalUniqueQualifyingVariants > 0, got ${totalQualifyingVariants}`);
+      }
+      if (!(totalQualifyingPriceRows >= totalQualifyingVariants)) {
+        failures.push(`expected price-row count >= unique variant count for city-scoped cache, got ${totalQualifyingPriceRows} < ${totalQualifyingVariants}`);
+      }
+      if (budgetDiscovery.cityScoped === false) {
+        failures.push("budget discovery should indicate city-scoped/default-city behavior when available");
+      }
     }
 
-    if (returnedPreviewGroups > 10 || previewGroups.length > 10) {
-      failures.push(`budget discovery preview should be <=10 groups, got returned=${returnedPreviewGroups}, rows=${previewGroups.length}`);
+    if (returnedPreviewGroups > 8 || previewGroups.length > 8) {
+      failures.push(`budget discovery preview should be <=8 groups, got returned=${returnedPreviewGroups}, rows=${previewGroups.length}`);
     }
 
-    if (response.modelGroupCount > 10 || response.data?.modelGroupCount > 10) {
-      failures.push(`budget discovery modelGroupCount should represent preview count <=10, got top=${response.modelGroupCount}, data=${response.data?.modelGroupCount}`);
+    if (response.modelGroupCount > 8 || response.data?.modelGroupCount > 8) {
+      failures.push(`budget discovery modelGroupCount should represent preview count <=8, got top=${response.modelGroupCount}, data=${response.data?.modelGroupCount}`);
     }
+
+    const previewModelKeys = new Set();
+    const previewBodyTypes = new Set();
 
     for (const group of previewGroups) {
+      const modelKey = text(`${group.make || group.brand || ""} ${group.modelKey || group.model || group.displayName || ""}`);
+      if (modelKey) {
+        if (previewModelKeys.has(modelKey)) {
+          failures.push(`budget discovery preview duplicated model: ${group.displayName || group.modelKey}`);
+        }
+        previewModelKeys.add(modelKey);
+      }
+
+      const groupBodyText = text(`${group.bodyType || ""} ${group.bodyTypeKey || ""} ${group.segment || ""}`);
+      if (groupBodyText) previewBodyTypes.add(groupBodyText);
+
       const variants = Array.isArray(group.qualifyingVariants) ? group.qualifyingVariants : [];
       if (!group.startsFromVariant || !group.bestUnderBudgetVariant) {
         failures.push(`budget model group missing start/best variants for ${group.displayName || group.modelKey}`);
@@ -497,6 +558,22 @@ const runCase = async (item) => {
           failures.push(`automatic budget discovery returned group without automatic variants: ${group.displayName || group.modelKey}`);
         }
       }
+    }
+
+    if (!item.bodyType && previewBodyTypes.size > 1 && !budgetDiscovery.diversifiedPreview) {
+      failures.push("generic budget discovery should mark diversified preview when multiple body types are present");
+    }
+
+    if (!item.bodyType && previewBodyTypes.size <= 1 && previewGroups.length > 3) {
+      failures.push("generic budget discovery preview should include more than one body type when bodyType data is available");
+    }
+
+    const bridgePrimaryTask = response.aciCoreBridge?.primaryTask || response.meta?.aciCoreBridge?.primaryTask || "";
+    if (
+      (item.id === "budget-suvs-under-20l" || item.id === "budget-best-automatic-suvs-under-20l") &&
+      bridgePrimaryTask !== "vehicle_discovery"
+    ) {
+      failures.push(`budget discovery bridge primaryTask should be vehicle_discovery, got ${bridgePrimaryTask}`);
     }
   }
 

@@ -59,6 +59,25 @@ let priceVariantCatalogCache = {
   items: [],
 };
 
+let candidatePrewarmPromise = null;
+
+const EMPTY_VEHICLE_ENTITY_INDEX = {
+  models: [],
+  variants: [],
+  colors: [],
+  modelAliases: [],
+  variantAliases: [],
+  colorAliases: [],
+  counts: {
+    models: 0,
+    variants: 0,
+    colors: 0,
+    modelAliases: 0,
+    variantAliases: 0,
+    colorAliases: 0,
+  },
+};
+
 const clean = (value = '') =>
   String(value || '')
     .toLowerCase()
@@ -203,7 +222,7 @@ const TASK_HINTS = [
   { task: 'color_lookup', terms: ['color', 'colour', 'black', 'white', 'red', 'dual tone'] },
   { task: 'feature_answer', terms: ['feature', 'features', 'does it have', 'available with', 'comes with'] },
   { task: 'vehicle_comparison', terms: ['compare', 'vs', 'versus', 'better than', 'difference between'] },
-  { task: 'vehicle_discovery', terms: ['cars with', 'cars under', 'show cars', 'show me cars', 'which cars'] },
+  { task: 'vehicle_discovery', terms: ['cars with', 'cars under', 'suvs under', 'sedans under', 'hatchbacks under', 'models under', 'options under', 'show cars', 'show me cars', 'which cars', 'cheapest cars', 'cheapest cng cars', 'lowest price cars', 'most affordable cars'] },
   { task: 'quotation', terms: ['quote', 'quotation', 'best price'] },
   { task: 'offer_lookup', terms: ['offer', 'discount', 'bonus'] },
   { task: 'waiting_period', terms: ['waiting', 'delivery time', 'kitne din', 'immediate delivery'] },
@@ -278,6 +297,16 @@ const buildFeatureAliasEntries = (feature = {}) => {
     pushEntry(alias, 'display_parenthetical');
   }
 
+  if (
+    canonicalText === 'turbo charger' ||
+    displayText === 'turbo charger' ||
+    entries.some((entry) => entry.aliasClean === 'turbo charger')
+  ) {
+    pushEntry('turbo', 'catalog_synonym');
+    pushEntry('turbocharged', 'catalog_synonym');
+    pushEntry('turbo charged', 'catalog_synonym');
+  }
+
   return uniqueBy(entries, (item) => item.aliasClean);
 };
 
@@ -349,6 +378,81 @@ const extractTaskHintCandidates = (message = '') => {
   }
 
   return candidates;
+};
+
+const isBroadDiscoveryCandidateQuery = ({
+  message = '',
+  budgetCandidates = [],
+  languageFilters = [],
+  taskHints = [],
+} = {}) => {
+  const normalized = clean(message);
+  if (!normalized) return false;
+
+  const hasBroadNoun = /\b(cars?|suvs?|sedans?|hatchbacks?|models?|options?)\b/.test(normalized);
+  const hasDiscoveryTask = taskHints.some((item) => item.canonicalKey === 'vehicle_discovery');
+  const hasBudget = budgetCandidates.length > 0;
+  const hasBodyFilter = languageFilters.some((item) => item.type === 'bodyType');
+
+  if (!hasBroadNoun && !hasDiscoveryTask && !hasBudget && !hasBodyFilter) return false;
+  if (hasComparisonLanguage(normalized)) return false;
+  if (/\b(on road|on-road|price|emi|compare|vs|versus|colour|color)\b/.test(normalized) && !hasBroadNoun) {
+    return false;
+  }
+
+  return hasBroadNoun || (hasBudget && hasBodyFilter);
+};
+
+const isGenericBroadBudgetQuery = (message = '') => {
+  const normalized = clean(message);
+  return /^(best|cheapest|lowest price|lowest|most affordable)?\s*((automatic|manual|electric|ev|cng|petrol|diesel)\s+)?(cars?|suvs?|sedans?|hatchbacks?|mpvs?|options?|models?)\b/.test(normalized);
+};
+
+const shouldLookupFeatureCatalogForBroadQuery = (message = '') => {
+  const normalized = clean(message);
+  if (!normalized) return false;
+
+  return /\b(with|having|must have|sunroof|turbo|turbocharged|adas|abs|airbags?|camera|cruise|ventilated|wireless|alloy|led|tpms)\b/.test(normalized);
+};
+
+const LIGHT_BROAD_FEATURE_ALIASES = [
+  { canonicalKey: 'turbo_charger', displayName: 'Turbo Charger', terms: ['turbo', 'turbocharged', 'turbo charger', 'turbo charged'] },
+  { canonicalKey: 'sunroof', displayName: 'Sunroof', terms: ['sunroof'] },
+  { canonicalKey: 'adas_package', displayName: 'ADAS Package', terms: ['adas'] },
+  { canonicalKey: 'anti_lock_braking_system_abs', displayName: 'Anti-lock Braking System (ABS)', terms: ['abs', 'anti lock braking', 'anti lock braking system'] },
+  { canonicalKey: 'six_airbags', displayName: 'Six Airbags', terms: ['six airbags', '6 airbags', 'airbags'] },
+  { canonicalKey: 'rear_camera', displayName: 'Rear Camera', terms: ['rear camera', 'parking camera'] },
+  { canonicalKey: 'cruise_control', displayName: 'Cruise Control', terms: ['cruise control'] },
+  { canonicalKey: 'ventilated_seats', displayName: 'Ventilated Seats', terms: ['ventilated seats'] },
+  { canonicalKey: 'wireless_charging', displayName: 'Wireless Charging', terms: ['wireless charging'] },
+  { canonicalKey: 'alloy_wheels', displayName: 'Alloy Wheels', terms: ['alloy wheels', 'alloys'] },
+  { canonicalKey: 'led_headlamps', displayName: 'LED Headlamps', terms: ['led headlamps', 'led headlights'] },
+  { canonicalKey: 'tpms', displayName: 'TPMS', terms: ['tpms', 'tyre pressure monitoring'] },
+];
+
+const findLightBroadFeatureCandidates = (message = '') => {
+  const normalized = clean(message);
+  if (!normalized) return [];
+
+  return LIGHT_BROAD_FEATURE_ALIASES
+    .map((feature) => {
+      const matchedTerm = feature.terms.find((term) => hasWord(normalized, term));
+      if (!matchedTerm) return null;
+
+      return createCandidateItem({
+        rawText: matchedTerm,
+        canonicalKey: feature.canonicalKey,
+        displayName: feature.displayName,
+        type: 'feature',
+        source: CANDIDATE_SOURCE_TYPES.STATIC_LANGUAGE_OPERATOR,
+        confidence: 0.82,
+        metadata: {
+          matchedAlias: matchedTerm,
+          lightBroadFeatureCandidate: true,
+        },
+      });
+    })
+    .filter(Boolean);
 };
 
 const getDb = () => {
@@ -792,6 +896,54 @@ const mapVariantMatch = (match = {}) => createCandidateItem({
   },
 });
 
+const FEATURE_ALIAS_VARIANT_BLOCKLIST = [
+  'turbo',
+  'turbocharged',
+  'turbo charged',
+  'turbo charger',
+  'sunroof',
+  'adas',
+  'abs',
+  'airbag',
+  'airbags',
+  'six airbags',
+  '6 airbags',
+  'camera',
+  '360 camera',
+  'ventilated seats',
+  'wireless charging',
+];
+
+const getFeatureAliasVariantBlocklist = (featureMatches = []) => {
+  const keys = new Set(FEATURE_ALIAS_VARIANT_BLOCKLIST.map(clean).filter(Boolean));
+
+  for (const feature of featureMatches || []) {
+    [
+      feature?.rawText,
+      feature?.displayName,
+      feature?.canonicalKey,
+      feature?.metadata?.matchedAlias,
+    ]
+      .map((value) => clean(String(value || '').replace(/[_-]/g, ' ')))
+      .filter(Boolean)
+      .forEach((value) => keys.add(value));
+  }
+
+  return keys;
+};
+
+const isFeatureAliasOnlyVariantMatch = (match = {}, blocklist = new Set()) => {
+  const matchedAlias = clean(match.matchedAlias || match.rawText || '');
+  const rawVariant = clean(match.rawVariant || match.variant || '');
+  const shortVariantKey = clean(match.shortVariantKey || '');
+
+  return Boolean(
+    (matchedAlias && blocklist.has(matchedAlias)) ||
+      (rawVariant && blocklist.has(rawVariant)) ||
+      (shortVariantKey && blocklist.has(shortVariantKey)),
+  );
+};
+
 const mapColorMatch = (match = {}) => createCandidateItem({
   rawText: match.matchedAlias || match.color || match.name || match.displayName || null,
   canonicalKey: normalizeFeatureKey(match.color || match.name || match.displayName || ''),
@@ -805,6 +957,7 @@ const mapColorMatch = (match = {}) => createCandidateItem({
     raw: match,
   },
 });
+
 
 async function retrieveAciDbCandidates({
   rawMessage = '',
@@ -822,17 +975,37 @@ async function retrieveAciDbCandidates({
     activeContext,
   });
 
-  const index = await getVehicleEntityIndex();
-
-  const makeMatches = await findMakeCandidates(message);
-  const modelMatches = await safeCall(() => Promise.resolve(findModelMatches(index, message)), []);
-  const rawVariantMatches = await safeCall(() => Promise.resolve(findVariantMatches(index, message)), []);
-  const colorMatches = await safeCall(() => Promise.resolve(findColorMatches(index, message)), []);
-  const featureMatches = await findFeatureCandidates(message);
-
   const languageFilters = extractLanguageFilterCandidates(message);
   const taskHints = extractTaskHintCandidates(message);
   const budgetCandidates = extractBudgetCandidates(message);
+  const useLightBroadDiscovery = isBroadDiscoveryCandidateQuery({
+    message,
+    budgetCandidates,
+    languageFilters,
+    taskHints,
+  });
+  const genericBroadBudgetQuery = useLightBroadDiscovery && isGenericBroadBudgetQuery(message);
+  const needsBroadFeatureLookup = useLightBroadDiscovery && shouldLookupFeatureCatalogForBroadQuery(message);
+  const index = useLightBroadDiscovery
+    ? EMPTY_VEHICLE_ENTITY_INDEX
+    : await getVehicleEntityIndex();
+
+  const makeMatches = genericBroadBudgetQuery ? [] : await findMakeCandidates(message);
+  const modelMatches = useLightBroadDiscovery
+    ? []
+    : await safeCall(() => Promise.resolve(findModelMatches(index, message)), []);
+  const rawVariantMatches = useLightBroadDiscovery
+    ? []
+    : await safeCall(() => Promise.resolve(findVariantMatches(index, message)), []);
+  const colorMatches = useLightBroadDiscovery
+    ? []
+    : await safeCall(() => Promise.resolve(findColorMatches(index, message)), []);
+  const featureMatches =
+    useLightBroadDiscovery && !needsBroadFeatureLookup
+      ? []
+      : useLightBroadDiscovery && needsBroadFeatureLookup
+        ? findLightBroadFeatureCandidates(message)
+      : await findFeatureCandidates(message);
 
   snapshot.vehicles.makes = makeMatches.slice(0, limits.makes || 8);
 
@@ -844,10 +1017,17 @@ async function retrieveAciDbCandidates({
     modelCandidates: snapshot.vehicles.models,
   });
 
-  const broadScopedVariantMatches = filterVariantMatchesByModels(
+  let broadScopedVariantMatches = filterVariantMatchesByModels(
     rawVariantMatches,
     snapshot.vehicles.models,
   );
+
+  if (!snapshot.vehicles.models.length && featureMatches.length) {
+    const featureAliasBlocklist = getFeatureAliasVariantBlocklist(featureMatches);
+    broadScopedVariantMatches = broadScopedVariantMatches.filter(
+      (match) => !isFeatureAliasOnlyVariantMatch(match, featureAliasBlocklist),
+    );
+  }
 
   // If exact model-scoped variant mentions are found, use them and avoid dumping
   // broad variant candidates into the parser snapshot.
@@ -906,6 +1086,10 @@ async function retrieveAciDbCandidates({
       makeCatalogAgeMs: makeCatalogCache.builtAt ? Date.now() - makeCatalogCache.builtAt : null,
       priceVariantCatalogSize: priceVariantCatalogCache.items.length,
       priceVariantCatalogAgeMs: priceVariantCatalogCache.builtAt ? Date.now() - priceVariantCatalogCache.builtAt : null,
+      lightBroadDiscovery: useLightBroadDiscovery,
+      genericBroadBudgetQuery,
+      skippedFeatureCatalog: useLightBroadDiscovery && !needsBroadFeatureLookup,
+      skippedMakeCatalog: genericBroadBudgetQuery,
     },
     counts: {
       makes: snapshot.vehicles.makes.length,
@@ -929,39 +1113,47 @@ async function retrieveAciDbCandidates({
 }
 
 async function prewarmAciDbCandidateRetrieverCaches({ force = false } = {}) {
+  if (!force && candidatePrewarmPromise) return candidatePrewarmPromise;
+
   if (force) {
     clearAciCandidateRetrieverCaches();
   }
 
   const startedAt = Date.now();
 
-  const [vehicleEntityIndex, makes, features, priceVariants] = await Promise.all([
-    getVehicleEntityIndex({ forceRefresh: force }),
-    loadMakeCatalog(),
-    loadFeatureCatalog(),
-    loadPriceVariantCatalog(),
-  ]);
+  candidatePrewarmPromise = (async () => {
+    const [vehicleEntityIndex, makes, features, priceVariants] = await Promise.all([
+      getVehicleEntityIndex({ forceRefresh: force }),
+      loadMakeCatalog(),
+      loadFeatureCatalog(),
+      loadPriceVariantCatalog(),
+    ]);
 
-  const count = (value) => {
-    if (Array.isArray(value)) return value.length;
-    if (value && typeof value === 'object') return Object.keys(value).length;
-    return 0;
-  };
+    const count = (value) => {
+      if (Array.isArray(value)) return value.length;
+      if (value && typeof value === 'object') return Object.keys(value).length;
+      return 0;
+    };
 
-  return {
-    ok: true,
-    durationMs: Date.now() - startedAt,
-    cache: {
-      vehicleEntityIndex: {
-        models: count(vehicleEntityIndex?.models),
-        variants: count(vehicleEntityIndex?.variants),
-        colors: count(vehicleEntityIndex?.colors),
+    return {
+      ok: true,
+      durationMs: Date.now() - startedAt,
+      cache: {
+        vehicleEntityIndex: {
+          models: count(vehicleEntityIndex?.models),
+          variants: count(vehicleEntityIndex?.variants),
+          colors: count(vehicleEntityIndex?.colors),
+        },
+        makes: Array.isArray(makes) ? makes.length : 0,
+        features: Array.isArray(features) ? features.length : 0,
+        priceVariants: Array.isArray(priceVariants) ? priceVariants.length : 0,
       },
-      makes: Array.isArray(makes) ? makes.length : 0,
-      features: Array.isArray(features) ? features.length : 0,
-      priceVariants: Array.isArray(priceVariants) ? priceVariants.length : 0,
-    },
-  };
+    };
+  })().finally(() => {
+    candidatePrewarmPromise = null;
+  });
+
+  return candidatePrewarmPromise;
 }
 
 function clearAciCandidateRetrieverCaches() {
@@ -977,6 +1169,7 @@ function clearAciCandidateRetrieverCaches() {
     builtAt: 0,
     items: [],
   };
+  candidatePrewarmPromise = null;
 }
 
 export {

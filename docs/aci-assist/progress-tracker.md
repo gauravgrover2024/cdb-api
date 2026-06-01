@@ -448,3 +448,73 @@ Then let frontend render premium UI from structured data.
 This protects ACI Assist from becoming a pile of features and keeps it as a serious buyer decision-intelligence product.
 <!-- ACI_LOCKED_SCOPE_2026_05_28_END -->
 
+<!-- ACI_LAUNCH_DISTRIBUTION_REVENUE_2026_05_30_START -->
+
+## Launch Distribution, Social Presence & Revenue Systems — Locked
+
+### Status
+Planned / locked into roadmap. This must not be missed during backend/frontend freeze planning.
+
+### Launch distribution and trust setup
+- Instagram page setup.
+- Instagram first launch / awareness post for ACI Assist.
+- Facebook page setup.
+- Google Business Profile setup.
+- Relevant local/business/listing profiles where useful.
+- WhatsApp Business presence.
+- WhatsApp green tick / official business account eligibility tracking.
+- Consistent brand/business identity across website, social pages, Google profile, WhatsApp, and listings.
+- Launch-time content/distribution checklist before public release.
+
+### Revenue models to support later
+- Consent-based dealer/showroom lead monetization.
+- Lead routing by pincode, city, brand, model, variant, and customer intent.
+- Lead seriousness / quality scoring before showroom handoff.
+- CRM/dealer partner routing readiness.
+- Lead delivery logs and audit trail.
+- Billing / monetization records for sold leads.
+- Sponsored brand banner campaigns.
+- Time-bound launch/campaign banner inventory, for example a brand buying banner space for a few days during a new-car launch.
+- Sponsored placement targeting, caps, approval workflow, disclosure, and tracking.
+- Impression, click, lead, and conversion tracking.
+- Strict separation from ACI Assist’s neutral recommendation brain.
+
+### Product rule
+Sponsored placements and revenue systems must never manipulate organic answers, recommendations, rankings, comparisons, price verdicts, safest/best-value advice, or buyer decision logic. Paid inventory must be clearly labeled, auditable, capped, and separated in backend contracts and UI.
+
+<!-- ACI_LAUNCH_DISTRIBUTION_REVENUE_2026_05_30_END -->
+
+---
+
+## Backend Decision Intelligence Read Models — Locked Direction
+
+**Status:** Planned / architecture locked, implementation not started.
+
+### Decision taken
+ACI Assist will not use hardcoded persona/scoring shortcuts. Recommendation, safety, quickest, value, similar cars, and variant-upgrade intelligence must be data-driven and precomputed before live chat.
+
+### Required read models
+- `aci_vehicle_variant_decision_profile`
+- `aci_vehicle_variant_city_price_profile`
+- `aci_vehicle_model_decision_profile`
+- `aci_vehicle_model_city_price_profile`
+- `aci_vehicle_editorial_profile`
+- `aci_vehicle_variant_upgrade_ladder`
+- `aci_vehicle_similar_cars_graph`
+- `aci_vehicle_score_config`
+
+### Locked principles
+- Variant-wise scoring is mandatory for safety, features, value, performance/quickest, mileage/running cost, practicality, family fit, city/highway use, comfort/premium feel, and regret risk.
+- Model-level rankings must store the exact variant that caused the model to rank high.
+- City-specific duplication should be avoided. Features, safety, persona, scores, upgrade logic, and similar-car intelligence should be global; only price and availability should be city overlays.
+- Variant upgrade logic must compare the next meaningful same-fuel/same-transmission equipment step.
+- Dual-tone, cosmetic-only, and special-colour variants must be skipped in upgrade comparisons unless explicitly requested.
+- Persona fields such as idealFor, skipIf, strengths, compromises, bestUseCases, buyerTypeTags, and regretWarnings must be curated/source-backed for every model. These must not be invented live or hardcoded through generic body-type rules.
+
+### Next work
+1. Gather all required fields from current DB collections.
+2. Audit missing data for safety, quickest/performance, mileage, dimensions, feature evidence, and market perception.
+3. Design final schemas.
+4. Build offline read-model builders.
+5. Replace slow live recommendation path with fast profile reads.
+6. Re-run 40-query customer corpus.

@@ -363,7 +363,7 @@ async function main() {
   await connectDB();
 
   clearAciCandidateRetrieverCaches();
-  await prewarmAciCoreRuntime({ force: true });
+  await prewarmAciCoreRuntime({ force: true, mode: "full" });
 
   const results = [];
   const failures = [];

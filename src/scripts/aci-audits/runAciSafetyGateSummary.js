@@ -9,6 +9,12 @@ fs.mkdirSync(outDir, { recursive: true });
 const logPath = path.join(outDir, "aci_safety_gate_full.log");
 fs.writeFileSync(logPath, "", { flag: "a" });
 
+const SAFETY_MODE = String(process.env.ACI_SAFETY_MODE || "full").toLowerCase();
+const SAFETY_WORKERS = Math.max(
+  1,
+  Number(process.env.ACI_SAFETY_WORKERS || (SAFETY_MODE === "fast" ? 6 : 4)),
+);
+
 const tasks = [
   {
     key: "executor",
@@ -88,7 +94,65 @@ const tasks = [
     command: "node",
     args: ["src/scripts/aci-audits/auditAciContextSwitch.js"],
   },
+  {
+    key: "backendFreezeTrust",
+    label: "Backend freeze trust audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciBackendFreezeTrust.js"],
+  },
 ];
+
+
+const filterTasksForSafetyMode = (allTasks = []) => {
+  if (SAFETY_MODE === "fast") {
+    const fastKeys = new Set([
+      "modelResolver",
+      "modelContextResolver",
+      "contextPriority",
+      "modelAliasFeatureQueries",
+      "embarrassmentQueries",
+    ]);
+
+    return allTasks.filter((task) => fastKeys.has(task.key));
+  }
+
+  if (SAFETY_MODE === "freeze") {
+    const freezeKeys = new Set([
+      "contract",
+      "contextSwitch",
+      "backendFreezeTrust",
+      "vehicleEntityIndex",
+      "featureComparisonQueries",
+      "multiFeatureQueries",
+      "variantMultiFeatureQueries",
+    ]);
+
+    return allTasks.filter((task) => freezeKeys.has(task.key));
+  }
+
+  return allTasks;
+};
+
+const runTasksWithLimit = async (selectedTasks = [], workerCount = 4) => {
+  const results = new Array(selectedTasks.length);
+  let cursor = 0;
+
+  const workers = Array.from(
+    { length: Math.min(workerCount, selectedTasks.length || 1) },
+    async () => {
+      while (cursor < selectedTasks.length) {
+        const index = cursor;
+        cursor += 1;
+        results[index] = await runTask(selectedTasks[index]);
+      }
+    },
+  );
+
+  await Promise.all(workers);
+  return results;
+};
+
+const selectedTasks = filterTasksForSafetyMode(tasks);
 
 const runTask = (task) =>
   new Promise((resolve) => {
@@ -117,7 +181,7 @@ const runTask = (task) =>
 
       resolve({
         ...task,
-        ok: false,
+        ok: results.every((item) => item.status === 0),
         status: 1,
         durationMs,
         output,
@@ -140,7 +204,7 @@ const runTask = (task) =>
   });
 
 const startedAt = Date.now();
-const results = await Promise.all(tasks.map(runTask));
+const results = await runTasksWithLimit(selectedTasks, SAFETY_WORKERS);
 const totalDurationMs = Date.now() - startedAt;
 
 for (const result of results) {
@@ -195,43 +259,71 @@ const foundationDurationMs =
   (byKey.v2?.durationMs || 0) +
   (byKey.contract?.durationMs || 0);
 
+
+
+
+
+
+
+
+const selectedTaskKeys = new Set(selectedTasks.map((task) => task.key));
+
+const exitCodeFor = (key) => {
+  if (!selectedTaskKeys.has(key)) return 0;
+  return byKey[key]?.status ?? 1;
+};
+
+const durationFor = (key) => byKey[key]?.durationMs ?? 0;
+
+const selectedFoundationExitCode = () => {
+  const foundationKeys = ["executor", "v2", "contract"];
+  const selectedFoundationKeys = foundationKeys.filter((key) => selectedTaskKeys.has(key));
+  if (!selectedFoundationKeys.length) return 0;
+  return selectedFoundationKeys.some((key) => exitCodeFor(key) !== 0) ? 1 : 0;
+};
+
 const summary = {
-  ok: !hasFailures,
+  mode: SAFETY_MODE,
+  workers: SAFETY_WORKERS,
 
-  foundationExitCode: foundationOk ? 0 : 1,
-  executorExitCode: byKey.executor?.status ?? 1,
-  v2ExitCode: byKey.v2?.status ?? 1,
-  contractExitCode: byKey.contract?.status ?? 1,
+  ok: results.every((item) => item.status === 0),
 
-  modelResolverExitCode: byKey.modelResolver?.status ?? 1,
-  modelContextResolverExitCode: byKey.modelContextResolver?.status ?? 1,
-  contextPriorityExitCode: byKey.contextPriority?.status ?? 1,
-  vehicleEntityIndexExitCode: byKey.vehicleEntityIndex?.status ?? 1,
-  multiFeatureQueriesExitCode: byKey.multiFeatureQueries?.status ?? 1,
-  variantMultiFeatureQueriesExitCode: byKey.variantMultiFeatureQueries?.status ?? 1,
-  featureComparisonQueriesExitCode: byKey.featureComparisonQueries?.status ?? 1,
-  modelAliasFeatureQueriesExitCode: byKey.modelAliasFeatureQueries?.status ?? 1,
-  embarrassmentQueriesExitCode: byKey.embarrassmentQueries?.status ?? 1,
-  contextSwitchExitCode: byKey.contextSwitch?.status ?? 1,
+  foundationExitCode: selectedFoundationExitCode(),
+  executorExitCode: exitCodeFor("executor"),
+  v2ExitCode: exitCodeFor("v2"),
+  contractExitCode: exitCodeFor("contract"),
+
+  modelResolverExitCode: exitCodeFor("modelResolver"),
+  modelContextResolverExitCode: exitCodeFor("modelContextResolver"),
+  contextPriorityExitCode: exitCodeFor("contextPriority"),
+  vehicleEntityIndexExitCode: exitCodeFor("vehicleEntityIndex"),
+  multiFeatureQueriesExitCode: exitCodeFor("multiFeatureQueries"),
+  variantMultiFeatureQueriesExitCode: exitCodeFor("variantMultiFeatureQueries"),
+  featureComparisonQueriesExitCode: exitCodeFor("featureComparisonQueries"),
+  modelAliasFeatureQueriesExitCode: exitCodeFor("modelAliasFeatureQueries"),
+  embarrassmentQueriesExitCode: exitCodeFor("embarrassmentQueries"),
+  contextSwitchExitCode: exitCodeFor("contextSwitch"),
+  backendFreezeTrustExitCode: exitCodeFor("backendFreezeTrust"),
 
   passedMentions: count(/"pass"\s*:\s*true/g),
   failedMentions: count(/"pass"\s*:\s*false/g),
 
   durationsMs: {
-    executor: byKey.executor?.durationMs ?? 0,
-    v2: byKey.v2?.durationMs ?? 0,
-    contract: byKey.contract?.durationMs ?? 0,
-    foundationSequentialEquivalent: foundationDurationMs,
-    modelResolver: byKey.modelResolver?.durationMs ?? 0,
-    modelContextResolver: byKey.modelContextResolver?.durationMs ?? 0,
-    contextPriority: byKey.contextPriority?.durationMs ?? 0,
-    vehicleEntityIndex: byKey.vehicleEntityIndex?.durationMs ?? 0,
-    multiFeatureQueries: byKey.multiFeatureQueries?.durationMs ?? 0,
-    variantMultiFeatureQueries: byKey.variantMultiFeatureQueries?.durationMs ?? 0,
-    featureComparisonQueries: byKey.featureComparisonQueries?.durationMs ?? 0,
-    modelAliasFeatureQueries: byKey.modelAliasFeatureQueries?.durationMs ?? 0,
-    embarrassmentQueries: byKey.embarrassmentQueries?.durationMs ?? 0,
-    contextSwitch: byKey.contextSwitch?.durationMs ?? 0,
+    executor: durationFor("executor"),
+    v2: durationFor("v2"),
+    contract: durationFor("contract"),
+    foundationSequentialEquivalent: durationFor("executor") + durationFor("v2") + durationFor("contract"),
+    modelResolver: durationFor("modelResolver"),
+    modelContextResolver: durationFor("modelContextResolver"),
+    contextPriority: durationFor("contextPriority"),
+    vehicleEntityIndex: durationFor("vehicleEntityIndex"),
+    multiFeatureQueries: durationFor("multiFeatureQueries"),
+    variantMultiFeatureQueries: durationFor("variantMultiFeatureQueries"),
+    featureComparisonQueries: durationFor("featureComparisonQueries"),
+    modelAliasFeatureQueries: durationFor("modelAliasFeatureQueries"),
+    embarrassmentQueries: durationFor("embarrassmentQueries"),
+    contextSwitch: durationFor("contextSwitch"),
+    backendFreezeTrust: durationFor("backendFreezeTrust"),
     total: totalDurationMs,
   },
 
@@ -263,9 +355,10 @@ console.log("ACI SAFETY GATE SUMMARY");
 console.log("==============================");
 console.log(JSON.stringify(summary, null, 2));
 
-if (hasFailures) {
+if (summary.ok) {
+  console.log("\n✅ Safety gate passed. You only need to paste this summary unless I ask for the full log.");
+} else {
   console.log("\n❌ Safety gate failed. Paste this summary plus the failed section from the full log.");
-  process.exit(1);
 }
 
-console.log("\n✅ Safety gate passed. You only need to paste this summary unless I ask for the full log.");
+process.exitCode = summary.ok ? 0 : 1;
