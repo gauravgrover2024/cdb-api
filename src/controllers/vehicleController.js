@@ -1,12 +1,12 @@
-import asyncHandler from 'express-async-handler';
-import mongoose from 'mongoose';
-import Vehicle from '../models/Vehicle.js';
-import VehicleRecord from '../models/VehicleRecord.js';
-import VehicleFeature from '../models/VehicleFeature.js';
+import asyncHandler from "express-async-handler";
+import mongoose from "mongoose";
+import Vehicle from "../models/Vehicle.js";
+import VehicleRecord from "../models/VehicleRecord.js";
+import VehicleFeature from "../models/VehicleFeature.js";
 import {
   normalizeVehicleDatasetRow,
   vehicleNormalizationFields,
-} from '../utils/vehicleDatasetNormalizer.js';
+} from "../utils/vehicleDatasetNormalizer.js";
 
 const VEHICLE_LIST_PROJECTION = {
   make: 1,
@@ -74,9 +74,9 @@ const VEHICLE_LIST_PROJECTION = {
 };
 
 const parseAmount = (value) => {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  if (typeof value === 'string') {
-    const cleaned = value.replace(/[^0-9.-]/g, '');
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[^0-9.-]/g, "");
     if (!cleaned) return 0;
     const parsed = Number(cleaned);
     return Number.isFinite(parsed) ? parsed : 0;
@@ -92,7 +92,8 @@ const firstPositiveAmount = (...values) => {
   return 0;
 };
 
-const numbersNearlyEqual = (a, b) => Math.abs(parseAmount(a) - parseAmount(b)) <= 1;
+const numbersNearlyEqual = (a, b) =>
+  Math.abs(parseAmount(a) - parseAmount(b)) <= 1;
 
 const normalizeVehiclePricing = (raw = {}) => {
   const tcs = firstPositiveAmount(raw.tcs, raw.other_tcsCharges);
@@ -101,7 +102,9 @@ const normalizeVehiclePricing = (raw = {}) => {
     raw.optional_totalAccessories,
     raw.optional_accessoriesCharges,
   );
-  const orpWithoutAccessories = firstPositiveAmount(raw.orp_without_accessories);
+  const orpWithoutAccessories = firstPositiveAmount(
+    raw.orp_without_accessories,
+  );
   const totalOnRoad = firstPositiveAmount(
     raw.total_on_road_with_accessories,
     raw.on_road_price_cardekho,
@@ -116,7 +119,10 @@ const normalizeVehiclePricing = (raw = {}) => {
     raw.other_otherCharges,
     raw.other_handlingCharges,
   );
-  const rawOtherTotal = firstPositiveAmount(raw.other_totalOtherCharges, raw.otherCharges);
+  const rawOtherTotal = firstPositiveAmount(
+    raw.other_totalOtherCharges,
+    raw.otherCharges,
+  );
   const nonTcsOtherCharges =
     explicitOtherCharges ||
     (rawOtherTotal && tcs
@@ -183,90 +189,109 @@ const toVehicleListItem = (doc) => {
     isDiscontinued: discontinued,
     discontinued_date: normalized.discontinued_date ?? null,
     discontinuedDate: normalized.discontinuedDate ?? null,
-    sourceImageUrl: normalized.sourceImageUrl || normalized.image_url || normalized.imageUrl || '',
-    normalizedImageUrl: normalized.normalizedImageUrl || '',
-    cleanImageUrl: normalized.cleanImageUrl || normalized.normalizedImageUrl || '',
-    image_url: normalized.image_url || normalized.sourceImageUrl || normalized.imageUrl || '',
+    sourceImageUrl:
+      normalized.sourceImageUrl ||
+      normalized.image_url ||
+      normalized.imageUrl ||
+      "",
+    normalizedImageUrl: normalized.normalizedImageUrl || "",
+    cleanImageUrl:
+      normalized.cleanImageUrl || normalized.normalizedImageUrl || "",
+    image_url:
+      normalized.image_url ||
+      normalized.sourceImageUrl ||
+      normalized.imageUrl ||
+      "",
     imageUrl:
       normalized.imageUrl ||
       normalized.normalizedImageUrl ||
       normalized.cleanImageUrl ||
       normalized.image_url ||
-      '',
-    color_name: normalized.color_name || '',
-    color_hex: normalized.color_hex || normalized.hex || '',
-    hex: normalized.hex || normalized.color_hex || '',
+      "",
+    color_name: normalized.color_name || "",
+    color_hex: normalized.color_hex || normalized.hex || "",
+    hex: normalized.hex || normalized.color_hex || "",
     createdAt: normalized.createdAt,
     updatedAt: normalized.updatedAt,
   };
 };
 
-const normalizeText = (value) => String(value || '').trim().toLowerCase();
+const normalizeText = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
 
 const canonicalizeMake = (value) => {
-  const normalized = String(value || '')
+  const normalized = String(value || "")
     .trim()
     .toLowerCase()
-    .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ');
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ");
   const aliases = {
-    mercedes: 'mercedes benz',
-    'mercedes benz': 'mercedes benz',
-    benz: 'mercedes benz',
-    maruti: 'maruti suzuki',
-    'maruti suzuki': 'maruti suzuki',
+    mercedes: "mercedes benz",
+    "mercedes benz": "mercedes benz",
+    benz: "mercedes benz",
+    maruti: "maruti suzuki",
+    "maruti suzuki": "maruti suzuki",
   };
   return aliases[normalized] || normalized;
 };
 
-const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const escapeRegex = (value) =>
+  String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const normalizeRegNo = (value) =>
-  String(value || '')
+  String(value || "")
     .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
+    .replace(/[^A-Z0-9]/g, "");
 
 const trimLeading = (value, prefix) => {
-  const source = String(value || '').trim();
-  const leader = String(prefix || '').trim();
+  const source = String(value || "").trim();
+  const leader = String(prefix || "").trim();
   if (!source || !leader) return source;
   const escaped = escapeRegex(leader);
-  return source.replace(new RegExp(`^${escaped}\\s*`, 'i'), '').trim();
+  return source.replace(new RegExp(`^${escaped}\\s*`, "i"), "").trim();
 };
 
-const toCityToken = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '-');
+const toCityToken = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-");
 
 const buildCityCandidates = (city) => {
   const token = toCityToken(city);
   if (!token) return [];
 
   const aliases = {
-    delhi: ['new-delhi'],
-    'new-delhi': ['delhi'],
-    gurugram: ['gurgaon'],
-    gurgaon: ['gurugram'],
+    delhi: ["new-delhi"],
+    "new-delhi": ["delhi"],
+    gurugram: ["gurgaon"],
+    gurgaon: ["gurugram"],
   };
 
   return [...new Set([token, ...(aliases[token] || [])])];
 };
 
 const slugTokens = (value) =>
-  String(value || '')
+  String(value || "")
     .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .split('-')
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .split("-")
     .filter(Boolean);
 
 const mediaUrlMatchesMakeModel = (url, make, model) => {
-  const raw = String(url || '').trim().toLowerCase();
+  const raw = String(url || "")
+    .trim()
+    .toLowerCase();
   if (!raw) return false;
 
   const makeParts = slugTokens(make);
   const modelParts = slugTokens(model);
   if (!makeParts.length || !modelParts.length) return false;
 
-  const normalized = raw.replace(/[^a-z0-9]+/g, '-');
+  const normalized = raw.replace(/[^a-z0-9]+/g, "-");
   const hasMake = makeParts.some(
     (part) =>
       normalized.includes(`-${part}-`) ||
@@ -283,7 +308,11 @@ const mediaUrlMatchesMakeModel = (url, make, model) => {
   return hasMake && hasModel;
 };
 
-const normalizeHex = (value) => String(value || '').trim().replace(/^#/, '').toLowerCase();
+const normalizeHex = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/^#/, "")
+    .toLowerCase();
 
 const parseTimestampValue = (value) => {
   if (!value) return 0;
@@ -304,7 +333,9 @@ const dedupeMediaRowsByHexLatest = (rows = []) => {
   const withoutHex = [];
 
   rows.forEach((row) => {
-    const hex = normalizeHex(row?.hex || row?.color_hex || row?.colour_hex || '');
+    const hex = normalizeHex(
+      row?.hex || row?.color_hex || row?.colour_hex || "",
+    );
     if (!hex) {
       withoutHex.push(row);
       return;
@@ -324,7 +355,7 @@ const dedupeMediaRowsByHexLatest = (rows = []) => {
   });
 
   return [...withoutHex, ...byHex.values()].sort((a, b) =>
-    String(a?.color_name || '').localeCompare(String(b?.color_name || '')),
+    String(a?.color_name || "").localeCompare(String(b?.color_name || "")),
   );
 };
 
@@ -349,11 +380,11 @@ const resolveDisplayImageUrl = (row = {}) =>
       row.image_url ||
       row.sourceImageUrl ||
       row.car_image_url ||
-      '',
+      "",
   ).trim();
 
 const normalizeImageFrameMeta = (frame = {}) => {
-  if (!frame || typeof frame !== 'object') return frame || null;
+  if (!frame || typeof frame !== "object") return frame || null;
 
   const readNumber = (...values) => {
     for (const value of values) {
@@ -367,8 +398,20 @@ const normalizeImageFrameMeta = (frame = {}) => {
   const y = readNumber(frame.y, frame.top, frame.minY);
   const width = readNumber(frame.width, frame.w);
   const height = readNumber(frame.height, frame.h);
-  const canvasWidth = readNumber(frame.canvas_width, frame.canvasWidth, frame.naturalWidth, frame.imageWidth, frame.sourceWidth);
-  const canvasHeight = readNumber(frame.canvas_height, frame.canvasHeight, frame.naturalHeight, frame.imageHeight, frame.sourceHeight);
+  const canvasWidth = readNumber(
+    frame.canvas_width,
+    frame.canvasWidth,
+    frame.naturalWidth,
+    frame.imageWidth,
+    frame.sourceWidth,
+  );
+  const canvasHeight = readNumber(
+    frame.canvas_height,
+    frame.canvasHeight,
+    frame.naturalHeight,
+    frame.imageHeight,
+    frame.sourceHeight,
+  );
 
   if (
     !Number.isFinite(x) ||
@@ -391,7 +434,13 @@ const normalizeImageFrameMeta = (frame = {}) => {
   const heightRatio = height / canvasHeight;
   const scale = Math.min(
     1.3,
-    Math.max(1, Math.max(0.86 / Math.max(widthRatio, 0.01), 0.58 / Math.max(heightRatio, 0.01))),
+    Math.max(
+      1,
+      Math.max(
+        0.86 / Math.max(widthRatio, 0.01),
+        0.58 / Math.max(heightRatio, 0.01),
+      ),
+    ),
   );
   const translateX = (0.5 - centerX) * 100;
   const translateY = (0.5 - centerY) * 100;
@@ -403,21 +452,23 @@ const normalizeImageFrameMeta = (frame = {}) => {
     bounds: { x, y, width, height },
     cssVars: {
       ...(frame.cssVars || {}),
-      '--car-frame-scale': Number(scale.toFixed(3)),
-      '--car-frame-x': `${Number(translateX.toFixed(2))}%`,
-      '--car-frame-y': `${Number(translateY.toFixed(2))}%`,
-      '--car-frame-origin': 'center center',
+      "--car-frame-scale": Number(scale.toFixed(3)),
+      "--car-frame-x": `${Number(translateX.toFixed(2))}%`,
+      "--car-frame-y": `${Number(translateY.toFixed(2))}%`,
+      "--car-frame-origin": "center center",
     },
   };
 };
 
 const firstMeaningfulFrame = (...frames) =>
-  frames.find((frame) => frame && typeof frame === 'object' && Object.keys(frame).length) || null;
+  frames.find(
+    (frame) => frame && typeof frame === "object" && Object.keys(frame).length,
+  ) || null;
 
 const flattenVehicleColorDocuments = (docs = []) =>
   docs.flatMap((doc = {}) => {
-    const make = doc.make || doc.brand || doc.brandName || '';
-    const model = doc.model || doc.modelName || doc.model_name || '';
+    const make = doc.make || doc.brand || doc.brandName || "";
+    const model = doc.model || doc.modelName || doc.model_name || "";
     const topFrame = normalizeImageFrameMeta(
       doc.heroFrameMeta ||
         doc.displayFrameMeta ||
@@ -443,7 +494,7 @@ const flattenVehicleColorDocuments = (docs = []) =>
       doc.cleanImageUrl ||
       doc.imageUrl ||
       doc.image_url ||
-      '';
+      "";
 
     const rows = [];
     if (topImage) {
@@ -452,13 +503,19 @@ const flattenVehicleColorDocuments = (docs = []) =>
         make,
         brand: doc.brand || make,
         model,
-        color_name: doc.defaultColorName || doc.color_name || doc.colorName || 'Display',
-        colorName: doc.defaultColorName || doc.colorName || doc.color_name || 'Display',
+        color_name:
+          doc.defaultColorName || doc.color_name || doc.colorName || "Display",
+        colorName:
+          doc.defaultColorName || doc.colorName || doc.color_name || "Display",
         normalizedImageUrl: topImage,
         cleanImageUrl: topImage,
         imageUrl: topImage,
         imageFrame: topFrame,
-        sourceImageUrl: doc.displayImageUrl || doc.defaultColorImageUrl || doc.sourceImageUrl || '',
+        sourceImageUrl:
+          doc.displayImageUrl ||
+          doc.defaultColorImageUrl ||
+          doc.sourceImageUrl ||
+          "",
         source: doc.source || VEHICLE_COLORS_COLLECTION,
       });
     }
@@ -471,7 +528,7 @@ const flattenVehicleColorDocuments = (docs = []) =>
         color.cleanImageUrl ||
         color.imageUrl ||
         color.sourceImageUrl ||
-        '';
+        "";
       if (!colorImage) return;
 
       rows.push({
@@ -480,15 +537,25 @@ const flattenVehicleColorDocuments = (docs = []) =>
         make,
         brand: doc.brand || make,
         model,
-        color_name: color.name || color.color_name || color.colorName || `Color ${index + 1}`,
-        colorName: color.name || color.colorName || color.color_name || `Color ${index + 1}`,
-        color_hex: color.hex || color.color_hex || color.colorHex || '',
-        hex: color.hex || color.color_hex || color.colorHex || '',
+        color_name:
+          color.name ||
+          color.color_name ||
+          color.colorName ||
+          `Color ${index + 1}`,
+        colorName:
+          color.name ||
+          color.colorName ||
+          color.color_name ||
+          `Color ${index + 1}`,
+        color_hex: color.hex || color.color_hex || color.colorHex || "",
+        hex: color.hex || color.color_hex || color.colorHex || "",
         normalizedImageUrl: colorImage,
         cleanImageUrl: colorImage,
         imageUrl: colorImage,
-        sourceImageUrl: color.sourceImageUrl || '',
-        imageFrame: normalizeImageFrameMeta(firstMeaningfulFrame(color.imageFrame, color.frameMeta, topFrame)),
+        sourceImageUrl: color.sourceImageUrl || "",
+        imageFrame: normalizeImageFrameMeta(
+          firstMeaningfulFrame(color.imageFrame, color.frameMeta, topFrame),
+        ),
         updatedAt: color.updatedAt || doc.updatedAt,
         source: doc.source || VEHICLE_COLORS_COLLECTION,
       });
@@ -500,9 +567,9 @@ const flattenVehicleColorDocuments = (docs = []) =>
 const normalizeVehicleRecord = (doc) => {
   const raw = doc?.toObject ? doc.toObject() : { ...(doc || {}) };
   const pricing = normalizeVehiclePricing(raw);
-  const make = String(raw.make || raw.brand || '').trim();
-  const rawModel = String(raw.model || '').trim();
-  const rawVariant = String(raw.variant || '').trim();
+  const make = String(raw.make || raw.brand || "").trim();
+  const rawModel = String(raw.model || "").trim();
+  const rawVariant = String(raw.variant || "").trim();
   const model = trimLeading(rawModel, make) || rawModel;
   const variant =
     trimLeading(rawVariant, `${make} ${rawModel}`.trim()) ||
@@ -511,7 +578,11 @@ const normalizeVehicleRecord = (doc) => {
     trimLeading(rawVariant, make) ||
     rawVariant;
   const sourceImageUrl = String(
-    raw.sourceImageUrl || raw.image_url || raw.imageUrl || raw.car_image_url || '',
+    raw.sourceImageUrl ||
+      raw.image_url ||
+      raw.imageUrl ||
+      raw.car_image_url ||
+      "",
   ).trim();
   const normalizedImageUrl = String(
     raw.normalizedImageUrl ||
@@ -519,7 +590,7 @@ const normalizeVehicleRecord = (doc) => {
       raw.normalized_image_url ||
       raw.clean_image_url ||
       raw.normalizedImagePngUrl ||
-      '',
+      "",
   ).trim();
   const imageUrl = resolveDisplayImageUrl({
     normalizedImageUrl,
@@ -534,8 +605,8 @@ const normalizeVehicleRecord = (doc) => {
     rawModel,
     variant,
     rawVariant,
-    fuel: raw.fuel || raw.fuel_type || '',
-    fuel_type: raw.fuel_type || raw.fuel || '',
+    fuel: raw.fuel || raw.fuel_type || "",
+    fuel_type: raw.fuel_type || raw.fuel || "",
     exShowroom: parseAmount(raw.exShowroom ?? raw.ex_showroom ?? 0),
     onRoadPrice: pricing.onRoadPrice,
     on_road_price_cardekho: pricing.on_road_price_cardekho,
@@ -571,7 +642,8 @@ const withCanonicalVehiclePricing = (payload = {}) => {
   if (pricing.onRoadPrice > 0) {
     next.onRoadPrice = pricing.onRoadPrice;
     next.on_road_price_cardekho = pricing.on_road_price_cardekho;
-    next.total_on_road_with_accessories = pricing.total_on_road_with_accessories;
+    next.total_on_road_with_accessories =
+      pricing.total_on_road_with_accessories;
     next.orp_without_accessories = pricing.orp_without_accessories;
   }
 
@@ -614,8 +686,8 @@ const matchesExact = (actual, expected) => {
   if (!expected) return true;
   return (
     canonicalizeMake(actual) === canonicalizeMake(expected) ||
-    normalizeText(actual).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ') ===
-      normalizeText(expected).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ')
+    normalizeText(actual).replace(/[-_]+/g, " ").replace(/\s+/g, " ") ===
+      normalizeText(expected).replace(/[-_]+/g, " ").replace(/\s+/g, " ")
   );
 };
 
@@ -630,36 +702,50 @@ const matchesVehicleFilters = (vehicle, filters = {}) => {
 };
 
 const buildMakeMatch = (make) => {
-  const value = String(make || '').trim();
+  const value = String(make || "").trim();
   const normalized = canonicalizeMake(value);
   const candidates = [
     ...new Set(
-      [value, normalized, normalized.replace(/ /g, '-'), normalized.replace(/ /g, '')].filter(Boolean),
+      [
+        value,
+        normalized,
+        normalized.replace(/ /g, "-"),
+        normalized.replace(/ /g, ""),
+      ].filter(Boolean),
     ),
   ];
   return {
     $or: [
       { make: { $in: candidates } },
       { brand: { $in: candidates } },
-      { brand_normalized: new RegExp(`^${escapeRegex(value || normalized)}$`, 'i') },
+      {
+        brand_normalized: new RegExp(
+          `^${escapeRegex(value || normalized)}$`,
+          "i",
+        ),
+      },
     ],
   };
 };
 
 const buildModelCandidates = (make, model) => {
-  const makeValue = String(make || '').trim();
-  const modelValue = String(model || '').trim();
-  return [...new Set([modelValue, `${makeValue} ${modelValue}`.trim()].filter(Boolean))];
+  const makeValue = String(make || "").trim();
+  const modelValue = String(model || "").trim();
+  return [
+    ...new Set(
+      [modelValue, `${makeValue} ${modelValue}`.trim()].filter(Boolean),
+    ),
+  ];
 };
 
 const buildExactMakeCandidates = (make) => {
-  const value = String(make || '').trim();
+  const value = String(make || "").trim();
   const canonical = canonicalizeMake(value);
   const titleCanonical = canonical
-    .split(' ')
+    .split(" ")
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+    .join(" ");
 
   return [
     ...new Set(
@@ -670,17 +756,17 @@ const buildExactMakeCandidates = (make) => {
         titleCanonical.toUpperCase(),
         canonical,
         canonical.toUpperCase(),
-        value.replace(/-/g, ' '),
-        value.replace(/\s+/g, '-'),
+        value.replace(/-/g, " "),
+        value.replace(/\s+/g, "-"),
       ].filter(Boolean),
     ),
   ];
 };
 
 const buildVariantCandidates = (make, model, variant) => {
-  const makeValue = String(make || '').trim();
-  const modelValue = String(model || '').trim();
-  const variantValue = String(variant || '').trim();
+  const makeValue = String(make || "").trim();
+  const modelValue = String(model || "").trim();
+  const variantValue = String(variant || "").trim();
   return [
     ...new Set(
       [
@@ -694,7 +780,12 @@ const buildVariantCandidates = (make, model, variant) => {
 };
 
 const mergeAndCondition = (query, condition) => {
-  if (!condition || typeof condition !== 'object' || !Object.keys(condition).length) return;
+  if (
+    !condition ||
+    typeof condition !== "object" ||
+    !Object.keys(condition).length
+  )
+    return;
   query.$and = [...(query.$and || []), condition];
 };
 
@@ -704,31 +795,50 @@ const buildVehicleQuery = ({ q, make, model, variant, city, fuel }) => {
   if (q) {
     mergeAndCondition(query, {
       $or: [
-        { make: new RegExp(q, 'i') },
-        { brand: new RegExp(q, 'i') },
-        { model: new RegExp(q, 'i') },
-        { variant: new RegExp(q, 'i') },
-        { search_text: new RegExp(q, 'i') },
+        { make: new RegExp(q, "i") },
+        { brand: new RegExp(q, "i") },
+        { model: new RegExp(q, "i") },
+        { variant: new RegExp(q, "i") },
+        { search_text: new RegExp(q, "i") },
       ],
     });
   }
 
   if (make) mergeAndCondition(query, buildMakeMatch(make));
   if (model) {
-    const normalizedModel = normalizeVehicleDatasetRow({ brand: make, make, model }).model_normalized;
+    const normalizedModel = normalizeVehicleDatasetRow({
+      brand: make,
+      make,
+      model,
+    }).model_normalized;
     mergeAndCondition(query, {
       $or: [
         { model: { $in: buildModelCandidates(make, model) } },
-        { model_normalized: new RegExp(`^${escapeRegex(normalizedModel || model)}$`, 'i') },
+        {
+          model_normalized: new RegExp(
+            `^${escapeRegex(normalizedModel || model)}$`,
+            "i",
+          ),
+        },
       ],
     });
   }
   if (variant) {
-    const normalizedVariant = normalizeVehicleDatasetRow({ brand: make, make, model, variant }).variant_normalized;
+    const normalizedVariant = normalizeVehicleDatasetRow({
+      brand: make,
+      make,
+      model,
+      variant,
+    }).variant_normalized;
     mergeAndCondition(query, {
       $or: [
         { variant: { $in: buildVariantCandidates(make, model, variant) } },
-        { variant_normalized: new RegExp(`^${escapeRegex(normalizedVariant || variant)}$`, 'i') },
+        {
+          variant_normalized: new RegExp(
+            `^${escapeRegex(normalizedVariant || variant)}$`,
+            "i",
+          ),
+        },
       ],
     });
   }
@@ -740,7 +850,7 @@ const buildVehicleQuery = ({ q, make, model, variant, city, fuel }) => {
   }
 
   if (fuel) {
-    const fuelRegex = new RegExp(`^${escapeRegex(String(fuel).trim())}$`, 'i');
+    const fuelRegex = new RegExp(`^${escapeRegex(String(fuel).trim())}$`, "i");
     mergeAndCondition(query, {
       $or: [{ fuel: fuelRegex }, { fuel_type: fuelRegex }],
     });
@@ -749,18 +859,21 @@ const buildVehicleQuery = ({ q, make, model, variant, city, fuel }) => {
   return query;
 };
 
-const buildMakeRegex = (make) => new RegExp(`^${escapeRegex(String(make || '').trim())}$`, 'i');
+const buildMakeRegex = (make) =>
+  new RegExp(`^${escapeRegex(String(make || "").trim())}$`, "i");
 
 const parseBoolean = (value) => {
-  const raw = String(value ?? '').trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes';
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
 };
 
 const hasDiscontinuedDate = (value) => {
   if (value === undefined || value === null) return false;
   const raw = String(value).trim();
   if (!raw) return false;
-  return raw.toLowerCase() !== 'null';
+  return raw.toLowerCase() !== "null";
 };
 
 const isVehicleDiscontinued = (vehicle) =>
@@ -782,10 +895,17 @@ const ACTIVE_VARIANT_FILTER = {
       $nor: [
         { isDiscontinued: true },
         { isDiscontinued: 1 },
-        { isDiscontinued: 'true' },
-        { isDiscontinued: 'True' },
-        { discontinued_date: { $exists: true, $nin: [null, '', 'null', 'NULL'] } },
-        { discontinuedDate: { $exists: true, $nin: [null, '', 'null', 'NULL'] } },
+        { isDiscontinued: "true" },
+        { isDiscontinued: "True" },
+        {
+          discontinued_date: {
+            $exists: true,
+            $nin: [null, "", "null", "NULL"],
+          },
+        },
+        {
+          discontinuedDate: { $exists: true, $nin: [null, "", "null", "NULL"] },
+        },
       ],
     },
   ],
@@ -836,14 +956,15 @@ const VEHICLE_MEDIA_CACHE = new Map();
 const POPULAR_CARS_CACHE_TTL_MS = 10 * 60 * 1000;
 const POPULAR_CARS_CACHE = new Map();
 const POPULAR_CARS_IN_FLIGHT = new Map();
-const VEHICLE_COLORS_COLLECTION = 'vehicle_colors_v2';
-const R2_PUBLIC_IMAGE_PREFIX = 'https://pub-8504a10fc1c04f02ac8760cb90462ae3.r2.dev/';
+const VEHICLE_COLORS_COLLECTION = "vehicle_colors_v2";
+const R2_PUBLIC_IMAGE_PREFIX =
+  "https://pub-8504a10fc1c04f02ac8760cb90462ae3.r2.dev/";
 
 const normalizeLooseToken = (value) =>
-  String(value || '')
+  String(value || "")
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
+    .replace(/[^a-z0-9]/g, "");
 
 const normalizeModelNameForKey = (make, model) =>
   normalizeLooseToken(trimLeading(model, make) || model);
@@ -851,35 +972,39 @@ const normalizeModelNameForKey = (make, model) =>
 const buildMakeModelJoinKey = (make, model) => {
   const mk = normalizeLooseToken(make);
   const mdl = normalizeModelNameForKey(make, model);
-  if (!mk || !mdl) return '';
+  if (!mk || !mdl) return "";
   return `${mk}|${mdl}`;
 };
 
 const extractFeatureValueByKeywords = (featuresObj = {}, keywords = []) => {
-  if (!featuresObj || typeof featuresObj !== 'object') return '';
+  if (!featuresObj || typeof featuresObj !== "object") return "";
   const needles = (keywords || [])
     .map((value) => normalizeText(value))
     .filter(Boolean);
-  if (!needles.length) return '';
+  if (!needles.length) return "";
 
   for (const [key, value] of Object.entries(featuresObj)) {
     const hay = normalizeText(key);
     if (!hay) continue;
     if (!needles.some((needle) => hay.includes(needle))) continue;
-    const raw = String(value ?? '').trim();
+    const raw = String(value ?? "").trim();
     if (!raw) continue;
     const normalized = raw.toLowerCase();
-    if (['not available', 'na', 'n/a', '-', 'null', 'undefined'].includes(normalized)) {
+    if (
+      ["not available", "na", "n/a", "-", "null", "undefined"].includes(
+        normalized,
+      )
+    ) {
       continue;
     }
     return raw;
   }
-  return '';
+  return "";
 };
 
 const parseSeatCount = (value) => {
   if (value == null) return null;
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.round(value);
   }
   const raw = String(value).trim();
@@ -892,35 +1017,46 @@ const parseSeatCount = (value) => {
 
 const normalizeBodyTypeBucket = (value) => {
   const text = normalizeText(value);
-  if (!text) return '';
+  if (!text) return "";
   if (
-    text.includes('suv') ||
-    text.includes('crossover') ||
-    text.includes('sport utility')
+    text.includes("suv") ||
+    text.includes("crossover") ||
+    text.includes("sport utility")
   ) {
-    return 'suv';
+    return "suv";
   }
-  if (text.includes('sedan')) return 'sedan';
-  if (text.includes('hatch')) return 'hatchback';
-  if (text.includes('muv') || text.includes('mpv') || text.includes('people mover')) return 'mpv';
-  if (text.includes('coupe')) return 'coupe';
-  if (text.includes('convertible') || text.includes('cabriolet')) return 'convertible';
-  if (text.includes('pickup')) return 'pickup';
+  if (text.includes("sedan")) return "sedan";
+  if (text.includes("hatch")) return "hatchback";
+  if (
+    text.includes("muv") ||
+    text.includes("mpv") ||
+    text.includes("people mover")
+  )
+    return "mpv";
+  if (text.includes("coupe")) return "coupe";
+  if (text.includes("convertible") || text.includes("cabriolet"))
+    return "convertible";
+  if (text.includes("pickup")) return "pickup";
   return text;
 };
 
 const formatBodyType = (value) => {
-  const text = String(value || '')
+  const text = String(value || "")
     .trim()
-    .replace(/\s+/g, ' ');
-  if (!text) return '';
+    .replace(/\s+/g, " ");
+  if (!text) return "";
   return text
-    .split(' ')
-    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}` : ''))
-    .join(' ');
+    .split(" ")
+    .map((part) =>
+      part ? `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}` : "",
+    )
+    .join(" ");
 };
 
-const buildBaseModelRowsSnapshot = async ({ city = '', includeDiscontinued = false } = {}) => {
+const buildBaseModelRowsSnapshot = async ({
+  city = "",
+  includeDiscontinued = false,
+} = {}) => {
   const query = buildVehicleQuery({ city });
   if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
 
@@ -929,15 +1065,12 @@ const buildBaseModelRowsSnapshot = async ({ city = '', includeDiscontinued = fal
     {
       $project: {
         _id: 1,
-        make: { $ifNull: ['$make', '$brand'] },
-        model: '$model',
-        variant: '$variant',
-        city: '$city',
+        make: { $ifNull: ["$make", "$brand"] },
+        model: "$model",
+        variant: "$variant",
+        city: "$city",
         basePrice: {
-          $ifNull: [
-            '$ex_showroom',
-            '$exShowroom',
-          ],
+          $ifNull: ["$ex_showroom", "$exShowroom"],
         },
       },
     },
@@ -945,13 +1078,13 @@ const buildBaseModelRowsSnapshot = async ({ city = '', includeDiscontinued = fal
     { $sort: { basePrice: 1 } },
     {
       $group: {
-        _id: { make: '$make', model: '$model' },
-        make: { $first: '$make' },
-        model: { $first: '$model' },
-        city: { $first: '$city' },
-        basePrice: { $first: '$basePrice' },
-        variant: { $first: '$variant' },
-        vehicleId: { $first: '$_id' },
+        _id: { make: "$make", model: "$model" },
+        make: { $first: "$make" },
+        model: { $first: "$model" },
+        city: { $first: "$city" },
+        basePrice: { $first: "$basePrice" },
+        variant: { $first: "$variant" },
+        vehicleId: { $first: "$_id" },
       },
     },
   ];
@@ -959,8 +1092,8 @@ const buildBaseModelRowsSnapshot = async ({ city = '', includeDiscontinued = fal
   const rows = await Vehicle.aggregate(pipeline);
   return rows
     .map((row) => {
-      const make = String(row?.make || '').trim();
-      const modelRaw = String(row?.model || '').trim();
+      const make = String(row?.make || "").trim();
+      const modelRaw = String(row?.model || "").trim();
       const model = trimLeading(modelRaw, make) || modelRaw;
       const key = buildMakeModelJoinKey(make, model);
       if (!make || !model || !key) return null;
@@ -968,18 +1101,21 @@ const buildBaseModelRowsSnapshot = async ({ city = '', includeDiscontinued = fal
         key,
         make,
         model,
-        city: row?.city || '',
+        city: row?.city || "",
         basePrice: Number(row?.basePrice || 0),
-        variant: String(row?.variant || '').trim(),
-        vehicleId: String(row?.vehicleId || ''),
+        variant: String(row?.variant || "").trim(),
+        vehicleId: String(row?.vehicleId || ""),
       };
     })
     .filter((row) => row && row.basePrice > 0);
 };
 
-const getBaseModelRowsCached = async ({ city = '', includeDiscontinued = false } = {}) => {
+const getBaseModelRowsCached = async ({
+  city = "",
+  includeDiscontinued = false,
+} = {}) => {
   const key = JSON.stringify({
-    city: toCityToken(city || ''),
+    city: toCityToken(city || ""),
     includeDiscontinued: Boolean(includeDiscontinued),
   });
   const cached = SIMILAR_BASE_CACHE.get(key);
@@ -1005,13 +1141,13 @@ const buildFeatureMetaSnapshot = async () => {
   const byModel = new Map();
 
   docs.forEach((doc) => {
-    const make = String(doc?.brand || '').trim();
-    const modelRaw = String(doc?.model || '').trim();
+    const make = String(doc?.brand || "").trim();
+    const modelRaw = String(doc?.model || "").trim();
     const model = trimLeading(modelRaw, make) || modelRaw;
     const key = buildMakeModelJoinKey(make, model);
     if (!key) return;
 
-    const rawBody = String(doc?.body_type_bucket || '').trim();
+    const rawBody = String(doc?.body_type_bucket || "").trim();
     const bodyBucket = normalizeBodyTypeBucket(rawBody);
     const bodyLabel = formatBodyType(rawBody || bodyBucket);
     const seatValue = doc?.seating_capacity;
@@ -1028,22 +1164,29 @@ const buildFeatureMetaSnapshot = async () => {
     }
     const entry = byModel.get(key);
     if (bodyBucket) {
-      entry.bodyCounts.set(bodyBucket, (entry.bodyCounts.get(bodyBucket) || 0) + 1);
+      entry.bodyCounts.set(
+        bodyBucket,
+        (entry.bodyCounts.get(bodyBucket) || 0) + 1,
+      );
       if (bodyLabel && !entry.bodyLabels.has(bodyBucket)) {
         entry.bodyLabels.set(bodyBucket, bodyLabel);
       }
     }
     if (seatCount) {
-      entry.seatCounts.set(seatCount, (entry.seatCounts.get(seatCount) || 0) + 1);
+      entry.seatCounts.set(
+        seatCount,
+        (entry.seatCounts.get(seatCount) || 0) + 1,
+      );
     }
   });
 
   const out = new Map();
   byModel.forEach((entry, key) => {
     const bodyBucket =
-      [...entry.bodyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+      [...entry.bodyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
     const seatingCapacity =
-      [...entry.seatCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      [...entry.seatCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ||
+      null;
     out.set(key, {
       make: entry.make,
       model: entry.model,
@@ -1058,30 +1201,36 @@ const buildFeatureMetaSnapshot = async () => {
 
 const loadModelMetaOnDemand = async (make, model) => {
   if (!make || !model) return null;
-  const brandRegex = new RegExp(`^${escapeRegex(String(make).trim())}$`, 'i');
-  const modelRegex = new RegExp(escapeRegex(String(model).trim()), 'i');
+  const brandRegex = new RegExp(`^${escapeRegex(String(make).trim())}$`, "i");
+  const modelRegex = new RegExp(escapeRegex(String(model).trim()), "i");
   const docs = await VehicleFeature.find({
     brand: brandRegex,
     model: modelRegex,
   })
-    .select({ body_type_bucket: 1, seating_capacity: 1, features: 1, brand: 1, model: 1 })
+    .select({
+      body_type_bucket: 1,
+      seating_capacity: 1,
+      features: 1,
+      brand: 1,
+      model: 1,
+    })
     .limit(200)
     .lean();
 
   if (!docs.length) return null;
   const bodyCounts = new Map();
   const seatCounts = new Map();
-  let displayBody = '';
+  let displayBody = "";
 
   docs.forEach((doc) => {
     const rawBody =
-      String(doc?.body_type_bucket || '').trim() ||
+      String(doc?.body_type_bucket || "").trim() ||
       extractFeatureValueByKeywords(doc?.features, [
-        'body type',
-        'bodytype',
-        'vehicle type',
-        'body style',
-        'segment',
+        "body type",
+        "bodytype",
+        "vehicle type",
+        "body style",
+        "segment",
       ]);
     const bodyBucket = normalizeBodyTypeBucket(rawBody);
     if (bodyBucket) {
@@ -1092,13 +1241,13 @@ const loadModelMetaOnDemand = async (make, model) => {
     const seatValue =
       doc?.seating_capacity ??
       extractFeatureValueByKeywords(doc?.features, [
-        'seating capacity',
-        'seat capacity',
-        'seating',
-        'number of seats',
-        'no of seats',
-        'no. of seats',
-        'seats',
+        "seating capacity",
+        "seat capacity",
+        "seating",
+        "number of seats",
+        "no of seats",
+        "no. of seats",
+        "seats",
       ]);
     const seatCount = parseSeatCount(seatValue);
     if (seatCount) {
@@ -1106,8 +1255,10 @@ const loadModelMetaOnDemand = async (make, model) => {
     }
   });
 
-  const topBody = [...bodyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
-  const topSeat = [...seatCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+  const topBody =
+    [...bodyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+  const topSeat =
+    [...seatCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
   if (!topBody || !topSeat) return null;
   return {
     bodyTypeBucket: topBody,
@@ -1117,7 +1268,8 @@ const loadModelMetaOnDemand = async (make, model) => {
 };
 
 const getFeatureMetaMapCached = async () => {
-  const isFresh = Date.now() - FEATURE_META_CACHE.ts <= FEATURE_META_CACHE_TTL_MS;
+  const isFresh =
+    Date.now() - FEATURE_META_CACHE.ts <= FEATURE_META_CACHE_TTL_MS;
   if (isFresh && FEATURE_META_CACHE.data?.size) {
     return FEATURE_META_CACHE.data;
   }
@@ -1131,10 +1283,26 @@ const getVehicles = asyncHandler(async (req, res) => {
   const pageSize = req.query.limit ? Number(req.query.limit) : null;
   const skip = Number(req.query.skip) || 0;
   const includeFullPayload =
-    String(req.query.full || '').toLowerCase() === 'true' || String(req.query.full || '') === '1';
+    String(req.query.full || "").toLowerCase() === "true" ||
+    String(req.query.full || "") === "1";
 
-  const cacheParams = { q, make, model, variant, city, fuel, pageSize, skip, includeFullPayload };
-  const cached = readCache(VEHICLE_LIST_CACHE, VEHICLE_LIST_CACHE_TTL_MS, 'list', cacheParams);
+  const cacheParams = {
+    q,
+    make,
+    model,
+    variant,
+    city,
+    fuel,
+    pageSize,
+    skip,
+    includeFullPayload,
+  };
+  const cached = readCache(
+    VEHICLE_LIST_CACHE,
+    VEHICLE_LIST_CACHE_TTL_MS,
+    "list",
+    cacheParams,
+  );
   if (cached) {
     return res.json({ ...cached, fromCache: true });
   }
@@ -1154,25 +1322,28 @@ const getVehicles = asyncHandler(async (req, res) => {
   const data = includeFullPayload
     ? docs.map(normalizeVehicleRecord)
     : docs.map(toVehicleListItem);
-    
+
   const response = { success: true, count: count ?? data.length, data };
-  writeCache(VEHICLE_LIST_CACHE, 'list', cacheParams, response);
+  writeCache(VEHICLE_LIST_CACHE, "list", cacheParams, response);
 
   res.json(response);
 });
 
 const searchVehicleRecords = asyncHandler(async (req, res) => {
-  const rawQ = String(req.query.q || req.query.search || '').trim();
+  const rawQ = String(req.query.q || req.query.search || "").trim();
   const q = normalizeRegNo(rawQ);
   const isFourDigitSuffixSearch = /^\d{4}$/.test(rawQ) || /^\d{4}$/.test(q);
   const requestedLimit = Number(req.query.limit);
   const defaultLimit = isFourDigitSuffixSearch ? 5000 : 20;
   const limit = Math.min(
-    Math.max(Number.isFinite(requestedLimit) ? requestedLimit : defaultLimit, 1),
+    Math.max(
+      Number.isFinite(requestedLimit) ? requestedLimit : defaultLimit,
+      1,
+    ),
     10000,
   );
 
-  const fetchAll = req.query.all === 'true';
+  const fetchAll = req.query.all === "true";
 
   if (!fetchAll && rawQ.length < 2 && q.length < 2) {
     return res.json({ success: true, count: 0, data: [] });
@@ -1186,6 +1357,7 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
   if (fetchAll) {
     const rows = await VehicleRecord.find({})
       .select({
+        _id: 1,
         registrationNumber: 1,
         customerName: 1,
         primaryMobile: 1,
@@ -1213,21 +1385,27 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
   if (q.length >= 2) {
     if (isFourDigitSuffixSearch) {
       clauses.push({ registrationNumberLast4: suffix });
-      clauses.push({ registrationNumberNormalized: new RegExp(`${regEscaped}$`, 'i') });
+      clauses.push({
+        registrationNumberNormalized: new RegExp(`${regEscaped}$`, "i"),
+      });
     } else {
-      clauses.push({ registrationNumberNormalized: new RegExp(`^${regEscaped}`, 'i') });
-      clauses.push({ registrationNumberNormalized: new RegExp(regEscaped, 'i') });
+      clauses.push({
+        registrationNumberNormalized: new RegExp(`^${regEscaped}`, "i"),
+      });
+      clauses.push({
+        registrationNumberNormalized: new RegExp(regEscaped, "i"),
+      });
       if (suffix.length === 4) {
         clauses.push({ registrationNumberLast4: suffix });
       }
     }
   }
   if (rawQ.length >= 2) {
-    clauses.push({ customerName: new RegExp(rawEscaped, 'i') });
-    clauses.push({ primaryMobile: new RegExp(rawEscaped, 'i') });
-    clauses.push({ make: new RegExp(rawEscaped, 'i') });
-    clauses.push({ model: new RegExp(rawEscaped, 'i') });
-    clauses.push({ variant: new RegExp(rawEscaped, 'i') });
+    clauses.push({ customerName: new RegExp(rawEscaped, "i") });
+    clauses.push({ primaryMobile: new RegExp(rawEscaped, "i") });
+    clauses.push({ make: new RegExp(rawEscaped, "i") });
+    clauses.push({ model: new RegExp(rawEscaped, "i") });
+    clauses.push({ variant: new RegExp(rawEscaped, "i") });
   }
   if (!clauses.length) {
     return res.json({ success: true, count: 0, data: [] });
@@ -1237,6 +1415,7 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
 
   const rows = await VehicleRecord.find({ $or: clauses })
     .select({
+      _id: 1,
       registrationNumber: 1,
       registrationNumberNormalized: 1,
       registrationNumberLast4: 1,
@@ -1267,9 +1446,10 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
 
   const scored = rows
     .map((row) => {
-      const normalized = normalizeRegNo(
-        row?.registrationNumberNormalized || row?.registrationNumber,
-      ) || "";
+      const normalized =
+        normalizeRegNo(
+          row?.registrationNumberNormalized || row?.registrationNumber,
+        ) || "";
 
       let score = 0;
       if (q && normalized) {
@@ -1277,26 +1457,39 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
         if (normalized.startsWith(q)) score += 110;
         if (normalized.includes(q)) score += 50;
       }
-      if (isFourDigitSuffixSearch && row?.registrationNumberLast4 === suffix) score += 220;
-      if (isFourDigitSuffixSearch && normalized && normalized.endsWith(suffix)) score += 170;
-      if (!isFourDigitSuffixSearch && suffix.length === 4 && row?.registrationNumberLast4 === suffix) score += 80;
-      if (!isFourDigitSuffixSearch && suffix.length === 4 && normalized && normalized.endsWith(suffix)) score += 40;
-      const customerName = String(row?.customerName || '');
-      const primaryMobile = String(row?.primaryMobile || '');
-      const make = String(row?.make || '');
-      const model = String(row?.model || '');
-      const variant = String(row?.variant || '');
-      if (rawQ && new RegExp(rawEscaped, 'i').test(customerName)) score += 90;
-      if (rawQ && new RegExp(rawEscaped, 'i').test(primaryMobile)) score += 70;
-      if (rawQ && new RegExp(rawEscaped, 'i').test(make)) score += 55;
-      if (rawQ && new RegExp(rawEscaped, 'i').test(model)) score += 45;
-      if (rawQ && new RegExp(rawEscaped, 'i').test(variant)) score += 35;
+      if (isFourDigitSuffixSearch && row?.registrationNumberLast4 === suffix)
+        score += 220;
+      if (isFourDigitSuffixSearch && normalized && normalized.endsWith(suffix))
+        score += 170;
+      if (
+        !isFourDigitSuffixSearch &&
+        suffix.length === 4 &&
+        row?.registrationNumberLast4 === suffix
+      )
+        score += 80;
+      if (
+        !isFourDigitSuffixSearch &&
+        suffix.length === 4 &&
+        normalized &&
+        normalized.endsWith(suffix)
+      )
+        score += 40;
+      const customerName = String(row?.customerName || "");
+      const primaryMobile = String(row?.primaryMobile || "");
+      const make = String(row?.make || "");
+      const model = String(row?.model || "");
+      const variant = String(row?.variant || "");
+      if (rawQ && new RegExp(rawEscaped, "i").test(customerName)) score += 90;
+      if (rawQ && new RegExp(rawEscaped, "i").test(primaryMobile)) score += 70;
+      if (rawQ && new RegExp(rawEscaped, "i").test(make)) score += 55;
+      if (rawQ && new RegExp(rawEscaped, "i").test(model)) score += 45;
+      if (rawQ && new RegExp(rawEscaped, "i").test(variant)) score += 35;
       if (!score) return null;
 
       return {
         ...row,
         registrationNumber:
-          String(row?.registrationNumber || '').trim() || normalized,
+          String(row?.registrationNumber || "").trim() || normalized,
         registrationNumberNormalized: normalized,
         score,
       };
@@ -1304,38 +1497,37 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
     .filter(Boolean)
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      const aTs = Date.parse(a.updatedAt || a.createdAt || '') || 0;
-      const bTs = Date.parse(b.updatedAt || b.createdAt || '') || 0;
+      const aTs = Date.parse(a.updatedAt || a.createdAt || "") || 0;
+      const bTs = Date.parse(b.updatedAt || b.createdAt || "") || 0;
       return bTs - aTs;
     });
 
   const deduped = [];
   const seen = new Set();
   for (const row of scored) {
-    const key = row.registrationNumberNormalized || String(row._id);
+    const key = row.registrationNumberNormalized || row.registrationNumber;
     if (!key || seen.has(key)) continue;
     seen.add(key);
     deduped.push({
-      _id: row._id,
       registrationNumber: row.registrationNumber,
       registrationNumberNormalized: row.registrationNumberNormalized,
-      customerName: row.customerName || '',
-      primaryMobile: row.primaryMobile || '',
-      make: row.make || '',
-      model: row.model || '',
-      variant: row.variant || '',
-      yearOfManufacture: row.yearOfManufacture || '',
-      manufactureMonth: row.manufactureMonth || '',
-      engineNumber: row.engineNumber || '',
-      chassisNumber: row.chassisNumber || '',
+      customerName: row.customerName || "",
+      primaryMobile: row.primaryMobile || "",
+      make: row.make || "",
+      model: row.model || "",
+      variant: row.variant || "",
+      yearOfManufacture: row.yearOfManufacture || "",
+      manufactureMonth: row.manufactureMonth || "",
+      engineNumber: row.engineNumber || "",
+      chassisNumber: row.chassisNumber || "",
       registrationDate: row.registrationDate || null,
-      regAuthority: row.regAuthority || '',
-      registrationCity: row.registrationCity || '',
-      hypothecation: row.hypothecation || '',
-      fuelType: row.fuelType || '',
-      typesOfVehicle: row.typesOfVehicle || '',
-      batteryNumber: row.batteryNumber || '',
-      chargerNumber: row.chargerNumber || '',
+      regAuthority: row.regAuthority || "",
+      registrationCity: row.registrationCity || "",
+      hypothecation: row.hypothecation || "",
+      fuelType: row.fuelType || "",
+      typesOfVehicle: row.typesOfVehicle || "",
+      batteryNumber: row.batteryNumber || "",
+      chargerNumber: row.chargerNumber || "",
       cubicCapacityCc: row.cubicCapacityCc,
     });
     if (deduped.length >= limit) break;
@@ -1347,7 +1539,7 @@ const searchVehicleRecords = asyncHandler(async (req, res) => {
 const getVehicleById = asyncHandler(async (req, res) => {
   if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
     res.status(400);
-    throw new Error('Invalid vehicle ID format');
+    throw new Error("Invalid vehicle ID format");
   }
 
   const vehicle = await Vehicle.findById(req.params.id);
@@ -1355,20 +1547,20 @@ const getVehicleById = asyncHandler(async (req, res) => {
     res.json({ success: true, data: normalizeVehicleRecord(vehicle) });
   } else {
     res.status(404);
-    throw new Error('Vehicle not found');
+    throw new Error("Vehicle not found");
   }
 });
 
 const createVehicle = asyncHandler(async (req, res) => {
-  const make = String(req.body.make || req.body.brand || '').trim();
-  const model = String(req.body.model || '').trim();
-  const variant = String(req.body.variant || '').trim();
+  const make = String(req.body.make || req.body.brand || "").trim();
+  const model = String(req.body.model || "").trim();
+  const variant = String(req.body.variant || "").trim();
   const fuel = req.body.fuel || req.body.fuel_type;
   const city = req.body.city;
 
   if (!make || !model || !variant) {
     res.status(400);
-    throw new Error('Please include Make, Model, and Variant');
+    throw new Error("Please include Make, Model, and Variant");
   }
 
   const payload = withCanonicalVehiclePricing({
@@ -1378,26 +1570,42 @@ const createVehicle = asyncHandler(async (req, res) => {
     model,
     variant,
   });
-  const existingDocs = await Vehicle.find(buildVehicleQuery({ make, model, variant, city, fuel }))
-    .select({ make: 1, brand: 1, model: 1, variant: 1, fuel: 1, fuel_type: 1, city: 1 })
+  const existingDocs = await Vehicle.find(
+    buildVehicleQuery({ make, model, variant, city, fuel }),
+  )
+    .select({
+      make: 1,
+      brand: 1,
+      model: 1,
+      variant: 1,
+      fuel: 1,
+      fuel_type: 1,
+      city: 1,
+    })
     .lean();
   const duplicate = existingDocs.find((doc) =>
     matchesVehicleFilters(doc, { make, model, variant, city, fuel }),
   );
   if (duplicate) {
     res.status(400);
-    throw new Error('Vehicle variant already exists for this city/fuel combination');
+    throw new Error(
+      "Vehicle variant already exists for this city/fuel combination",
+    );
   }
 
   const vehicle = await Vehicle.create(payload);
-  res.status(201).json({ success: true, data: normalizeVehicleRecord(vehicle) });
+  res
+    .status(201)
+    .json({ success: true, data: normalizeVehicleRecord(vehicle) });
 });
 
 const updateVehicle = asyncHandler(async (req, res) => {
   const vehicle = await Vehicle.findById(req.params.id);
 
   if (vehicle) {
-    const nextMake = String(req.body.make || req.body.brand || vehicle.make || vehicle.brand || '').trim();
+    const nextMake = String(
+      req.body.make || req.body.brand || vehicle.make || vehicle.brand || "",
+    ).trim();
     Object.assign(vehicle, {
       ...req.body,
       make: nextMake,
@@ -1408,7 +1616,7 @@ const updateVehicle = asyncHandler(async (req, res) => {
     res.json({ success: true, data: normalizeVehicleRecord(updatedVehicle) });
   } else {
     res.status(404);
-    throw new Error('Vehicle not found');
+    throw new Error("Vehicle not found");
   }
 });
 
@@ -1416,10 +1624,10 @@ const deleteVehicle = asyncHandler(async (req, res) => {
   const vehicle = await Vehicle.findById(req.params.id);
   if (vehicle) {
     await vehicle.deleteOne();
-    res.json({ success: true, message: 'Vehicle removed' });
+    res.json({ success: true, message: "Vehicle removed" });
   } else {
     res.status(404);
-    throw new Error('Vehicle not found');
+    throw new Error("Vehicle not found");
   }
 });
 
@@ -1428,16 +1636,16 @@ const bulkUploadVehicles = asyncHandler(async (req, res) => {
 
   if (!Array.isArray(vehiclesData)) {
     res.status(400);
-    throw new Error('Expected an array of vehicle objects');
+    throw new Error("Expected an array of vehicle objects");
   }
 
   const results = { inserted: 0, updated: 0, errors: [] };
 
   for (const item of vehiclesData) {
     try {
-      const make = String(item.make || item.brand || '').trim();
-      const model = String(item.model || '').trim();
-      const variant = String(item.variant || '').trim();
+      const make = String(item.make || item.brand || "").trim();
+      const model = String(item.model || "").trim();
+      const variant = String(item.variant || "").trim();
       const fuel = item.fuel || item.fuel_type;
       const city = item.city;
       if (!make || !model || !variant) continue;
@@ -1449,15 +1657,27 @@ const bulkUploadVehicles = asyncHandler(async (req, res) => {
         model,
         variant,
       });
-      const existingDocs = await Vehicle.find(buildVehicleQuery({ make, model, variant, city, fuel }))
-        .select({ make: 1, brand: 1, model: 1, variant: 1, fuel: 1, fuel_type: 1, city: 1 })
+      const existingDocs = await Vehicle.find(
+        buildVehicleQuery({ make, model, variant, city, fuel }),
+      )
+        .select({
+          make: 1,
+          brand: 1,
+          model: 1,
+          variant: 1,
+          fuel: 1,
+          fuel_type: 1,
+          city: 1,
+        })
         .lean();
       const duplicate = existingDocs.find((doc) =>
         matchesVehicleFilters(doc, { make, model, variant, city, fuel }),
       );
 
       if (duplicate) {
-        await Vehicle.findByIdAndUpdate(duplicate._id, payload, { returnDocument: 'after' });
+        await Vehicle.findByIdAndUpdate(duplicate._id, payload, {
+          returnDocument: "after",
+        });
         results.updated++;
       } else {
         await Vehicle.create(payload);
@@ -1474,7 +1694,7 @@ const bulkUploadVehicles = asyncHandler(async (req, res) => {
 const getUniqueMakes = asyncHandler(async (req, res) => {
   const { city } = req.query;
   const includeDiscontinued = parseBoolean(req.query.includeDiscontinued);
-  const cached = readDistinctCache('makes', { city, includeDiscontinued });
+  const cached = readDistinctCache("makes", { city, includeDiscontinued });
   if (cached) {
     return res.json({ success: true, data: cached, cached: true });
   }
@@ -1484,18 +1704,24 @@ const getUniqueMakes = asyncHandler(async (req, res) => {
     : { ...cityQuery, ...ACTIVE_VARIANT_FILTER };
 
   const [makeValues, brandValues] = await Promise.all([
-    Vehicle.distinct('make', { ...baseQuery, make: { $exists: true, $ne: null } }),
-    Vehicle.distinct('brand', { ...baseQuery, brand: { $exists: true, $ne: null } }),
+    Vehicle.distinct("make", {
+      ...baseQuery,
+      make: { $exists: true, $ne: null },
+    }),
+    Vehicle.distinct("brand", {
+      ...baseQuery,
+      brand: { $exists: true, $ne: null },
+    }),
   ]);
 
   const makes = [
     ...new Set(
       [...makeValues, ...brandValues]
-        .map((value) => String(value || '').trim())
+        .map((value) => String(value || "").trim())
         .filter(Boolean),
     ),
   ].sort((a, b) => a.localeCompare(b));
-  writeDistinctCache('makes', { city, includeDiscontinued }, makes);
+  writeDistinctCache("makes", { city, includeDiscontinued }, makes);
 
   res.json({ success: true, data: makes });
 });
@@ -1506,28 +1732,32 @@ const getUniqueModels = asyncHandler(async (req, res) => {
 
   if (!make) {
     res.status(400);
-    throw new Error('Make parameter is required');
+    throw new Error("Make parameter is required");
   }
-  const cached = readDistinctCache('models', { make, city, includeDiscontinued });
+  const cached = readDistinctCache("models", {
+    make,
+    city,
+    includeDiscontinued,
+  });
   if (cached) {
     return res.json({ success: true, data: cached, cached: true });
   }
 
   const query = buildVehicleQuery({ make, city });
   if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
-  const rawModels = await Vehicle.distinct('model', {
+  const rawModels = await Vehicle.distinct("model", {
     ...query,
     model: { $exists: true, $ne: null },
   });
   const models = [
     ...new Set(
       rawModels
-        .map((value) => String(value || '').trim())
+        .map((value) => String(value || "").trim())
         .map((value) => trimLeading(value, make) || value)
         .filter(Boolean),
     ),
   ].sort((a, b) => a.localeCompare(b));
-  writeDistinctCache('models', { make, city, includeDiscontinued }, models);
+  writeDistinctCache("models", { make, city, includeDiscontinued }, models);
 
   res.json({ success: true, data: models });
 });
@@ -1538,9 +1768,9 @@ const getUniqueVariants = asyncHandler(async (req, res) => {
 
   if (!make || !model) {
     res.status(400);
-    throw new Error('Make and Model parameters are required');
+    throw new Error("Make and Model parameters are required");
   }
-  const cached = readDistinctCache('variants', {
+  const cached = readDistinctCache("variants", {
     make,
     model,
     city,
@@ -1552,24 +1782,29 @@ const getUniqueVariants = asyncHandler(async (req, res) => {
 
   const query = buildVehicleQuery({ make, model, city });
   if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
-  const rawVariants = await Vehicle.distinct('variant', {
+  const rawVariants = await Vehicle.distinct("variant", {
     ...query,
     variant: { $exists: true, $ne: null },
   });
   const variants = [
     ...new Set(
       rawVariants
-        .map((value) => String(value || '').trim())
-        .map((value) =>
-          trimLeading(value, `${make} ${model}`.trim()) ||
-          trimLeading(value, model) ||
-          trimLeading(value, make) ||
-          value,
+        .map((value) => String(value || "").trim())
+        .map(
+          (value) =>
+            trimLeading(value, `${make} ${model}`.trim()) ||
+            trimLeading(value, model) ||
+            trimLeading(value, make) ||
+            value,
         )
         .filter(Boolean),
     ),
   ].sort((a, b) => a.localeCompare(b));
-  writeDistinctCache('variants', { make, model, city, includeDiscontinued }, variants);
+  writeDistinctCache(
+    "variants",
+    { make, model, city, includeDiscontinued },
+    variants,
+  );
 
   res.json({ success: true, data: variants });
 });
@@ -1580,11 +1815,16 @@ const getVariantOptionsByModel = asyncHandler(async (req, res) => {
 
   if (!make || !model) {
     res.status(400);
-    throw new Error('Make and model are required');
+    throw new Error("Make and model are required");
   }
 
   const cacheParams = { make, model, city, includeDiscontinued };
-  const cached = readCache(VEHICLE_LIST_CACHE, VEHICLE_LIST_CACHE_TTL_MS, 'variants-options', cacheParams);
+  const cached = readCache(
+    VEHICLE_LIST_CACHE,
+    VEHICLE_LIST_CACHE_TTL_MS,
+    "variants-options",
+    cacheParams,
+  );
   if (cached) {
     return res.json({ ...cached, fromCache: true });
   }
@@ -1596,7 +1836,9 @@ const getVariantOptionsByModel = asyncHandler(async (req, res) => {
     if (cityQuery) mergeAndCondition(cityQuery, ACTIVE_VARIANT_FILTER);
   }
 
-  const cityDocs = cityQuery ? await Vehicle.find(cityQuery).select(VEHICLE_LIST_PROJECTION).lean() : [];
+  const cityDocs = cityQuery
+    ? await Vehicle.find(cityQuery).select(VEHICLE_LIST_PROJECTION).lean()
+    : [];
   const docs = cityDocs.length
     ? cityDocs
     : await Vehicle.find(baseQuery).select(VEHICLE_LIST_PROJECTION).lean();
@@ -1625,13 +1867,15 @@ const getVariantOptionsByModel = asyncHandler(async (req, res) => {
         ),
       insurance: doc.insurance,
       rto: doc.rto,
-      tcs: parseAmount(doc.tcs || doc.other_tcsCharges || doc.otherCharges || 0),
+      tcs: parseAmount(
+        doc.tcs || doc.other_tcsCharges || doc.otherCharges || 0,
+      ),
       ...doc,
     });
   });
 
   const response = { success: true, data: Array.from(byVariant.values()) };
-  writeCache(VEHICLE_LIST_CACHE, 'variants-options', cacheParams, response);
+  writeCache(VEHICLE_LIST_CACHE, "variants-options", cacheParams, response);
 
   res.json(response);
 });
@@ -1641,11 +1885,13 @@ const getVehicleByDetails = asyncHandler(async (req, res) => {
 
   if (!make || !model || !variant) {
     res.status(400);
-    throw new Error('Make, model and variant are required');
+    throw new Error("Make, model and variant are required");
   }
 
   const baseQuery = buildVehicleQuery({ make, model, variant, fuel });
-  const cityQuery = city ? buildVehicleQuery({ make, model, variant, fuel, city }) : null;
+  const cityQuery = city
+    ? buildVehicleQuery({ make, model, variant, fuel, city })
+    : null;
 
   const docsWithCity = cityQuery
     ? await Vehicle.find(cityQuery).select(VEHICLE_LIST_PROJECTION).lean()
@@ -1666,7 +1912,7 @@ const getVehicleByDetails = asyncHandler(async (req, res) => {
 
   if (!match) {
     res.status(404);
-    throw new Error('Vehicle not found');
+    throw new Error("Vehicle not found");
   }
 
   res.json({ success: true, data: match });
@@ -1677,21 +1923,23 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
 
   if (!make || !model) {
     res.status(400);
-    throw new Error('Make and model are required');
+    throw new Error("Make and model are required");
   }
 
   const cached = readCache(
     VEHICLE_MEDIA_CACHE,
     VEHICLE_MEDIA_CACHE_TTL_MS,
-    'media',
+    "media",
     { make, model, variant },
   );
   if (cached) {
     return res.json({ ...cached, fromCache: true });
   }
 
-  const collection = mongoose.connection.db.collection(VEHICLE_COLORS_COLLECTION);
-  const makeValue = String(make || '').trim();
+  const collection = mongoose.connection.db.collection(
+    VEHICLE_COLORS_COLLECTION,
+  );
+  const makeValue = String(make || "").trim();
   const modelCandidates = buildModelCandidates(make, model);
   const variantCandidates = variant
     ? buildVariantCandidates(make, model, variant)
@@ -1699,15 +1947,13 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
 
   // Fast exact path first (index-friendly).
   let docs = await collection
-    .find(
-      {
-        brand: makeValue,
-        model: { $in: modelCandidates },
-        ...(variantCandidates.length
-          ? { variant: { $in: variantCandidates } }
-          : {}),
-      },
-    )
+    .find({
+      brand: makeValue,
+      model: { $in: modelCandidates },
+      ...(variantCandidates.length
+        ? { variant: { $in: variantCandidates } }
+        : {}),
+    })
     .toArray();
 
   // Case-insensitive fallback for rows with casing drift.
@@ -1722,7 +1968,7 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
             : {}),
         },
         {
-          collation: { locale: 'en', strength: 2 },
+          collation: { locale: "en", strength: 2 },
         },
       )
       .toArray();
@@ -1744,116 +1990,135 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
         matchesExact(doc.variant, variant),
     )
     .filter((doc) => {
-      const sourceUrl = doc.sourceImageUrl || doc.image_url || doc.imageUrl || '';
+      const sourceUrl =
+        doc.sourceImageUrl || doc.image_url || doc.imageUrl || "";
       if (!sourceUrl) return true;
       return mediaUrlMatchesMakeModel(sourceUrl, make, model);
     })
-    .sort((a, b) => String(a.color_name || '').localeCompare(String(b.color_name || '')));
+    .sort((a, b) =>
+      String(a.color_name || "").localeCompare(String(b.color_name || "")),
+    );
 
   const fallbackRows = rows.length
     ? rows
     : colorRows
         .map((doc) => normalizeVehicleRecord(doc))
-        .filter((doc) => matchesExact(doc.make, make) && matchesExact(doc.model, model))
+        .filter(
+          (doc) =>
+            matchesExact(doc.make, make) && matchesExact(doc.model, model),
+        )
         .filter((doc) => {
-          const sourceUrl = doc.sourceImageUrl || doc.image_url || doc.imageUrl || '';
+          const sourceUrl =
+            doc.sourceImageUrl || doc.image_url || doc.imageUrl || "";
           if (!sourceUrl) return true;
           return mediaUrlMatchesMakeModel(sourceUrl, make, model);
         })
-        .sort((a, b) => String(a.color_name || '').localeCompare(String(b.color_name || '')));
+        .sort((a, b) =>
+          String(a.color_name || "").localeCompare(String(b.color_name || "")),
+        );
 
   const payload = {
     success: true,
     data: dedupeMediaRowsByHexLatest(fallbackRows),
   };
-  writeCache(VEHICLE_MEDIA_CACHE, 'media', { make, model, variant }, payload);
+  writeCache(VEHICLE_MEDIA_CACHE, "media", { make, model, variant }, payload);
   res.json(payload);
 });
 
 const toSlug = (value) =>
-  String(value || '')
+  String(value || "")
     .trim()
     .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
-const normalizeSalesDisplayName = (value = '') =>
-  String(value || '')
+const normalizeSalesDisplayName = (value = "") =>
+  String(value || "")
     .trim()
-    .replace(/\s+/g, ' ')
-    .replace(/^Maruti\s+(?:Arena|Nexa)\s+/i, 'Maruti ');
+    .replace(/\s+/g, " ")
+    .replace(/^Maruti\s+(?:Arena|Nexa)\s+/i, "Maruti ");
 
 const POPULAR_CAR_KNOWN_MAKES = [
-  'Mercedes Benz',
-  'Mercedes-Benz',
-  'Land Rover',
-  'Maruti Suzuki',
-  'Volkswagen',
-  'Mahindra',
-  'Hyundai',
-  'Toyota',
-  'Citroen',
-  'Renault',
-  'Skoda',
-  'Honda',
-  'Nissan',
-  'Maruti',
-  'Tata',
-  'Kia',
-  'MG',
-  'Jeep',
-  'BYD',
-  'BMW',
-  'Audi',
-  'Volvo',
-  'Lexus',
-  'Porsche',
-  'Mini',
-  'Force',
-  'Isuzu',
+  "Mercedes Benz",
+  "Mercedes-Benz",
+  "Land Rover",
+  "Maruti Suzuki",
+  "Volkswagen",
+  "Mahindra",
+  "Hyundai",
+  "Toyota",
+  "Citroen",
+  "Renault",
+  "Skoda",
+  "Honda",
+  "Nissan",
+  "Maruti",
+  "Tata",
+  "Kia",
+  "MG",
+  "Jeep",
+  "BYD",
+  "BMW",
+  "Audi",
+  "Volvo",
+  "Lexus",
+  "Porsche",
+  "Mini",
+  "Force",
+  "Isuzu",
 ];
 
-const parseSalesVehicleName = (displayName = '', knownMakes = []) => {
+const parseSalesVehicleName = (displayName = "", knownMakes = []) => {
   const cleaned = normalizeSalesDisplayName(displayName);
-  const normalized = normalizeText(cleaned).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
+  const normalized = normalizeText(cleaned)
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ");
   const make = [...new Set([...knownMakes, ...POPULAR_CAR_KNOWN_MAKES])]
-    .map((item) => String(item || '').trim())
+    .map((item) => String(item || "").trim())
     .filter(Boolean)
     .sort((a, b) => b.length - a.length)
     .find((candidate) => {
-      const candidateKey = normalizeText(candidate).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
-      return normalized === candidateKey || normalized.startsWith(`${candidateKey} `);
+      const candidateKey = normalizeText(candidate)
+        .replace(/[-_]+/g, " ")
+        .replace(/\s+/g, " ");
+      return (
+        normalized === candidateKey || normalized.startsWith(`${candidateKey} `)
+      );
     });
 
   if (make) {
     const model = trimLeading(cleaned, make) || cleaned;
-    return { make, model, displayName: [make, model].filter(Boolean).join(' ') };
+    return {
+      make,
+      model,
+      displayName: [make, model].filter(Boolean).join(" "),
+    };
   }
 
-  const [fallbackMake = '', ...modelParts] = cleaned.split(' ');
-  const model = modelParts.join(' ').trim();
+  const [fallbackMake = "", ...modelParts] = cleaned.split(" ");
+  const model = modelParts.join(" ").trim();
   return {
     make: fallbackMake,
     model: model || cleaned,
-    displayName: [fallbackMake, model].filter(Boolean).join(' ') || cleaned,
+    displayName: [fallbackMake, model].filter(Boolean).join(" ") || cleaned,
   };
 };
 
-const parseSalesMonth = (value = '') => {
-  const raw = String(value || '').trim();
+const parseSalesMonth = (value = "") => {
+  const raw = String(value || "").trim();
   const match = raw.match(/^(\d{4})-(\d{1,2})/);
   if (!match) {
-    return { monthLabel: raw || '', year: null, previousMonthLabel: '' };
+    return { monthLabel: raw || "", year: null, previousMonthLabel: "" };
   }
 
   const year = Number(match[1]);
   const monthIndex = Number(match[2]) - 1;
   const currentDate = new Date(Date.UTC(year, monthIndex, 1));
   const previousDate = new Date(Date.UTC(year, monthIndex - 1, 1));
-  const formatter = new Intl.DateTimeFormat('en-IN', {
-    month: 'long',
-    timeZone: 'UTC',
+  const formatter = new Intl.DateTimeFormat("en-IN", {
+    month: "long",
+    timeZone: "UTC",
   });
 
   return {
@@ -1866,7 +2131,7 @@ const parseSalesMonth = (value = '') => {
 const formatExShowroomRange = (minPrice, maxPrice) => {
   const format = (value) => {
     const amount = Number(value || 0);
-    if (!amount) return '';
+    if (!amount) return "";
     if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(2)}Cr`;
     return `₹${(amount / 100000).toFixed(2)}L`;
   };
@@ -1874,11 +2139,12 @@ const formatExShowroomRange = (minPrice, maxPrice) => {
   const min = format(minPrice);
   const max = format(maxPrice);
   if (min && max && min !== max) return `${min} – ${max}`;
-  return min || max || '';
+  return min || max || "";
 };
 
 const normalizeSalesNumber = (value) => {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value);
+  if (typeof value === "number" && Number.isFinite(value))
+    return Math.round(value);
   const parsed = parseAmount(value);
   return parsed > 0 ? Math.round(parsed) : 0;
 };
@@ -1889,19 +2155,23 @@ const normalizeSalesChange = (value) => {
 };
 
 const cleanR2ImageUrl = (value) => {
-  const url = String(value || '').trim();
-  if (!url || !url.startsWith(R2_PUBLIC_IMAGE_PREFIX)) return '';
+  const url = String(value || "").trim();
+  if (!url || !url.startsWith(R2_PUBLIC_IMAGE_PREFIX)) return "";
   return url;
 };
 
-const compactVehicleMediaKey = (value = '') =>
-  String(value || '')
+const compactVehicleMediaKey = (value = "") =>
+  String(value || "")
     .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, '')
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "")
     .trim();
 
-const hasVehicleImageModelConflict = ({ requestedModel = '', row = {}, imageUrl = '' } = {}) => {
+const hasVehicleImageModelConflict = ({
+  requestedModel = "",
+  row = {},
+  imageUrl = "",
+} = {}) => {
   const requestedKey = compactVehicleMediaKey(requestedModel);
   if (!requestedKey) return false;
 
@@ -1934,15 +2204,15 @@ const hasVehicleImageModelConflict = ({ requestedModel = '', row = {}, imageUrl 
         : []),
     ]
       .filter(Boolean)
-      .join(' '),
+      .join(" "),
   );
 
   const rules = [
-    { requested: 'innovahycross', forbidden: ['innovacrysta', 'crysta'] },
-    { requested: 'innovacrysta', forbidden: ['innovahycross', 'hycross'] },
-    { requested: 'creta', forbidden: ['cretaelectric', 'electric', 'nline'] },
-    { requested: 'fortuner', forbidden: ['legender'] },
-    { requested: 'thar', forbidden: ['tharroxx', 'roxx'] },
+    { requested: "innovahycross", forbidden: ["innovacrysta", "crysta"] },
+    { requested: "innovacrysta", forbidden: ["innovahycross", "hycross"] },
+    { requested: "creta", forbidden: ["cretaelectric", "electric", "nline"] },
+    { requested: "fortuner", forbidden: ["legender"] },
+    { requested: "thar", forbidden: ["tharroxx", "roxx"] },
   ];
   const rule = rules.find((item) => item.requested === requestedKey);
 
@@ -1965,9 +2235,15 @@ const pickVehicleColorImageUrl = (row = {}) =>
   cleanR2ImageUrl(row.defaultColorImageUrl) ||
   cleanR2ImageUrl(row.imageUrl) ||
   cleanR2ImageUrl(row.image_url) ||
-  cleanR2ImageUrl(row.colors?.find?.((color) => cleanR2ImageUrl(color.normalizedImageUrl))?.normalizedImageUrl) ||
-  cleanR2ImageUrl(row.colors?.find?.((color) => cleanR2ImageUrl(color.stagedImageUrl))?.stagedImageUrl) ||
-  '';
+  cleanR2ImageUrl(
+    row.colors?.find?.((color) => cleanR2ImageUrl(color.normalizedImageUrl))
+      ?.normalizedImageUrl,
+  ) ||
+  cleanR2ImageUrl(
+    row.colors?.find?.((color) => cleanR2ImageUrl(color.stagedImageUrl))
+      ?.stagedImageUrl,
+  ) ||
+  "";
 
 const pickPopularImageFrame = (row = {}) =>
   normalizeImageFrameMeta(
@@ -1981,18 +2257,21 @@ const pickPopularImageFrame = (row = {}) =>
       row.car_image_frame ||
       row.frame ||
       firstMeaningfulFrame(
-        row.colors?.find?.((color) => firstMeaningfulFrame(color.frameMeta, color.imageFrame))?.frameMeta,
-        row.colors?.find?.((color) => firstMeaningfulFrame(color.frameMeta, color.imageFrame))?.imageFrame,
+        row.colors?.find?.((color) =>
+          firstMeaningfulFrame(color.frameMeta, color.imageFrame),
+        )?.frameMeta,
+        row.colors?.find?.((color) =>
+          firstMeaningfulFrame(color.frameMeta, color.imageFrame),
+        )?.imageFrame,
       ) ||
       null,
-  ) ||
-  {};
+  ) || {};
 
 const buildExactModelRegexes = (make, model) =>
   buildModelCandidates(make, model)
-    .map((value) => String(value || '').trim())
+    .map((value) => String(value || "").trim())
     .filter(Boolean)
-    .map((value) => new RegExp(`^${escapeRegex(value)}$`, 'i'));
+    .map((value) => new RegExp(`^${escapeRegex(value)}$`, "i"));
 
 const buildPopularVehicleIdentity = (make, model) => {
   const normalized = normalizeVehicleDatasetRow({ brand: make, make, model });
@@ -2007,8 +2286,10 @@ const buildPopularVehicleIdentity = (make, model) => {
 const popularIdentityKey = (make, model) => {
   const identity = buildPopularVehicleIdentity(make, model);
   return [identity.brandNormalized, identity.modelNormalized]
-    .map((value) => normalizeText(value).replace(/[-_]+/g, ' ').replace(/\s+/g, ' '))
-    .join('|');
+    .map((value) =>
+      normalizeText(value).replace(/[-_]+/g, " ").replace(/\s+/g, " "),
+    )
+    .join("|");
 };
 
 const getPopularVehiclePriceRangeMap = async ({ vehicles = [], city }) => {
@@ -2018,7 +2299,9 @@ const getPopularVehiclePriceRangeMap = async ({ vehicles = [], city }) => {
       identity: buildPopularVehicleIdentity(vehicle.make, vehicle.model),
       key: popularIdentityKey(vehicle.make, vehicle.model),
     }))
-    .filter((item) => item.identity.brandNormalized && item.identity.modelNormalized);
+    .filter(
+      (item) => item.identity.brandNormalized && item.identity.modelNormalized,
+    );
 
   if (!identities.length) return new Map();
 
@@ -2065,7 +2348,9 @@ const getPopularVehiclePriceRangeMap = async ({ vehicles = [], city }) => {
 
   addDocs(await Vehicle.find(buildQuery(true)).select(projection).lean());
 
-  const missingIdentities = identities.filter((item) => !docsByKey.has(item.key));
+  const missingIdentities = identities.filter(
+    (item) => !docsByKey.has(item.key),
+  );
   if (missingIdentities.length) {
     const fallbackQuery = {
       $and: [
@@ -2086,8 +2371,18 @@ const getPopularVehiclePriceRangeMap = async ({ vehicles = [], city }) => {
     const docs = docsByKey.get(item.key) || [];
     const prices = docs
       .map((doc) => normalizeVehicleRecord(doc))
-      .filter((doc) => matchesExact(doc.make, item.make) && matchesExact(doc.model, item.model))
-      .map((doc) => firstPositiveAmount(doc.ex_showroom, doc.exShowroom, doc.exShowroomPrice))
+      .filter(
+        (doc) =>
+          matchesExact(doc.make, item.make) &&
+          matchesExact(doc.model, item.model),
+      )
+      .map((doc) =>
+        firstPositiveAmount(
+          doc.ex_showroom,
+          doc.exShowroom,
+          doc.exShowroomPrice,
+        ),
+      )
       .filter((amount) => amount > 0)
       .sort((a, b) => a - b);
 
@@ -2111,9 +2406,14 @@ const getPopularVehicleImageMap = async (vehicles = []) => {
 
   if (!identities.length) return new Map();
 
-  const collection = mongoose.connection.db.collection(VEHICLE_COLORS_COLLECTION);
+  const collection = mongoose.connection.db.collection(
+    VEHICLE_COLORS_COLLECTION,
+  );
   const activeScopeFilter = {
-    $or: [{ scopeStatus: { $exists: false } }, { scopeStatus: { $ne: 'rejected' } }],
+    $or: [
+      { scopeStatus: { $exists: false } },
+      { scopeStatus: { $ne: "rejected" } },
+    ],
   };
   const projection = {
     brand: 1,
@@ -2186,14 +2486,20 @@ const getPopularVehicleImageMap = async (vehicles = []) => {
 
   const imageMap = new Map();
   identities.forEach((item) => {
-      const row = rows.find((candidate) => {
-        const rowMake = candidate.brand || candidate.make || candidate.brandName || '';
-        const rowModel = String(candidate.model || candidate.modelName || candidate.model_name || '').trim();
+    const row = rows.find((candidate) => {
+      const rowMake =
+        candidate.brand || candidate.make || candidate.brandName || "";
+      const rowModel = String(
+        candidate.model || candidate.modelName || candidate.model_name || "",
+      ).trim();
       const normalizedImageUrl = pickVehicleColorImageUrl(candidate);
       return (
         normalizedImageUrl &&
         matchesExact(rowMake, item.make) &&
-        matchesExact(trimLeading(rowModel, item.make) || rowModel, item.model) &&
+        matchesExact(
+          trimLeading(rowModel, item.make) || rowModel,
+          item.model,
+        ) &&
         !hasVehicleImageModelConflict({
           requestedModel: item.model,
           row: candidate,
@@ -2203,8 +2509,8 @@ const getPopularVehicleImageMap = async (vehicles = []) => {
     });
     const normalizedImageUrl = pickVehicleColorImageUrl(row);
     imageMap.set(item.key, {
-      imageUrl: normalizedImageUrl || '',
-      normalizedImageUrl: normalizedImageUrl || '',
+      imageUrl: normalizedImageUrl || "",
+      normalizedImageUrl: normalizedImageUrl || "",
       imageFrame: row ? pickPopularImageFrame(row) : {},
     });
   });
@@ -2250,7 +2556,9 @@ const getPopularVehiclePriceRange = async ({ make, model, city }) => {
     if (!docs.length) {
       const normalizedFallbackQuery = { ...normalizedBaseQuery };
       mergeAndCondition(normalizedFallbackQuery, ACTIVE_VARIANT_FILTER);
-      docs = await Vehicle.find(normalizedFallbackQuery).select(projection).lean();
+      docs = await Vehicle.find(normalizedFallbackQuery)
+        .select(projection)
+        .lean();
     }
   }
 
@@ -2261,9 +2569,7 @@ const getPopularVehiclePriceRange = async ({ make, model, city }) => {
     const baseQuery = buildVehicleQuery({ make, model });
     mergeAndCondition(baseQuery, ACTIVE_VARIANT_FILTER);
 
-    docs = city
-      ? await Vehicle.find(cityQuery).select(projection).lean()
-      : [];
+    docs = city ? await Vehicle.find(cityQuery).select(projection).lean() : [];
     if (!docs.length) {
       docs = await Vehicle.find(baseQuery).select(projection).lean();
     }
@@ -2271,8 +2577,12 @@ const getPopularVehiclePriceRange = async ({ make, model, city }) => {
 
   const prices = docs
     .map((doc) => normalizeVehicleRecord(doc))
-    .filter((doc) => matchesExact(doc.make, make) && matchesExact(doc.model, model))
-    .map((doc) => firstPositiveAmount(doc.ex_showroom, doc.exShowroom, doc.exShowroomPrice))
+    .filter(
+      (doc) => matchesExact(doc.make, make) && matchesExact(doc.model, model),
+    )
+    .map((doc) =>
+      firstPositiveAmount(doc.ex_showroom, doc.exShowroom, doc.exShowroomPrice),
+    )
     .filter((amount) => amount > 0)
     .sort((a, b) => a - b);
 
@@ -2285,9 +2595,12 @@ const getPopularVehiclePriceRange = async ({ make, model, city }) => {
 const getPopularVehicleImage = async ({ make, model }) => {
   const makeRegex = buildMakeRegex(make);
   const modelRegexes = buildExactModelRegexes(make, model);
-  if (!modelRegexes.length) return { imageUrl: '', normalizedImageUrl: '', imageFrame: {} };
+  if (!modelRegexes.length)
+    return { imageUrl: "", normalizedImageUrl: "", imageFrame: {} };
 
-  const collection = mongoose.connection.db.collection(VEHICLE_COLORS_COLLECTION);
+  const collection = mongoose.connection.db.collection(
+    VEHICLE_COLORS_COLLECTION,
+  );
   const identity = buildPopularVehicleIdentity(make, model);
   const projection = {
     brand: 1,
@@ -2340,7 +2653,10 @@ const getPopularVehicleImage = async ({ make, model }) => {
     updatedAt: -1,
   };
   const activeScopeFilter = {
-    $or: [{ scopeStatus: { $exists: false } }, { scopeStatus: { $ne: 'rejected' } }],
+    $or: [
+      { scopeStatus: { $exists: false } },
+      { scopeStatus: { $ne: "rejected" } },
+    ],
   };
   const exactQuery = {
     $and: [
@@ -2366,7 +2682,11 @@ const getPopularVehicleImage = async ({ make, model }) => {
     const normalizedImageUrl = pickVehicleColorImageUrl(row);
     return (
       normalizedImageUrl &&
-      !hasVehicleImageModelConflict({ requestedModel: model, row, imageUrl: normalizedImageUrl })
+      !hasVehicleImageModelConflict({
+        requestedModel: model,
+        row,
+        imageUrl: normalizedImageUrl,
+      })
     );
   });
 
@@ -2393,8 +2713,18 @@ const getPopularVehicleImage = async ({ make, model }) => {
             activeScopeFilter,
             {
               $or: [
-                { normalizedImageUrl: { $regex: `^${escapeRegex(R2_PUBLIC_IMAGE_PREFIX)}`, $options: 'i' } },
-                { cleanImageUrl: { $regex: `^${escapeRegex(R2_PUBLIC_IMAGE_PREFIX)}`, $options: 'i' } },
+                {
+                  normalizedImageUrl: {
+                    $regex: `^${escapeRegex(R2_PUBLIC_IMAGE_PREFIX)}`,
+                    $options: "i",
+                  },
+                },
+                {
+                  cleanImageUrl: {
+                    $regex: `^${escapeRegex(R2_PUBLIC_IMAGE_PREFIX)}`,
+                    $options: "i",
+                  },
+                },
               ],
             },
           ],
@@ -2407,7 +2737,9 @@ const getPopularVehicleImage = async ({ make, model }) => {
   }
 
   const exactRow = rows.find((row) => {
-    const rowModel = String(row.model || row.modelName || row.model_name || '').trim();
+    const rowModel = String(
+      row.model || row.modelName || row.model_name || "",
+    ).trim();
     return matchesExact(trimLeading(rowModel, make) || rowModel, model);
   });
   const row = exactRow || rows[0] || null;
@@ -2420,31 +2752,35 @@ const getPopularVehicleImage = async ({ make, model }) => {
   };
 };
 
-const buildPopularCarsPayload = async ({ city = 'new-delhi', limit = 25 } = {}) => {
+const buildPopularCarsPayload = async ({
+  city = "new-delhi",
+  limit = 25,
+} = {}) => {
   const startedAt = Date.now();
-  const salesCollection = mongoose.connection.db.collection('monthly_car_sales');
+  const salesCollection =
+    mongoose.connection.db.collection("monthly_car_sales");
   const latest = await salesCollection
-    .find({ source: 'v3cars' })
+    .find({ source: "v3cars" })
     .sort({ month: -1, rank: 1 })
     .limit(1)
     .toArray();
-  const month = latest[0]?.month || '';
+  const month = latest[0]?.month || "";
 
   if (!month) {
     return {
       ok: true,
-      source: 'v3cars',
-      month: '',
+      source: "v3cars",
+      month: "",
       year: null,
       city,
       count: 0,
       rows: [],
-      meta: { queryMs: Date.now() - startedAt, reason: 'monthly_sales_empty' },
+      meta: { queryMs: Date.now() - startedAt, reason: "monthly_sales_empty" },
     };
   }
 
   const salesRows = await salesCollection
-    .find({ month, source: 'v3cars' })
+    .find({ month, source: "v3cars" })
     .sort({ rank: 1 })
     .limit(limit)
     .toArray();
@@ -2452,10 +2788,16 @@ const buildPopularCarsPayload = async ({ city = 'new-delhi', limit = 25 } = {}) 
   const monthInfo = parseSalesMonth(month);
   const parsedRows = salesRows
     .map((row) => {
-      const rawName = normalizeSalesDisplayName(row.model || row.displayName || row.name);
+      const rawName = normalizeSalesDisplayName(
+        row.model || row.displayName || row.name,
+      );
       const parsed = parseSalesVehicleName(rawName, knownMakes);
       if (!parsed.make || !parsed.model) return null;
-      return { row, parsed, key: popularIdentityKey(parsed.make, parsed.model) };
+      return {
+        row,
+        parsed,
+        key: popularIdentityKey(parsed.make, parsed.model),
+      };
     })
     .filter(Boolean);
   const parsedVehicles = parsedRows.map((item) => item.parsed);
@@ -2471,41 +2813,50 @@ const buildPopularCarsPayload = async ({ city = 'new-delhi', limit = 25 } = {}) 
       const image = imageMap.get(key) || {};
 
       return {
-          id: toSlug(`${parsed.make}-${parsed.model}`),
-          rank: Number(row.rank || 0) || 0,
-          make: parsed.make,
-          brand: parsed.make,
-          rawBrand: parsed.make,
-          model: parsed.model,
-          displayName: parsed.displayName,
-          bodyStyle: String(row.bodyStyle || '').trim(),
-          segment: String(row.segment || '').trim(),
-          priceRange: formatExShowroomRange(minExShowroomPrice, maxExShowroomPrice),
+        id: toSlug(`${parsed.make}-${parsed.model}`),
+        rank: Number(row.rank || 0) || 0,
+        make: parsed.make,
+        brand: parsed.make,
+        rawBrand: parsed.make,
+        model: parsed.model,
+        displayName: parsed.displayName,
+        bodyStyle: String(row.bodyStyle || "").trim(),
+        segment: String(row.segment || "").trim(),
+        priceRange: formatExShowroomRange(
           minExShowroomPrice,
           maxExShowroomPrice,
-          currentMonth: monthInfo.monthLabel,
-          previousMonth: monthInfo.previousMonthLabel,
-          currentMonthSales: normalizeSalesNumber(row.sales || row.currentMonthSales),
-          previousMonthSales: normalizeSalesNumber(row.previousMonthSales),
-          salesChangePercent: normalizeSalesChange(row.percentChange ?? row.salesChangePercent),
-          salesTrend:
-            normalizeSalesChange(row.percentChange ?? row.salesChangePercent) > 0
-              ? 'up'
-              : normalizeSalesChange(row.percentChange ?? row.salesChangePercent) < 0
-                ? 'down'
-                : 'flat',
-          imageUrl: image.imageUrl,
-          normalizedImageUrl: image.normalizedImageUrl,
-          imageFrame: image.imageFrame || {},
-          city,
-          source: 'v3cars',
-        };
+        ),
+        minExShowroomPrice,
+        maxExShowroomPrice,
+        currentMonth: monthInfo.monthLabel,
+        previousMonth: monthInfo.previousMonthLabel,
+        currentMonthSales: normalizeSalesNumber(
+          row.sales || row.currentMonthSales,
+        ),
+        previousMonthSales: normalizeSalesNumber(row.previousMonthSales),
+        salesChangePercent: normalizeSalesChange(
+          row.percentChange ?? row.salesChangePercent,
+        ),
+        salesTrend:
+          normalizeSalesChange(row.percentChange ?? row.salesChangePercent) > 0
+            ? "up"
+            : normalizeSalesChange(
+                  row.percentChange ?? row.salesChangePercent,
+                ) < 0
+              ? "down"
+              : "flat",
+        imageUrl: image.imageUrl,
+        normalizedImageUrl: image.normalizedImageUrl,
+        imageFrame: image.imageFrame || {},
+        city,
+        source: "v3cars",
+      };
     })
     .filter(Boolean);
 
   const payload = {
     ok: true,
-    source: 'v3cars',
+    source: "v3cars",
     month: monthInfo.monthLabel,
     year: monthInfo.year,
     city,
@@ -2516,21 +2867,31 @@ const buildPopularCarsPayload = async ({ city = 'new-delhi', limit = 25 } = {}) 
   return payload;
 };
 
-const warmPopularCarsCache = async ({ city = 'new-delhi', limit = 25 } = {}) => {
+const warmPopularCarsCache = async ({
+  city = "new-delhi",
+  limit = 25,
+} = {}) => {
   if (!mongoose.connection?.db) {
-    throw new Error('MongoDB connection is not ready for popular cars cache warm-up');
+    throw new Error(
+      "MongoDB connection is not ready for popular cars cache warm-up",
+    );
   }
 
-  const normalizedCity = toCityToken(city || 'new-delhi') || 'new-delhi';
+  const normalizedCity = toCityToken(city || "new-delhi") || "new-delhi";
   const normalizedLimit = Math.min(Math.max(Number(limit) || 25, 1), 25);
-  const cacheKey = getCacheKey('popular-cars', {
+  const cacheKey = getCacheKey("popular-cars", {
     city: normalizedCity,
     limit: normalizedLimit,
   });
-  const cached = readCache(POPULAR_CARS_CACHE, POPULAR_CARS_CACHE_TTL_MS, 'popular-cars', {
-    city: normalizedCity,
-    limit: normalizedLimit,
-  });
+  const cached = readCache(
+    POPULAR_CARS_CACHE,
+    POPULAR_CARS_CACHE_TTL_MS,
+    "popular-cars",
+    {
+      city: normalizedCity,
+      limit: normalizedLimit,
+    },
+  );
   if (cached) return cached;
 
   if (POPULAR_CARS_IN_FLIGHT.has(cacheKey)) {
@@ -2542,7 +2903,12 @@ const warmPopularCarsCache = async ({ city = 'new-delhi', limit = 25 } = {}) => 
     limit: normalizedLimit,
   })
     .then((payload) => {
-      writeCache(POPULAR_CARS_CACHE, 'popular-cars', { city: normalizedCity, limit: normalizedLimit }, payload);
+      writeCache(
+        POPULAR_CARS_CACHE,
+        "popular-cars",
+        { city: normalizedCity, limit: normalizedLimit },
+        payload,
+      );
       return payload;
     })
     .finally(() => {
@@ -2554,32 +2920,37 @@ const warmPopularCarsCache = async ({ city = 'new-delhi', limit = 25 } = {}) => 
 };
 
 const getPopularCars = asyncHandler(async (req, res) => {
-  const city = toCityToken(req.query.city || 'new-delhi') || 'new-delhi';
+  const city = toCityToken(req.query.city || "new-delhi") || "new-delhi";
   const limitRaw = Number(req.query.limit);
   const limit =
     Number.isFinite(limitRaw) && limitRaw > 0
       ? Math.min(Math.round(limitRaw), 25)
       : 25;
 
-  const cached = readCache(POPULAR_CARS_CACHE, POPULAR_CARS_CACHE_TTL_MS, 'popular-cars', {
-    city,
-    limit,
-  });
+  const cached = readCache(
+    POPULAR_CARS_CACHE,
+    POPULAR_CARS_CACHE_TTL_MS,
+    "popular-cars",
+    {
+      city,
+      limit,
+    },
+  );
   if (cached) {
-    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
     return res.json({ ...cached, cached: true });
   }
 
   const payload = await warmPopularCarsCache({ city, limit });
-  res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+  res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
   return res.json(payload);
 });
 
 const getSimilarModels = asyncHandler(async (req, res) => {
   const startedAt = Date.now();
-  const make = String(req.query.make || '').trim();
-  const model = String(req.query.model || '').trim();
-  const city = 'new-delhi';
+  const make = String(req.query.make || "").trim();
+  const model = String(req.query.model || "").trim();
+  const city = "new-delhi";
   const includeDiscontinued = parseBoolean(req.query.includeDiscontinued);
   const toleranceRaw = Number(req.query.tolerance);
   const tolerance =
@@ -2594,7 +2965,7 @@ const getSimilarModels = asyncHandler(async (req, res) => {
 
   if (!make || !model) {
     res.status(400);
-    throw new Error('Make and model are required');
+    throw new Error("Make and model are required");
   }
 
   const selectedKey = buildMakeModelJoinKey(make, model);
@@ -2603,7 +2974,7 @@ const getSimilarModels = asyncHandler(async (req, res) => {
       success: true,
       baseModel: null,
       data: [],
-      meta: { queryMs: Date.now() - startedAt, reason: 'invalid_make_model' },
+      meta: { queryMs: Date.now() - startedAt, reason: "invalid_make_model" },
     });
   }
 
@@ -2622,14 +2993,17 @@ const getSimilarModels = asyncHandler(async (req, res) => {
       meta: {
         queryMs: Date.now() - startedAt,
         rowsScanned: baseRows?.length || 0,
-        reason: 'base_variant_not_found',
+        reason: "base_variant_not_found",
       },
     });
   }
 
   let selectedMeta = featureMetaMap.get(selectedKey) || null;
   if (!selectedMeta) {
-    const ondemand = await loadModelMetaOnDemand(selectedBase.make, selectedBase.model);
+    const ondemand = await loadModelMetaOnDemand(
+      selectedBase.make,
+      selectedBase.model,
+    );
     if (ondemand) {
       selectedMeta = {
         make: selectedBase.make,
@@ -2640,7 +3014,7 @@ const getSimilarModels = asyncHandler(async (req, res) => {
     }
   }
 
-  const selectedBodyKey = normalizeText(selectedMeta?.bodyTypeBucket || '');
+  const selectedBodyKey = normalizeText(selectedMeta?.bodyTypeBucket || "");
   const selectedSeat = Number(selectedMeta?.seatingCapacity || 0) || null;
   const metadataReady = Boolean(selectedBodyKey && selectedSeat);
 
@@ -2649,9 +3023,9 @@ const getSimilarModels = asyncHandler(async (req, res) => {
     model: selectedBase.model,
     basePrice: selectedBase.basePrice,
     baseVariant: selectedBase.variant,
-    city: selectedBase.city || city || '',
-    bodyType: selectedMeta?.bodyType || '',
-    bodyTypeBucket: selectedMeta?.bodyTypeBucket || '',
+    city: selectedBase.city || city || "",
+    bodyType: selectedMeta?.bodyType || "",
+    bodyTypeBucket: selectedMeta?.bodyTypeBucket || "",
     seatingCapacity: selectedSeat,
     metadataReady,
   };
@@ -2664,7 +3038,7 @@ const getSimilarModels = asyncHandler(async (req, res) => {
       meta: {
         queryMs: Date.now() - startedAt,
         rowsScanned: baseRows?.length || 0,
-        reason: 'body_or_seating_missing',
+        reason: "body_or_seating_missing",
       },
     });
   }
@@ -2679,8 +3053,10 @@ const getSimilarModels = asyncHandler(async (req, res) => {
       if (!price || price < minPrice || price > maxPrice) return false;
       const meta = featureMetaMap.get(row.key);
       if (!meta) return false;
-      if (normalizeText(meta?.bodyTypeBucket || '') !== selectedBodyKey) return false;
-      if ((Number(meta?.seatingCapacity || 0) || null) !== selectedSeat) return false;
+      if (normalizeText(meta?.bodyTypeBucket || "") !== selectedBodyKey)
+        return false;
+      if ((Number(meta?.seatingCapacity || 0) || null) !== selectedSeat)
+        return false;
       return true;
     })
     .map((row) => {
@@ -2690,16 +3066,17 @@ const getSimilarModels = asyncHandler(async (req, res) => {
         model: row.model,
         startingPrice: Number(row.basePrice) || 0,
         baseVariant: row.variant,
-      city: row.city || '',
-        bodyType: meta?.bodyType || '',
-        bodyTypeBucket: meta?.bodyTypeBucket || '',
+        city: row.city || "",
+        bodyType: meta?.bodyType || "",
+        bodyTypeBucket: meta?.bodyTypeBucket || "",
         seatingCapacity: Number(meta?.seatingCapacity || 0) || null,
         priceDelta: (Number(row.basePrice) || 0) - selectedBase.basePrice,
       };
     })
     .sort(
       (a, b) =>
-        Math.abs(Number(a?.priceDelta || 0)) - Math.abs(Number(b?.priceDelta || 0)),
+        Math.abs(Number(a?.priceDelta || 0)) -
+        Math.abs(Number(b?.priceDelta || 0)),
     );
   const similar = allSimilar.slice(0, limit);
 
@@ -2731,12 +3108,15 @@ const warmVehicleCachesWhenConnected = (attempt = 0) => {
   if (vehicleCacheWarmupStarted) return;
   vehicleCacheWarmupStarted = true;
 
-  void warmPopularCarsCache({ city: 'new-delhi', limit: 25 }).catch(() => {
+  void warmPopularCarsCache({ city: "new-delhi", limit: 25 }).catch(() => {
     vehicleCacheWarmupStarted = false;
   });
 
   setTimeout(() => {
-    void getBaseModelRowsCached({ city: 'new-delhi', includeDiscontinued: false }).catch(() => {});
+    void getBaseModelRowsCached({
+      city: "new-delhi",
+      includeDiscontinued: false,
+    }).catch(() => {});
     void getFeatureMetaMapCached().catch(() => {});
   }, 1500);
 };
