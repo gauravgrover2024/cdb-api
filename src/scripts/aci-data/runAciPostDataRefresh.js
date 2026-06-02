@@ -217,6 +217,13 @@ if (!skipDecision) {
     );
 
     steps.push(
+      command("F1. Build inherited model-level crash safety profiles", "node", [
+        "src/scripts/aci-decision/buildInheritedModelLevelCrashSafetyProfilesV1.cjs",
+        ...writeArg(),
+      ]),
+    );
+
+    steps.push(
       command("G. Patch decision profiles from crash safety", "node", [
         "src/scripts/aci-decision/patchVariantDecisionProfilesFromCrashSafetyV1.js",
         ...writeArg(),
