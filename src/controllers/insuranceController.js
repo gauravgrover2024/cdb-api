@@ -332,26 +332,89 @@ const isInsuranceCaseReadyForSubmit = (payload = {}) => {
   };
 };
 
+const getCycleAdjustedExpiryDate = (expiryDateStr, baseDate = new Date()) => {
+  if (!expiryDateStr) return null;
+  const parsed = new Date(expiryDateStr);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  const base = new Date(baseDate);
+  base.setHours(0, 0, 0, 0);
+
+  const candidate = new Date(parsed);
+  candidate.setFullYear(base.getFullYear());
+  candidate.setHours(0, 0, 0, 0);
+
+  const diffDays = Math.round((candidate.getTime() - base.getTime()) / 86400000);
+
+  if (diffDays < -45) {
+    candidate.setFullYear(base.getFullYear() + 1);
+  } else if (diffDays > 365) {
+    candidate.setFullYear(base.getFullYear() - 1);
+  }
+
+  return candidate;
+};
+
 const getRenewalExpiryDate = (doc = {}) =>
   safeString(
     doc.newOdExpiryDate ||
       doc.previousOdExpiryDate ||
       doc.newTpExpiryDate ||
+      doc.previousTpExpiryDate ||
       doc.policyExpiry ||
       "",
   ).trim();
 
-const isPendingRenewalWithinWindow = (doc = {}, futureDays = 30, pastDays = 45) => {
+const isPendingRenewalWithinWindow = (doc = {}, futureDays = 30, pastDays = 45, baseDate = new Date()) => {
   const raw = getRenewalExpiryDate(doc);
   if (!raw) return false;
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return false;
-  const startOfToday = new Date();
+  const cycleAdjusted = getCycleAdjustedExpiryDate(raw, baseDate);
+  if (!cycleAdjusted) return false;
+  const startOfToday = new Date(baseDate);
   startOfToday.setHours(0, 0, 0, 0);
-  const expiry = new Date(parsed);
+  const expiry = new Date(cycleAdjusted);
   expiry.setHours(0, 0, 0, 0);
   const days = Math.round((expiry.getTime() - startOfToday.getTime()) / 86400000);
   return days <= futureDays && days >= -pastDays;
+};
+
+const performAutoMoveExpiredToExternal = async (baseDate = new Date()) => {
+  try {
+    const startOfToday = new Date(baseDate);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const unrenewedCases = await InsuranceCase.find({
+      policyCategory: { $not: { $regex: /^extended warranty$/i } },
+      renewalOutcome: "NONE",
+      $or: [
+        { renewedToCaseId: { $exists: false } },
+        { renewedToCaseId: "" },
+        { renewedToCaseId: null }
+      ]
+    });
+
+    for (const doc of unrenewedCases) {
+      const expiryStr = getRenewalExpiryDate(doc);
+      if (!expiryStr) continue;
+
+      const cycleAdjusted = getCycleAdjustedExpiryDate(expiryStr, startOfToday);
+      if (cycleAdjusted && cycleAdjusted < startOfToday) {
+        await InsuranceCase.updateOne(
+          { _id: doc._id },
+          {
+            $set: {
+              renewalLeadStatus: "Closed",
+              renewalClosedReason: "Policy from Elsewhere",
+              renewalOutcome: "POLICY_FROM_ELSEWHERE",
+              renewalComment: (doc.renewalComment || "") + "\n[System: Auto-moved to external due to expiration without renewal]"
+            }
+          }
+        );
+      }
+    }
+  } catch (err) {
+    console.error("[Insurance] Error in performAutoMoveExpiredToExternal:", err);
+  }
 };
 
 const RENEWAL_LEAD_STATUSES = [
@@ -1121,6 +1184,8 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
   const tierStr = safeString(req.query.tier).trim().toLowerCase();
   const view = safeString(req.query.view || "renewal").trim().toLowerCase();
 
+  await performAutoMoveExpiredToExternal();
+
   const completionQuery = {
     $or: [
       { status: { $in: ["submitted", "issued", "completed"] } },
@@ -1163,108 +1228,80 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
     });
   }
 
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-
-  // We construct an $expr to get the effective expiry date
-  const expiryDateExpr = {
-    $toDate: {
-      $cond: [
-        { $ifNull: ["$newOdExpiryDate", false] }, "$newOdExpiryDate",
-        {
-          $cond: [
-            { $ifNull: ["$previousOdExpiryDate", false] }, "$previousOdExpiryDate",
-            {
-              $cond: [
-                { $ifNull: ["$newTpExpiryDate", false] }, "$newTpExpiryDate",
-                "$policyExpiry"
-              ]
-            }
-          ]
-        }
-      ]
-    }
-  };
-
-  const getDayDiffExpr = {
-    $divide: [
-      { $subtract: [ expiryDateExpr, now ] },
-      86400000
-    ]
-  };
-
-  let exprConditions = [];
-
-  // Expiration Window Logic
-  if (windowStr) {
-    if (windowStr === "7d") {
-      exprConditions.push({ $and: [ { $gte: [getDayDiffExpr, 0] }, { $lte: [getDayDiffExpr, 7] } ] });
-    } else if (windowStr === "14d") {
-      exprConditions.push({ $and: [ { $gte: [getDayDiffExpr, 0] }, { $lte: [getDayDiffExpr, 14] } ] });
-    } else if (windowStr === "30d") {
-      exprConditions.push({ $and: [ { $gte: [getDayDiffExpr, 0] }, { $lte: [getDayDiffExpr, 30] } ] });
-    } else if (windowStr === "45d") {
-      exprConditions.push({ $and: [ { $gte: [getDayDiffExpr, 0] }, { $lte: [getDayDiffExpr, 45] } ] });
-    } else if (windowStr === "60d") {
-      exprConditions.push({ $and: [ { $gte: [getDayDiffExpr, 0] }, { $lte: [getDayDiffExpr, 60] } ] });
-    } else if (windowStr === "gt60d") {
-      exprConditions.push({ $gt: [getDayDiffExpr, 60] });
-    } else if (windowStr === "expired") {
-      exprConditions.push({ $lt: [getDayDiffExpr, 0] });
-    }
-  }
-
-  // Status Filter Logic (Active, Grace Period, Suspended, Cancelled)
-  if (statusStr && statusStr !== "all") {
-    if (statusStr === "active") {
-      exprConditions.push({ $gte: [getDayDiffExpr, 0] });
-    } else if (statusStr === "grace period" || statusStr === "grace") {
-      exprConditions.push({ $and: [ { $lt: [getDayDiffExpr, 0] }, { $gte: [getDayDiffExpr, -30] } ] });
-    } else if (statusStr === "suspended" || statusStr === "cancelled") {
-      if (query.$and) {
-        query.$and.push({ renewalOutcome: { $in: [/cancelled/i, /suspended/i, "CAR_SOLD", "CAR_EXPIRED"] } });
-      } else {
-        query.renewalOutcome = { $in: [/cancelled/i, /suspended/i, "CAR_SOLD", "CAR_EXPIRED"] };
-      }
-    }
-  }
-
-  if (exprConditions.length > 0) {
-    query.$expr = { $and: exprConditions };
-  }
-
-  // Tier Logic (High-Value, Premium, Basic)
-  if (tierStr && tierStr !== "all") {
-    const tierOr = [];
-    if (tierStr === "high-value") {
-      tierOr.push({ newTotalPremium: { $gt: 50000 } });
-      tierOr.push({ totalPremium: { $gt: 50000 } });
-      tierOr.push({ previousTotalPremium: { $gt: 50000 } });
-    } else if (tierStr === "premium") {
-      tierOr.push({ newTotalPremium: { $gte: 20000, $lte: 50000 } });
-      tierOr.push({ totalPremium: { $gte: 20000, $lte: 50000 } });
-      tierOr.push({ previousTotalPremium: { $gte: 20000, $lte: 50000 } });
-    } else if (tierStr === "basic") {
-      tierOr.push({ newTotalPremium: { $lt: 20000, $gt: 0 } });
-      tierOr.push({ totalPremium: { $lt: 20000, $gt: 0 } });
-      tierOr.push({ previousTotalPremium: { $lt: 20000, $gt: 0 } });
-    }
-    
-    if (query.$or) {
-      if (!query.$and) query.$and = [];
-      query.$and.push({ $or: query.$or });
-      query.$and.push({ $or: tierOr });
-      delete query.$or;
-    } else {
-      query.$or = tierOr;
-    }
-  }
-
   const baseRows = await InsuranceCase.find(query)
     .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
 
-  const mappedRows = baseRows.map((doc) => ({
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const filteredRows = baseRows.filter((doc) => {
+    const expiryStr = getRenewalExpiryDate(doc);
+    if (!expiryStr && (windowStr || (statusStr && statusStr !== "all"))) return false;
+
+    let diffDays = null;
+    if (expiryStr) {
+      const cycleAdjusted = getCycleAdjustedExpiryDate(expiryStr, today);
+      if (cycleAdjusted) {
+        diffDays = Math.round((cycleAdjusted.getTime() - today.getTime()) / 86400000);
+      }
+    }
+
+    if (windowStr) {
+      if (diffDays === null) return false;
+      if (windowStr === "7d") {
+        if (!(diffDays >= 0 && diffDays <= 7)) return false;
+      } else if (windowStr === "14d") {
+        if (!(diffDays >= 0 && diffDays <= 14)) return false;
+      } else if (windowStr === "30d") {
+        if (!(diffDays >= 0 && diffDays <= 30)) return false;
+      } else if (windowStr === "45d") {
+        if (!(diffDays >= 0 && diffDays <= 45)) return false;
+      } else if (windowStr === "60d") {
+        if (!(diffDays >= 0 && diffDays <= 60)) return false;
+      } else if (windowStr === "gt60d") {
+        if (!(diffDays > 60)) return false;
+      } else if (windowStr === "expired") {
+        if (!(diffDays < 0)) return false;
+      }
+    }
+
+    if (statusStr && statusStr !== "all") {
+      if (statusStr === "active") {
+        if (diffDays === null || diffDays < 0) return false;
+      } else if (statusStr === "grace period" || statusStr === "grace") {
+        if (diffDays === null || !(diffDays < 0 && diffDays >= -30)) return false;
+      } else if (statusStr === "suspended" || statusStr === "cancelled") {
+        const outcome = doc.renewalOutcome;
+        const isCancelled = /cancelled/i.test(outcome) || /suspended/i.test(outcome) || outcome === "CAR_SOLD" || outcome === "CAR_EXPIRED";
+        if (!isCancelled) return false;
+      }
+    }
+
+    if (tierStr && tierStr !== "all") {
+      const newPremium = Number(doc.newTotalPremium || 0);
+      const premium = Number(doc.totalPremium || 0);
+      const prevPremium = Number(doc.previousTotalPremium || 0);
+      
+      if (tierStr === "high-value") {
+        if (!(newPremium > 50000 || premium > 50000 || prevPremium > 50000)) return false;
+      } else if (tierStr === "premium") {
+        const isPrem = (newPremium >= 20000 && newPremium <= 50000) ||
+                       (premium >= 20000 && premium <= 50000) ||
+                       (prevPremium >= 20000 && prevPremium <= 50000);
+        if (!isPrem) return false;
+      } else if (tierStr === "basic") {
+        const isBasic = (newPremium < 20000 && newPremium > 0) ||
+                        (premium < 20000 && premium > 0) ||
+                        (prevPremium < 20000 && prevPremium > 0);
+        if (!isBasic) return false;
+      }
+    }
+
+    return true;
+  });
+
+  const mappedRows = filteredRows.map((doc) => ({
     ...doc,
     renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
   }));
@@ -1482,6 +1519,9 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
     "team_lead",
     "insurance_team_lead",
   ].includes(role);
+
+  await performAutoMoveExpiredToExternal();
+
   const rows = await InsuranceCase.find({})
     .sort({ updatedAt: -1 })
     .lean();
@@ -1507,10 +1547,10 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
       normalizeRenewalOutcome(doc?.renewalOutcome) === "ALREADY_RENEWED" ||
       Boolean(doc?.renewedToCaseId),
   );
-  const externalRows = scopedRows.filter(
-    (doc) => normalizeRenewalOutcome(doc?.renewalOutcome) === "POLICY_FROM_ELSEWHERE",
-    "RENEW_NEXT_YEAR",
-  );
+  const externalRows = scopedRows.filter((doc) => {
+    const outcome = normalizeRenewalOutcome(doc?.renewalOutcome);
+    return outcome === "POLICY_FROM_ELSEWHERE" || outcome === "RENEW_NEXT_YEAR";
+  });
   const activeCases = scopedRows.filter(
     (row) => normalizeRenewalLeadStatus(row?.renewalLeadStatus) !== "Closed",
   ).length;
