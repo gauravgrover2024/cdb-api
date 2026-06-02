@@ -50,6 +50,16 @@ const gapPriority = (profile, gapType) => {
   return 'P3';
 };
 
+const isKnownResolvedMileageStatus = (value) => {
+  const status = String(value || '').trim();
+
+  return (
+    status === 'manual_google_review_complete' ||
+    status === 'direct_source_verified_complete' ||
+    status.startsWith('known_source_limitation')
+  );
+};
+
 const isKnownResolvedSpecStatus = (value) => {
   const status = String(value || '').trim();
 
@@ -261,13 +271,29 @@ async function main() {
       }));
     }
 
-    if (!mileage.araiMileage && !mileage.evClaimedRange) {
+    const mileageGapAlreadyClassified = isKnownResolvedMileageStatus(
+      dq.mileageCompletenessStatus
+    );
+
+    const mileageHasAcceptedValue = Boolean(
+      mileage.araiMileage ||
+      mileage.evClaimedRange ||
+      mileage.claimedMileageKmpl ||
+      mileage.cngMileageKmPerKg ||
+      mileage.primaryMileageValue
+    );
+
+    if (!mileageGapAlreadyClassified && !mileageHasAcceptedValue) {
       gaps.push(makeGap({
         profile,
         gapType: 'mileage_specs_missing',
         evidence: {
           araiMileage: mileage.araiMileage || null,
-          evClaimedRange: mileage.evClaimedRange || null
+          evClaimedRange: mileage.evClaimedRange || null,
+          claimedMileageKmpl: mileage.claimedMileageKmpl || null,
+          cngMileageKmPerKg: mileage.cngMileageKmPerKg || null,
+          primaryMileageValue: mileage.primaryMileageValue || null,
+          mileageCompletenessStatus: dq.mileageCompletenessStatus || null
         }
       }));
     }
