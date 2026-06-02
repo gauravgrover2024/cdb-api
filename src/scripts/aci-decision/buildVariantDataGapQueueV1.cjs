@@ -50,6 +50,15 @@ const gapPriority = (profile, gapType) => {
   return 'P3';
 };
 
+const isKnownResolvedSpecStatus = (value) => {
+  const status = String(value || '').trim();
+
+  return (
+    status === 'manual_verified_complete' ||
+    status.startsWith('known_source_limitation')
+  );
+};
+
 const sourcePlanForGap = (gapType) => {
   if (gapType === 'crash_rating_missing') {
     return [
@@ -236,13 +245,18 @@ async function main() {
       }));
     }
 
-    if (!perf.powerBhp || !perf.torqueNm) {
+    const performanceGapAlreadyClassified = isKnownResolvedSpecStatus(
+      dq.performanceCompletenessStatus
+    );
+
+    if ((!perf.powerBhp || !perf.torqueNm) && !performanceGapAlreadyClassified) {
       gaps.push(makeGap({
         profile,
         gapType: 'performance_specs_missing',
         evidence: {
           powerBhp: perf.powerBhp || null,
-          torqueNm: perf.torqueNm || null
+          torqueNm: perf.torqueNm || null,
+          performanceCompletenessStatus: dq.performanceCompletenessStatus || null
         }
       }));
     }
@@ -258,14 +272,19 @@ async function main() {
       }));
     }
 
-    if (!practical.seatingCapacity || !practical.lengthMm || !practical.widthMm) {
+    const dimensionsGapAlreadyClassified = isKnownResolvedSpecStatus(
+      dq.dimensionsCompletenessStatus
+    );
+
+    if ((!practical.seatingCapacity || !practical.lengthMm || !practical.widthMm) && !dimensionsGapAlreadyClassified) {
       gaps.push(makeGap({
         profile,
         gapType: 'dimensions_missing',
         evidence: {
           seatingCapacity: practical.seatingCapacity || null,
           lengthMm: practical.lengthMm || null,
-          widthMm: practical.widthMm || null
+          widthMm: practical.widthMm || null,
+          dimensionsCompletenessStatus: dq.dimensionsCompletenessStatus || null
         }
       }));
     }
