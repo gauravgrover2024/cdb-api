@@ -62,6 +62,55 @@ const normalizeHyphenKey = (value) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
+const expandVariantAliasKeys = (...values) => {
+  const aliases = new Set();
+
+  const add = (candidate) => {
+    const raw = String(candidate ?? "").trim();
+    if (!raw) return;
+
+    const underscore = normalizeKey(raw);
+    const hyphen = normalizeHyphenKey(raw);
+
+    if (underscore) aliases.add(underscore);
+    if (hyphen) aliases.add(hyphen);
+  };
+
+  values.flat().forEach(add);
+
+  for (const key of Array.from(aliases)) {
+    const underscoreKey = normalizeKey(key);
+    const hyphenKey = normalizeHyphenKey(key);
+
+    for (const candidate of [underscoreKey, hyphenKey]) {
+      if (!candidate) continue;
+
+      add(candidate.replace(/_34_5_kwh/g, "_345_kwh"));
+      add(candidate.replace(/_39_4_kwh/g, "_394_kwh"));
+      add(candidate.replace(/_345_kwh/g, "_34_5_kwh"));
+      add(candidate.replace(/_394_kwh/g, "_39_4_kwh"));
+
+      add(candidate.replace(/-34-5-kwh/g, "-345-kwh"));
+      add(candidate.replace(/-39-4-kwh/g, "-394-kwh"));
+      add(candidate.replace(/-345-kwh/g, "-34-5-kwh"));
+      add(candidate.replace(/-394-kwh/g, "-39-4-kwh"));
+
+      add(candidate.replace(/_long_range$/g, ""));
+      add(candidate.replace(/_medium_range$/g, ""));
+      add(candidate.replace(/-long-range$/g, ""));
+      add(candidate.replace(/-medium-range$/g, ""));
+
+      if (/_24$/.test(candidate)) add(`${candidate}_long_range`);
+      if (/_19$/.test(candidate)) add(`${candidate}_medium_range`);
+      if (/-24$/.test(candidate)) add(`${candidate}-long-range`);
+      if (/-19$/.test(candidate)) add(`${candidate}-medium-range`);
+    }
+  }
+
+  return uniq(Array.from(aliases).filter(Boolean));
+};
+
+
 const uniq = (arr) => [...new Set(arr.filter(Boolean))];
 
 const addMapArray = (map, key, value) => {
@@ -297,15 +346,11 @@ const buildFeatureIndexes = async (featureCollection) => {
       normalizeHyphenKey(doc.model),
     ]);
 
-    const variantKeys = uniq([
+    const variantKeys = expandVariantAliasKeys(
       doc.variantKey,
-      normalizeKey(doc.variantKey),
-      normalizeKey(doc.variant),
-      normalizeKey(doc.variantName),
-      normalizeHyphenKey(doc.variantKey),
-      normalizeHyphenKey(doc.variant),
-      normalizeHyphenKey(doc.variantName),
-    ]);
+      doc.variant,
+      doc.variantName,
+    );
 
     for (const modelKey of modelKeys) {
       for (const variantKey of variantKeys) {
@@ -351,15 +396,11 @@ const buildFeatureLookupKeys = (row) => {
     normalizeHyphenKey(model),
   ]);
 
-  const variantKeys = uniq([
+  const variantKeys = expandVariantAliasKeys(
     variantKey,
-    normalizeKey(variantKey),
-    normalizeKey(variant),
-    normalizeHyphenKey(variantKey),
-    normalizeHyphenKey(variant),
-    normalizeKey(variantWithoutDualTone),
-    normalizeHyphenKey(variantWithoutDualTone),
-  ]);
+    variant,
+    variantWithoutDualTone,
+  );
 
   const keys = [];
 

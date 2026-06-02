@@ -63,6 +63,41 @@ const compactText = (value = "") => normalizeText(value).replace(/\s+/g, "");
 
 const slug = (value = "") => normalizeText(value).replace(/\s+/g, "_");
 
+const expandVariantAliasKeys = (value = "") => {
+  const aliases = new Set();
+
+  const add = (candidate) => {
+    const key = String(candidate ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/&/g, " and ")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+    if (key) aliases.add(key);
+  };
+
+  add(value);
+  add(slug(value));
+
+  for (const key of Array.from(aliases)) {
+    add(key.replace(/_34_5_kwh/g, "_345_kwh"));
+    add(key.replace(/_39_4_kwh/g, "_394_kwh"));
+    add(key.replace(/_345_kwh/g, "_34_5_kwh"));
+    add(key.replace(/_394_kwh/g, "_39_4_kwh"));
+
+    add(key.replace(/_long_range$/g, ""));
+    add(key.replace(/_medium_range$/g, ""));
+
+    if (/_24$/.test(key)) add(`${key}_long_range`);
+    if (/_19$/.test(key)) add(`${key}_medium_range`);
+  }
+
+  return Array.from(aliases);
+};
+
+
+
 const uniq = (items = []) => [...new Set(items.filter(Boolean))];
 
 const numberOrZero = (value) => {
@@ -1019,14 +1054,8 @@ const loadVehiclePriceIndex = async (db) => {
 
     if (!model || !variant) continue;
 
-    const key = `${slug(model)}__${slug(variant)}`;
     const price = getVehiclePrice(row);
-
-    if (!byModelVariant.has(key)) {
-      byModelVariant.set(key, []);
-    }
-
-    byModelVariant.get(key).push({
+    const priceIndexRow = {
       brand,
       model,
       variant,
@@ -1041,7 +1070,17 @@ const loadVehiclePriceIndex = async (db) => {
         row.imageUrl ||
         "",
       active: isActiveVehicleRow(row),
-    });
+    };
+
+    for (const variantAliasKey of expandVariantAliasKeys(variant)) {
+      const key = `${slug(model)}__${variantAliasKey}`;
+
+      if (!byModelVariant.has(key)) {
+        byModelVariant.set(key, []);
+      }
+
+      byModelVariant.get(key).push(priceIndexRow);
+    }
   }
 
   return byModelVariant;
