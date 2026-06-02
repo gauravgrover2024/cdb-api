@@ -100,7 +100,7 @@ const buildInheritedDoc = ({ gap, representative, signature, sourceDocs }) => {
   console.log(`[target] ${CRASH_COLLECTION}`);
 
   const missing = await gaps.find(
-    { status: 'open', priority: 'P0', gapType: 'crash_rating_missing' },
+    { status: 'open', gapType: 'crash_rating_missing' },
     {
       projection: {
         _id: 0,
@@ -246,7 +246,7 @@ const buildInheritedDoc = ({ gap, representative, signature, sourceDocs }) => {
 
   const summary = {
     mode: WRITE ? 'WRITE' : 'DRY_RUN',
-    openP0CrashGapsScanned: missing.length,
+    openCrashGapsScanned: missing.length,
     modelsScanned: byModel.size,
     candidateConsistentModels: candidateModels.length,
     noInternalSourceModels: noInternalSourceModels.length,

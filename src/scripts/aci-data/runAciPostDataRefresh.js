@@ -217,13 +217,6 @@ if (!skipDecision) {
     );
 
     steps.push(
-      command("F1. Build inherited model-level crash safety profiles", "node", [
-        "src/scripts/aci-decision/buildInheritedModelLevelCrashSafetyProfilesV1.cjs",
-        ...writeArg(),
-      ]),
-    );
-
-    steps.push(
       command("G. Patch decision profiles from crash safety", "node", [
         "src/scripts/aci-decision/patchVariantDecisionProfilesFromCrashSafetyV1.js",
         ...writeArg(),
@@ -242,6 +235,36 @@ if (!skipDecision) {
   if (!skipGapQueue) {
     steps.push(
       command("I. Build data gap queue", "node", [
+        "src/scripts/aci-decision/buildVariantDataGapQueueV1.js",
+        ...writeArg(),
+        ...resetArg(),
+      ]),
+    );
+
+    steps.push(
+      command("I1. Build inherited model-level crash safety profiles", "node", [
+        "src/scripts/aci-decision/buildInheritedModelLevelCrashSafetyProfilesV1.cjs",
+        ...writeArg(),
+      ]),
+    );
+
+    steps.push(
+      command("I2. Patch decision profiles from inherited crash safety", "node", [
+        "src/scripts/aci-decision/patchVariantDecisionProfilesFromCrashSafetyV1.js",
+        ...writeArg(),
+      ]),
+    );
+
+    steps.push(
+      command("I3. Rebuild ranks after inherited crash safety", "node", [
+        "src/scripts/aci-decision/buildVariantRanksAndUpgradeLadderV1.js",
+        ...writeArg(),
+        ...resetArg(),
+      ]),
+    );
+
+    steps.push(
+      command("I4. Rebuild data gap queue after inherited crash safety", "node", [
         "src/scripts/aci-decision/buildVariantDataGapQueueV1.js",
         ...writeArg(),
         ...resetArg(),
@@ -290,6 +313,14 @@ if (!skipDecision) {
         ...resetArg(),
       ]),
     );
+
+    steps.push(
+      command("I5. Patch crash safety status semantics", "node", [
+        "src/scripts/aci-decision/patchVariantDecisionProfilesWithCrashSafetyStatusV1.cjs",
+        ...writeArg(),
+      ]),
+    );
+
   }
 }
 
