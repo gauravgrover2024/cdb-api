@@ -4898,28 +4898,7 @@ const getLoanById = asyncHandler(async (req, res) => {
       loanObj.customerId = customerId.toString();
     }
 
-    // Fallback: If approval_banksData is missing or empty, create one from top-level fields
-    if (
-      !loanObj.approval_banksData ||
-      loanObj.approval_banksData.length === 0
-    ) {
-      loanObj.approval_banksData = [
-        {
-          bankName: loanObj.approval_bankName,
-          loanBookedIn: loanObj.approval_loanBookedIn || "Direct Code",
-          brokerName: loanObj.approval_brokerName || "",
-          dsaCode: loanObj.dsaCode || "",
-          loanAmount: loanObj.approval_loanAmountApproved,
-          interestRate: loanObj.approval_roi,
-          tenure: loanObj.approval_tenureMonths,
-          status: loanObj.approval_status,
-          processingFees: loanObj.approval_processingFees,
-          approvalDate: loanObj.approval_approvalDate,
-          remarks: loanObj.approval_remarks,
-          // Add more fields as needed
-        },
-      ];
-    }
+
 
     // Fallback: If caseType is missing, infer from typeOfLoan or loanType
     if (!loanObj.caseType) {

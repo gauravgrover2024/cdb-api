@@ -703,7 +703,10 @@ const updateCustomer = asyncHandler(async (req, res) => {
         insuranceUpdate.email = normalizedData.email;
       }
       if (Object.keys(insuranceUpdate).length > 0) {
-        insuranceUpdate.customerSnapshot = buildInsuranceCustomerSnapshot(updatedCustomer);
+        const snap = buildInsuranceCustomerSnapshot(updatedCustomer);
+        for (const [k, v] of Object.entries(snap)) {
+          insuranceUpdate[`customerSnapshot.${k}`] = v;
+        }
         const insuranceSyncResult = await InsuranceCase.updateMany(
           { customerId: customer._id },
           { $set: { ...insuranceUpdate, updatedAt: new Date() } },
