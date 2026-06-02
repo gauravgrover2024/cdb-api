@@ -20,6 +20,8 @@ const normalizeKey = (value) =>
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
 
+const uniq = (items) => [...new Set(items.filter(Boolean))];
+
 const getFeature = (features, names) => {
   if (!features || typeof features !== 'object') return null;
 
@@ -159,24 +161,38 @@ async function main() {
     }
   }).sort({ makeKey: 1, modelKey: 1, variantKey: 1, evidenceType: 1 }).toArray();
 
-  const results = [];
+  const rawDocsByCollection = new Map();
 
-  for (const seed of seeds) {
-    const candidates = [];
+  const seedModels = uniq(seeds.flatMap((seed) => [seed.model, seed.modelKey]));
+  const seedModelKeys = uniq(seedModels.map(normalizeKey));
+  const seedMakes = uniq(seeds.flatMap((seed) => [seed.make, seed.makeKey]));
+  const seedMakeKeys = uniq(seedMakes.map(normalizeKey));
 
-    for (const collectionName of RAW_FEATURE_COLLECTIONS) {
-      if (!(await collectionExists(db, collectionName))) continue;
+  for (const collectionName of RAW_FEATURE_COLLECTIONS) {
+    if (!(await collectionExists(db, collectionName))) {
+      rawDocsByCollection.set(collectionName, []);
+      continue;
+    }
 
-      const col = db.collection(collectionName);
-
-      const docs = await col.find({
-        $or: [
-          { brand: new RegExp(seed.make || seed.makeKey || '', 'i') },
-          { make: new RegExp(seed.make || seed.makeKey || '', 'i') },
-          { model: new RegExp(String(seed.model || seed.modelKey || '').replace(/[-_]/g, '[-_\\s]?'), 'i') },
-          { variant: new RegExp(String(seed.variant || seed.variantKey || '').replace(/[-_]/g, '[-_\\s]?'), 'i') },
-        ],
-      }, {
+    const col = db.collection(collectionName);
+    const docs = await col.find({
+      $and: [
+        {
+          $or: [
+            { model: { $in: seedModels } },
+            { modelKey: { $in: seedModelKeys } },
+          ],
+        },
+        {
+          $or: [
+            { brand: { $in: seedMakes } },
+            { make: { $in: seedMakes } },
+            { brandKey: { $in: seedMakeKeys } },
+            { makeKey: { $in: seedMakeKeys } },
+          ],
+        },
+      ],
+    }, {
         projection: {
           _id: 1,
           brand: 1,
@@ -189,7 +205,17 @@ async function main() {
           body_type_bucket: 1,
           seating_capacity: 1,
         }
-      }).limit(300).toArray();
+      }).limit(Number(process.env.ACI_RAW_AUDIT_MAX_DOCS || 15000)).toArray();
+
+    rawDocsByCollection.set(collectionName, docs);
+  }
+
+  const results = [];
+
+  for (const seed of seeds) {
+    const candidates = [];
+
+    for (const [collectionName, docs] of rawDocsByCollection.entries()) {
 
       for (const doc of docs) {
         const modelBrandOk = sameModelBrand(seed, doc);

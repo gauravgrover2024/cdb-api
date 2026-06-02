@@ -4,7 +4,12 @@ try { require('dotenv').config(); } catch (_) {}
 
 const mongoose = require('mongoose');
 
+const {
+  isInactiveDecisionProfile,
+} = require('../../services/aciCore/lifecycle/aciVehicleLifecycle.cjs');
+
 const GAP_COLLECTION = process.env.ACI_VARIANT_DATA_GAP_QUEUE_COLLECTION || 'aci_variant_data_gap_queue';
+const PROFILE_COLLECTION = process.env.ACI_VARIANT_DECISION_PROFILE_COLLECTION || 'aci_vehicle_variant_decision_profile';
 const TARGET_COLLECTION = process.env.ACI_VARIANT_EXTERNAL_EVIDENCE_COLLECTION || 'aci_variant_external_evidence';
 
 const args = process.argv.slice(2);
@@ -103,13 +108,43 @@ async function main() {
   const db = mongoose.connection.db;
 
   const gaps = db.collection(GAP_COLLECTION);
+  const profiles = db.collection(PROFILE_COLLECTION);
   const target = db.collection(TARGET_COLLECTION);
 
-  const sourceGaps = await gaps.find({
+  const sourceGapsRaw = await gaps.find({
     status: 'open',
     priority: 'P0',
     gapType: { $in: ['feature_matrix_missing', 'unknown_transmission'] }
   }).sort({ makeKey: 1, modelKey: 1, variantKey: 1, gapType: 1 }).toArray();
+
+  const profileKeys = [...new Set(sourceGapsRaw.map((gap) => gap.variantProfileKey).filter(Boolean))];
+  const inactiveProfileKeys = new Set();
+
+  if (profileKeys.length) {
+    const profileCursor = profiles.find(
+      { variantProfileKey: { $in: profileKeys } },
+      {
+        projection: {
+          _id: 0,
+          variantProfileKey: 1,
+          lifecycleStatus: 1,
+          dataStatus: 1,
+        },
+      },
+    );
+
+    for await (const profile of profileCursor) {
+      if (isInactiveDecisionProfile(profile)) {
+        inactiveProfileKeys.add(profile.variantProfileKey);
+      }
+    }
+  }
+
+  const sourceGaps = sourceGapsRaw.filter(
+    (gap) =>
+      !isInactiveDecisionProfile(gap) &&
+      !inactiveProfileKeys.has(gap.variantProfileKey),
+  );
 
   const seeds = sourceGaps.map(buildSeed);
 
@@ -174,6 +209,7 @@ async function main() {
   console.log(JSON.stringify({
     mode: write ? 'WRITE' : 'DRY_RUN',
     sourceGaps: sourceGaps.length,
+    skippedInactiveSourceGaps: sourceGapsRaw.length - sourceGaps.length,
     seeds: seeds.length,
     duplicateEvidenceKeyCount,
     byType,

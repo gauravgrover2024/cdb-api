@@ -18,9 +18,15 @@ const {
   normalizeTransmissionKey,
 } = require('../../services/aciCore/decisionProfiles/aciDecisionProfileKeys.cjs');
 
+const {
+  isInactiveDecisionProfile,
+  isInactiveVehicle,
+} = require('../../services/aciCore/lifecycle/aciVehicleLifecycle.cjs');
+
 const PRICE_COLLECTION = process.env.ACI_PRICE_ROWS_COLLECTION || 'aci_vehicle_price_rows';
 const PROFILE_COLLECTION = process.env.ACI_VARIANT_DECISION_PROFILE_COLLECTION || 'aci_vehicle_variant_decision_profile';
 const TARGET_COLLECTION = process.env.ACI_VARIANT_CITY_PRICE_PROFILE_COLLECTION || 'aci_vehicle_variant_city_price_profile';
+const VEHICLE_COLLECTION = process.env.ACI_SOURCE_VEHICLE_COLLECTION || 'vehicles';
 
 const args = process.argv.slice(2);
 const write = args.includes('--write');
@@ -129,6 +135,8 @@ const PROFILE_PROJECTION = {
   transmission: 1,
   transmissionKey: 1,
   fuelTransmissionFamilyKey: 1,
+  lifecycleStatus: 1,
+  dataStatus: 1,
 };
 
 const loadProfileIndexes = async (profilesCollection) => {
@@ -145,6 +153,8 @@ const loadProfileIndexes = async (profilesCollection) => {
   const cursor = profilesCollection.find({}, { projection: PROFILE_PROJECTION }).batchSize(500);
 
   for await (const profile of cursor) {
+    if (isInactiveDecisionProfile(profile)) continue;
+
     loaded += 1;
 
     if (loaded % 500 === 0) {
@@ -211,6 +221,32 @@ const loadProfileIndexes = async (profilesCollection) => {
     normalizedLooseFuelTransmission,
     normalizedLooseFuel,
   };
+};
+
+const loadInactiveSourceVehicleIds = async (db) => {
+  const ids = new Set();
+  const cursor = db.collection(VEHICLE_COLLECTION).find(
+    {},
+    {
+      projection: {
+        _id: 1,
+        is_discontinued: 1,
+        isDiscontinued: 1,
+        active: 1,
+        is_active: 1,
+        discontinued_date: 1,
+        discontinuedDate: 1,
+        discontinuedAt: 1,
+      },
+    },
+  ).batchSize(1000);
+
+  const now = new Date();
+  for await (const vehicle of cursor) {
+    if (isInactiveVehicle(vehicle, now)) ids.add(String(vehicle._id));
+  }
+
+  return ids;
 };
 
 const resolveProfile = (row, indexes) => {
@@ -444,10 +480,13 @@ async function main() {
   }
 
   const indexes = await loadProfileIndexes(profiles);
+  const inactiveSourceVehicleIds = await loadInactiveSourceVehicleIds(db);
+  console.log(`[load] inactive source vehicle ids=${inactiveSourceVehicleIds.size}`);
 
   let scanned = 0;
   let supportedCityRows = 0;
   let unsupportedCityRows = 0;
+  let skippedInactiveSourceVehicle = 0;
   let matched = 0;
   let unmatched = 0;
 
@@ -461,6 +500,14 @@ async function main() {
 
   for await (const row of cursor) {
     scanned += 1;
+
+    if (
+      row.sourceVehicleId &&
+      inactiveSourceVehicleIds.has(String(row.sourceVehicleId))
+    ) {
+      skippedInactiveSourceVehicle += 1;
+      continue;
+    }
 
     if (scanned % 1000 === 0) {
       console.log(`[scan] price rows scanned=${scanned}, matched=${matched}, unmatched=${unmatched}`);
@@ -572,6 +619,7 @@ async function main() {
     scanned,
     supportedCityRows,
     unsupportedCityRows,
+    skippedInactiveSourceVehicle,
     matched,
     unmatched,
     builtDocs: docs.length,

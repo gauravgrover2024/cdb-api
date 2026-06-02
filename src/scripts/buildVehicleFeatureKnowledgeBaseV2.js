@@ -35,6 +35,11 @@ const mongoUri =
 
 const nowIso = () => new Date().toISOString();
 
+const logStepTime = (label, startedAt) => {
+  const seconds = ((Date.now() - startedAt) / 1000).toFixed(2);
+  console.log(`${label} in ${seconds}s`);
+};
+
 const clean = (value = "") =>
   String(value ?? "")
     .replace(/&amp;/g, "&")
@@ -1504,6 +1509,113 @@ const toSlimCatalogDocForMongo = (doc = {}) => ({
   createdAt: doc.createdAt || new Date(),
 });
 
+const DECISION_SIGNAL_FEATURE_KEYS = new Set([
+  "sunroof",
+  "panoramic_sunroof",
+  "panorama_sunroof",
+  "adas_package",
+  "adas",
+  "advanced_driver_assistance_systems",
+  "six_airbags",
+  "anti_lock_braking_system_abs",
+  "abs",
+  "electronic_brakeforce_distribution_ebd",
+  "ebd",
+  "electronic_stability_control_esc",
+  "esc",
+  "esp",
+  "brake_assist",
+  "traction_control",
+  "tyre_pressure_monitoring_system_tpms",
+  "tpms",
+  "hill_assist",
+  "hill_hold",
+  "hill_descent_control",
+  "isofix_child_seat_mounts",
+  "isofix",
+  "rear_camera",
+  "camera_360",
+  "360_degree_camera",
+  "surround_view_camera",
+  "front_parking_sensors",
+  "front_parking_sensor",
+  "rear_parking_sensors",
+  "rear_parking_sensor",
+  "parking_sensors",
+  "ventilated_seats",
+  "powered_driver_seat",
+  "electric_driver_seat",
+  "driver_electric_adjustable_seat",
+  "powered_passenger_seat",
+  "electric_passenger_seat",
+  "passenger_electric_adjustable_seat",
+  "leatherette_seats",
+  "leatherette_upholstery",
+  "upholstery",
+  "automatic_climate_control",
+  "rear_ac_vents",
+  "cruise_control",
+  "wireless_charging",
+  "wireless_phone_charging",
+  "touchscreen",
+  "android_auto",
+  "apple_carplay",
+  "connected_car_features",
+  "connected_car",
+  "digital_cluster",
+  "led_headlamps",
+  "led_headlights",
+  "alloy_wheels",
+  "paddle_shifters",
+  "drive_modes",
+  "drive_mode",
+  "max_power",
+  "power",
+  "max_torque",
+  "torque",
+  "kerb_weight",
+  "arai_mileage",
+  "petrol_mileage_arai",
+  "diesel_mileage_arai",
+  "cng_mileage_arai",
+  "battery_capacity",
+  "range",
+  "claimed_range",
+  "engine_type",
+  "displacement",
+  "engine_displacement",
+  "number_of_cylinders",
+  "turbo_charger",
+  "super_charger",
+  "drive_type",
+  "fuel_tank_capacity",
+  "petrol_fuel_tank_capacity",
+  "diesel_fuel_tank_capacity",
+  "length",
+  "width",
+  "height",
+  "wheel_base",
+  "ground_clearance_unladen",
+  "ground_clearance",
+  "seating_capacity",
+  "boot_space",
+]);
+
+const buildDecisionSignalsForMongo = (featuresByKey = {}) => {
+  const selected = {};
+
+  for (const key of DECISION_SIGNAL_FEATURE_KEYS) {
+    const feature = featuresByKey[key];
+    if (!feature) continue;
+    selected[key] = toSlimFeatureForMongo(feature);
+  }
+
+  return {
+    featureKeys: Object.keys(selected),
+    featuresByKey: selected,
+  };
+};
+
 const toSlimFeatureForMongo = (feature = {}) => {
   const slim = {
     displayName: feature.displayName || "",
@@ -1555,6 +1667,7 @@ const toSlimMatrixDocForMongo = (doc = {}, buildId = "") => {
   const featureGroups = uniq(
     Object.values(featuresByKey).map((feature) => feature.groupKey).filter(Boolean),
   );
+  const decisionSignals = buildDecisionSignalsForMongo(doc.featuresByKey || {});
 
   return {
     buildId,
@@ -1582,6 +1695,7 @@ const toSlimMatrixDocForMongo = (doc = {}, buildId = "") => {
     featureKeys,
     featureGroups,
     featuresByKey,
+    decisionSignals,
     quality: {
       rawFeatureRows: doc.quality?.rawFeatureRows || 0,
       conflicts: doc.quality?.conflicts || 0,
@@ -1614,22 +1728,30 @@ const main = async () => {
   console.log("Build ID:", buildId);
 
   console.log("\n[1/6] Loading vehicle price/current index...");
+  const priceIndexStartedAt = Date.now();
   const priceIndex = await loadVehiclePriceIndex(db);
+  logStepTime("Vehicle price/current index loaded", priceIndexStartedAt);
   console.log("Vehicle price index keys:", priceIndex.size);
 
   console.log("\n[2/6] Loading vehicle_features docs...");
+  const featureDocsStartedAt = Date.now();
   const docs = await db.collection(SOURCE_FEATURES).find({}).toArray();
+  logStepTime("Vehicle feature docs loaded", featureDocsStartedAt);
   console.log("Feature docs:", docs.length);
 
   console.log("\n[3/6] Normalizing feature rows and building matrix...");
-  const allRows = [];
+  const normalizeStartedAt = Date.now();
+  const shouldKeepNormalizedRows = SHOULD_WRITE_ROWS || process.argv.includes("--audit-full");
+  const allRows = shouldKeepNormalizedRows ? [] : null;
+  let normalizedRowCount = 0;
   const matrixByKey = new Map();
   const catalog = new Map();
   const unknownSections = new Map();
 
   for (const doc of docs) {
     const rows = extractRowsFromDoc(doc);
-    allRows.push(...rows);
+    normalizedRowCount += rows.length;
+    if (allRows) allRows.push(...rows);
 
     for (const row of rows) {
       if (row.groupKey === "other") {
@@ -1707,11 +1829,13 @@ const main = async () => {
     }
   }
 
-  console.log("Normalized rows:", allRows.length);
+  logStepTime("Feature normalization + matrix build completed", normalizeStartedAt);
+  console.log("Normalized rows:", normalizedRowCount);
   console.log("Matrix variants:", matrixByKey.size);
   console.log("Catalog before synthetic:", catalog.size);
 
   console.log("\n[4/6] Adding safe DB-derived synthetic features...");
+  const syntheticStartedAt = Date.now();
   const matrixDocs = [...matrixByKey.values()];
 
   for (const doc of matrixDocs) {
@@ -1723,7 +1847,10 @@ const main = async () => {
     );
   }
 
+  logStepTime("Synthetic feature stage completed", syntheticStartedAt);
   console.log("Catalog after synthetic:", catalog.size);
+
+  const auditPrepStartedAt = Date.now();
 
   const catalogDocs = [...catalog.values()].map((entry) => ({
     buildId,
@@ -1786,7 +1913,7 @@ const main = async () => {
     generatedAt: nowIso(),
     source: {
       featureDocs: docs.length,
-      normalizedRows: allRows.length,
+      normalizedRows: normalizedRowCount,
       matrixVariants: matrixDocs.length,
       catalogFeatures: catalogDocs.length,
       unknownSections: unknownSectionDocs.length,
@@ -1809,7 +1936,10 @@ const main = async () => {
       })),
   };
 
+  logStepTime("Audit payload preparation completed", auditPrepStartedAt);
+
   console.log("\n[5/6] Writing audit files...");
+  const auditWriteStartedAt = Date.now();
   safeJsonWrite(path.join(OUT_DIR, "summary.json"), summary);
   safeJsonWrite(path.join(OUT_DIR, "unknown_sections.json"), unknownSectionDocs);
   safeJsonWrite(path.join(OUT_DIR, "feature_conflicts_sample.json"), conflictDocs);
@@ -1827,6 +1957,7 @@ const main = async () => {
     safeJsonWrite(path.join(OUT_DIR, "comparison_preview_creta_e_vs_ex_diesel.json"), preview);
   }
 
+  logStepTime("Audit files written", auditWriteStartedAt);
   console.log("Audit dir:", OUT_DIR);
   console.log("Summary:", JSON.stringify(summary.source, null, 2));
 
@@ -1881,6 +2012,7 @@ const main = async () => {
     }
 
     if (SHOULD_WRITE_ROWS) {
+      if (!allRows) throw new Error("Normalized rows were not retained, but SHOULD_WRITE_ROWS=true.");
       console.log("Writing normalized rows:", allRows.length);
       const rowDocs = allRows.map((row) => ({
         ...row,
@@ -1902,7 +2034,9 @@ const main = async () => {
 
     await db.collection(OUT_MATRIX).createIndex({ modelKey: 1, variantKey: 1 }, { unique: true });
     await db.collection(OUT_MATRIX).createIndex({ modelKey: 1 });
-    await db.collection(OUT_MATRIX).createIndex({ "featureKeys": 1 });
+    // Avoid a broad multikey featureKeys index here. It is very large on Atlas
+    // free-tier storage and the runtime keeps targeted feature indexes for the
+    // feature predicates that need fast lookup.
     await db.collection(OUT_MATRIX).createIndex({ activePricelistMatched: 1 });
 
     if (SHOULD_WRITE_ROWS) {
@@ -1912,6 +2046,8 @@ const main = async () => {
     }
 
     await db.collection(OUT_BUILDS).insertOne({
+        status: "success",
+      finishedAt: new Date(),
       ...summary,
       createdAt: new Date(),
       collections: {

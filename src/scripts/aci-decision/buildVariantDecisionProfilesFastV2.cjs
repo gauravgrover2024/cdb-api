@@ -18,10 +18,15 @@ const {
   normalizeTransmissionKey,
 } = require('../../services/aciCore/decisionProfiles/aciDecisionProfileKeys.cjs');
 
+const {
+  isInactiveVehicle,
+} = require('../../services/aciCore/lifecycle/aciVehicleLifecycle.cjs');
+
 const PRICE_COLLECTION = process.env.ACI_PRICE_ROWS_COLLECTION || 'aci_vehicle_price_rows';
 const FEATURE_COLLECTION = process.env.ACI_FEATURE_MATRIX_COLLECTION || 'vehicle_variant_feature_matrix_v2';
 const MODEL_SUMMARY_COLLECTION = process.env.ACI_MODEL_SUMMARY_COLLECTION || 'aci_vehicle_model_summary';
 const TARGET_COLLECTION = process.env.ACI_VARIANT_DECISION_PROFILE_COLLECTION || 'aci_vehicle_variant_decision_profile';
+const VEHICLE_COLLECTION = process.env.ACI_SOURCE_VEHICLE_COLLECTION || 'vehicles';
 
 const args = process.argv.slice(2);
 const write = args.includes('--write');
@@ -238,28 +243,21 @@ const FEATURE_KEYS_TO_PROJECT = [
   'boot_space',
 ];
 
-const buildFeatureProjection = () => {
-  const projection = {
-    _id: 1,
-    make: 1,
-    makeKey: 1,
-    brand: 1,
-    brandKey: 1,
-    model: 1,
-    modelKey: 1,
-    variant: 1,
-    variantKey: 1,
-    variantName: 1,
-    activePricelistMatched: 1,
-    discontinuedPricelistMatched: 1,
-  };
-
-  for (const key of FEATURE_KEYS_TO_PROJECT) {
-    projection[`featuresByKey.${key}`] = 1;
-  }
-
-  return projection;
-};
+const buildFeatureProjection = () => ({
+  _id: 1,
+  make: 1,
+  makeKey: 1,
+  brand: 1,
+  brandKey: 1,
+  model: 1,
+  modelKey: 1,
+  variant: 1,
+  variantKey: 1,
+  variantName: 1,
+  activePricelistMatched: 1,
+  discontinuedPricelistMatched: 1,
+  decisionSignals: 1,
+});
 
 const buildFeatureIndexes = async (featureCollection) => {
   const index = new Map();
@@ -273,6 +271,10 @@ const buildFeatureIndexes = async (featureCollection) => {
   const cursor = featureCollection.find({}, { projection }).batchSize(250);
 
   for await (const doc of cursor) {
+    if (doc.decisionSignals?.featuresByKey && !doc.featuresByKey) {
+      doc.featuresByKey = doc.decisionSignals.featuresByKey;
+    }
+
     docs.push(doc);
     loaded += 1;
 
@@ -456,6 +458,32 @@ const flushBulk = async (collection, bulk) => {
   };
 };
 
+const loadInactiveSourceVehicleIds = async (db) => {
+  const ids = new Set();
+  const cursor = db.collection(VEHICLE_COLLECTION).find(
+    {},
+    {
+      projection: {
+        _id: 1,
+        is_discontinued: 1,
+        isDiscontinued: 1,
+        active: 1,
+        is_active: 1,
+        discontinued_date: 1,
+        discontinuedDate: 1,
+        discontinuedAt: 1,
+      },
+    },
+  ).batchSize(1000);
+
+  const now = new Date();
+  for await (const vehicle of cursor) {
+    if (isInactiveVehicle(vehicle, now)) ids.add(String(vehicle._id));
+  }
+
+  return ids;
+};
+
 async function main() {
   if (!mongoUri) {
     console.error('Missing Mongo URI. Set MONGODB_URI or MONGO_URI.');
@@ -485,16 +513,29 @@ async function main() {
   const modelIndexes = await buildModelSummaryIndexes(modelSummaries);
   console.log(`[step] Model summaries loaded=${modelIndexes.docs.length}`);
 
+  console.log('[step] Loading inactive source vehicle ids...');
+  const inactiveSourceVehicleIds = await loadInactiveSourceVehicleIds(db);
+  console.log(`[step] Inactive source vehicle ids=${inactiveSourceVehicleIds.size}`);
+
   console.log('[step] Grouping price rows into unique global variants...');
   const grouped = new Map();
   let scannedPriceRows = 0;
   let skippedNoKey = 0;
+  let skippedInactiveSourceVehicle = 0;
 
   let cursor = priceRows.find({}).batchSize(1000);
   if (limit > 0) cursor = cursor.limit(limit);
 
   for await (const rawRow of cursor) {
     scannedPriceRows += 1;
+
+    if (
+      rawRow.sourceVehicleId &&
+      inactiveSourceVehicleIds.has(String(rawRow.sourceVehicleId))
+    ) {
+      skippedInactiveSourceVehicle += 1;
+      continue;
+    }
 
     const row = normalizePriceRowForProfile(rawRow);
     const key = makeVariantLookupKey(row) || makeVariantLooseLookupKey(row);
@@ -633,6 +674,7 @@ async function main() {
     uniqueVariants: grouped.size,
     builtProfiles: docs.length,
     skippedNoKey,
+    skippedInactiveSourceVehicle,
     featureHits,
     featureMisses,
     modelSummaryHits,

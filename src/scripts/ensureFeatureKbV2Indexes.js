@@ -28,6 +28,11 @@ const ensureIndex = async (collection, key, options) => {
   }
 };
 
+const hasIndexWithKey = (indexes, key) => {
+  const wanted = JSON.stringify(key);
+  return indexes.some((index) => JSON.stringify(index.key) === wanted);
+};
+
 console.log("=== FEATURE KB V2 INDEX HEALTH ===");
 
 const nullKeyCount = await catalog.countDocuments({
@@ -109,28 +114,40 @@ await ensureIndex(
   },
 );
 
-await ensureIndex(
-  catalog,
-  { canonicalKey: 1 },
-  {
-    name: "feature_catalog_canonical_key_unique_partial",
-    unique: true,
-    partialFilterExpression: {
-      canonicalKey: { $type: "string", $gt: "" },
-    },
-  },
-);
+const catalogIndexes = await catalog.indexes();
 
-await ensureIndex(
-  catalog,
-  { aliases: 1 },
-  {
-    name: "feature_catalog_aliases",
-    partialFilterExpression: {
-      aliases: { $exists: true },
+if (hasIndexWithKey(catalogIndexes, { canonicalKey: 1 })) {
+  console.log(
+    "skipped: feature_catalog_canonical_key_unique_partial covered by existing canonicalKey index",
+  );
+} else {
+  await ensureIndex(
+    catalog,
+    { canonicalKey: 1 },
+    {
+      name: "feature_catalog_canonical_key_unique_partial",
+      unique: true,
+      partialFilterExpression: {
+        canonicalKey: { $type: "string", $gt: "" },
+      },
     },
-  },
-);
+  );
+}
+
+if (hasIndexWithKey(catalogIndexes, { aliases: 1 })) {
+  console.log("skipped: feature_catalog_aliases covered by existing aliases index");
+} else {
+  await ensureIndex(
+    catalog,
+    { aliases: 1 },
+    {
+      name: "feature_catalog_aliases",
+      partialFilterExpression: {
+        aliases: { $exists: true },
+      },
+    },
+  );
+}
 
 await ensureIndex(
   catalog,

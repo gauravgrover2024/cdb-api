@@ -6,6 +6,10 @@ try {
 
 const mongoose = require('mongoose');
 
+const {
+  isInactiveDecisionProfile,
+} = require('../../services/aciCore/lifecycle/aciVehicleLifecycle.cjs');
+
 const PROFILE_COLLECTION = process.env.ACI_VARIANT_DECISION_PROFILE_COLLECTION || 'aci_vehicle_variant_decision_profile';
 const CITY_PRICE_COLLECTION = process.env.ACI_VARIANT_CITY_PRICE_PROFILE_COLLECTION || 'aci_vehicle_variant_city_price_profile';
 const LADDER_COLLECTION = process.env.ACI_VARIANT_UPGRADE_LADDER_COLLECTION || 'aci_vehicle_variant_upgrade_ladder';
@@ -190,6 +194,8 @@ const loadProfiles = async (collection) => {
     isDualToneOnly: 1,
     isSpecialEdition: 1,
     shouldSkipInUpgradeLadder: 1,
+    lifecycleStatus: 1,
+    dataStatus: 1,
   };
 
   const total = await collection.estimatedDocumentCount();
@@ -199,6 +205,8 @@ const loadProfiles = async (collection) => {
   const cursor = collection.find({}, { projection }).batchSize(500);
 
   for await (const doc of cursor) {
+    if (isInactiveDecisionProfile(doc)) continue;
+
     docs.push(doc);
     if (docs.length % 500 === 0) {
       console.log(`[load] Loaded profiles ${docs.length}/${total}`);

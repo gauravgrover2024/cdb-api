@@ -1,6 +1,9 @@
 import "dotenv/config";
 import mongoose from "mongoose";
 import connectDB from "../../config/db.js";
+import lifecycle from "../../services/aciCore/lifecycle/aciVehicleLifecycle.cjs";
+
+const { isInactiveVehicle } = lifecycle;
 
 const DRY_RUN =
   String(process.env.ACI_READ_MODEL_DRY_RUN || "true").toLowerCase() !== "false";
@@ -35,6 +38,11 @@ const first = (...values) => {
     }
   }
   return "";
+};
+
+const logStepTime = (label, startedAt) => {
+  const seconds = ((Date.now() - startedAt) / 1000).toFixed(2);
+  console.log(`${label} in ${seconds}s`);
 };
 
 const getObjectishField = (value, key = "") => {
@@ -435,26 +443,67 @@ const loadVehicleFeatureTransmissionMap = async (db) => {
 
   if (!exists) return map;
 
+  // Do not load the full features blob into Node just to find one field.
+  // This extracts only feature keys matching "Transmission Type" server-side.
   const rows = await db
     .collection("vehicle_features")
-    .find(
-      {
-        features: { $exists: true },
-      },
-      {
-        projection: {
-          brand: 1,
-          make: 1,
-          model: 1,
-          modelName: 1,
-          model_slug: 1,
-          modelKey: 1,
-          variant: 1,
-          variantName: 1,
-          variant_slug: 1,
-          variantSlug: 1,
-          features: 1,
+    .aggregate(
+      [
+        {
+          $match: {
+            features: { $type: "object" },
+          },
         },
+        {
+          $project: {
+            brand: 1,
+            make: 1,
+            model: 1,
+            modelName: 1,
+            model_slug: 1,
+            modelKey: 1,
+            variant: 1,
+            variantName: 1,
+            variant_slug: 1,
+            variantSlug: 1,
+            matchedFeatures: {
+              $filter: {
+                input: { $objectToArray: "$features" },
+                as: "feature",
+                cond: {
+                  $regexMatch: {
+                    input: "$$feature.k",
+                    regex: "transmission\\s*type",
+                    options: "i",
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          $match: {
+            "matchedFeatures.0": { $exists: true },
+          },
+        },
+        {
+          $project: {
+            brand: 1,
+            make: 1,
+            model: 1,
+            modelName: 1,
+            model_slug: 1,
+            modelKey: 1,
+            variant: 1,
+            variantName: 1,
+            variant_slug: 1,
+            variantSlug: 1,
+            transmissionFeature: { $arrayElemAt: ["$matchedFeatures", 0] },
+          },
+        },
+      ],
+      {
+        allowDiskUse: false,
       },
     )
     .toArray();
@@ -463,17 +512,12 @@ const loadVehicleFeatureTransmissionMap = async (db) => {
     const modelKey = normalizeKey(first(row.model_slug, row.modelKey, getModel(row)));
     const variantKey = deriveVariantKeyFromFeatureDoc(row);
 
-    if (!modelKey || !variantKey || !row.features || typeof row.features !== "object") {
+    if (!modelKey || !variantKey || !row.transmissionFeature) {
       continue;
     }
 
-    const entry = Object.entries(row.features).find(([featureKey]) =>
-      String(featureKey || "").toLowerCase().includes("transmission type"),
-    );
-
-    if (!entry) continue;
-
-    const [sourceKey, sourceValue] = entry;
+    const sourceKey = row.transmissionFeature.k;
+    const sourceValue = row.transmissionFeature.v;
     const transmission = getFeatureValue(sourceValue);
 
     if (!transmission) continue;
@@ -637,18 +681,25 @@ const build = async () => {
 
   console.log(`DRY_RUN=${DRY_RUN}`);
   console.log("Loading color heroes...");
+  const colorHeroStartedAt = Date.now();
   const colorHeroMap = await loadColorHeroMap(db);
+  logStepTime("Color heroes loaded", colorHeroStartedAt);
   console.log(`Color hero models loaded: ${colorHeroMap.size}`);
 
   console.log("Loading explicit transmission values from vehicle_features...");
+  const transmissionStartedAt = Date.now();
   const vehicleFeatureTransmissionMap = await loadVehicleFeatureTransmissionMap(db);
+  logStepTime("Vehicle feature transmission map loaded", transmissionStartedAt);
   console.log(`Vehicle feature transmission rows loaded: ${vehicleFeatureTransmissionMap.size}`);
 
   console.log("Loading variant gearbox values...");
+  const gearboxStartedAt = Date.now();
   const variantGearboxMap = await loadVariantGearboxMap(db);
+  logStepTime("Variant gearbox map loaded", gearboxStartedAt);
   console.log(`Variant gearbox rows loaded: ${variantGearboxMap.size}`);
 
   console.log("Loading vehicle rows...");
+  const vehicleRowsStartedAt = Date.now();
   const vehicleDocs = await db
     .collection(SOURCE_VEHICLES)
     .find(
@@ -693,21 +744,37 @@ const build = async () => {
           normalizedImageUrl: 1,
           displayNormalizedImageUrl: 1,
           imageFrame: 1,
-          raw_price_json: 1,
-          raw: 1,
+
+          // Keep only selected raw price fields needed by getRawPriceField().
+          // Do not project full raw/raw_price_json blobs; they are too heavy.
+          is_discontinued: 1,
+          isDiscontinued: 1,
+          active: 1,
+          is_active: 1,
+          discontinued_date: 1,
+          discontinuedDate: 1,
+          discontinuedAt: 1,
           updatedAt: 1,
           createdAt: 1,
         },
       },
     )
+    .batchSize(500)
     .toArray();
 
+  logStepTime("Vehicle rows loaded", vehicleRowsStartedAt);
   const now = new Date();
 
   const modelMap = new Map();
   const priceRows = [];
+  let skippedInactiveVehicles = 0;
 
   for (const doc of vehicleDocs) {
+    if (isInactiveVehicle(doc, now)) {
+      skippedInactiveVehicles += 1;
+      continue;
+    }
+
     const make = getMake(doc);
     const model = getModel(doc);
     const variant = getVariant(doc);
@@ -909,6 +976,7 @@ const build = async () => {
   });
 
   console.log(`Vehicle source docs: ${vehicleDocs.length}`);
+  console.log(`Skipped inactive vehicle source docs: ${skippedInactiveVehicles}`);
   console.log(`Model summaries to upsert: ${summaries.length}`);
   console.log(`Price rows to upsert: ${priceRows.length}`);
 

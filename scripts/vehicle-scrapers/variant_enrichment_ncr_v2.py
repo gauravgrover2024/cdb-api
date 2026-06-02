@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
+import json
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,6 +27,7 @@ API_MODEL_PRICE = f"{BASE}/api/v3/model/modelprice"
 API_MODEL_SPECS = f"{BASE}/api/v3/model/pwamodelspecs"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 TODAY = date.today().isoformat()
+FEATURE_HASH_VERSION = "sha256-json-v1"
 
 FEATURE_NORMALIZATION = {
     "sun roof": "Sunroof",
@@ -71,6 +74,28 @@ def normalize_feature_name(name: str) -> str:
         if k in low:
             return v
     return raw
+
+
+
+def stable_features_json(features: Dict) -> str:
+    return json.dumps(
+        features or {},
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+
+def compute_features_hash(features: Dict) -> str:
+    return hashlib.sha256(stable_features_json(features).encode("utf-8")).hexdigest()
+
+
+
+def identity_key(brand: str, model: str, variant: str) -> str:
+    return f"{brand}||{model}||{variant}"
+
 
 
 
@@ -259,6 +284,24 @@ def main() -> None:
 
     session = build_session()
     operations: List[UpdateOne] = []
+    run_started_at = datetime.now().isoformat()
+
+    existing_hash_by_identity = {
+        identity_key(
+            normalize_spaces(doc.get("brand")),
+            normalize_spaces(doc.get("model")),
+            normalize_spaces(doc.get("variant")),
+        ): doc.get("featuresHash")
+        for doc in features_collection.find(
+            {},
+            {
+                "brand": 1,
+                "model": 1,
+                "variant": 1,
+                "featuresHash": 1,
+            },
+        )
+    }
 
     models_processed = 0
     models_skipped = 0
@@ -266,6 +309,8 @@ def main() -> None:
     variants_resolved = 0
     variants_unresolved = 0
     variants_empty_features = 0
+    variants_feature_unchanged = 0
+    variants_feature_changed_or_new = 0
 
     for model_entry in tqdm(models, desc="Feature enrich", unit="model"):
         brand_slug = model_entry["brand_slug"]
@@ -337,30 +382,64 @@ def main() -> None:
 
                 variants_resolved += 1
 
-                doc = {
+                features_hash = compute_features_hash(features)
+                identity = {
                     "brand": brand_display,
                     "model": model_display,
                     "variant": variant_display,
-                    "brand_slug": brand_slug,
-                    "model_slug": model_slug,
-                    "variant_slug": variant_slug,
-                    "features": features,
-                    "source": "ncr_variant_enrichment_v2",
-                    "last_updated": TODAY,
-                    "scrape_timestamp": datetime.now().isoformat(),
                 }
-
-                operations.append(
-                    UpdateOne(
-                        {
-                            "brand": brand_display,
-                            "model": model_display,
-                            "variant": variant_display,
-                        },
-                        {"$set": doc},
-                        upsert=True,
-                    )
+                existing_hash = existing_hash_by_identity.get(
+                    identity_key(brand_display, model_display, variant_display)
                 )
+
+                if existing_hash == features_hash:
+                    variants_feature_unchanged += 1
+                    operations.append(
+                        UpdateOne(
+                            identity,
+                            {
+                                "$set": {
+                                    "scraperSeenAt": run_started_at,
+                                    "lastSeenAt": TODAY,
+                                    "featuresHash": features_hash,
+                                    "featuresHashVersion": FEATURE_HASH_VERSION,
+                                }
+                            },
+                            upsert=False,
+                        )
+                    )
+                else:
+                    variants_feature_changed_or_new += 1
+                    doc = {
+                        "brand": brand_display,
+                        "model": model_display,
+                        "variant": variant_display,
+                        "brand_slug": brand_slug,
+                        "model_slug": model_slug,
+                        "variant_slug": variant_slug,
+                        "features": features,
+                        "featuresHash": features_hash,
+                        "featuresHashVersion": FEATURE_HASH_VERSION,
+                        "featureContentChangedAt": run_started_at,
+                        "scraperSeenAt": run_started_at,
+                        "lastSeenAt": TODAY,
+                        "source": "ncr_variant_enrichment_v2",
+                        "last_updated": TODAY,
+                        "scrape_timestamp": run_started_at,
+                    }
+
+                    operations.append(
+                        UpdateOne(
+                            identity,
+                            {
+                                "$set": doc,
+                                "$setOnInsert": {
+                                    "createdAt": run_started_at,
+                                },
+                            },
+                            upsert=True,
+                        )
+                    )
 
         time.sleep(0.03 + random.uniform(0.01, 0.05))
 
@@ -377,6 +456,8 @@ def main() -> None:
     print(f"Variants resolved+written: {variants_resolved}")
     print(f"Variants unresolved: {variants_unresolved}")
     print(f"Variants with empty features: {variants_empty_features}")
+    print(f"Feature docs unchanged: {variants_feature_unchanged}")
+    print(f"Feature docs changed/new/unhashed: {variants_feature_changed_or_new}")
     print(f"Upserts prepared: {len(operations)}")
     print(f"Workers used: {workers}")
     print(f"Dry run: {args.dry_run}")

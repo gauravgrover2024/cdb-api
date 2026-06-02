@@ -6,12 +6,37 @@ await connectDB();
 
 const db = mongoose.connection.db;
 
+const stableKey = (value = {}) => JSON.stringify(value);
+
 const ensure = async (collection, keys, options = {}) => {
+  const col = db.collection(collection);
+  const requestedName =
+    options.name || Object.entries(keys).map(([key, value]) => `${key}_${value}`).join("_");
+
   console.log(`Creating index on ${collection}:`, keys);
-  await db.collection(collection).createIndex(keys, {
-    background: true,
-    ...options,
-  });
+
+  try {
+    await col.createIndex(keys, {
+      background: true,
+      ...options,
+    });
+  } catch (error) {
+    if (error?.code !== 85 && error?.codeName !== "IndexOptionsConflict") {
+      throw error;
+    }
+
+    const indexes = await col.indexes();
+    const existing = indexes.find((index) => stableKey(index.key) === stableKey(keys));
+
+    if (existing) {
+      console.log(
+        `Index already covered on ${collection}: requested=${requestedName}, existing=${existing.name}`,
+      );
+      return;
+    }
+
+    throw error;
+  }
 };
 
 await ensure("aci_vehicle_price_rows", {
@@ -103,67 +128,61 @@ await ensure("vehicle_variant_feature_matrix_v2", {
   name: "matrix_active_isofix_price_model",
 });
 
-await ensure("aci_vehicle_decision_profile", {
-  citySlug: 1,
-  minExShowroomPrice: 1,
+await ensure("aci_vehicle_variant_decision_profile", {
+  variantProfileKey: 1,
+}, {
+  name: "decision_profile_variant_key",
+  unique: true,
+});
+
+await ensure("aci_vehicle_variant_decision_profile", {
+  referencePriceCitySlug: 1,
+  referenceExShowroomPrice: 1,
   modelKey: 1,
 }, {
-  name: "decision_profile_city_price_model",
+  name: "decision_profile_reference_city_price_model",
 });
 
-await ensure("aci_vehicle_decision_profile", {
-  citySlug: 1,
-  safetyScore: -1,
-  minExShowroomPrice: 1,
-}, {
-  name: "decision_profile_city_safety_price",
-});
-
-await ensure("aci_vehicle_decision_profile", {
-  citySlug: 1,
-  familyScore: -1,
-  minExShowroomPrice: 1,
-}, {
-  name: "decision_profile_city_family_price",
-});
-
-await ensure("aci_vehicle_decision_profile", {
-  citySlug: 1,
-  valueScore: -1,
-  minExShowroomPrice: 1,
-}, {
-  name: "decision_profile_city_value_price",
-});
-
-await ensure("aci_vehicle_decision_profile", {
-  citySlug: 1,
+await ensure("aci_vehicle_variant_decision_profile", {
+  referencePriceCitySlug: 1,
   bodyTypeKey: 1,
-  minExShowroomPrice: 1,
+  referenceExShowroomPrice: 1,
 }, {
-  name: "decision_profile_city_body_price",
+  name: "decision_profile_reference_city_body_price",
 });
 
-await ensure("aci_vehicle_decision_profile", {
-  citySlug: 1,
-  fuels: 1,
-  minExShowroomPrice: 1,
+await ensure("aci_vehicle_variant_decision_profile", {
+  makeKey: 1,
+  modelKey: 1,
+  fuelTransmissionFamilyKey: 1,
+  priceRank: 1,
 }, {
-  name: "decision_profile_city_fuels_price",
+  name: "decision_profile_model_family_rank",
 });
 
-await ensure("aci_vehicle_decision_profile", {
-  citySlug: 1,
-  transmissions: 1,
-  minExShowroomPrice: 1,
+await ensure("aci_vehicle_variant_decision_profile", {
+  modelKey: 1,
+  fuelKey: 1,
+  transmissionKey: 1,
+  referenceExShowroomPrice: 1,
 }, {
-  name: "decision_profile_city_transmissions_price",
+  name: "decision_profile_model_powertrain_price",
 });
 
-await ensure("aci_vehicle_decision_profile", {
+await ensure("aci_vehicle_variant_city_price_profile", {
   citySlug: 1,
-  similarModelKeys: 1,
+  exShowroomPrice: 1,
+  modelKey: 1,
 }, {
-  name: "decision_profile_city_similar_models",
+  name: "city_price_profile_city_price_model",
+});
+
+await ensure("aci_vehicle_variant_city_price_profile", {
+  variantProfileKey: 1,
+  citySlug: 1,
+}, {
+  name: "city_price_profile_variant_city",
+  unique: true,
 });
 
 console.log("ACI recommendation indexes created.");

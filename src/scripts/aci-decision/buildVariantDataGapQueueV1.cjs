@@ -4,6 +4,10 @@ try { require('dotenv').config(); } catch (_) {}
 
 const mongoose = require('mongoose');
 
+const {
+  isInactiveDecisionProfile,
+} = require('../../services/aciCore/lifecycle/aciVehicleLifecycle.cjs');
+
 const PROFILE_COLLECTION = process.env.ACI_VARIANT_DECISION_PROFILE_COLLECTION || 'aci_vehicle_variant_decision_profile';
 const LADDER_COLLECTION = process.env.ACI_VARIANT_UPGRADE_LADDER_COLLECTION || 'aci_vehicle_variant_upgrade_ladder';
 const TARGET_COLLECTION = process.env.ACI_VARIANT_DATA_GAP_QUEUE_COLLECTION || 'aci_variant_data_gap_queue';
@@ -102,6 +106,8 @@ const makeGap = ({ profile, gapType, evidence = {}, notes = '' }) => ({
   transmission: profile.transmission,
   transmissionKey: profile.transmissionKey,
   fuelTransmissionFamilyKey: profile.fuelTransmissionFamilyKey,
+  lifecycleStatus: profile.lifecycleStatus || 'active',
+  dataStatus: profile.dataStatus || 'active',
   gapType,
   priority: gapPriority(profile, gapType),
   status: 'open',
@@ -164,7 +170,9 @@ async function main() {
       mileageBasis: 1,
       practicalityBasis: 1,
       comfortBasis: 1,
-      scores: 1
+      scores: 1,
+      lifecycleStatus: 1,
+      dataStatus: 1
     }
   }).toArray();
 
@@ -187,6 +195,8 @@ async function main() {
   const gaps = [];
 
   for (const profile of profiles) {
+    if (isInactiveDecisionProfile(profile)) continue;
+
     const dq = profile.dataQuality || {};
     const safety = profile.safetyBasis || {};
     const perf = profile.performanceBasis || {};
