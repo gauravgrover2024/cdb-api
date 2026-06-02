@@ -13,12 +13,10 @@ const bankDirectorySchema = new mongoose.Schema(
     micr: {
       type: String,
       trim: true,
-      index: true,
     },
     bankName: {
       type: String,
       trim: true,
-      index: true,
     },
     branch: {
       type: String,
@@ -47,7 +45,6 @@ const bankDirectorySchema = new mongoose.Schema(
     active: {
       type: Boolean,
       default: true,
-      index: true,
     },
     source: {
       type: String,
@@ -57,7 +54,6 @@ const bankDirectorySchema = new mongoose.Schema(
     lastVerifiedAt: {
       type: Date,
       default: Date.now,
-      index: true,
     },
     raw: {
       type: mongoose.Schema.Types.Mixed,

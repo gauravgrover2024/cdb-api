@@ -76,7 +76,6 @@ const run = async () => {
           [{ model_normalized: 1 }, { name: "ai_vehicle_model_normalized" }],
           [{ model_normalized: 1, city: 1 }, { name: "ai_vehicle_model_normalized_city" }],
           [{ model: 1, variant: 1, city: 1 }, { name: "ai_vehicle_model_variant_city" }],
-          [{ brand: 1, model: 1, variant: 1, city: 1 }, { name: "ai_vehicle_brand_model_variant_city" }],
           [{ model: 1, on_road_price_cardekho: 1, ex_showroom: 1 }, { name: "ai_vehicle_model_prices" }],
           [{ brand_normalized: 1, model_normalized: 1, variant_normalized: 1, city: 1 }, { name: "ai_vehicle_normalized_catalogue_city" }],
           [{ brand_normalized: 1, model_normalized: 1, city: 1, is_discontinued: 1, ex_showroom: 1 }, { name: "vehicle_popular_price_city_exact" }],
@@ -218,11 +217,9 @@ const run = async () => {
 
     const bankDirectoriesCollection = await optionalCollection("bankdirectories");
     if (bankDirectoriesCollection) {
-      const created = await ensure(bankDirectoriesCollection, [
-        [{ ifsc: 1 }, { name: "ai_bank_ifsc_lookup" }],
-        [{ bankName: 1, branch: 1, active: 1 }, { name: "ai_bank_name_branch_active" }],
-      ]);
-      console.log(`bankdirectories: ${created.join(", ")}`);
+      console.log(
+        "bankdirectories: skipped legacy AI-agent indexes; BankDirectory keeps lookup/cache indexes",
+      );
     } else {
       console.log("bankdirectories: collection not present, skipped optional indexes");
     }
