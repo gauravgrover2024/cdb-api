@@ -4490,6 +4490,11 @@ export const ACI_RUNTIME_DATA_TOOLS = {
   vehicle_offers: runtimeModularTool,
   vehicle_similar: runtimeModularTool,
   vehicle_safety_ranking: runtimeModularTool,
+  vehicle_score_insight: runtimeModularTool,
+  vehicle_score_profile: runtimeModularTool,
+  vehicle_model_score_insights: runtimeModularTool,
+  vehicle_same_family_value_insights: runtimeModularTool,
+  vehicle_top_score_insights: runtimeModularTool,
   quotation_lead: runtimeModularTool,
 };
 

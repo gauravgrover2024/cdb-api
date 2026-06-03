@@ -197,6 +197,35 @@ const inferTool = (meaningFrame = {}) => {
     return 'vehicle_colors';
   }
 
+  const scoreIntentText = [
+    task,
+    meaningFrame.primaryTask,
+    ...(Array.isArray(meaningFrame.secondaryTasks) ? meaningFrame.secondaryTasks : []),
+  ].join(' ').toLowerCase();
+
+  const requestedFactsText = JSON.stringify(requestedFacts || {}).toLowerCase();
+
+  const hasScoreInsightIntent =
+    requestedFacts.score ||
+    requestedFacts.scores ||
+    requestedFacts.value ||
+    requestedFacts.regret ||
+    requestedFacts.strengths ||
+    requestedFacts.weaknesses ||
+    /\b(score|scores|rating|ratings|value|worth|regret|strong|weak|strength|weakness|pros|cons|good value|bad value)\b/i.test(scoreIntentText) ||
+    /\b(score|scores|rating|ratings|value|regret|strength|weakness)\b/i.test(requestedFactsText);
+
+  if (
+    hasScoreInsightIntent &&
+    !requestedFacts.price &&
+    !requestedFacts.onRoad &&
+    !requestedFacts.emi &&
+    !requestedFacts.colors
+  ) {
+    return 'vehicle_score_insight';
+  }
+
+
   if (isBroadDiscovery && !hasComparisonTargets && !hasTwoOrMoreModels) {
     return 'vehicle_recommend';
   }
@@ -232,6 +261,7 @@ const inferConversationMode = (tool = '', meaningFrame = {}) => {
   if (tool === 'unavailable') return 'unavailable';
   if (tool === 'vehicle_feature_comparison') return 'comparison';
   if (tool === 'vehicle_compare') return 'comparison';
+  if (tool === 'vehicle_score_insight') return 'decision_intelligence';
   if (tool === 'vehicle_recommend') return 'recommendation';
   if (tool === 'vehicle_emi') return 'calculation';
   if (tool === 'aci_lead_capture') return 'lead_capture';
@@ -299,6 +329,16 @@ const inferOutput = (tool = '', meaningFrame = {}) => {
       preferredWidgetType: null,
     };
   }
+
+  if (tool === 'vehicle_score_insight') {
+    return {
+      canvasType: 'score_insight_canvas',
+      inlineType: 'score_insight_summary',
+      groupBy: 'variant',
+      preferredWidgetType: null,
+    };
+  }
+
 
   if (tool === 'vehicle_emi') {
     return {

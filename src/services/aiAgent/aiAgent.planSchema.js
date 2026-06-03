@@ -74,6 +74,7 @@ export const PLANNER_TOOLS = [
   "vehicle_compare",
   "vehicle_feature_comparison",
   "vehicle_recommend",
+  "vehicle_score_insight",
   "vehicle_price_breakup",
   "vehicle_emi",
   "vehicle_price_history",
@@ -1830,6 +1831,7 @@ export const inferConversationModeFromTools = (
 ) => {
   const first = tools[0]?.tool;
 
+  if (first === "vehicle_score_insight") return "decision_intelligence";
   if (first === "vehicle_recommend") return "recommendation";
   if (first === "vehicle_compare") return "comparison";
   if (first === "vehicle_emi") return "calculation";

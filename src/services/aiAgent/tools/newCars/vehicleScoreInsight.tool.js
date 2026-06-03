@@ -29,6 +29,14 @@ const SCORE_PATH_BY_MODULE = {
   regret_risk: "regretRisk.riskScore",
 };
 
+const OPERATION_BY_TOOL_NAME = {
+  vehicle_score_insight: "variant_score_insight",
+  vehicle_score_profile: "variant_score_insight",
+  vehicle_model_score_insights: "model_score_insights",
+  vehicle_same_family_value_insights: "same_family_value_insights",
+  vehicle_top_score_insights: "top_module_score_insights",
+};
+
 const normalizeKey = (value) =>
   String(value || "")
     .trim()
@@ -41,6 +49,60 @@ const safeLimit = (value, fallback = 20, max = 80) => {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(Math.floor(n), max);
+};
+
+const firstValue = (...values) =>
+  values.find((value) => value !== undefined && value !== null && value !== "");
+
+const normalizeRuntimeArgs = (args = {}) => {
+  const toolPlan = args.toolPlan || {};
+  const input = toolPlan.input || toolPlan.args || toolPlan.params || {};
+  const anchors = args.plan?.meaningFrame?.anchors || args.context?.meaningFrame?.anchors || {};
+  const primaryVehicle = anchors.primaryVehicle || anchors.vehicle || {};
+  const selectedVehicle =
+    args.context?.selectedVehicle ||
+    args.context?.vehicle ||
+    args.context?.aciSelectedVehicle ||
+    {};
+
+  return {
+    ...input,
+    ...toolPlan,
+    ...args,
+    operation: firstValue(
+      args.operation,
+      input.operation,
+      toolPlan.operation,
+      OPERATION_BY_TOOL_NAME[toolPlan.tool],
+      OPERATION_BY_TOOL_NAME[args.tool],
+      "variant_score_insight"
+    ),
+    makeKey: firstValue(args.makeKey, input.makeKey, toolPlan.makeKey, primaryVehicle.makeKey, selectedVehicle.makeKey),
+    modelKey: firstValue(args.modelKey, input.modelKey, toolPlan.modelKey, primaryVehicle.modelKey, selectedVehicle.modelKey),
+    variantKey: firstValue(args.variantKey, input.variantKey, toolPlan.variantKey, primaryVehicle.variantKey, selectedVehicle.variantKey),
+    fuelKey: firstValue(args.fuelKey, input.fuelKey, toolPlan.fuelKey, primaryVehicle.fuelKey, selectedVehicle.fuelKey),
+    transmissionKey: firstValue(
+      args.transmissionKey,
+      input.transmissionKey,
+      toolPlan.transmissionKey,
+      primaryVehicle.transmissionKey,
+      selectedVehicle.transmissionKey
+    ),
+    fuelTransmissionFamilyKey: firstValue(
+      args.fuelTransmissionFamilyKey,
+      input.fuelTransmissionFamilyKey,
+      toolPlan.fuelTransmissionFamilyKey
+    ),
+    scoreProfileKey: firstValue(args.scoreProfileKey, input.scoreProfileKey, toolPlan.scoreProfileKey),
+    variantProfileKey: firstValue(args.variantProfileKey, input.variantProfileKey, toolPlan.variantProfileKey),
+    module: firstValue(args.module, input.module, toolPlan.module),
+    scoreModule: firstValue(args.scoreModule, input.scoreModule, toolPlan.scoreModule),
+    scorePath: firstValue(args.scorePath, input.scorePath, toolPlan.scorePath),
+    limit: firstValue(args.limit, input.limit, toolPlan.limit),
+    direction: firstValue(args.direction, input.direction, toolPlan.direction),
+    filters: firstValue(args.filters, input.filters, toolPlan.filters, {}),
+    db: args.db,
+  };
 };
 
 const buildScoreProfileKey = ({
@@ -57,7 +119,6 @@ const buildScoreProfileKey = ({
   const transmission = normalizeKey(transmissionKey);
 
   if (!make || !model || !variant || !fuel || !transmission) return null;
-
   return `${make}_${model}__${variant}__${fuel}_${transmission}`;
 };
 
@@ -118,8 +179,98 @@ const compactVariantLine = (insight) => {
   return `${insight.variantFullName}: safety ${safetyScore}, features ${featureScore}, same-model value ${valueScore}, regret risk ${regretRisk}.`;
 };
 
-export const runVehicleScoreInsightTool = async (args = {}) => {
-  const operation = normalizeKey(args.operation || args.mode || args.queryType || "variant_score_insight");
+const resolveVariantInsight = async (params = {}) => {
+  const scoreProfileKey =
+    params.scoreProfileKey ||
+    params.score_profile_key ||
+    buildScoreProfileKey(params);
+
+  const variantProfileKey = params.variantProfileKey || params.variant_profile_key;
+
+  if (scoreProfileKey || variantProfileKey) {
+    return {
+      insight: await getVariantScoreInsight({
+        db: params.db,
+        scoreProfileKey,
+        variantProfileKey,
+      }),
+      error: null,
+      scoreProfileKey,
+      variantProfileKey,
+    };
+  }
+
+  const modelKey = normalizeKey(params.modelKey || params.model_key);
+  const variantKey = normalizeKey(params.variantKey || params.variant_key);
+
+  if (!modelKey || !variantKey) {
+    return {
+      insight: null,
+      error: {
+        code: "missing_variant_key",
+        message:
+          "Pass scoreProfileKey, variantProfileKey, or at least modelKey and variantKey. Fuel/transmission improves precision.",
+      },
+    };
+  }
+
+  const result = await getModelScoreInsights({
+    db: params.db,
+    makeKey: params.makeKey || params.make_key,
+    modelKey,
+    fuelKey: params.fuelKey || params.fuel_key,
+    transmissionKey: params.transmissionKey || params.transmission_key,
+    fuelTransmissionFamilyKey:
+      params.fuelTransmissionFamilyKey || params.fuel_transmission_family_key,
+    limit: 100,
+  });
+
+  const fuelKey = normalizeKey(params.fuelKey || params.fuel_key);
+  const transmissionKey = normalizeKey(params.transmissionKey || params.transmission_key);
+
+  const matches = (result.variants || []).filter((variant) => {
+    if (normalizeKey(variant.variantKey) !== variantKey) return false;
+    if (fuelKey && normalizeKey(variant.fuelKey) !== fuelKey) return false;
+    if (transmissionKey && normalizeKey(variant.transmissionKey) !== transmissionKey) return false;
+    return true;
+  });
+
+  if (matches.length === 1) {
+    return { insight: matches[0], error: null };
+  }
+
+  if (matches.length > 1) {
+    return {
+      insight: null,
+      error: {
+        code: "ambiguous_variant_score_profile",
+        message:
+          "Multiple score profiles match this variant. Add fuelKey and transmissionKey.",
+        meta: {
+          matches: matches.slice(0, 10).map((item) => ({
+            scoreProfileKey: item.scoreProfileKey,
+            variantFullName: item.variantFullName,
+            fuelKey: item.fuelKey,
+            transmissionKey: item.transmissionKey,
+          })),
+        },
+      },
+    };
+  }
+
+  return {
+    insight: null,
+    error: {
+      code: "score_profile_not_found",
+      message: "No score profile found for the requested variant.",
+      meta: { modelKey, variantKey, fuelKey, transmissionKey },
+    },
+  };
+};
+
+export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
+  const args = normalizeRuntimeArgs(rawArgs);
+  const operation = normalizeKey(args.operation || "variant_score_insight");
 
   try {
     if (operation === "coverage") {
@@ -133,41 +284,24 @@ export const runVehicleScoreInsightTool = async (args = {}) => {
     }
 
     if (["variant_score_insight", "variant", "score_profile"].includes(operation)) {
-      const scoreProfileKey =
-        args.scoreProfileKey ||
-        args.score_profile_key ||
-        buildScoreProfileKey(args);
+      const resolved = await resolveVariantInsight(args);
 
-      const variantProfileKey = args.variantProfileKey || args.variant_profile_key;
-
-      if (!scoreProfileKey && !variantProfileKey) {
+      if (resolved.error) {
         return createError({
           operation,
-          code: "missing_variant_key",
-          message:
-            "Pass scoreProfileKey, variantProfileKey, or makeKey/modelKey/variantKey/fuelKey/transmissionKey.",
-        });
-      }
-
-      const insight = await getVariantScoreInsight({
-        db: args.db,
-        scoreProfileKey,
-        variantProfileKey,
-      });
-
-      if (!insight) {
-        return createError({
-          operation,
-          code: "score_profile_not_found",
-          message: "No score profile found for the requested variant.",
-          meta: { scoreProfileKey, variantProfileKey },
+          code: resolved.error.code,
+          message: resolved.error.message,
+          meta: resolved.error.meta || {
+            scoreProfileKey: resolved.scoreProfileKey,
+            variantProfileKey: resolved.variantProfileKey,
+          },
         });
       }
 
       return createSuccess({
         operation: "variant_score_insight",
-        data: insight,
-        answer: compactVariantLine(insight),
+        data: resolved.insight,
+        answer: compactVariantLine(resolved.insight),
       });
     }
 
