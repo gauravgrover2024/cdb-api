@@ -207,7 +207,7 @@ const ACI_PROGRESS_MODULES = [
     summary: "DB-backed variant intelligence foundation for instant buyer advice, variant regret prevention, upgrade decisions, city pricing, and later scoring.",
     whatWillWork: "Full variant universe, city-specific price overlay, same-model/fuel/transmission upgrade ladder, gain/loss evidence, data-quality gaps, and controlled external evidence workflow.",
     currentState: "Full supported-city global variant profile universe is built with 2,114 profiles. City price overlay is written with 6,002 rows across New Delhi, Gurgaon and Noida with zero unmatched rows, zero missing prices and zero duplicate variant-city pairs. Upgrade ladder is written for 2,114 variants with priceRank, equipmentRank and variantRole. Dual-tone/cosmetic variants remain ranked and searchable but are not selected as default upgrade targets. Data gap queue is written with 2,773 open evidence gaps and zero duplicate gap keys after importing crash-rating evidence and applying 15 exact internal feature-matrix evidence patches.",
-    pending: "Build external evidence collection, fill P0 feature/transmission gaps, add crash-rating evidence model, build controlled evidence-to-profile patcher, rerun coverage audits, then design score config and compute recommendation/value/regret/safety scores. Do not scrape directly into decision profiles.",
+    pending: "Build variant score profile read model, score modules, feature explainer, similar cars graph, recommendation/value/regret/safety scoring, crash safety confidence handling, and ACI Assist score integration. Mileage, dimensions and performance gaps are now reviewed/closed; remaining data caveats are crash-rating gaps and upgrade-edge review.",
     items: [
       { key: "variant_profile_universe", name: "Full variant decision profile universe: 2,114 profiles", status: "ready" },
       { key: "variant_profile_quality", name: "Profile quality: 1,404 high, 710 medium, 0 low, 0 duplicate keys", status: "ready" },
@@ -231,9 +231,35 @@ const ACI_PROGRESS_MODULES = [
       { key: "external_evidence_collection", name: "External evidence collection", status: "planned" },
       { key: "evidence_to_profile_patcher", name: "Controlled evidence-to-profile patcher", status: "planned" },
       { key: "score_config", name: "Score config for safety/value/regret/recommendation", status: "pending" },
+      { key: "variant_score_profile", name: "Variant score profile read model", status: "pending" },
+      { key: "score_modules", name: "Safety/features/value/performance/mileage/practicality/city/highway/comfort/regret score modules", status: "pending" },
+      { key: "feature_explainer_integration", name: "Feature explainer integration with scoring and recommendations", status: "planned" },
+      { key: "similar_cars_graph", name: "Similar cars graph/read model", status: "pending" },
+      { key: "aci_assist_score_mapping", name: "ACI Assist mapping to decision profiles and score profiles", status: "pending" },
       { key: "score_computation", name: "Score computation", status: "pending" }
     ]
   },
+  {
+    id: "feature_explainer",
+    title: "Feature Explainer & Buyer Education",
+    area: "Backend Intelligence",
+    status: "planned",
+    priority: "P0",
+    progress: 0,
+    summary: "DB-backed feature explainer engine that explains what each feature means, when it matters, when it does not matter, and whether it is worth paying for.",
+    whatWillWork: "Explain features like ESC, ADAS, DCT, IVT, AMT, TPMS, ISOFIX, 360 camera, ventilated seats and sunroof in buyer-friendly language. Compare features, explain gained/lost features between variants, and feed feature importance into scoring/recommendations.",
+    done: "Feature catalog and variant feature matrix exist. Feature availability can already be answered from DB-backed data.",
+    pending: "Create feature explainer KB, feature comparison explainer, feature importance mapping by buyer context, feature delta explainer, and ACI Assist tools for explainFeature, compareFeatures, explainVariantFeatures and explainFeatureDelta.",
+    eta: "7-12 working days, overlapping with score profiles and recommendation engine.",
+    milestones: [
+      { key: "feature_explainer_kb", name: "Feature explainer knowledge base", status: "planned" },
+      { key: "feature_comparison_explainer", name: "Feature-vs-feature explainer", status: "planned" },
+      { key: "buyer_context_feature_importance", name: "Buyer-context feature importance mapping", status: "planned" },
+      { key: "feature_delta_explainer", name: "Variant gained/lost feature explainer", status: "planned" },
+      { key: "feature_explainer_tools", name: "ACI Assist feature explainer tools", status: "planned" }
+    ]
+  },
+
   {
     id: "recommendations",
     title: "Recommendations & Car Advisor",
@@ -589,6 +615,35 @@ const ACI_PROGRESS_MODULES = [
     ]
   }
 ];
+
+  {
+    id: "backend_completion_timeline",
+    title: "Backend Completion Timeline",
+    area: "Roadmap",
+    status: "planned",
+    priority: "P0",
+    progress: 0,
+    summary: "Consolidated backend roadmap covering the remaining ACI Assist intelligence, conversion, launch, revenue and WhatsApp backend work.",
+    whatWillWork: "Score profiles, feature explainer, similar cars, recommendations, variant advisor, ACI Assist mapping, CRM/lead routing, revenue campaigns, WhatsApp Cloud API, SEO/indexing, evals and production hardening.",
+    done: "Core data foundation is materially cleaned: dimensions, performance and mileage gaps are closed/reviewed; city price overlays, decision profiles and gap queue discipline are in place.",
+    pending: "Complete score engine, feature explainer, similar cars, recommendations, upgrade ladder, crash confidence, ACI Assist integration, canvas contracts, CRM/leads, revenue, WhatsApp, SEO/indexing and eval hardening.",
+    eta: "Core intelligent backend: 23-32 working days. Full backend including WhatsApp, CRM, revenue, SEO and hardening: 40-58 working days.",
+    milestones: [
+      { key: "score_engine", name: "Score engine and score profiles", status: "pending", eta: "3-5 working days" },
+      { key: "feature_explainer", name: "Feature explainer engine", status: "planned", eta: "7-12 working days" },
+      { key: "similar_cars", name: "Similar cars graph/read model", status: "pending", eta: "3-5 working days" },
+      { key: "recommendation_engine", name: "Recommendation and final verdict engine", status: "pending", eta: "4-6 working days" },
+      { key: "upgrade_variant_advisor", name: "Upgrade ladder and variant advisor", status: "pending", eta: "3-5 working days" },
+      { key: "crash_confidence", name: "Crash safety confidence/caveat handling", status: "pending", eta: "3-6 working days" },
+      { key: "aci_assist_mapping", name: "ACI Assist mapping to decision/score profiles", status: "pending", eta: "5-7 working days" },
+      { key: "canvas_contracts", name: "Backend response/canvas contracts", status: "pending", eta: "2-4 working days" },
+      { key: "crm_leads", name: "Quotation, CRM and dealer lead routing", status: "planned", eta: "5-8 working days" },
+      { key: "revenue_campaigns", name: "Sponsored campaigns and lead monetization backend", status: "planned", eta: "4-7 working days" },
+      { key: "whatsapp_backend", name: "Direct Meta WhatsApp Cloud API backend", status: "planned", eta: "6-10 working days" },
+      { key: "seo_indexing", name: "SEO/indexing backend", status: "planned", eta: "4-7 working days" },
+      { key: "evals_hardening", name: "Evals, audits and production hardening", status: "pending", eta: "5-8 working days" }
+    ]
+  },
 
 module.exports = {
   ACI_PROGRESS_MODULES
