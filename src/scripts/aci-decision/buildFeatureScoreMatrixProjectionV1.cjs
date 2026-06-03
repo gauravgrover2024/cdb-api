@@ -140,6 +140,10 @@ const buildSourceProjection = (projectedFeatureKeys) => {
     await targetCol.createIndex({ projectionKey: 1 }, { unique: true, name: 'projection_key_unique' });
     await targetCol.createIndex({ modelKey: 1, variantKey: 1 }, { name: 'model_variant_projection_idx' });
     await targetCol.createIndex({ taxonomyVersion: 1 }, { name: 'taxonomy_version_projection_idx' });
+    await targetCol.createIndex(
+      { taxonomyVersion: 1, projectionKey: 1 },
+      { name: 'taxonomy_projection_key_idx' }
+    );
 
     writeResult = {
       matched: result.matchedCount || 0,

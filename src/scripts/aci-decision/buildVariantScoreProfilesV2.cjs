@@ -1140,14 +1140,28 @@ const buildScoreDoc = ({ profile, matrixDoc, modules, valueScore, regretRisk }) 
 
   console.error('[load] Loading feature score matrix projection docs...');
 
+  const neededFeatureProjectionKeys = [
+    ...new Set(
+      scoringProfiles
+        .map((profile) => `${normKey(profile.modelKey)}__${normKey(profile.variantKey)}`)
+        .filter((key) => key && key !== '__')
+    )
+  ];
+
+  console.error(`[load] Needed feature projection keys=${neededFeatureProjectionKeys.length}`);
+
   let featureMatrixSource = FEATURE_SCORE_MATRIX_PROJECTION_COLLECTION;
   console.time('[load] feature_score_projection_find_toArray');
 
   let featureDocs = await compactFeatureScoreCol.find(
-    { taxonomyVersion: FEATURE_SCORE_TAXONOMY.taxonomyVersion },
+    {
+      taxonomyVersion: FEATURE_SCORE_TAXONOMY.taxonomyVersion,
+      projectionKey: { $in: neededFeatureProjectionKeys }
+    },
     {
       projection: {
         _id: 0,
+        projectionKey: 1,
         modelKey: 1,
         variantKey: 1,
         activePricelistMatched: 1,
@@ -1164,9 +1178,16 @@ const buildScoreDoc = ({ profile, matrixDoc, modules, valueScore, regretRisk }) 
 
   console.timeEnd('[load] feature_score_projection_find_toArray');
 
-  if (!featureDocs.length) {
+  const foundProjectionKeys = new Set(featureDocs.map((doc) => doc.projectionKey).filter(Boolean));
+  const missingProjectionKeys = neededFeatureProjectionKeys.filter((key) => !foundProjectionKeys.has(key));
+
+  if (missingProjectionKeys.length) {
+    console.error(`[load] Missing compact projection docs=${missingProjectionKeys.length}; sample=${missingProjectionKeys.slice(0, 10).join(', ')}`);
+  }
+
+  if (!featureDocs.length || missingProjectionKeys.length) {
     featureMatrixSource = FEATURE_MATRIX_COLLECTION;
-    console.error(`[load] No compact projection docs found for taxonomy=${FEATURE_SCORE_TAXONOMY.taxonomyVersion}; falling back to ${FEATURE_MATRIX_COLLECTION}`);
+    console.error(`[load] Compact projection incomplete for taxonomy=${FEATURE_SCORE_TAXONOMY.taxonomyVersion}; falling back to ${FEATURE_MATRIX_COLLECTION}`);
     console.time('[load] feature_matrix_find_toArray');
 
     featureDocs = await matrixCol.find({}, {
