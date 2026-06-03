@@ -11,3 +11,4 @@ export { runVehicleFeaturesTool } from "./vehicleFeatures.tool.js";
 export { runVehicleOwnershipCostTool } from "./vehicleOwnershipCost.tool.js";
 export { runVehicleOffersTool } from "./vehicleOffers.tool.js";
 export { runQuotationLeadTool } from "./quotationLead.tool.js";
+export { runVehicleScoreInsightTool } from "./vehicleScoreInsight.tool.js";
