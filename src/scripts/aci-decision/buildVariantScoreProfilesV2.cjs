@@ -16,8 +16,8 @@ const RESET = args.includes('--reset');
 const limitArgIndex = args.indexOf('--limit');
 const LIMIT = limitArgIndex >= 0 ? Number(args[limitArgIndex + 1]) : 0;
 
-const BUILD_VERSION = 'variant_score_profile_v2_2026_06_03';
-const FORMULA_VERSION = 'trust_first_module_scores_v2';
+const BUILD_VERSION = 'variant_score_profile_v2_1_2026_06_03';
+const FORMULA_VERSION = 'trust_first_module_scores_v2_1_layered_feature_score';
 
 const hasNumber = (value) =>
   value !== null &&
@@ -207,31 +207,53 @@ const featureKeysCount = (matrixDoc) => {
 };
 
 const FEATURE_DEFS = [
-  // useful/practical features
+  // Essentials: hygiene features a buyer expects even in basic/private-use cars.
+  { key: 'airConditioning', category: 'essential', weight: 6, aliases: ['air_conditioning', 'air conditioning', 'ac'] },
+  { key: 'heater', category: 'essential', weight: 2, aliases: ['heater'] },
+  { key: 'powerSteering', category: 'essential', weight: 6, aliases: ['power_steering', 'power steering'] },
+  { key: 'powerWindows', category: 'essential', weight: 5, aliases: ['power_windows', 'power windows', 'power_windows_front'] },
+  { key: 'centralLocking', category: 'essential', weight: 5, aliases: ['central_locking', 'central locking'] },
+  { key: 'keylessEntry', category: 'essential', weight: 4, aliases: ['keyless_entry', 'keyless entry'] },
+  { key: 'accessoryPowerOutlet', category: 'essential', weight: 3, aliases: ['accessory_power_outlet', 'accessory power outlet', 'power outlet'] },
+  { key: 'usbPorts', category: 'essential', weight: 3, aliases: ['usb_ports', 'usb ports', 'usb_charger', 'usb charger'] },
+  { key: 'adjustableSteering', category: 'essential', weight: 3, aliases: ['adjustable_steering', 'adjustable steering'] },
+  { key: 'adjustableHeadrest', category: 'essential', weight: 3, aliases: ['adjustable_headrest', 'adjustable headrest'] },
+  { key: 'rearSeatHeadrest', category: 'essential', weight: 3, aliases: ['rear_seat_headrest', 'rear seat headrest'] },
+  { key: 'parkingSensorsRear', category: 'essential', weight: 4, aliases: ['parkingSensorsRear', 'rear_parking_sensors', 'rear parking sensors'] },
+
+  // Useful upgrades: features that materially improve daily ownership/use.
   { key: 'rearAcVents', category: 'useful', weight: 7, aliases: ['rearAcVents', 'rear_ac_vents', 'rear ac vents'] },
-  { key: 'rearCamera', category: 'useful', weight: 6, aliases: ['rearCamera', 'rear parking camera', 'parking camera'] },
-  { key: 'camera360', category: 'useful', weight: 8, aliases: ['camera360', '360Camera', '360 degree camera', '360 camera'] },
-  { key: 'parkingSensorsFront', category: 'useful', weight: 4, aliases: ['parkingSensorsFront', 'front parking sensors'] },
-  { key: 'parkingSensorsRear', category: 'useful', weight: 3, aliases: ['parkingSensorsRear', 'rear parking sensors'] },
-  { key: 'cruiseControl', category: 'useful', weight: 5, aliases: ['cruiseControl', 'cruise control'] },
+  { key: 'rearCamera', category: 'useful', weight: 7, aliases: ['rearCamera', 'rear_camera', 'rear parking camera', 'parking camera'] },
+  { key: 'parkingSensorsFront', category: 'useful', weight: 4, aliases: ['parkingSensorsFront', 'front_parking_sensors', 'front parking sensors'] },
+  { key: 'touchscreen', category: 'useful', weight: 5, aliases: ['touchscreen', 'touchscreenInfotainment', 'touchscreen infotainment', 'touchscreen_size'] },
+  { key: 'androidAuto', category: 'useful', weight: 4, aliases: ['android_auto', 'android auto'] },
+  { key: 'appleCarPlay', category: 'useful', weight: 4, aliases: ['apple_carplay', 'apple carplay'] },
+  { key: 'bluetoothConnectivity', category: 'useful', weight: 3, aliases: ['bluetooth_connectivity', 'bluetooth connectivity', 'bluetooth'] },
+  { key: 'speakers', category: 'useful', weight: 3, aliases: ['speakers', 'number_of_speakers', 'number of speakers'] },
+  { key: 'radio', category: 'useful', weight: 2, aliases: ['radio', 'integrated_2din_audio', 'integrated 2din audio'] },
+  { key: 'digitalInstrumentCluster', category: 'useful', weight: 4, aliases: ['digitalInstrumentCluster', 'digital_cluster', 'digital cluster', 'digital instrument cluster'] },
+  { key: 'multiFunctionSteering', category: 'useful', weight: 3, aliases: ['multi_function_steering_wheel', 'multi function steering wheel'] },
+  { key: 'foldableRearSeat', category: 'useful', weight: 3, aliases: ['foldable_rear_seat', 'foldable rear seat'] },
+  { key: 'rearDefogger', category: 'useful', weight: 3, aliases: ['rear_window_defogger', 'rear window defogger'] },
+  { key: 'cruiseControl', category: 'useful', weight: 5, aliases: ['cruiseControl', 'cruise_control', 'cruise control'] },
+  { key: 'hillAssist', category: 'useful', weight: 3, aliases: ['hill_assist', 'hill assist'] },
 
-  // premium/comfort/desire features
-  { key: 'automaticClimateControl', category: 'premium', weight: 5, aliases: ['automaticClimateControl', 'auto ac', 'automatic climate control'] },
-  { key: 'ventilatedSeats', category: 'premium', weight: 8, aliases: ['ventilatedSeats', 'front ventilated seats', 'ventilated front seats'] },
-  { key: 'poweredDriverSeat', category: 'premium', weight: 6, aliases: ['poweredDriverSeat', 'power driver seat', 'electric driver seat'] },
-  { key: 'leatheretteSeats', category: 'premium', weight: 5, aliases: ['leatheretteSeats', 'leatherette upholstery', 'leather seats'] },
-  { key: 'sunroof', category: 'premium', weight: 4, aliases: ['sunroof', 'electric sunroof'] },
-  { key: 'panoramicSunroof', category: 'premium', weight: 7, aliases: ['panoramicSunroof', 'panoramic sunroof'] },
-  { key: 'premiumSound', category: 'premium', weight: 5, aliases: ['premiumSound', 'branded speakers', 'premium audio'] },
-
-  // tech/driver-assist features
-  { key: 'wirelessCharging', category: 'tech', weight: 4, aliases: ['wirelessCharging', 'wireless charger'] },
-  { key: 'connectedCar', category: 'tech', weight: 4, aliases: ['connectedCar', 'connected car tech', 'connected car'] },
-  { key: 'digitalInstrumentCluster', category: 'tech', weight: 4, aliases: ['digitalInstrumentCluster', 'digital cluster', 'digital instrument cluster'] },
-  { key: 'touchscreen', category: 'tech', weight: 3, aliases: ['touchscreen', 'touchscreenInfotainment', 'touchscreen infotainment'] },
-  { key: 'adas', category: 'tech', weight: 7, aliases: ['adas', 'advanced driver assistance system'] },
-  { key: 'laneKeepAssist', category: 'tech', weight: 3, aliases: ['laneKeepAssist', 'lane keep assist'] },
-  { key: 'adaptiveCruiseControl', category: 'tech', weight: 4, aliases: ['adaptiveCruiseControl', 'adaptive cruise control'] },
+  // Premium desirables: aspirational / higher-trim equipment.
+  { key: 'camera360', category: 'premium', weight: 8, aliases: ['camera360', '360Camera', '360_degree_camera', '360 degree camera', '360 camera'] },
+  { key: 'automaticClimateControl', category: 'premium', weight: 5, aliases: ['automaticClimateControl', 'automatic_climate_control', 'auto ac', 'automatic climate control'] },
+  { key: 'ventilatedSeats', category: 'premium', weight: 8, aliases: ['ventilatedSeats', 'ventilated_seats', 'front ventilated seats', 'ventilated front seats'] },
+  { key: 'poweredDriverSeat', category: 'premium', weight: 6, aliases: ['poweredDriverSeat', 'powered_driver_seat', 'power driver seat', 'electric driver seat'] },
+  { key: 'leatheretteSeats', category: 'premium', weight: 5, aliases: ['leatheretteSeats', 'leatherette_seats', 'leatherette upholstery', 'leather seats'] },
+  { key: 'sunroof', category: 'premium', weight: 4, aliases: ['sunroof', 'electric_sunroof', 'electric sunroof'] },
+  { key: 'panoramicSunroof', category: 'premium', weight: 7, aliases: ['panoramicSunroof', 'panoramic_sunroof', 'panoramic sunroof'] },
+  { key: 'wirelessCharging', category: 'premium', weight: 4, aliases: ['wirelessCharging', 'wireless_charger', 'wireless charger', 'wireless charging'] },
+  { key: 'connectedCar', category: 'premium', weight: 4, aliases: ['connectedCar', 'connected_car', 'connected car tech', 'connected car'] },
+  { key: 'premiumSound', category: 'premium', weight: 5, aliases: ['premiumSound', 'premium_sound', 'branded speakers', 'premium audio'] },
+  { key: 'adas', category: 'premium', weight: 7, aliases: ['adas', 'advanced driver assistance system'] },
+  { key: 'laneKeepAssist', category: 'premium', weight: 3, aliases: ['laneKeepAssist', 'lane_keep_assist', 'lane keep assist'] },
+  { key: 'adaptiveCruiseControl', category: 'premium', weight: 4, aliases: ['adaptiveCruiseControl', 'adaptive_cruise_control', 'adaptive cruise control'] },
+  { key: 'ledDrls', category: 'premium', weight: 2, aliases: ['led_drls', 'led drls'] },
+  { key: 'ledTaillights', category: 'premium', weight: 2, aliases: ['led_taillights', 'led taillights'] }
 ];
 
 const featureDirectFallback = (profile, featureKey) => {
@@ -248,11 +270,17 @@ const featureDirectFallback = (profile, featureKey) => {
   return direct[featureKey] === true;
 };
 
+const FEATURE_LAYER_WEIGHTS = {
+  essential: 0.50,
+  useful: 0.35,
+  premium: 0.15
+};
+
 const scoreFeatureRichness = (profile, matrixDoc) => {
   if (!matrixDoc) {
     return {
       score: null,
-      scoreType: 'overall_richness_v2',
+      scoreType: 'layered_equipment_richness_v2_1',
       status: 'not_scored_missing_feature_matrix',
       confidence: 'low',
       subScores: {},
@@ -260,63 +288,103 @@ const scoreFeatureRichness = (profile, matrixDoc) => {
       featureDetectionDiagnostic: {
         featureKeysInMatrix: 0,
         aliasesChecked: FEATURE_DEFS.length,
-        suspiciouslyLowScore: false,
+        suspiciouslyLowScore: false
       },
       caveats: ['Feature matrix could not be joined for this variant.']
     };
   }
 
-  const category = {
-    useful: { present: 0, possible: 0, keys: [] },
-    premium: { present: 0, possible: 0, keys: [] },
-    tech: { present: 0, possible: 0, keys: [] },
+  const featureKeysInMatrix =
+    safeArray(matrixDoc?.featureKeys).length ||
+    Object.keys(matrixDoc?.featuresByKey || {}).length ||
+    0;
+
+  const layers = {
+    essential: { presentWeighted: 0, possibleWeighted: 0, presentKeys: [] },
+    useful: { presentWeighted: 0, possibleWeighted: 0, presentKeys: [] },
+    premium: { presentWeighted: 0, possibleWeighted: 0, presentKeys: [] }
   };
 
-  const presentKeys = [];
+  const directFallback = (key) => {
+    const safety = profile.safetyBasis || {};
+    const practicality = profile.practicalityBasis || {};
+
+    if (key === 'rearAcVents') return practicality.rearAcVents === true;
+    if (key === 'rearCamera') return safety.hasRearCamera === true;
+    if (key === 'camera360') return safety.hasCamera360 === true;
+    if (key === 'adas') return safety.hasAdas === true;
+
+    return false;
+  };
+
   let presentWeighted = 0;
   let possibleWeighted = 0;
+  const presentKeys = [];
 
   for (const def of FEATURE_DEFS) {
+    const layer = layers[def.category] ? def.category : 'useful';
     possibleWeighted += def.weight;
-    category[def.category].possible += def.weight;
+    layers[layer].possibleWeighted += def.weight;
 
     const present =
       hasFeature(matrixDoc, def.aliases) ||
       featureSpecificFallback(matrixDoc, def.key) ||
-      featureDirectFallback(profile, def.key);
+      directFallback(def.key);
+
     if (present) {
       presentWeighted += def.weight;
-      category[def.category].present += def.weight;
-      category[def.category].keys.push(def.key);
       presentKeys.push(def.key);
+      layers[layer].presentWeighted += def.weight;
+      layers[layer].presentKeys.push(def.key);
     }
   }
 
   const subScores = Object.fromEntries(
-    Object.entries(category).map(([key, row]) => [
+    Object.entries(layers).map(([key, row]) => [
       key,
       {
-        score: row.possible ? round((row.present / row.possible) * 100) : null,
-        presentWeighted: row.present,
-        possibleWeighted: row.possible,
-        presentKeys: row.keys,
+        score: row.possibleWeighted ? round((row.presentWeighted / row.possibleWeighted) * 100) : null,
+        presentWeighted: row.presentWeighted,
+        possibleWeighted: row.possibleWeighted,
+        presentKeys: row.presentKeys
       }
     ])
   );
 
-  const overall = possibleWeighted ? round((presentWeighted / possibleWeighted) * 100) : null;
-  const featureKeysInMatrix = featureKeysCount(matrixDoc);
-  const suspiciouslyLowScore = hasNumber(overall) && overall < 15 && featureKeysInMatrix > 30;
+  const weightedLayerParts = Object.entries(FEATURE_LAYER_WEIGHTS)
+    .map(([key, weight]) => ({
+      key,
+      weight,
+      score: subScores[key]?.score
+    }))
+    .filter((row) => hasNumber(row.score));
 
-  const caveats = ['Feature score v2 measures weighted feature richness, not final buyer fit.'];
+  const layerWeightTotal = weightedLayerParts.reduce((sum, row) => sum + row.weight, 0);
+
+  const layeredScore = layerWeightTotal
+    ? weightedLayerParts.reduce((sum, row) => sum + row.score * row.weight, 0) / layerWeightTotal
+    : null;
+
+  const rawCoverageScore = possibleWeighted ? (presentWeighted / possibleWeighted) * 100 : null;
+
+  const suspiciouslyLowScore =
+    hasNumber(layeredScore) &&
+    layeredScore < 15 &&
+    featureKeysInMatrix > 35 &&
+    presentKeys.length <= 2;
+
+  const caveats = [
+    'Feature score v2.1 is layered: essentials 50%, useful upgrades 35%, premium desirables 15%. Safety-critical equipment is handled mainly by safetyScore.'
+  ];
 
   if (suspiciouslyLowScore) {
-    caveats.push('Feature score is suspiciously low despite many feature keys in matrix; alias coverage should be reviewed before using this score for strong conclusions.');
+    caveats.push('Feature score is suspiciously low despite many feature keys in matrix; alias coverage should be reviewed before using this score strongly.');
   }
 
   return {
-    score: overall,
-    scoreType: 'overall_richness_v2',
+    score: round(layeredScore),
+    rawCoverageScore: round(rawCoverageScore),
+    scoreType: 'layered_equipment_richness_v2_1',
     status: 'scored',
     confidence: suspiciouslyLowScore ? 'medium_low' : 'medium',
     subScores,
@@ -324,17 +392,19 @@ const scoreFeatureRichness = (profile, matrixDoc) => {
       presentWeighted,
       possibleWeighted,
       presentKeys,
+      layerWeights: FEATURE_LAYER_WEIGHTS,
       joinKey: matrixDoc.__joinKey || null,
       featureMatrixBuildId: matrixDoc.buildId || null
     },
     featureDetectionDiagnostic: {
       featureKeysInMatrix,
       aliasesChecked: FEATURE_DEFS.length,
-      suspiciouslyLowScore,
+      suspiciouslyLowScore
     },
     caveats
   };
 };
+
 
 const crashStarsFromSafety = (safety) => ({
   adult: firstNumber(safety?.bharatNcapAdult?.stars, safety?.globalNcapAdult?.stars),
@@ -1073,6 +1143,8 @@ const buildScoreDoc = ({ profile, matrixDoc, modules, valueScore, regretRisk }) 
   console.error(`[load] Decision profiles=${allProfiles.length}; scoring=${scoringProfiles.length}`);
 
   console.error('[load] Loading feature matrix docs...');
+  console.time('[load] feature_matrix_find_toArray');
+
   const featureDocs = await matrixCol.find({}, {
     projection: {
       _id: 0,
@@ -1082,14 +1154,17 @@ const buildScoreDoc = ({ profile, matrixDoc, modules, valueScore, regretRisk }) 
       discontinuedPricelistMatched: 1,
       featureKeys: 1,
       featuresByKey: 1,
-      decisionSignals: 1,
-      buildId: 1,
-      updatedAt: 1
+      buildId: 1
     }
-  }).toArray();
+  }).maxTimeMS(120000).toArray();
 
+  console.timeEnd('[load] feature_matrix_find_toArray');
+  console.error(`[load] Feature matrix docs=${featureDocs.length}`);
+
+  console.time('[load] build_feature_matrix_index');
   const featureIndex = buildFeatureMatrixIndex(featureDocs);
-  console.error(`[load] Feature matrix docs=${featureDocs.length}; join index=${featureIndex.size}`);
+  console.timeEnd('[load] build_feature_matrix_index');
+  console.error(`[load] Feature matrix join index=${featureIndex.size}`);
 
   const distributions = buildDistributions(allProfiles);
 
