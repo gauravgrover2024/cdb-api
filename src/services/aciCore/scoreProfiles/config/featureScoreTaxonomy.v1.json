@@ -1,0 +1,785 @@
+{
+  "taxonomyVersion": "feature_score_taxonomy_v1_1_2026_06_03_source_keys",
+  "formulaCompatibility": "trust_first_module_scores_v2_2_taxonomy_driven_feature_score",
+  "status": "interim_curated_from_v2_1_with_source_keys",
+  "note": "External taxonomy source for feature scoring. Includes sourceKeys discovered from vehicle_variant_feature_matrix_v2.featureKeys to preserve compact-projection detection behavior.",
+  "layerWeights": {
+    "essential": 0.5,
+    "useful": 0.35,
+    "premium": 0.15
+  },
+  "featureDefinitions": [
+    {
+      "order": 1,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "airConditioning",
+      "category": "essential",
+      "weight": 6,
+      "aliases": [
+        "air_conditioning",
+        "air conditioning",
+        "ac"
+      ],
+      "sourceKeys": [
+        "ac",
+        "acceleration",
+        "acceleration_0_100kmph",
+        "acceleration_0_60kmph",
+        "accessory_power_outlet",
+        "acoustic_vehicle_alert_system",
+        "active_noise_cancellation",
+        "adas_package",
+        "air_conditioning",
+        "approach_angle",
+        "battery_capacity",
+        "boot_space",
+        "boot_space_rear_seat_folding",
+        "charging_time_ac",
+        "charging_time_ac_11_2kw",
+        "charging_time_ac_11kw",
+        "charging_time_ac_15a_plug_point",
+        "charging_time_ac_22kw",
+        "charging_time_ac_2kw",
+        "charging_time_ac_3_3kw",
+        "charging_time_ac_7_2kw",
+        "charging_time_ac_7_4kw",
+        "cng_fuel_tank_capacity",
+        "diesel_fuel_tank_capacity",
+        "displacement",
+        "electric_fuel_tank_capacity",
+        "engine_displacement",
+        "front_impact_beams",
+        "fuel_tank_capacity",
+        "impact_sensing_auto_door_unlock",
+        "petrol_fuel_tank_capacity",
+        "petrol_fuel_tank_capacity_litres",
+        "real_time_vehicle_tracking",
+        "rear_ac_vents",
+        "remote_ac_on_off",
+        "reported_boot_space",
+        "save_route_place",
+        "seating_capacity",
+        "side_impact_beams",
+        "smart_access_card_entry",
+        "tachometer",
+        "towing_capacity",
+        "traction_control"
+      ]
+    },
+    {
+      "order": 2,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "heater",
+      "category": "essential",
+      "weight": 2,
+      "aliases": [
+        "heater"
+      ],
+      "sourceKeys": [
+        "heater"
+      ]
+    },
+    {
+      "order": 3,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "powerSteering",
+      "category": "essential",
+      "weight": 6,
+      "aliases": [
+        "power_steering",
+        "power steering"
+      ],
+      "sourceKeys": [
+        "power_steering"
+      ]
+    },
+    {
+      "order": 4,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "powerWindows",
+      "category": "essential",
+      "weight": 5,
+      "aliases": [
+        "power_windows",
+        "power windows",
+        "power_windows_front"
+      ],
+      "sourceKeys": [
+        "anti_pinch_power_windows",
+        "power_windows",
+        "power_windows_front"
+      ]
+    },
+    {
+      "order": 5,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "centralLocking",
+      "category": "essential",
+      "weight": 5,
+      "aliases": [
+        "central_locking",
+        "central locking"
+      ],
+      "sourceKeys": [
+        "central_locking"
+      ]
+    },
+    {
+      "order": 6,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "keylessEntry",
+      "category": "essential",
+      "weight": 4,
+      "aliases": [
+        "keyless_entry",
+        "keyless entry"
+      ],
+      "sourceKeys": [
+        "keyless_entry"
+      ]
+    },
+    {
+      "order": 7,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "accessoryPowerOutlet",
+      "category": "essential",
+      "weight": 3,
+      "aliases": [
+        "accessory_power_outlet",
+        "accessory power outlet",
+        "power outlet"
+      ],
+      "sourceKeys": [
+        "accessory_power_outlet",
+        "power_outlet"
+      ]
+    },
+    {
+      "order": 8,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "usbPorts",
+      "category": "essential",
+      "weight": 3,
+      "aliases": [
+        "usb_ports",
+        "usb ports",
+        "usb_charger",
+        "usb charger"
+      ],
+      "sourceKeys": [
+        "usb_charger",
+        "usb_ports"
+      ]
+    },
+    {
+      "order": 9,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "adjustableSteering",
+      "category": "essential",
+      "weight": 3,
+      "aliases": [
+        "adjustable_steering",
+        "adjustable steering"
+      ],
+      "sourceKeys": [
+        "adjustable_steering"
+      ]
+    },
+    {
+      "order": 10,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "adjustableHeadrest",
+      "category": "essential",
+      "weight": 3,
+      "aliases": [
+        "adjustable_headrest",
+        "adjustable headrest"
+      ],
+      "sourceKeys": [
+        "adjustable_headrest"
+      ]
+    },
+    {
+      "order": 11,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "rearSeatHeadrest",
+      "category": "essential",
+      "weight": 3,
+      "aliases": [
+        "rear_seat_headrest",
+        "rear seat headrest"
+      ],
+      "sourceKeys": [
+        "rear_seat_headrest"
+      ]
+    },
+    {
+      "order": 12,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "parkingSensorsRear",
+      "category": "essential",
+      "weight": 4,
+      "aliases": [
+        "parkingSensorsRear",
+        "rear_parking_sensors",
+        "rear parking sensors"
+      ],
+      "sourceKeys": [
+        "parking_sensors",
+        "parkingsensorsrear",
+        "rear_parking_sensors"
+      ]
+    },
+    {
+      "order": 13,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "rearAcVents",
+      "category": "useful",
+      "weight": 7,
+      "aliases": [
+        "rearAcVents",
+        "rear_ac_vents",
+        "rear ac vents"
+      ],
+      "sourceKeys": [
+        "rear_ac_vents",
+        "rearacvents"
+      ]
+    },
+    {
+      "order": 14,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "rearCamera",
+      "category": "useful",
+      "weight": 7,
+      "aliases": [
+        "rearCamera",
+        "rear_camera",
+        "rear parking camera",
+        "parking camera"
+      ],
+      "sourceKeys": [
+        "parking_camera",
+        "rear_camera",
+        "rear_parking_camera",
+        "rearcamera"
+      ]
+    },
+    {
+      "order": 15,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "parkingSensorsFront",
+      "category": "useful",
+      "weight": 4,
+      "aliases": [
+        "parkingSensorsFront",
+        "front_parking_sensors",
+        "front parking sensors"
+      ],
+      "sourceKeys": [
+        "front_parking_sensors",
+        "parking_sensors",
+        "parkingsensorsfront"
+      ]
+    },
+    {
+      "order": 16,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "touchscreen",
+      "category": "useful",
+      "weight": 5,
+      "aliases": [
+        "touchscreen",
+        "touchscreenInfotainment",
+        "touchscreen infotainment",
+        "touchscreen_size"
+      ],
+      "sourceKeys": [
+        "rear_touchscreen",
+        "touchscreen",
+        "touchscreen_infotainment",
+        "touchscreen_size",
+        "touchscreeninfotainment"
+      ]
+    },
+    {
+      "order": 17,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "androidAuto",
+      "category": "useful",
+      "weight": 4,
+      "aliases": [
+        "android_auto",
+        "android auto"
+      ],
+      "sourceKeys": [
+        "android_auto"
+      ]
+    },
+    {
+      "order": 18,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "appleCarPlay",
+      "category": "useful",
+      "weight": 4,
+      "aliases": [
+        "apple_carplay",
+        "apple carplay"
+      ],
+      "sourceKeys": [
+        "apple_carplay"
+      ]
+    },
+    {
+      "order": 19,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "bluetoothConnectivity",
+      "category": "useful",
+      "weight": 3,
+      "aliases": [
+        "bluetooth_connectivity",
+        "bluetooth connectivity",
+        "bluetooth"
+      ],
+      "sourceKeys": [
+        "bluetooth",
+        "bluetooth_connectivity"
+      ]
+    },
+    {
+      "order": 20,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "speakers",
+      "category": "useful",
+      "weight": 3,
+      "aliases": [
+        "speakers",
+        "number_of_speakers",
+        "number of speakers"
+      ],
+      "sourceKeys": [
+        "number_of_speakers",
+        "speakers"
+      ]
+    },
+    {
+      "order": 21,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "radio",
+      "category": "useful",
+      "weight": 2,
+      "aliases": [
+        "radio",
+        "integrated_2din_audio",
+        "integrated 2din audio"
+      ],
+      "sourceKeys": [
+        "integrated_2din_audio",
+        "radio"
+      ]
+    },
+    {
+      "order": 22,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "digitalInstrumentCluster",
+      "category": "useful",
+      "weight": 4,
+      "aliases": [
+        "digitalInstrumentCluster",
+        "digital_cluster",
+        "digital cluster",
+        "digital instrument cluster"
+      ],
+      "sourceKeys": [
+        "digital_cluster",
+        "digital_cluster_size",
+        "digital_instrument_cluster",
+        "digitalinstrumentcluster"
+      ]
+    },
+    {
+      "order": 23,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "multiFunctionSteering",
+      "category": "useful",
+      "weight": 3,
+      "aliases": [
+        "multi_function_steering_wheel",
+        "multi function steering wheel"
+      ],
+      "sourceKeys": [
+        "multi_function_steering_wheel"
+      ]
+    },
+    {
+      "order": 24,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "foldableRearSeat",
+      "category": "useful",
+      "weight": 3,
+      "aliases": [
+        "foldable_rear_seat",
+        "foldable rear seat"
+      ],
+      "sourceKeys": [
+        "foldable_rear_seat"
+      ]
+    },
+    {
+      "order": 25,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "rearDefogger",
+      "category": "useful",
+      "weight": 3,
+      "aliases": [
+        "rear_window_defogger",
+        "rear window defogger"
+      ],
+      "sourceKeys": [
+        "rear_window_defogger"
+      ]
+    },
+    {
+      "order": 26,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "cruiseControl",
+      "category": "useful",
+      "weight": 5,
+      "aliases": [
+        "cruiseControl",
+        "cruise_control",
+        "cruise control"
+      ],
+      "sourceKeys": [
+        "adaptive_cruise_control",
+        "cruise_control",
+        "cruisecontrol"
+      ]
+    },
+    {
+      "order": 27,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "hillAssist",
+      "category": "useful",
+      "weight": 3,
+      "aliases": [
+        "hill_assist",
+        "hill assist"
+      ],
+      "sourceKeys": [
+        "hill_assist"
+      ]
+    },
+    {
+      "order": 28,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "camera360",
+      "category": "premium",
+      "weight": 8,
+      "aliases": [
+        "camera360",
+        "360Camera",
+        "360_degree_camera",
+        "360 degree camera",
+        "360 camera"
+      ],
+      "sourceKeys": [
+        "360_camera",
+        "360_degree_camera",
+        "360camera",
+        "camera360"
+      ]
+    },
+    {
+      "order": 29,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "automaticClimateControl",
+      "category": "premium",
+      "weight": 5,
+      "aliases": [
+        "automaticClimateControl",
+        "automatic_climate_control",
+        "auto ac",
+        "automatic climate control"
+      ],
+      "sourceKeys": [
+        "auto_ac",
+        "automatic_climate_control",
+        "automaticclimatecontrol"
+      ]
+    },
+    {
+      "order": 30,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "ventilatedSeats",
+      "category": "premium",
+      "weight": 8,
+      "aliases": [
+        "ventilatedSeats",
+        "ventilated_seats",
+        "front ventilated seats",
+        "ventilated front seats"
+      ],
+      "sourceKeys": [
+        "front_ventilated_seats",
+        "ventilated_front_seats",
+        "ventilated_seats",
+        "ventilatedseats"
+      ]
+    },
+    {
+      "order": 31,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "poweredDriverSeat",
+      "category": "premium",
+      "weight": 6,
+      "aliases": [
+        "poweredDriverSeat",
+        "powered_driver_seat",
+        "power driver seat",
+        "electric driver seat"
+      ],
+      "sourceKeys": [
+        "electric_driver_seat",
+        "power_driver_seat",
+        "powered_driver_seat",
+        "powereddriverseat"
+      ]
+    },
+    {
+      "order": 32,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "leatheretteSeats",
+      "category": "premium",
+      "weight": 5,
+      "aliases": [
+        "leatheretteSeats",
+        "leatherette_seats",
+        "leatherette upholstery",
+        "leather seats"
+      ],
+      "sourceKeys": [
+        "leather_seats",
+        "leatherette_seats",
+        "leatherette_upholstery",
+        "leatheretteseats"
+      ]
+    },
+    {
+      "order": 33,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "sunroof",
+      "category": "premium",
+      "weight": 4,
+      "aliases": [
+        "sunroof",
+        "electric_sunroof",
+        "electric sunroof"
+      ],
+      "sourceKeys": [
+        "electric_sunroof",
+        "sunroof",
+        "voice_assisted_sunroof"
+      ]
+    },
+    {
+      "order": 34,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "panoramicSunroof",
+      "category": "premium",
+      "weight": 7,
+      "aliases": [
+        "panoramicSunroof",
+        "panoramic_sunroof",
+        "panoramic sunroof"
+      ],
+      "sourceKeys": [
+        "panoramic_sunroof",
+        "panoramicsunroof"
+      ]
+    },
+    {
+      "order": 35,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "wirelessCharging",
+      "category": "premium",
+      "weight": 4,
+      "aliases": [
+        "wirelessCharging",
+        "wireless_charger",
+        "wireless charger",
+        "wireless charging"
+      ],
+      "sourceKeys": [
+        "wireless_charger",
+        "wireless_charging",
+        "wirelesscharging"
+      ]
+    },
+    {
+      "order": 36,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "connectedCar",
+      "category": "premium",
+      "weight": 4,
+      "aliases": [
+        "connectedCar",
+        "connected_car",
+        "connected car tech",
+        "connected car"
+      ],
+      "sourceKeys": [
+        "connected_car",
+        "connected_car_features",
+        "connected_car_tech",
+        "connectedcar"
+      ]
+    },
+    {
+      "order": 37,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "premiumSound",
+      "category": "premium",
+      "weight": 5,
+      "aliases": [
+        "premiumSound",
+        "premium_sound",
+        "branded speakers",
+        "premium audio"
+      ],
+      "sourceKeys": [
+        "branded_speakers",
+        "premium_audio",
+        "premium_sound",
+        "premiumsound"
+      ]
+    },
+    {
+      "order": 38,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "adas",
+      "category": "premium",
+      "weight": 7,
+      "aliases": [
+        "adas",
+        "advanced driver assistance system"
+      ],
+      "sourceKeys": [
+        "adas",
+        "adas_package",
+        "advanced_driver_assistance_system"
+      ]
+    },
+    {
+      "order": 39,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "laneKeepAssist",
+      "category": "premium",
+      "weight": 3,
+      "aliases": [
+        "laneKeepAssist",
+        "lane_keep_assist",
+        "lane keep assist"
+      ],
+      "sourceKeys": [
+        "lane_keep_assist",
+        "lanekeepassist"
+      ]
+    },
+    {
+      "order": 40,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "adaptiveCruiseControl",
+      "category": "premium",
+      "weight": 4,
+      "aliases": [
+        "adaptiveCruiseControl",
+        "adaptive_cruise_control",
+        "adaptive cruise control"
+      ],
+      "sourceKeys": [
+        "adaptive_cruise_control",
+        "adaptivecruisecontrol"
+      ]
+    },
+    {
+      "order": 41,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "ledDrls",
+      "category": "premium",
+      "weight": 2,
+      "aliases": [
+        "led_drls",
+        "led drls"
+      ],
+      "sourceKeys": [
+        "led_drls"
+      ]
+    },
+    {
+      "order": 42,
+      "scoreEligible": true,
+      "source": "extracted_from_layered_feature_score_v2_1",
+      "key": "ledTaillights",
+      "category": "premium",
+      "weight": 2,
+      "aliases": [
+        "led_taillights",
+        "led taillights"
+      ],
+      "sourceKeys": [
+        "led_taillights"
+      ]
+    }
+  ],
+  "generatedAt": "2026-06-03T11:07:46.100Z",
+  "sourceKeyDiscovery": {
+    "matrixCollection": "vehicle_variant_feature_matrix_v2",
+    "scannedDocs": 2936,
+    "uniqueMatrixFeatureKeys": 392,
+    "featuresWithNoSourceKeys": 0,
+    "expandedFeatureCount": 3,
+    "totalFeatureSourceKeys": 137
+  }
+}

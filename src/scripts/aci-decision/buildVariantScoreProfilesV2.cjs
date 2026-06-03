@@ -2,6 +2,7 @@
 require('dotenv').config();
 
 const mongoose = require('mongoose');
+const { loadFeatureScoreTaxonomy } = require('../../services/aciCore/scoreProfiles/featureScoreTaxonomy.loader.cjs');
 
 const PROFILE_COLLECTION =
   process.env.ACI_VARIANT_DECISION_PROFILE_COLLECTION || 'aci_vehicle_variant_decision_profile';
@@ -16,8 +17,12 @@ const RESET = args.includes('--reset');
 const limitArgIndex = args.indexOf('--limit');
 const LIMIT = limitArgIndex >= 0 ? Number(args[limitArgIndex + 1]) : 0;
 
-const BUILD_VERSION = 'variant_score_profile_v2_1_2026_06_03';
-const FORMULA_VERSION = 'trust_first_module_scores_v2_1_layered_feature_score';
+const BUILD_VERSION = 'variant_score_profile_v2_2_2026_06_03';
+const FORMULA_VERSION = 'trust_first_module_scores_v2_2_taxonomy_driven_feature_score';
+
+const FEATURE_SCORE_TAXONOMY = loadFeatureScoreTaxonomy();
+const FEATURE_DEFS = FEATURE_SCORE_TAXONOMY.features;
+const FEATURE_LAYER_WEIGHTS = FEATURE_SCORE_TAXONOMY.layerWeights;
 
 const hasNumber = (value) =>
   value !== null &&
@@ -206,55 +211,6 @@ const featureKeysCount = (matrixDoc) => {
   return safeArray(matrixDoc.featureKeys).length || Object.keys(matrixDoc.featuresByKey || {}).length || 0;
 };
 
-const FEATURE_DEFS = [
-  // Essentials: hygiene features a buyer expects even in basic/private-use cars.
-  { key: 'airConditioning', category: 'essential', weight: 6, aliases: ['air_conditioning', 'air conditioning', 'ac'] },
-  { key: 'heater', category: 'essential', weight: 2, aliases: ['heater'] },
-  { key: 'powerSteering', category: 'essential', weight: 6, aliases: ['power_steering', 'power steering'] },
-  { key: 'powerWindows', category: 'essential', weight: 5, aliases: ['power_windows', 'power windows', 'power_windows_front'] },
-  { key: 'centralLocking', category: 'essential', weight: 5, aliases: ['central_locking', 'central locking'] },
-  { key: 'keylessEntry', category: 'essential', weight: 4, aliases: ['keyless_entry', 'keyless entry'] },
-  { key: 'accessoryPowerOutlet', category: 'essential', weight: 3, aliases: ['accessory_power_outlet', 'accessory power outlet', 'power outlet'] },
-  { key: 'usbPorts', category: 'essential', weight: 3, aliases: ['usb_ports', 'usb ports', 'usb_charger', 'usb charger'] },
-  { key: 'adjustableSteering', category: 'essential', weight: 3, aliases: ['adjustable_steering', 'adjustable steering'] },
-  { key: 'adjustableHeadrest', category: 'essential', weight: 3, aliases: ['adjustable_headrest', 'adjustable headrest'] },
-  { key: 'rearSeatHeadrest', category: 'essential', weight: 3, aliases: ['rear_seat_headrest', 'rear seat headrest'] },
-  { key: 'parkingSensorsRear', category: 'essential', weight: 4, aliases: ['parkingSensorsRear', 'rear_parking_sensors', 'rear parking sensors'] },
-
-  // Useful upgrades: features that materially improve daily ownership/use.
-  { key: 'rearAcVents', category: 'useful', weight: 7, aliases: ['rearAcVents', 'rear_ac_vents', 'rear ac vents'] },
-  { key: 'rearCamera', category: 'useful', weight: 7, aliases: ['rearCamera', 'rear_camera', 'rear parking camera', 'parking camera'] },
-  { key: 'parkingSensorsFront', category: 'useful', weight: 4, aliases: ['parkingSensorsFront', 'front_parking_sensors', 'front parking sensors'] },
-  { key: 'touchscreen', category: 'useful', weight: 5, aliases: ['touchscreen', 'touchscreenInfotainment', 'touchscreen infotainment', 'touchscreen_size'] },
-  { key: 'androidAuto', category: 'useful', weight: 4, aliases: ['android_auto', 'android auto'] },
-  { key: 'appleCarPlay', category: 'useful', weight: 4, aliases: ['apple_carplay', 'apple carplay'] },
-  { key: 'bluetoothConnectivity', category: 'useful', weight: 3, aliases: ['bluetooth_connectivity', 'bluetooth connectivity', 'bluetooth'] },
-  { key: 'speakers', category: 'useful', weight: 3, aliases: ['speakers', 'number_of_speakers', 'number of speakers'] },
-  { key: 'radio', category: 'useful', weight: 2, aliases: ['radio', 'integrated_2din_audio', 'integrated 2din audio'] },
-  { key: 'digitalInstrumentCluster', category: 'useful', weight: 4, aliases: ['digitalInstrumentCluster', 'digital_cluster', 'digital cluster', 'digital instrument cluster'] },
-  { key: 'multiFunctionSteering', category: 'useful', weight: 3, aliases: ['multi_function_steering_wheel', 'multi function steering wheel'] },
-  { key: 'foldableRearSeat', category: 'useful', weight: 3, aliases: ['foldable_rear_seat', 'foldable rear seat'] },
-  { key: 'rearDefogger', category: 'useful', weight: 3, aliases: ['rear_window_defogger', 'rear window defogger'] },
-  { key: 'cruiseControl', category: 'useful', weight: 5, aliases: ['cruiseControl', 'cruise_control', 'cruise control'] },
-  { key: 'hillAssist', category: 'useful', weight: 3, aliases: ['hill_assist', 'hill assist'] },
-
-  // Premium desirables: aspirational / higher-trim equipment.
-  { key: 'camera360', category: 'premium', weight: 8, aliases: ['camera360', '360Camera', '360_degree_camera', '360 degree camera', '360 camera'] },
-  { key: 'automaticClimateControl', category: 'premium', weight: 5, aliases: ['automaticClimateControl', 'automatic_climate_control', 'auto ac', 'automatic climate control'] },
-  { key: 'ventilatedSeats', category: 'premium', weight: 8, aliases: ['ventilatedSeats', 'ventilated_seats', 'front ventilated seats', 'ventilated front seats'] },
-  { key: 'poweredDriverSeat', category: 'premium', weight: 6, aliases: ['poweredDriverSeat', 'powered_driver_seat', 'power driver seat', 'electric driver seat'] },
-  { key: 'leatheretteSeats', category: 'premium', weight: 5, aliases: ['leatheretteSeats', 'leatherette_seats', 'leatherette upholstery', 'leather seats'] },
-  { key: 'sunroof', category: 'premium', weight: 4, aliases: ['sunroof', 'electric_sunroof', 'electric sunroof'] },
-  { key: 'panoramicSunroof', category: 'premium', weight: 7, aliases: ['panoramicSunroof', 'panoramic_sunroof', 'panoramic sunroof'] },
-  { key: 'wirelessCharging', category: 'premium', weight: 4, aliases: ['wirelessCharging', 'wireless_charger', 'wireless charger', 'wireless charging'] },
-  { key: 'connectedCar', category: 'premium', weight: 4, aliases: ['connectedCar', 'connected_car', 'connected car tech', 'connected car'] },
-  { key: 'premiumSound', category: 'premium', weight: 5, aliases: ['premiumSound', 'premium_sound', 'branded speakers', 'premium audio'] },
-  { key: 'adas', category: 'premium', weight: 7, aliases: ['adas', 'advanced driver assistance system'] },
-  { key: 'laneKeepAssist', category: 'premium', weight: 3, aliases: ['laneKeepAssist', 'lane_keep_assist', 'lane keep assist'] },
-  { key: 'adaptiveCruiseControl', category: 'premium', weight: 4, aliases: ['adaptiveCruiseControl', 'adaptive_cruise_control', 'adaptive cruise control'] },
-  { key: 'ledDrls', category: 'premium', weight: 2, aliases: ['led_drls', 'led drls'] },
-  { key: 'ledTaillights', category: 'premium', weight: 2, aliases: ['led_taillights', 'led taillights'] }
-];
 
 const featureDirectFallback = (profile, featureKey) => {
   const safety = profile.safetyBasis || {};
@@ -270,17 +226,12 @@ const featureDirectFallback = (profile, featureKey) => {
   return direct[featureKey] === true;
 };
 
-const FEATURE_LAYER_WEIGHTS = {
-  essential: 0.50,
-  useful: 0.35,
-  premium: 0.15
-};
 
 const scoreFeatureRichness = (profile, matrixDoc) => {
   if (!matrixDoc) {
     return {
       score: null,
-      scoreType: 'layered_equipment_richness_v2_1',
+      scoreType: 'taxonomy_driven_layered_equipment_richness_v2_2',
       status: 'not_scored_missing_feature_matrix',
       confidence: 'low',
       subScores: {},
@@ -374,7 +325,7 @@ const scoreFeatureRichness = (profile, matrixDoc) => {
     presentKeys.length <= 2;
 
   const caveats = [
-    'Feature score v2.1 is layered: essentials 50%, useful upgrades 35%, premium desirables 15%. Safety-critical equipment is handled mainly by safetyScore.'
+    'Feature score is taxonomy-driven and layered. Safety-critical equipment is handled mainly by safetyScore.'
   ];
 
   if (suspiciouslyLowScore) {
@@ -384,7 +335,7 @@ const scoreFeatureRichness = (profile, matrixDoc) => {
   return {
     score: round(layeredScore),
     rawCoverageScore: round(rawCoverageScore),
-    scoreType: 'layered_equipment_richness_v2_1',
+    scoreType: 'taxonomy_driven_layered_equipment_richness_v2_2',
     status: 'scored',
     confidence: suspiciouslyLowScore ? 'medium_low' : 'medium',
     subScores,
@@ -392,6 +343,8 @@ const scoreFeatureRichness = (profile, matrixDoc) => {
       presentWeighted,
       possibleWeighted,
       presentKeys,
+      taxonomyVersion: FEATURE_SCORE_TAXONOMY.taxonomyVersion,
+      taxonomySourcePath: FEATURE_SCORE_TAXONOMY.sourcePath,
       layerWeights: FEATURE_LAYER_WEIGHTS,
       joinKey: matrixDoc.__joinKey || null,
       featureMatrixBuildId: matrixDoc.buildId || null
@@ -1011,6 +964,43 @@ const buildDistributions = (profiles) => {
   return dist;
 };
 
+
+const getFeatureMatrixProjection = () => {
+  const projection = {
+    _id: 0,
+    modelKey: 1,
+    variantKey: 1,
+    activePricelistMatched: 1,
+    discontinuedPricelistMatched: 1,
+    featureKeys: 1,
+    buildId: 1,
+    updatedAt: 1,
+  };
+
+  const featureKeys = new Set();
+
+  for (const feature of FEATURE_DEFS) {
+    for (const alias of feature.aliases || []) {
+      const key = normKey(alias);
+      if (key) featureKeys.add(key);
+    }
+
+    for (const sourceKey of feature.sourceKeys || []) {
+      const key = normKey(sourceKey);
+      if (key) featureKeys.add(key);
+    }
+  }
+
+  // Generic value used by positional parking-sensor detection.
+  featureKeys.add('parking_sensors');
+
+  for (const key of featureKeys) {
+    projection[`featuresByKey.${key}`] = 1;
+  }
+
+  return projection;
+};
+
 const buildFeatureMatrixIndex = (featureDocs) => {
   const index = new Map();
 
@@ -1092,6 +1082,8 @@ const buildScoreDoc = ({ profile, matrixDoc, modules, valueScore, regretRisk }) 
 
     buildVersion: BUILD_VERSION,
     formulaVersion: FORMULA_VERSION,
+    featureScoreTaxonomyVersion: FEATURE_SCORE_TAXONOMY.taxonomyVersion,
+    featureScoreTaxonomySourcePath: FEATURE_SCORE_TAXONOMY.sourcePath,
     builtAt: new Date(),
 
     ...allModules,
@@ -1146,16 +1138,7 @@ const buildScoreDoc = ({ profile, matrixDoc, modules, valueScore, regretRisk }) 
   console.time('[load] feature_matrix_find_toArray');
 
   const featureDocs = await matrixCol.find({}, {
-    projection: {
-      _id: 0,
-      modelKey: 1,
-      variantKey: 1,
-      activePricelistMatched: 1,
-      discontinuedPricelistMatched: 1,
-      featureKeys: 1,
-      featuresByKey: 1,
-      buildId: 1
-    }
+    projection: getFeatureMatrixProjection()
   }).maxTimeMS(120000).toArray();
 
   console.timeEnd('[load] feature_matrix_find_toArray');
