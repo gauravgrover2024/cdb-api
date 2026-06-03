@@ -2,14 +2,30 @@ const fs = require("fs");
 const path = require("path");
 const { ACI_PROGRESS_MODULES } = require("./aciProgress.registry.cjs");
 
+const normalizeProgressModule = (module) => {
+  if (!module || typeof module !== "object" || typeof module.id !== "string") {
+    return null;
+  }
+
+  const items = Array.isArray(module.items)
+    ? module.items
+    : Array.isArray(module.milestones)
+      ? module.milestones
+      : null;
+
+  if (!items) return null;
+
+  return {
+    ...module,
+    group: module.group || module.area || "Roadmap",
+    items
+  };
+};
+
 const getSafeProgressModules = () =>
-  (ACI_PROGRESS_MODULES || []).filter(
-    (module) =>
-      module &&
-      typeof module === "object" &&
-      typeof module.id === "string" &&
-      Array.isArray(module.items),
-  );
+  (ACI_PROGRESS_MODULES || [])
+    .map(normalizeProgressModule)
+    .filter(Boolean);
 
 
 const REPORT_DIR = path.resolve(process.cwd(), "reports/aci");
