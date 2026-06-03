@@ -8,6 +8,8 @@ const PROFILE_COLLECTION =
   process.env.ACI_VARIANT_DECISION_PROFILE_COLLECTION || 'aci_vehicle_variant_decision_profile';
 const FEATURE_MATRIX_COLLECTION =
   process.env.ACI_FEATURE_MATRIX_COLLECTION || 'vehicle_variant_feature_matrix_v2';
+const FEATURE_SCORE_MATRIX_PROJECTION_COLLECTION =
+  process.env.ACI_FEATURE_SCORE_MATRIX_PROJECTION_COLLECTION || 'aci_feature_score_matrix_projection_v1';
 const TARGET_COLLECTION =
   process.env.ACI_VARIANT_SCORE_PROFILE_COLLECTION || 'aci_vehicle_variant_score_profile';
 
@@ -246,6 +248,7 @@ const scoreFeatureRichness = (profile, matrixDoc) => {
   }
 
   const featureKeysInMatrix =
+    Number(matrixDoc?.featureKeysInMatrixCount || 0) ||
     safeArray(matrixDoc?.featureKeys).length ||
     Object.keys(matrixDoc?.featuresByKey || {}).length ||
     0;
@@ -347,7 +350,7 @@ const scoreFeatureRichness = (profile, matrixDoc) => {
       taxonomySourcePath: FEATURE_SCORE_TAXONOMY.sourcePath,
       layerWeights: FEATURE_LAYER_WEIGHTS,
       joinKey: matrixDoc.__joinKey || null,
-      featureMatrixBuildId: matrixDoc.buildId || null
+      featureMatrixBuildId: matrixDoc.buildId || matrixDoc.sourceBuildId || null
     },
     featureDetectionDiagnostic: {
       featureKeysInMatrix,
@@ -1108,6 +1111,7 @@ const buildScoreDoc = ({ profile, matrixDoc, modules, valueScore, regretRisk }) 
   const db = mongoose.connection.db;
   const profilesCol = db.collection(PROFILE_COLLECTION);
   const matrixCol = db.collection(FEATURE_MATRIX_COLLECTION);
+  const compactFeatureScoreCol = db.collection(FEATURE_SCORE_MATRIX_PROJECTION_COLLECTION);
   const targetCol = db.collection(TARGET_COLLECTION);
 
   console.error('[load] Loading decision profiles...');
@@ -1134,15 +1138,45 @@ const buildScoreDoc = ({ profile, matrixDoc, modules, valueScore, regretRisk }) 
   const scoringProfiles = LIMIT > 0 ? allProfiles.slice(0, LIMIT) : allProfiles;
   console.error(`[load] Decision profiles=${allProfiles.length}; scoring=${scoringProfiles.length}`);
 
-  console.error('[load] Loading feature matrix docs...');
-  console.time('[load] feature_matrix_find_toArray');
+  console.error('[load] Loading feature score matrix projection docs...');
 
-  const featureDocs = await matrixCol.find({}, {
-    projection: getFeatureMatrixProjection()
-  }).maxTimeMS(120000).toArray();
+  let featureMatrixSource = FEATURE_SCORE_MATRIX_PROJECTION_COLLECTION;
+  console.time('[load] feature_score_projection_find_toArray');
 
-  console.timeEnd('[load] feature_matrix_find_toArray');
-  console.error(`[load] Feature matrix docs=${featureDocs.length}`);
+  let featureDocs = await compactFeatureScoreCol.find(
+    { taxonomyVersion: FEATURE_SCORE_TAXONOMY.taxonomyVersion },
+    {
+      projection: {
+        _id: 0,
+        modelKey: 1,
+        variantKey: 1,
+        activePricelistMatched: 1,
+        discontinuedPricelistMatched: 1,
+        featureKeys: 1,
+        featureKeysInMatrixCount: 1,
+        featuresByKey: 1,
+        buildId: 1,
+        sourceBuildId: 1,
+        taxonomyVersion: 1
+      }
+    }
+  ).maxTimeMS(120000).toArray();
+
+  console.timeEnd('[load] feature_score_projection_find_toArray');
+
+  if (!featureDocs.length) {
+    featureMatrixSource = FEATURE_MATRIX_COLLECTION;
+    console.error(`[load] No compact projection docs found for taxonomy=${FEATURE_SCORE_TAXONOMY.taxonomyVersion}; falling back to ${FEATURE_MATRIX_COLLECTION}`);
+    console.time('[load] feature_matrix_find_toArray');
+
+    featureDocs = await matrixCol.find({}, {
+      projection: getFeatureMatrixProjection()
+    }).maxTimeMS(120000).toArray();
+
+    console.timeEnd('[load] feature_matrix_find_toArray');
+  }
+
+  console.error(`[load] Feature matrix source=${featureMatrixSource}; docs=${featureDocs.length}`);
 
   console.time('[load] build_feature_matrix_index');
   const featureIndex = buildFeatureMatrixIndex(featureDocs);
@@ -1239,6 +1273,7 @@ const buildScoreDoc = ({ profile, matrixDoc, modules, valueScore, regretRisk }) 
       return acc;
     }, {}),
     notFinalOverallScore: true,
+    featureMatrixSource,
     targetCollection: TARGET_COLLECTION
   };
 
