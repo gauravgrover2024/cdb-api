@@ -613,8 +613,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "security_privacy_guardrails_plan", name: "Security, Privacy & Guardrails Plan", status: "planned" },
       { key: "whatsapp_crm_lead_routing_plan", name: "WhatsApp, CRM & Lead Routing Plan", status: "planned" }
     ]
-  }
-];
+  },
 
   {
     id: "backend_completion_timeline",
@@ -643,7 +642,8 @@ const ACI_PROGRESS_MODULES = [
       { key: "seo_indexing", name: "SEO/indexing backend", status: "planned", eta: "4-7 working days" },
       { key: "evals_hardening", name: "Evals, audits and production hardening", status: "pending", eta: "5-8 working days" }
     ]
-  },
+  }
+];
 
 module.exports = {
   ACI_PROGRESS_MODULES
