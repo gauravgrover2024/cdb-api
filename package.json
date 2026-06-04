@@ -95,7 +95,10 @@
     "aci:decision:similar-relation-mode:eval": "node src/scripts/aci-decision/runSimilarCarsRelationModeRegressionEvalV1.cjs",
     "aci:decision:score-language:audit": "node src/scripts/aci-decision/auditScoreInsightDiagnosticLanguageV1.cjs",
     "aci:decision:score-tool-language:audit": "node src/scripts/aci-decision/auditScoreInsightToolLanguageV1.cjs",
-    "aci:decision:score-user-query:smoke": "node src/scripts/aci-decision/smokeScoreInsightUserQueryV1.cjs"
+    "aci:decision:score-user-query:smoke": "node src/scripts/aci-decision/smokeScoreInsightUserQueryV1.cjs",
+    "aci:decision:gate:score": "node src/scripts/aci-decision/runDecisionGateParallelV1.cjs score",
+    "aci:decision:gate:similar": "node src/scripts/aci-decision/runDecisionGateParallelV1.cjs similar",
+    "aci:decision:gate:phase0": "node src/scripts/aci-decision/runDecisionGateParallelV1.cjs phase0"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
