@@ -9,6 +9,7 @@ import DeliveryOrder from "../models/DeliveryOrder.js";
 import Payment from "../models/Payment.js";
 import LoanBreakupField from "../models/LoanBreakupField.js";
 import Receivable from "../models/Receivable.js";
+import InsuranceCase from "../models/InsuranceCase.js";
 import {
   calculatePayoutsOnDisbursement,
   validateDisbursementData,
@@ -5460,12 +5461,71 @@ const updateLoan = asyncHandler(async (req, res) => {
         }
       }
 
+      step = "sync-insurance-cases";
+      // 3. Sync customer identity fields into linked InsuranceCases
+      if (loan.customerId) {
+        try {
+          const insurancePatch = {};
+          const snapshotPatch = {};
+
+          const pick = (val) => {
+            const s = String(val ?? "").trim();
+            return s || undefined;
+          };
+
+          const fieldMap = [
+            // [loanField(s), insuranceCaseField, inSnapshot]
+            [["customerName"],                           "customerName",   true],
+            [["primaryMobile"],                          "mobile",         false],
+            [["emailAddress", "email"],                  "email",          true],
+            [["panNumber"],                              "panNumber",      true],
+            [["aadhaarNumber", "aadharNumber"],          "aadhaarNumber",  false],
+            [["gstNumber"],                              "gstNumber",      false],
+            [["residenceAddress"],                       "residenceAddress", true],
+            [["pincode"],                                "pincode",        true],
+            [["city"],                                   "city",           true],
+            [["gender"],                                 "gender",         false],
+          ];
+
+          for (const [loanFields, insField, inSnap] of fieldMap) {
+            let resolved;
+            for (const lf of loanFields) {
+              if (normalizedBody[lf] !== undefined) {
+                resolved = pick(normalizedBody[lf]);
+                break;
+              }
+            }
+            if (resolved !== undefined) {
+              insurancePatch[insField] = resolved;
+              if (inSnap) {
+                snapshotPatch[`customerSnapshot.${insField}`] = resolved;
+              }
+              if (insField === "mobile") {
+                snapshotPatch["customerSnapshot.primaryMobile"] = resolved;
+              }
+            }
+          }
+
+          if (Object.keys(insurancePatch).length > 0) {
+            await InsuranceCase.updateMany(
+              { customerId: loan.customerId },
+              { $set: { ...insurancePatch, ...snapshotPatch } },
+            );
+          }
+        } catch (insErr) {
+          console.warn(
+            "Insurance cases sync skipped (update):",
+            insErr?.message,
+          );
+        }
+      }
+
       step = "ensure-linked-records";
-      // 3. Ensure linked records (DO and Payment)
+      // 4. Ensure linked records (DO and Payment)
       await ensureLinkedRecords(updatedLoan);
 
       step = "sync-vehicle-record";
-      // 4. Upsert vehicle master record
+      // 5. Upsert vehicle master record
       await syncVehicleMasterRecord(updatedLoan);
 
       step = "sync-receivables-collection";

@@ -388,7 +388,6 @@ const performAutoMoveExpiredToExternal = async (baseDate = new Date()) => {
       renewalOutcome: "NONE",
       $or: [
         { renewedToCaseId: { $exists: false } },
-        { renewedToCaseId: "" },
         { renewedToCaseId: null }
       ]
     });
@@ -1218,10 +1217,16 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
     const sr = { $regex: searchQ, $options: "i" };
     query.$and.push({
       $or: [
+        { caseId: sr },
         { customerName: sr },
         { companyName: sr },
         { contactPersonName: sr },
         { email: sr },
+        { mobile: sr },
+        { alternatePhone: sr },
+        { vehicleMake: sr },
+        { vehicleModel: sr },
+        { vehicleVariant: sr },
         { newPolicyNumber: sr },
         { registrationNumber: sr }
       ]
@@ -1558,6 +1563,12 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
   const paymentPending = scopedRows.filter(
     (row) => normalizeRenewalLeadStatus(row?.renewalLeadStatus) === "Payment Pending",
   ).length;
+  const highValue = scopedRows.filter((row) => {
+    const newPremium = Number(row.newTotalPremium || 0);
+    const premium = Number(row.totalPremium || 0);
+    const prevPremium = Number(row.previousTotalPremium || 0);
+    return newPremium > 50000 || premium > 50000 || prevPremium > 50000;
+  }).length;
   res.json({
     success: true,
     data: {
@@ -1567,6 +1578,7 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
       pendingRenewals: renewalRows.length,
       renewed: renewedRows.length,
       external: externalRows.length,
+      highValue,
       nonAssigned: renewalRows.filter((row) => !safeString(row?.renewalAssignedToId).trim()).length,
       assignedToMe: meId
         ? renewalRows.filter((row) => safeString(row?.renewalAssignedToId).trim() === meId).length
