@@ -174,14 +174,14 @@ const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expect
       message: 'Is Baleno Alpha worth over Zeta?',
       expectedTools: ['vehicle_score_insight'],
       requireGuardrail: true,
-      answerMustInclude: ['Maruti Baleno Alpha', 'Maruti Baleno Zeta'],
+      answerMustInclude: ['Maruti Baleno Alpha', 'Maruti Baleno Zeta', 'Feature gains', '360° camera'],
     },
     {
       id: 'score-baleno-delta-to-zeta-gain',
       message: 'What do I gain from Baleno Delta to Zeta?',
       expectedTools: ['vehicle_score_insight'],
       requireGuardrail: true,
-      answerMustInclude: ['Maruti Baleno Delta', 'Maruti Baleno Zeta'],
+      answerMustInclude: ['Maruti Baleno Delta', 'Maruti Baleno Zeta', 'Feature gains', 'rear camera'],
     },
     {
       id: 'price-creta-sx-delhi',

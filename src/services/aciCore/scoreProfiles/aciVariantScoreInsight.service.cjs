@@ -122,6 +122,18 @@ const toScoreInsight = (profile) => {
     ])
   );
 
+  if (modules.features && profile.featureScore?.evidence) {
+    modules.features = {
+      ...modules.features,
+      evidence: {
+        ...(modules.features.evidence || {}),
+        presentKeys: compactArray(profile.featureScore.evidence.presentKeys || [], 80),
+        taxonomyVersion: profile.featureScore.evidence.taxonomyVersion || null,
+        joinKey: profile.featureScore.evidence.joinKey || null,
+      },
+    };
+  }
+
   return {
     scoreProfileKey: profile.scoreProfileKey,
     variantProfileKey: profile.variantProfileKey,

@@ -761,6 +761,71 @@ const inferUpgradeInsightParamsFromMessage = async ({
   };
 };
 
+
+const FEATURE_LABEL_OVERRIDES = {
+  connectedCar: "connected car tech",
+  rearAcVents: "rear AC vents",
+  rearCamera: "rear camera",
+  camera360: "360° camera",
+  cruiseControl: "cruise control",
+  ledDrls: "LED DRLs",
+  androidAuto: "Android Auto",
+  appleCarPlay: "Apple CarPlay",
+  touchscreen: "touchscreen",
+  wirelessCharging: "wireless charging",
+  ventilatedSeats: "ventilated seats",
+  panoramicSunroof: "panoramic sunroof",
+  sunroof: "sunroof",
+  premiumSound: "premium sound",
+  automaticClimateControl: "automatic climate control",
+};
+
+const humanizeFeatureKey = (key = "") => {
+  if (FEATURE_LABEL_OVERRIDES[key]) return FEATURE_LABEL_OVERRIDES[key];
+
+  return String(key || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^./, (char) => char.toUpperCase());
+};
+
+const getPresentFeatureKeys = (insight = {}) => {
+  const direct =
+    insight.modules?.features?.evidence?.presentKeys ||
+    insight.modules?.features?.presentKeys ||
+    insight.featureScore?.evidence?.presentKeys ||
+    insight.featureScore?.presentKeys ||
+    insight.data?.featureScore?.evidence?.presentKeys ||
+    [];
+
+  return Array.isArray(direct) ? direct.filter(Boolean) : [];
+};
+
+const getFeatureDiff = ({ baseInsight = {}, targetInsight = {}, limit = 6 } = {}) => {
+  const baseKeys = new Set(getPresentFeatureKeys(baseInsight));
+  const targetKeys = new Set(getPresentFeatureKeys(targetInsight));
+
+  const gained = [...targetKeys]
+    .filter((key) => !baseKeys.has(key))
+    .sort()
+    .slice(0, limit);
+
+  const lost = [...baseKeys]
+    .filter((key) => !targetKeys.has(key))
+    .sort()
+    .slice(0, limit);
+
+  return {
+    gained,
+    lost,
+    gainedLabels: gained.map(humanizeFeatureKey),
+    lostLabels: lost.map(humanizeFeatureKey),
+  };
+};
+
+
 const buildVariantUpgradeInsightLine = ({ baseInsight, targetInsight } = {}) => {
   if (!baseInsight || !targetInsight) {
     return "I could not resolve both variants clearly enough for an upgrade-ladder answer.";
@@ -821,7 +886,28 @@ const buildVariantUpgradeInsightLine = ({ baseInsight, targetInsight } = {}) => 
       ? `Practical call: ${baseName} is the safer value pick; ${targetName} is for buyers who specifically want the higher-trim equipment.`
       : `Practical call: ${targetName} can be justified if those upgrades match your use case.`;
 
-  return `${verdict} ${snapshotLine} ${moduleLine} ${conclusion}`.replace(/\s+/g, " ").trim();
+  const featureDiff = getFeatureDiff({ baseInsight, targetInsight });
+
+  const featureGainLine = featureDiff.gainedLabels.length
+    ? `Feature gains: ${featureDiff.gainedLabels.join(", ")}.`
+    : "";
+
+  const featureLossLine = featureDiff.lostLabels.length
+    ? `Feature losses: ${featureDiff.lostLabels.join(", ")}.`
+    : "";
+
+  return [
+    verdict,
+    featureGainLine,
+    featureLossLine,
+    snapshotLine,
+    moduleLine,
+    conclusion,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 };
 
 
