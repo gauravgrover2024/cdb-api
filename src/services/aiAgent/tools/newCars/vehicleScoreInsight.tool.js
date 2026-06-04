@@ -941,14 +941,14 @@ const buildSameFamilyValueLine = (result = {}, params = {}) => {
     })
     .join("; ");
 
-  let verdict = `${top.variantFullName} is the strongest same-family value pick in this set with value score ${topValue}.`;
+  let verdict = `${top.variantFullName} has the highest same-family value score in this set at ${topValue}.`;
 
   if (second) {
     verdict += ` ${second.variantFullName} is the next practical step if you want more equipment without jumping straight to the weakest-value top trim.`;
   }
 
   if (last && last.scoreProfileKey !== top.scoreProfileKey) {
-    verdict += ` ${last.variantFullName} scores lowest on same-family value, so buy it only if its extra features matter to you.`;
+    verdict += ` ${last.variantFullName} scores lowest on same-family value; treat it as equipment-led rather than value-led and check whether the extra features matter to you.`;
   }
 
   return `${verdict} Ranked ladder: ${ranked}.`;
@@ -1161,9 +1161,9 @@ const compactVariantLine = (insight) => {
   let verdict = `${insight.variantFullName} has diagnostic score data available.`;
 
   if (isWeakValue && isFeatureRich) {
-    verdict = `${insight.variantFullName} is feature-rich, but its same-model value is weak — you are paying more for the top-trim experience rather than getting the strongest value pick.`;
+    verdict = `${insight.variantFullName} is feature-rich, but its same-model value signal is weak — the score indicates a top-trim equipment focus rather than the strongest same-model value position.`;
   } else if (isGoodValue && isFeatureRich) {
-    verdict = `${insight.variantFullName} looks like a strong same-model value pick and is also feature-rich.`;
+    verdict = `${insight.variantFullName} has a strong same-model value signal and is also feature-rich.`;
   } else if (isGoodValue) {
     verdict = `${insight.variantFullName} looks like a strong same-model value pick.`;
   } else if (isWeakValue) {
