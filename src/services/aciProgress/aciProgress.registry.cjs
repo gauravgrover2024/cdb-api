@@ -529,7 +529,7 @@ const ACI_PROGRESS_MODULES = [
     status: "planned",
     summary: "Production governance layer for ACI decision intelligence: final recommendation eligibility, strict decision output contracts, provenance/freshness controls, degraded modes, eval gates and market-judgment isolation.",
     whatWillWork: "Block final buy-this recommendations until buyer context and evidence thresholds are met; allow fact-only or diagnostic-only answers when data is partial; ensure every decision claim carries evidence, freshness, provenance and degraded-mode status.",
-    currentState: "Phase 0 is being implemented. Standalone Decision Policy / Eligibility constants, decision output contract, policy evaluator, smoke test skeleton and policy-layer market-judgment isolation audit, synthetic decision policy eval corpus skeleton and provenance/freshness helper eval and degraded-mode inference helper now exist. Runtime score/similar/recommendation tools are not wired to the policy yet, and wider runtime/composer isolation gates are still pending.",
+    currentState: "Phase 0 is being implemented. Standalone Decision Policy / Eligibility constants, decision output contract, policy evaluator, smoke test skeleton and policy-layer market-judgment isolation audit, synthetic decision policy eval corpus skeleton and provenance/freshness helper eval, degraded-mode inference helper and module-specific policy profile eval now exist. Runtime score/similar/recommendation tools are not wired to the policy yet, and wider runtime/composer isolation gates are still pending.",
     pending: "Create decision policy contract skeleton, decision output normalizer, degraded-mode taxonomy constants, provenance/freshness helpers, final recommendation eligibility evaluator, decision eval corpus, market-judgment isolation tests and composer integration. Do not touch cross-model scoring or score wording until Phase 0 is locked.",
     items: [
       { key: "production_plan_v1", name: "ACI Decision Module Production Plan v1", status: "ready" },
@@ -538,6 +538,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "evidence_freshness_provenance", name: "Evidence/freshness/provenance fields", status: "partial" },
       { key: "degraded_mode_taxonomy", name: "Degraded-mode taxonomy", status: "ready" },
       { key: "final_recommendation_eligibility", name: "Final recommendation eligibility rules", status: "partial" },
+      { key: "module_specific_policy_profiles", name: "Module-specific policy profiles", status: "partial" },
       { key: "decision_eval_suites", name: "Decision eval suites and pass/fail gates", status: "partial" },
       { key: "market_judgement_isolation", name: "Market-judgment isolation tests", status: "partial" },
       { key: "empty_result_not_success", name: "Empty result must not pass as success", status: "ready" },

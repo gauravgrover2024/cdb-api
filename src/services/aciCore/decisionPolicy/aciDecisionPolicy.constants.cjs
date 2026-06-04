@@ -64,6 +64,7 @@ const BLOCKED_REASONS = Object.freeze({
   CONFLICTING_EVIDENCE: 'conflicting_evidence',
   UNSUPPORTED_CITY: 'unsupported_city',
   FINAL_RECOMMENDATION_POLICY_NOT_READY: 'final_recommendation_policy_not_ready',
+  MODULE_NOT_FINAL_RECOMMENDATION_ELIGIBLE: 'module_not_final_recommendation_eligible',
   SPONSORED_INFLUENCE_NOT_ALLOWED: 'sponsored_influence_not_allowed',
 });
 
