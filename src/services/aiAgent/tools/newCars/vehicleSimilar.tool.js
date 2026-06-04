@@ -49,16 +49,50 @@ const getDb = (db) => {
 const getToolInput = (toolPlan = {}) =>
   toolPlan.input || toolPlan.args || toolPlan.params || {};
 
-const getRequestedMode = (message = "") => {
-  if (/\b(ev|electric)\b/i.test(message)) {
+const includesAny = (text = "", terms = []) =>
+  terms.some((term) => String(text || "").includes(term));
+
+const getRequestedMode = (request = {}) => {
+  const message = typeof request === "string" ? request : String(request?.message || "");
+  const toolPlan = request && typeof request === "object" && !Array.isArray(request)
+    ? request.toolPlan || {}
+    : {};
+  const input = getToolInput(toolPlan);
+
+  const modeText = [
+    message,
+    input.mode,
+    input.intent,
+    input.relationType,
+    input.fuelType,
+    input.fuel,
+    toolPlan.mode,
+    toolPlan.intent,
+    toolPlan.primaryTask,
+    toolPlan.filters?.mode,
+    toolPlan.filters?.intent,
+    toolPlan.filters?.fuelType,
+    toolPlan.filters?.fuel,
+    toolPlan.entities?.fuelType,
+    toolPlan.entities?.fuel,
+    JSON.stringify(toolPlan.requestedFacts || {}),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (includesAny(modeText, [" ev", "ev ", "electric", "battery", "powertrain shift", "powertrain_shift"])) {
     return "powertrain_shift";
   }
-  if (/\b(cheaper|lower price|more affordable|budget)\b/i.test(message)) {
+
+  if (includesAny(modeText, ["cheaper", "lower price", "less expensive", "budget alternative", "step down", "step-down", "cheaper_step_down"])) {
     return "cheaper";
   }
-  if (/\b(premium|higher|upgrade|upmarket|expensive)\b/i.test(message)) {
+
+  if (includesAny(modeText, ["premium", "upgrade", "step up", "step-up", "higher segment", "premium_step_up"])) {
     return "premium";
   }
+
   return "default";
 };
 
@@ -186,27 +220,28 @@ const isCheaperPeer = ({ anchor = {}, model = {} } = {}) => {
 
 const filterSimilarModels = ({ anchor = {}, models = [], mode = "default" } = {}) => {
   const cleanModels = asArray(models);
-  if (mode === "cheaper") {
-    const filtered = cleanModels.filter(
-      (model) => model.relationType === "cheaper_step_down" || isCheaperPeer({ anchor, model }),
-    );
-    return filtered.length ? filtered : cleanModels.filter((model) => model.relationType !== "powertrain_shift");
-  }
 
   if (mode === "premium") {
-    return cleanModels.filter((model) => model.relationType === "premium_step_up");
+    const filtered = cleanModels.filter(
+      (model) => model.relationType === "premium_step_up" || isPremiumAnchorBudgetStepDown({ anchor, model })
+    );
+    return filtered.slice(0, 12);
   }
 
-  if (mode === "powertrain_shift") {
+  if (mode === "powertrain_shift" || mode === "ev") {
     const filtered = cleanModels.filter((model) => model.relationType === "powertrain_shift");
-    return filtered.length ? filtered : cleanModels;
+    return filtered.slice(0, 12);
   }
 
-  return cleanModels.filter(
-    (model) =>
-      defaultRelationTypes.has(model.relationType) &&
-      !isPremiumAnchorBudgetStepDown({ anchor, model }),
-  );
+  if (mode === "cheaper") {
+    const filtered = cleanModels.filter(
+      (model) => model.relationType === "cheaper_step_down" || isCheaperPeer({ anchor, model })
+    );
+    return filtered.slice(0, 12);
+  }
+
+  const tightRows = cleanModels.filter((model) => defaultRelationTypes.has(model.relationType));
+  return tightRows.slice(0, 9);
 };
 
 const matchLabelFor = (row = {}) => {
@@ -229,7 +264,7 @@ const buildAnswer = ({ anchor = {}, rows = [], mode = "default" } = {}) => {
     if (mode === "premium") {
       return `I did not find a clean premium step-up from ${anchor.displayName || "this model"} in the current graph. I can show close rivals, cheaper step-downs, or EV alternatives instead.`;
     }
-    return `I could not find enough similar-car graph data for ${anchor.displayName || "this model"} yet.`;
+    return `I did not find clean close alternatives for ${anchor.displayName || "this model"} in the current graph. I can show cheaper step-downs, premium step-ups, or EV/powertrain alternatives instead.`;
   }
 
   const relationLabel =
@@ -237,7 +272,7 @@ const buildAnswer = ({ anchor = {}, rows = [], mode = "default" } = {}) => {
       ? "cheaper alternatives"
       : mode === "premium"
         ? "premium alternatives"
-        : mode === "powertrain_shift"
+        : mode === "powertrain_shift" || mode === "ev"
           ? "electric/powertrain-shift alternatives"
           : "similar cars";
 
@@ -270,7 +305,7 @@ export const runVehicleSimilarTool = async ({
     };
   }
 
-  const requestedMode = getRequestedMode(userMessage);
+  const requestedMode = getRequestedMode({ message: userMessage, toolPlan });
   const rows = withMatchLabels(filterSimilarModels({
     anchor: graphDoc.anchor,
     models: graphDoc.similarModels || [],
