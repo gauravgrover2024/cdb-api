@@ -104,6 +104,12 @@ const inferScoreInsightOperationFromText = (text = "", fallback = "variant_score
 
   if (hasUpgradeIntent && hasVariantCompareIntent) return "variant_upgrade_insight";
 
+  const hasModelSummaryIntent =
+    /\b(overall|how good|good family car|family car|most sensible|should i consider|which variant should i consider|model summary)\b/i.test(plainText) ||
+    (/\bgood\b/i.test(plainText) && /\b(overall|family)\b/i.test(plainText));
+
+  if (hasModelSummaryIntent) return "model_score_insights";
+
   const hasValueIntent =
     /\b(value|worth|better value|best value|better variant|which variant)\b/i.test(plainText) ||
     normalized.includes("better_value") ||
@@ -949,6 +955,130 @@ const buildSameFamilyValueLine = (result = {}, params = {}) => {
 };
 
 
+
+const getModelLabelFromVariants = (variants = [], fallbackModelKey = "") => {
+  const firstName = variants[0]?.variantFullName || "";
+  const parts = firstName.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return parts.slice(0, 2).join(" ");
+  return humanizeFeatureKey(fallbackModelKey || "this model");
+};
+
+const getModelModuleScoreValue = (insight = {}, key = "") => {
+  const value = insight.modules?.[key]?.score;
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+};
+
+const getBestModelVariantByModule = (variants = [], key = "") =>
+  variants
+    .filter((item) => Number.isFinite(getModelModuleScoreValue(item, key)))
+    .sort((a, b) => getModelModuleScoreValue(b, key) - getModelModuleScoreValue(a, key))[0] || null;
+
+const getBalancedModelVariant = (variants = []) => {
+  const weighted = variants
+    .map((variant) => {
+      const parts = [
+        getModelModuleScoreValue(variant, "value"),
+        getModelModuleScoreValue(variant, "features"),
+        getModelModuleScoreValue(variant, "safety"),
+        getModelModuleScoreValue(variant, "cityUse"),
+        getModelModuleScoreValue(variant, "mileageRunningCost"),
+        getModelModuleScoreValue(variant, "practicality"),
+      ].filter((value) => Number.isFinite(value));
+
+      if (!parts.length) return null;
+
+      return {
+        variant,
+        score: parts.reduce((sum, value) => sum + value, 0) / parts.length,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+
+  return weighted[0]?.variant || null;
+};
+
+const uniqueModelStrings = (values = [], limit = 4) => {
+  const out = [];
+  const seen = new Set();
+
+  for (const value of values) {
+    const text = String(value || "").trim();
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+
+  return out;
+};
+
+const buildModelScoreSummaryLine = (result = {}, params = {}) => {
+  const variants = Array.isArray(result.variants) ? result.variants : [];
+  const modelLabel = getModelLabelFromVariants(variants, params.modelKey);
+
+  if (!variants.length) {
+    return `I could not find enough diagnostic score data for ${modelLabel}.`;
+  }
+
+  const bestValue = getBestModelVariantByModule(variants, "value");
+  const featureRich = getBestModelVariantByModule(variants, "features");
+  const cityStrong = getBestModelVariantByModule(variants, "cityUse");
+  const mileageStrong = getBestModelVariantByModule(variants, "mileageRunningCost");
+  const balanced = getBalancedModelVariant(variants);
+
+  const watchouts = uniqueModelStrings(
+    variants.flatMap((variant) => variant.watchouts || []),
+    3
+  );
+
+  const summaryParts = [];
+
+  summaryParts.push(
+    `${modelLabel} looks strongest as a practical, efficient city hatchback in the current diagnostic score data.`
+  );
+
+  if (bestValue) {
+    summaryParts.push(
+      `Best value signal: ${bestValue.variantFullName} with same-model value ${formatScore(getModelModuleScoreValue(bestValue, "value"))}.`
+    );
+  }
+
+  if (balanced) {
+    summaryParts.push(
+      `Most balanced diagnostic pick: ${balanced.variantFullName}, because it keeps a better mix of value, features and daily-use scores.`
+    );
+  }
+
+  if (featureRich) {
+    summaryParts.push(
+      `Top-trim caveat: ${featureRich.variantFullName} is the most feature-rich at features ${formatScore(getModelModuleScoreValue(featureRich, "features"))}, but value is ${formatScore(getModelModuleScoreValue(featureRich, "value"))}.`
+    );
+  }
+
+  if (cityStrong) {
+    summaryParts.push(
+      `City-use signal is strongest on ${cityStrong.variantFullName} at ${formatScore(getModelModuleScoreValue(cityStrong, "cityUse"))}.`
+    );
+  }
+
+  if (mileageStrong) {
+    summaryParts.push(
+      `Mileage/running-cost signal is strong across the family at about ${formatScore(getModelModuleScoreValue(mileageStrong, "mileageRunningCost"))}.`
+    );
+  }
+
+  if (watchouts.length) {
+    summaryParts.push(`Watchouts: ${watchouts.join("; ")}.`);
+  }
+
+  summaryParts.push("This is still diagnostic score insight, not a final recommendation.");
+
+  return summaryParts.join(" ");
+};
+
+
 const compactVariantLine = (insight) => {
   if (!insight) return null;
 
@@ -1179,7 +1309,16 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
     }
 
     if (["model_score_insights", "model", "model_variants"].includes(operation)) {
-      const modelKey = args.modelKey || args.model_key;
+      const inferred = await inferSameFamilyParamsFromMessage({
+        db: args.db,
+        userMessage: args.userMessage || args.message || args.query || "",
+        makeKey: args.makeKey || args.make_key,
+        modelKey: args.modelKey || args.model_key,
+        fuelKey: args.fuelKey || args.fuel_key,
+        transmissionKey: args.transmissionKey || args.transmission_key,
+      });
+
+      const modelKey = inferred.modelKey || args.modelKey || args.model_key;
       if (!modelKey) {
         return createError({
           operation,
@@ -1190,19 +1329,21 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
 
       const result = await getModelScoreInsights({
         db: args.db,
-        makeKey: args.makeKey || args.make_key,
+        makeKey: inferred.makeKey || args.makeKey || args.make_key,
         modelKey,
-        fuelKey: args.fuelKey || args.fuel_key,
-        transmissionKey: args.transmissionKey || args.transmission_key,
+        fuelKey: inferred.fuelKey || args.fuelKey || args.fuel_key,
+        transmissionKey: inferred.transmissionKey || args.transmissionKey || args.transmission_key,
         fuelTransmissionFamilyKey:
-          args.fuelTransmissionFamilyKey || args.fuel_transmission_family_key,
-        limit: safeLimit(args.limit, 80, 100),
+          inferred.fuelTransmissionFamilyKey ||
+          args.fuelTransmissionFamilyKey ||
+          args.fuel_transmission_family_key,
+        limit: safeLimit(args.limit, 40, 80),
       });
 
       return createSuccess({
         operation: "model_score_insights",
         data: result,
-        answer: `${result.count} score insight variants found for ${modelKey}.`,
+        answer: buildModelScoreSummaryLine(result, { modelKey, ...inferred }),
       });
     }
 

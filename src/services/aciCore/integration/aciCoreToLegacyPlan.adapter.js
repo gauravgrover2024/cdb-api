@@ -197,7 +197,7 @@ const inferTool = (meaningFrame = {}, rawMessage = '') => {
     requestedFacts.regret ||
     requestedFacts.strengths ||
     requestedFacts.weaknesses ||
-    /\b(score|scores|rating|ratings|value|worth|worth over|regret|strong|weak|strength|weakness|pros|cons|good value|bad value|gain|gain from|upgrade|worth upgrading|pay extra|extra over)\b/i.test(preClarificationScoreIntentText) ||
+    /\b(score|scores|rating|ratings|value|worth|worth over|regret|strong|weak|strength|weakness|pros|cons|good value|bad value|gain|gain from|upgrade|worth upgrading|pay extra|extra over|overall|good family|family car|most sensible|should i consider)\b/i.test(preClarificationScoreIntentText) ||
     /\b(score|scores|rating|ratings|value|regret|strength|weakness|gain|upgrade|pay extra|extra over)\b/i.test(preClarificationRequestedFactsText);
 
   const hasPreClarificationVehicleContext =
@@ -221,9 +221,16 @@ const inferTool = (meaningFrame = {}, rawMessage = '') => {
     /\bpay\s+extra\b/i.test(rawMessage || '') ||
     /\bshould\s+i\s+buy\b.+\bor\b.+/i.test(rawMessage || '');
 
+  const hasPreClarificationModelSummaryIntent =
+    /\b(overall|how good|good family car|family car|most sensible|should i consider|which variant should i consider|model summary)\b/i.test(rawMessage || '') ||
+    (/\bgood\b/i.test(rawMessage || '') && /\b(overall|family)\b/i.test(rawMessage || ''));
+
   if (
-    (hasPreClarificationScoreInsightIntent || hasPreClarificationUpgradePairIntent) &&
-    hasPreClarificationVehicleContext &&
+    (
+      hasPreClarificationModelSummaryIntent ||
+      ((hasPreClarificationScoreInsightIntent || hasPreClarificationUpgradePairIntent) &&
+        hasPreClarificationVehicleContext)
+    ) &&
     !requestedFacts.price &&
     !requestedFacts.onRoad &&
     !requestedFacts.emi &&
@@ -263,7 +270,7 @@ const inferTool = (meaningFrame = {}, rawMessage = '') => {
     requestedFacts.regret ||
     requestedFacts.strengths ||
     requestedFacts.weaknesses ||
-    /\b(score|scores|rating|ratings|value|worth|worth over|regret|strong|weak|strength|weakness|pros|cons|good value|bad value|gain|gain from|upgrade|worth upgrading|pay extra|extra over)\b/i.test(scoreIntentText) ||
+    /\b(score|scores|rating|ratings|value|worth|worth over|regret|strong|weak|strength|weakness|pros|cons|good value|bad value|gain|gain from|upgrade|worth upgrading|pay extra|extra over|overall|good family|family car|most sensible|should i consider)\b/i.test(scoreIntentText) ||
     /\b(score|scores|rating|ratings|value|regret|strength|weakness|gain|upgrade|pay extra|extra over)\b/i.test(requestedFactsText);
 
   if (

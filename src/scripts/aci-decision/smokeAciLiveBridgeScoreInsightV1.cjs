@@ -184,6 +184,20 @@ const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expect
       answerMustInclude: ['Maruti Baleno Delta', 'Maruti Baleno Zeta', 'Feature gains', 'rear camera'],
     },
     {
+      id: 'score-baleno-overall-summary',
+      message: 'How good is Baleno overall?',
+      expectedTools: ['vehicle_score_insight'],
+      requireGuardrail: true,
+      answerMustInclude: ['Maruti Baleno', 'Best value signal', 'diagnostic'],
+    },
+    {
+      id: 'score-baleno-family-car',
+      message: 'Is Baleno a good family car?',
+      expectedTools: ['vehicle_score_insight'],
+      requireGuardrail: true,
+      answerMustInclude: ['Maruti Baleno', 'Watchouts'],
+    },
+    {
       id: 'price-creta-sx-delhi',
       message: 'Creta SX on-road price Delhi',
       expectedTools: ['vehicle_pricelist'],
