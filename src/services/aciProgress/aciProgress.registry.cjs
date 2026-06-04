@@ -532,6 +532,8 @@ const ACI_PROGRESS_MODULES = [
     currentState: "Phase 0 is being implemented. Standalone Decision Policy / Eligibility constants, decision output contract, policy evaluator, smoke test skeleton and policy-layer market-judgment isolation audit, synthetic decision policy eval corpus skeleton and provenance/freshness helper eval, degraded-mode inference helper and module-specific policy profile eval and score-insight and similar-cars real-output policy fixture evals plus similar-cars filtering audit now exist. Runtime score/similar/recommendation tools are not wired to the policy yet, and wider runtime/composer isolation gates are still pending.",
     pending: "Create decision policy contract skeleton, decision output normalizer, degraded-mode taxonomy constants, provenance/freshness helpers, final recommendation eligibility evaluator, decision eval corpus, market-judgment isolation tests and composer integration. Do not touch cross-model scoring or score wording until Phase 0 is locked.",
     items: [
+      { key: "phase0_closure_report_v1", name: "Phase 0 closure report and gate bundle", status: "ready" },
+
       { key: "production_plan_v1", name: "ACI Decision Module Production Plan v1", status: "ready" },
       { key: "decision_policy_contract", name: "Decision Policy / Eligibility contract", status: "ready" },
       { key: "decision_output_schema", name: "Strict decision output schema", status: "ready" },
