@@ -542,6 +542,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "final_recommendation_eligibility", name: "Final recommendation eligibility rules", status: "partial" },
       { key: "module_specific_policy_profiles", name: "Module-specific policy profiles", status: "partial" },
       { key: "score_insight_output_policy_fixtures", name: "Score insight real-output policy fixtures", status: "partial" },
+      { key: "score_insight_diagnostic_language_audit", name: "Score insight diagnostic-language audit", status: "partial" },
       { key: "similar_cars_output_policy_fixtures", name: "Similar cars real-output policy fixtures", status: "partial" },
       { key: "similar_cars_filtering_audit", name: "Similar cars tool filtering audit", status: "partial" },
       { key: "similar_cars_relation_mode_regression_eval", name: "Similar cars relation-mode regression eval", status: "partial" },
