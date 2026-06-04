@@ -86,7 +86,8 @@
     "aci:decision:policy:smoke": "node src/scripts/aci-decision/smokeDecisionPolicyContractsV1.cjs",
     "aci:decision:market-judgement:audit": "node src/scripts/aci-decision/auditDecisionMarketJudgementIsolationV1.cjs",
     "aci:decision:policy:eval": "node src/scripts/aci-decision/runDecisionPolicyEvalV1.cjs",
-    "aci:decision:provenance:eval": "node src/scripts/aci-decision/runDecisionProvenanceEvalV1.cjs"
+    "aci:decision:provenance:eval": "node src/scripts/aci-decision/runDecisionProvenanceEvalV1.cjs",
+    "aci:decision:degraded-mode:eval": "node src/scripts/aci-decision/runDecisionDegradedModeEvalV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
