@@ -159,6 +159,11 @@ const hasTurboFeature = (meaningFrame = {}) =>
     ),
   );
 
+const hasSimilarVehicleIntent = (message = '') =>
+  /\b(similar cars?|cars? similar to|similar to|alternatives?|alternative to|cars? like|competitors?|rivals?|cheaper alternatives?|premium alternatives?)\b/i.test(
+    message || '',
+  );
+
 const getBudgetMax = (meaningFrame = {}) => {
   const max = Number(meaningFrame.filters?.budget?.max);
   return Number.isFinite(max) && max > 0 ? max : undefined;
@@ -179,6 +184,17 @@ const inferTool = (meaningFrame = {}, rawMessage = '') => {
 
   if (meaningFrame.safety?.shouldRefuse || task === 'unsupported') {
     return 'unavailable';
+  }
+
+  if (
+    (hasSimilarVehicleIntent(rawMessage) ||
+      task === 'similar_vehicles' ||
+      task === 'rivals_alternatives') &&
+    !requestedFacts.price &&
+    !requestedFacts.onRoad &&
+    !requestedFacts.colors
+  ) {
+    return 'vehicle_similar';
   }
 
   const preClarificationScoreIntentText = [
@@ -319,6 +335,7 @@ const inferConversationMode = (tool = '', meaningFrame = {}) => {
   if (tool === 'unavailable') return 'unavailable';
   if (tool === 'vehicle_feature_comparison') return 'comparison';
   if (tool === 'vehicle_compare') return 'comparison';
+  if (tool === 'vehicle_similar') return 'evaluation';
   if (tool === 'vehicle_score_insight') return 'decision_intelligence';
   if (tool === 'vehicle_recommend') return 'recommendation';
   if (tool === 'vehicle_emi') return 'calculation';
@@ -388,6 +405,15 @@ const inferOutput = (tool = '', meaningFrame = {}) => {
     };
   }
 
+  if (tool === 'vehicle_similar') {
+    return {
+      canvasType: 'similar_cars_canvas',
+      inlineType: 'similar_cars_summary',
+      groupBy: 'model',
+      preferredWidgetType: null,
+    };
+  }
+
   if (tool === 'vehicle_score_insight') {
     return {
       canvasType: 'score_insight_canvas',
@@ -452,8 +478,9 @@ const inferOutput = (tool = '', meaningFrame = {}) => {
 };
 
 const inferRanking = (tool = '', meaningFrame = {}) => {
-  if (tool === 'vehicle_recommend') {
+  if (tool === 'vehicle_recommend' || tool === 'vehicle_similar') {
     if (getFeatures(meaningFrame).length) return 'feature_match';
+    if (tool === 'vehicle_similar') return 'similarity';
     if (getBudgetMax(meaningFrame)) return 'value';
     return 'balanced';
   }

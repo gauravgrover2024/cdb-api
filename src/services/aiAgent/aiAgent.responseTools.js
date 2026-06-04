@@ -42,6 +42,7 @@ export const ACI_RESPONSE_TOOL_IDS = [
   "vehicle_feature_lookup",
   "vehicle_compare",
   "vehicle_recommend",
+  "vehicle_similar",
   "vehicle_price_breakup",
   "vehicle_emi",
   "vehicle_price_history",
@@ -64,6 +65,7 @@ export const RESPONSE_INTENTS = {
   vehicle_feature_lookup: "vehicle_feature_answer",
   vehicle_compare: "vehicle_comparison",
   vehicle_recommend: "vehicle_recommendation",
+  vehicle_similar: "vehicle_similar",
   vehicle_price_breakup: "vehicle_price_breakup",
   vehicle_emi: "vehicle_emi_calculator",
   vehicle_price_history: "vehicle_price_history",
@@ -82,6 +84,7 @@ export const RESPONSE_CANVAS_TYPES = {
   vehicle_feature_lookup: "",
   vehicle_compare: "comparison_canvas",
   vehicle_recommend: "recommendation_results_canvas",
+  vehicle_similar: "similar_cars_canvas",
   vehicle_price_breakup: "price_breakup_canvas",
   vehicle_emi: "emi_calculator_canvas",
   vehicle_price_history: "price_history_canvas",
@@ -100,6 +103,7 @@ export const RESPONSE_INLINE_TYPES = {
   vehicle_feature_lookup: "feature_answer_card",
   vehicle_compare: "",
   vehicle_recommend: "",
+  vehicle_similar: "similar_cars_summary",
   vehicle_price_breakup: "",
   vehicle_emi: "",
   vehicle_price_history: "",
@@ -1321,6 +1325,76 @@ export const buildVehicleRecommendResponse = ({
   };
 };
 
+export const buildVehicleSimilarResponse = ({
+  toolPlan = {},
+  runtimeData = {},
+  context = {},
+} = {}) => {
+  const rows = asArray(
+    runtimeData.similarModels ||
+      runtimeData.rows ||
+      runtimeData.items,
+  );
+  const anchor = runtimeData.anchor || {};
+  const anchorLabel = anchor.displayName || getModel(toolPlan, context) || "selected model";
+  const answer =
+    runtimeData.answer ||
+    (
+      rows.length
+        ? `Similar Cars Graph v1 found ${rows.length} similar cars for ${anchorLabel}: ${rows
+            .slice(0, 5)
+            .map((row) => row.displayName)
+            .filter(Boolean)
+            .join(", ")}. This is a deterministic alternatives graph, not a purchase verdict.`
+        : `I could not find enough similar-car graph data for ${anchorLabel} yet.`
+    );
+
+  const response = baseResponse({
+    toolPlan,
+    context,
+    runtimeData,
+    intent: runtimeData.intent || "vehicle_similar",
+    displayMode: "canvas",
+    canvasType: runtimeData.canvasType || "similar_cars_canvas",
+    inlineType: runtimeData.inlineType || "similar_cars_summary",
+    title: runtimeData.title || `Similar cars to ${anchorLabel}`,
+    answer,
+    data: {
+      anchor,
+      rows,
+      items: rows,
+      similarModels: rows,
+      usageGuardrail: runtimeData.usageGuardrail || {
+        canUseForFinalRecommendation: false,
+        reason:
+          "Similar cars graph v1 is a deterministic discovery aid, not a purchase verdict.",
+      },
+    },
+    actions: runtimeData.actions || [],
+    leadingQuestions: runtimeData.leadingQuestions || [],
+    conversationSuggestions: runtimeData.conversationSuggestions || [],
+    sourceTransparency: runtimeData.sourceTransparency || {
+      modulesChecked: runtimeData.modulesChecked || [],
+      matched: runtimeData.matched ?? rows.length,
+      dataSource: runtimeData.dataSource || "",
+    },
+    meta: {
+      ...(runtimeData.meta || {}),
+      finalRecommendationEnabled: false,
+    },
+  });
+
+  return {
+    ...response,
+    rows,
+    items: rows,
+    similarModels: rows,
+    anchor,
+    matched: runtimeData.matched ?? rows.length,
+    usageGuardrail: runtimeData.usageGuardrail || response.data.usageGuardrail,
+  };
+};
+
 export const buildRecommendationLeadingQuestions = ({ toolPlan = {} } = {}) => {
   const filters = getToolFilters(toolPlan);
   const questions = [];
@@ -2118,6 +2192,10 @@ export const ACI_RESPONSE_TOOLS = {
   vehicle_recommend: {
     id: "vehicle_recommend",
     run: buildVehicleRecommendResponse,
+  },
+  vehicle_similar: {
+    id: "vehicle_similar",
+    run: buildVehicleSimilarResponse,
   },
   vehicle_score_insight: {
     id: "vehicle_score_insight",

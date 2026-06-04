@@ -764,7 +764,9 @@ export const runAciCoreLiveBridge = async ({
       ? "vehicle_discovery"
       : bridgeTool === "vehicle_score_insight"
         ? "score_insight"
-        : understanding.meaningFrame?.primaryTask || "";
+        : bridgeTool === "vehicle_similar"
+          ? "similar_cars"
+          : understanding.meaningFrame?.primaryTask || "";
 
   const bridge = {
     enabled: true,
