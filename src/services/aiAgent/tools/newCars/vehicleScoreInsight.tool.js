@@ -105,7 +105,7 @@ const inferScoreInsightOperationFromText = (text = "", fallback = "variant_score
   if (hasUpgradeIntent && hasVariantCompareIntent) return "variant_upgrade_insight";
 
   const hasModelSummaryIntent =
-    /\b(overall|how good|good family car|family car|most sensible|should i consider|which variant should i consider|model summary)\b/i.test(plainText) ||
+    /\b(overall|how good|good family car|family car|family use|city driving|city use|daily use|best .* city|best value|most sensible|should i consider|which variant should i consider|model summary)\b/i.test(plainText) ||
     (/\bgood\b/i.test(plainText) && /\b(overall|family)\b/i.test(plainText));
 
   if (hasModelSummaryIntent) return "model_score_insights";
@@ -1014,9 +1014,37 @@ const uniqueModelStrings = (values = [], limit = 4) => {
   return out;
 };
 
+const inferModelSummaryContext = (userMessage = "") => {
+  const text = String(userMessage || "").toLowerCase();
+
+  if (/\b(city|city driving|daily driving|daily use|traffic|urban)\b/i.test(text)) {
+    return "city";
+  }
+
+  if (/\b(family|family use|family car|practical|practicality|parents|kids|children)\b/i.test(text)) {
+    return "family";
+  }
+
+  if (/\b(value|sensible|worth|best buy|best variant)\b/i.test(text)) {
+    return "value";
+  }
+
+  return "overall";
+};
+
+const buildScopeLabel = ({ fuelKey = "", transmissionKey = "" } = {}) => {
+  const parts = [fuelKey, transmissionKey]
+    .map((part) => humanizeFeatureKey(part))
+    .filter(Boolean);
+
+  return parts.join(" ").toLowerCase();
+};
+
 const buildModelScoreSummaryLine = (result = {}, params = {}) => {
   const variants = Array.isArray(result.variants) ? result.variants : [];
   const modelLabel = getModelLabelFromVariants(variants, params.modelKey);
+  const buyerContext = inferModelSummaryContext(params.userMessage);
+  const scopeLabel = buildScopeLabel(params);
 
   if (!variants.length) {
     return `I could not find enough diagnostic score data for ${modelLabel}.`;
@@ -1027,6 +1055,7 @@ const buildModelScoreSummaryLine = (result = {}, params = {}) => {
   const cityStrong = getBestModelVariantByModule(variants, "cityUse");
   const mileageStrong = getBestModelVariantByModule(variants, "mileageRunningCost");
   const balanced = getBalancedModelVariant(variants);
+  const practicalStrong = getBestModelVariantByModule(variants, "practicality");
 
   const watchouts = uniqueModelStrings(
     variants.flatMap((variant) => variant.watchouts || []),
@@ -1035,9 +1064,27 @@ const buildModelScoreSummaryLine = (result = {}, params = {}) => {
 
   const summaryParts = [];
 
-  summaryParts.push(
-    `${modelLabel} looks strongest as a practical, efficient city hatchback in the current diagnostic score data.`
-  );
+  if (scopeLabel) {
+    summaryParts.push(`Scope: ${scopeLabel}.`);
+  }
+
+  if (buyerContext === "city" && cityStrong) {
+    summaryParts.push(
+      `For city driving, ${modelLabel} looks strongest where city-use score is highest: ${cityStrong.variantFullName} at ${formatScore(getModelModuleScoreValue(cityStrong, "cityUse"))}.`
+    );
+  } else if (buyerContext === "family" && practicalStrong) {
+    summaryParts.push(
+      `For family use, ${modelLabel} should be read through practicality, safety and daily-use scores first. Practicality signal is strongest on ${practicalStrong.variantFullName} at ${formatScore(getModelModuleScoreValue(practicalStrong, "practicality"))}.`
+    );
+  } else if (buyerContext === "value" && bestValue) {
+    summaryParts.push(
+      `For value, ${modelLabel} looks strongest on ${bestValue.variantFullName} with same-model value ${formatScore(getModelModuleScoreValue(bestValue, "value"))}.`
+    );
+  } else {
+    summaryParts.push(
+      `${modelLabel} looks strongest as a practical, efficient city hatchback in the current diagnostic score data.`
+    );
+  }
 
   if (bestValue) {
     summaryParts.push(
@@ -1060,6 +1107,12 @@ const buildModelScoreSummaryLine = (result = {}, params = {}) => {
   if (cityStrong) {
     summaryParts.push(
       `City-use signal is strongest on ${cityStrong.variantFullName} at ${formatScore(getModelModuleScoreValue(cityStrong, "cityUse"))}.`
+    );
+  }
+
+  if (buyerContext === "family" && practicalStrong) {
+    summaryParts.push(
+      `Family/practicality signal: ${practicalStrong.variantFullName} is strongest on practicality at ${formatScore(getModelModuleScoreValue(practicalStrong, "practicality"))}.`
     );
   }
 
@@ -1343,7 +1396,11 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
       return createSuccess({
         operation: "model_score_insights",
         data: result,
-        answer: buildModelScoreSummaryLine(result, { modelKey, ...inferred }),
+        answer: buildModelScoreSummaryLine(result, {
+          modelKey,
+          ...inferred,
+          userMessage: args.userMessage || args.message || args.query || "",
+        }),
       });
     }
 

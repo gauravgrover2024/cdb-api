@@ -31,7 +31,16 @@ const hasGuardrailFalse = (value) => {
   );
 };
 
-const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expectedTools = [], requireGuardrail = false, answerMustInclude = [] }) => {
+const runCase = async ({
+  runAciCoreLiveBridge,
+  id,
+  message,
+  context = {},
+  expectedTools = [],
+  requireGuardrail = false,
+  answerMustInclude = [],
+  answerMustNotInclude = [],
+}) => {
   const startedAt = Date.now();
 
   const response = await runAciCoreLiveBridge({
@@ -86,6 +95,13 @@ const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expect
       assert(
         answerText.includes(requiredText),
         `${id}: expected answer to include "${requiredText}", got: ${answerText}`
+      );
+    }
+
+    for (const forbiddenText of answerMustNotInclude) {
+      assert(
+        !answerText.includes(forbiddenText),
+        `${id}: expected answer not to include "${forbiddenText}", got: ${answerText}`
       );
     }
 
@@ -196,6 +212,28 @@ const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expect
       expectedTools: ['vehicle_score_insight'],
       requireGuardrail: true,
       answerMustInclude: ['Maruti Baleno', 'Watchouts'],
+    },
+    {
+      id: 'score-baleno-petrol-manual-overall',
+      message: 'How good is Baleno petrol manual overall?',
+      expectedTools: ['vehicle_score_insight'],
+      requireGuardrail: true,
+      answerMustInclude: ['Maruti Baleno', 'Scope: petrol manual'],
+      answerMustNotInclude: ['CNG'],
+    },
+    {
+      id: 'score-baleno-city-driving',
+      message: 'Best Baleno for city driving?',
+      expectedTools: ['vehicle_score_insight'],
+      requireGuardrail: true,
+      answerMustInclude: ['For city driving', 'City-use signal'],
+    },
+    {
+      id: 'score-baleno-family-use',
+      message: 'Which Baleno variant should I consider for family use?',
+      expectedTools: ['vehicle_score_insight'],
+      requireGuardrail: true,
+      answerMustInclude: ['family', 'practicality', 'Watchouts'],
     },
     {
       id: 'price-creta-sx-delhi',
