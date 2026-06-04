@@ -94,7 +94,8 @@
     "aci:decision:similar-filter:audit": "node src/scripts/aci-decision/auditSimilarCarsToolFilteringV1.cjs",
     "aci:decision:similar-relation-mode:eval": "node src/scripts/aci-decision/runSimilarCarsRelationModeRegressionEvalV1.cjs",
     "aci:decision:score-language:audit": "node src/scripts/aci-decision/auditScoreInsightDiagnosticLanguageV1.cjs",
-    "aci:decision:score-tool-language:audit": "node src/scripts/aci-decision/auditScoreInsightToolLanguageV1.cjs"
+    "aci:decision:score-tool-language:audit": "node src/scripts/aci-decision/auditScoreInsightToolLanguageV1.cjs",
+    "aci:decision:score-user-query:smoke": "node src/scripts/aci-decision/smokeScoreInsightUserQueryV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
