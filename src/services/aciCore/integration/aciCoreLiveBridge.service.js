@@ -215,7 +215,9 @@ const isolateAciCoreBridgeContext = ({
 };
 
 const isAciCoreLiveBridgeEnabled = () =>
-  truthy(process.env.ACI_CORE_LIVE_BRIDGE_ENABLED);
+  process.env.ACI_CORE_LIVE_BRIDGE_ENABLED === undefined
+    ? true
+    : truthy(process.env.ACI_CORE_LIVE_BRIDGE_ENABLED);
 
 const shouldUseAciCoreLiveBridge = ({ message = "" } = {}) => {
   if (!isAciCoreLiveBridgeEnabled()) return false;

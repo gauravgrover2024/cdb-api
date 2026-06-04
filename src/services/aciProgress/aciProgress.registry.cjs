@@ -51,6 +51,8 @@ const ACI_PROGRESS_MODULES = [
       { key: "chat_first_direction", name: "Chat-first direction", status: "ready" },
       { key: "context_persistence", name: "Context persistence", status: "mostly_ready" },
       { key: "explicit_context_switching", name: "Explicit context switching", status: "mostly_ready" },
+      { key: "public_chat_score_insight_smoke", name: "Public chat score insight smoke", status: "partial" },
+      { key: "aci_core_live_bridge_default_on", name: "ACI Core live bridge default-on chat path", status: "partial" },
       { key: "multi_intent_responses", name: "Multi-intent responses", status: "partial" },
       { key: "safe_streaming", name: "Safe first response streaming", status: "planned" },
       { key: "clarification_policy", name: "Clarifying question policy", status: "partial" },

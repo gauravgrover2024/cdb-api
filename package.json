@@ -101,7 +101,8 @@
     "aci:decision:gate:phase0": "node src/scripts/aci-decision/runDecisionGateParallelV1.cjs phase0",
     "aci:decision:score-language:audit:fast": "ACI_SCORE_LANGUAGE_SAMPLE_LIMIT=12 node src/scripts/aci-decision/auditScoreInsightDiagnosticLanguageV1.cjs",
     "aci:decision:score-language:audit:full": "ACI_SCORE_LANGUAGE_SAMPLE_LIMIT=50 node src/scripts/aci-decision/auditScoreInsightDiagnosticLanguageV1.cjs",
-    "aci:decision:gate:score:full": "node src/scripts/aci-decision/runDecisionGateParallelV1.cjs scoreFull"
+    "aci:decision:gate:score:full": "node src/scripts/aci-decision/runDecisionGateParallelV1.cjs scoreFull",
+    "aci:decision:public-chat-score:smoke": "node src/scripts/aci-decision/smokePublicChatScoreInsightV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
