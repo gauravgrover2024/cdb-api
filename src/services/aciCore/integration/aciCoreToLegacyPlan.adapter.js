@@ -197,8 +197,8 @@ const inferTool = (meaningFrame = {}, rawMessage = '') => {
     requestedFacts.regret ||
     requestedFacts.strengths ||
     requestedFacts.weaknesses ||
-    /\b(score|scores|rating|ratings|value|worth|regret|strong|weak|strength|weakness|pros|cons|good value|bad value)\b/i.test(preClarificationScoreIntentText) ||
-    /\b(score|scores|rating|ratings|value|regret|strength|weakness)\b/i.test(preClarificationRequestedFactsText);
+    /\b(score|scores|rating|ratings|value|worth|worth over|regret|strong|weak|strength|weakness|pros|cons|good value|bad value|gain|gain from|upgrade|worth upgrading|pay extra|extra over)\b/i.test(preClarificationScoreIntentText) ||
+    /\b(score|scores|rating|ratings|value|regret|strength|weakness|gain|upgrade|pay extra|extra over)\b/i.test(preClarificationRequestedFactsText);
 
   const hasPreClarificationVehicleContext =
     Boolean(
@@ -214,8 +214,15 @@ const inferTool = (meaningFrame = {}, rawMessage = '') => {
       /\b(alpha|zeta|delta|sigma|smart|sx|s\(o\)|htx|gtx|zx|vx|vxi|zxi|amt|ivt|dct|cvt|automatic|manual|petrol|diesel|cng|ev)\b/i.test(rawMessage || '')
     );
 
+  const hasPreClarificationUpgradePairIntent =
+    /\bwhat\s+do\s+i\s+gain\s+from\b/i.test(rawMessage || '') ||
+    /\bfrom\s+.+\s+to\s+.+\b/i.test(rawMessage || '') ||
+    /\bworth\s+over\b/i.test(rawMessage || '') ||
+    /\bpay\s+extra\b/i.test(rawMessage || '') ||
+    /\bshould\s+i\s+buy\b.+\bor\b.+/i.test(rawMessage || '');
+
   if (
-    hasPreClarificationScoreInsightIntent &&
+    (hasPreClarificationScoreInsightIntent || hasPreClarificationUpgradePairIntent) &&
     hasPreClarificationVehicleContext &&
     !requestedFacts.price &&
     !requestedFacts.onRoad &&
@@ -256,8 +263,8 @@ const inferTool = (meaningFrame = {}, rawMessage = '') => {
     requestedFacts.regret ||
     requestedFacts.strengths ||
     requestedFacts.weaknesses ||
-    /\b(score|scores|rating|ratings|value|worth|regret|strong|weak|strength|weakness|pros|cons|good value|bad value)\b/i.test(scoreIntentText) ||
-    /\b(score|scores|rating|ratings|value|regret|strength|weakness)\b/i.test(requestedFactsText);
+    /\b(score|scores|rating|ratings|value|worth|worth over|regret|strong|weak|strength|weakness|pros|cons|good value|bad value|gain|gain from|upgrade|worth upgrading|pay extra|extra over)\b/i.test(scoreIntentText) ||
+    /\b(score|scores|rating|ratings|value|regret|strength|weakness|gain|upgrade|pay extra|extra over)\b/i.test(requestedFactsText);
 
   if (
     hasScoreInsightIntent &&

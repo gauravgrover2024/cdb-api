@@ -38,6 +38,7 @@ const OPERATION_BY_TOOL_NAME = {
   vehicle_score_profile: "variant_score_insight",
   vehicle_model_score_insights: "model_score_insights",
   vehicle_same_family_value_insights: "same_family_value_insights",
+  vehicle_variant_upgrade_insight: "variant_upgrade_insight",
   vehicle_top_score_insights: "top_module_score_insights",
 };
 
@@ -48,6 +49,36 @@ const normalizeKey = (value) =>
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
+
+const escapeRegex = (value = "") =>
+  String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const hasNormalizedPhrase = (normalizedText = "", phrase = "") => {
+  const normalizedPhrase = normalizeKey(phrase);
+  if (!normalizedText || !normalizedPhrase) return false;
+  return new RegExp(`(^|_)${escapeRegex(normalizedPhrase)}(_|$)`).test(normalizedText);
+};
+
+const getNormalizedPhraseIndex = (normalizedText = "", phrase = "") => {
+  const normalizedPhrase = normalizeKey(phrase);
+  if (!normalizedText || !normalizedPhrase) return -1;
+  const match = normalizedText.match(
+    new RegExp(`(^|_)${escapeRegex(normalizedPhrase)}(?=_|$)`),
+  );
+  if (!match) return -1;
+  return match.index + (match[1] ? 1 : 0);
+};
+
+const getScoreProfileDocKey = (doc = {}) =>
+  doc.scoreProfileKey || doc.variantProfileKey || [doc.makeKey, doc.modelKey, doc.variantKey, doc.fuelKey, doc.transmissionKey].map(normalizeKey).join("|");
+
+const getFamilyKey = (doc = {}) =>
+  [
+    normalizeKey(doc.makeKey),
+    normalizeKey(doc.modelKey),
+    normalizeKey(doc.fuelKey),
+    normalizeKey(doc.transmissionKey),
+  ].join("|");
 
 const safeLimit = (value, fallback = 20, max = 80) => {
   const n = Number(value);
@@ -63,6 +94,15 @@ const inferScoreInsightOperationFromText = (text = "", fallback = "variant_score
   const plainText = String(text || "").trim().toLowerCase();
   const normalized = normalizeKey(text);
   if (!plainText && !normalized) return fallback;
+
+  const hasUpgradeIntent =
+    /\b(worth over|worth upgrading|upgrade|gain from|what do i gain|pay extra|extra over|over|vs|versus| or )\b/i.test(plainText);
+
+  const hasVariantCompareIntent =
+    /\b(sigma|delta|zeta|alpha|base|top trim|higher trim|lower trim)\b/i.test(plainText) &&
+    /\b(worth|gain|upgrade|over|vs|versus| or |buy)\b/i.test(plainText);
+
+  if (hasUpgradeIntent && hasVariantCompareIntent) return "variant_upgrade_insight";
 
   const hasValueIntent =
     /\b(value|worth|better value|best value|better variant|which variant)\b/i.test(plainText) ||
@@ -399,9 +439,18 @@ const resolveScoreProfileKeyFromMessage = async ({ db, userMessage = "" } = {}) 
 
 
 
-const inferSameFamilyParamsFromMessage = async ({ db, userMessage = "" } = {}) => {
+const inferSameFamilyParamsFromMessage = async ({
+  db,
+  userMessage = "",
+  makeKey: preferredMakeKey = "",
+  modelKey: preferredModelKey = "",
+  fuelKey: preferredFuelKey = "",
+  transmissionKey: preferredTransmissionKey = "",
+} = {}) => {
   const normalizedMessage = normalizeKey(userMessage);
-  if (!normalizedMessage) return {};
+  const normalizedPreferredModel = normalizeKey(preferredModelKey);
+  const normalizedPreferredMake = normalizeKey(preferredMakeKey);
+  if (!normalizedMessage && !normalizedPreferredModel) return {};
 
   const docs = await getScoreProfileLookupDocs(db);
 
@@ -410,11 +459,13 @@ const inferSameFamilyParamsFromMessage = async ({ db, userMessage = "" } = {}) =
     const modelKey = normalizeKey(doc.modelKey);
     if (!modelKey) continue;
 
-    const fullNameKey = normalizeKey(doc.variantFullName);
+    const makeKey = normalizeKey(doc.makeKey);
     let score = 0;
 
-    if (normalizedMessage.includes(modelKey)) score += 50;
-    if (fullNameKey && normalizedMessage.includes(fullNameKey.split("_").slice(0, 2).join("_"))) score += 10;
+    if (normalizedPreferredModel && modelKey === normalizedPreferredModel) score += 80;
+    if (normalizedPreferredMake && makeKey === normalizedPreferredMake) score += 10;
+    if (hasNormalizedPhrase(normalizedMessage, modelKey)) score += 50;
+    if (makeKey && hasNormalizedPhrase(normalizedMessage, makeKey)) score += 8;
 
     if (score <= 0) continue;
 
@@ -425,17 +476,19 @@ const inferSameFamilyParamsFromMessage = async ({ db, userMessage = "" } = {}) =
   const bestModel = [...modelScores.values()].sort((a, b) => b.score - a.score)[0]?.doc;
   if (!bestModel) return {};
 
-  const fuelKey =
+  const fuelKey = normalizeKey(preferredFuelKey) || (
     /\bpetrol\b/i.test(userMessage) ? "petrol" :
     /\bdiesel\b/i.test(userMessage) ? "diesel" :
     /\bcng\b/i.test(userMessage) ? "cng" :
-    /\bev|electric\b/i.test(userMessage) ? "ev" :
-    "";
+    /\b(?:ev|electric)\b/i.test(userMessage) ? "ev" :
+    ""
+  );
 
-  const transmissionKey =
-    /\bmanual|mt\b/i.test(userMessage) ? "manual" :
-    /\bautomatic|amt|cvt|dct|ivt|at\b/i.test(userMessage) ? "automatic" :
-    "";
+  const transmissionKey = normalizeKey(preferredTransmissionKey) || (
+    /\b(?:manual|mt)\b/i.test(userMessage) ? "manual" :
+    /\b(?:automatic|amt|cvt|dct|ivt|at)\b/i.test(userMessage) ? "automatic" :
+    ""
+  );
 
   return {
     makeKey: normalizeKey(bestModel.makeKey),
@@ -445,6 +498,332 @@ const inferSameFamilyParamsFromMessage = async ({ db, userMessage = "" } = {}) =
     fuelTransmissionFamilyKey: fuelKey && transmissionKey ? `${fuelKey}_${transmissionKey}` : "",
   };
 };
+
+
+const getNumericScore = (insight = {}, moduleKey = "", fallbackPath = "") => {
+  const modules = insight.modules || {};
+  const value = modules[moduleKey]?.score;
+  if (Number.isFinite(Number(value))) return Number(value);
+
+  if (fallbackPath) {
+    const parts = fallbackPath.split(".");
+    let current = insight;
+    for (const part of parts) current = current?.[part];
+    if (Number.isFinite(Number(current))) return Number(current);
+  }
+
+  return null;
+};
+
+const scoreDifference = (targetInsight = {}, baseInsight = {}, moduleKey = "", fallbackPath = "") => {
+  const targetScore = getNumericScore(targetInsight, moduleKey, fallbackPath);
+  const baseScore = getNumericScore(baseInsight, moduleKey, fallbackPath);
+
+  if (!Number.isFinite(targetScore) || !Number.isFinite(baseScore)) return null;
+  return targetScore - baseScore;
+};
+
+const formatPriceDelta = (delta = 0) => {
+  if (!Number.isFinite(Number(delta))) return "";
+  const abs = Math.abs(Number(delta));
+  if (abs >= 100000) return `₹${(abs / 100000).toFixed(2)}L`;
+  return `₹${Math.round(abs).toLocaleString("en-IN")}`;
+};
+
+const scoreDeltaPhrase = (label, delta) => {
+  if (!Number.isFinite(Number(delta)) || Math.abs(delta) < 0.5) return "";
+  const direction = delta > 0 ? "improves" : "drops";
+  return `${label} ${direction} by ${Math.abs(Number(delta)).toFixed(1)} points`;
+};
+
+const riskDeltaPhrase = (label, delta) => {
+  if (!Number.isFinite(Number(delta)) || Math.abs(delta) < 0.5) return "";
+  const direction = delta > 0 ? "rises" : "drops";
+  return `${label} ${direction} by ${Math.abs(Number(delta)).toFixed(1)} points`;
+};
+
+const formatScore = (value) =>
+  Number.isFinite(Number(value)) ? Number(value).toFixed(1).replace(/\.0$/, "") : "NA";
+
+const getVariantScoreSnapshot = (insight = {}) => ({
+  price: Number(insight.referenceExShowroomPrice || insight.price || insight.data?.referenceExShowroomPrice),
+  features: getNumericScore(insight, "features", "featureScore.score"),
+  value: getNumericScore(insight, "value", "valueScore.score"),
+  safety: getNumericScore(insight, "safety", "safetyScore.score"),
+  cityUse: getNumericScore(insight, "cityUse", "cityUseScore.score"),
+  premiumComfort: getNumericScore(insight, "premiumComfort", "premiumComfortScore.score"),
+  regretRisk: getNumericScore(insight, "regretRisk", "regretRisk.riskScore"),
+});
+
+const getMentionedVariantDocs = ({ docs = [], normalizedMessage = "" } = {}) => {
+  const mentioned = docs
+    .map((doc) => {
+      const variantIndex = getNormalizedPhraseIndex(normalizedMessage, doc.variantKey);
+      const fullNameIndex = getNormalizedPhraseIndex(normalizedMessage, doc.variantFullName);
+      const index = [variantIndex, fullNameIndex]
+        .filter((value) => value >= 0)
+        .sort((a, b) => a - b)[0];
+
+      return index >= 0 ? { doc, index } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.index - b.index);
+
+  const unique = [];
+  const seen = new Set();
+  for (const item of mentioned) {
+    const key = getScoreProfileDocKey(item.doc);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item.doc);
+  }
+
+  return unique;
+};
+
+const getMentionedVariantKeys = ({ docs = [], normalizedMessage = "" } = {}) => {
+  const mentionedKeys = [];
+  const seen = new Set();
+
+  const docsByVariant = new Map();
+  for (const doc of docs) {
+    const variantKey = normalizeKey(doc.variantKey);
+    if (!variantKey || docsByVariant.has(variantKey)) continue;
+    docsByVariant.set(variantKey, doc);
+  }
+
+  const ordered = [...docsByVariant.keys()]
+    .map((variantKey) => ({
+      variantKey,
+      index: getNormalizedPhraseIndex(normalizedMessage, variantKey),
+    }))
+    .filter((item) => item.index >= 0)
+    .sort((a, b) => a.index - b.index);
+
+  for (const item of ordered) {
+    if (seen.has(item.variantKey)) continue;
+    seen.add(item.variantKey);
+    mentionedKeys.push(item.variantKey);
+  }
+
+  return mentionedKeys;
+};
+
+const inferFamilyDocsFromVariantPair = ({
+  docs = [],
+  normalizedMessage = "",
+  preferredMakeKey = "",
+  preferredModelKey = "",
+  preferredFuelKey = "",
+  preferredTransmissionKey = "",
+} = {}) => {
+  const mentionedVariantKeys = getMentionedVariantKeys({ docs, normalizedMessage });
+  if (mentionedVariantKeys.length < 2) return null;
+
+  const requiredKeys = mentionedVariantKeys.slice(0, 2);
+  const groups = new Map();
+
+  for (const doc of docs) {
+    const variantKey = normalizeKey(doc.variantKey);
+    if (!requiredKeys.includes(variantKey)) continue;
+
+    const familyKey = getFamilyKey(doc);
+    const group = groups.get(familyKey) || [];
+    group.push(doc);
+    groups.set(familyKey, group);
+  }
+
+  const candidates = [...groups.values()]
+    .map((group, order) => {
+      const presentKeys = new Set(group.map((doc) => normalizeKey(doc.variantKey)));
+      if (!requiredKeys.every((key) => presentKeys.has(key))) return null;
+
+      const first = group[0] || {};
+      let score = 0;
+      if (preferredModelKey && normalizeKey(first.modelKey) === normalizeKey(preferredModelKey)) score += 100;
+      if (preferredMakeKey && normalizeKey(first.makeKey) === normalizeKey(preferredMakeKey)) score += 20;
+      if (preferredFuelKey && normalizeKey(first.fuelKey) === normalizeKey(preferredFuelKey)) score += 10;
+      if (preferredTransmissionKey && normalizeKey(first.transmissionKey) === normalizeKey(preferredTransmissionKey)) score += 10;
+
+      return {
+        group,
+        order,
+        score,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score || a.order - b.order);
+
+  if (!candidates.length) return null;
+
+  return {
+    familyDocs: candidates[0].group,
+    mentionedVariantKeys: requiredKeys,
+  };
+};
+
+const findDocForText = (docs = [], text = "") => {
+  const normalizedText = normalizeKey(text);
+  if (!normalizedText) return null;
+
+  return docs.find((doc) =>
+    hasNormalizedPhrase(normalizedText, doc.variantKey) ||
+    hasNormalizedPhrase(normalizedText, doc.variantFullName) ||
+    normalizeKey(doc.variantFullName).includes(normalizedText),
+  ) || null;
+};
+
+const inferUpgradeInsightParamsFromMessage = async ({
+  db,
+  userMessage = "",
+  makeKey = "",
+  modelKey = "",
+  fuelKey = "",
+  transmissionKey = "",
+} = {}) => {
+  const plainText = String(userMessage || "").toLowerCase();
+  const normalizedMessage = normalizeKey(userMessage);
+  if (!normalizedMessage) return null;
+
+  const docs = await getScoreProfileLookupDocs(db);
+
+  const sameFamily = await inferSameFamilyParamsFromMessage({
+    db,
+    userMessage,
+    makeKey,
+    modelKey,
+    fuelKey,
+    transmissionKey,
+  });
+
+  let familyDocs = [];
+
+  if (sameFamily?.modelKey) {
+    familyDocs = docs.filter((doc) => {
+      if (normalizeKey(doc.modelKey) !== sameFamily.modelKey) return false;
+      if (sameFamily.fuelKey && normalizeKey(doc.fuelKey) !== sameFamily.fuelKey) return false;
+      if (sameFamily.transmissionKey && normalizeKey(doc.transmissionKey) !== sameFamily.transmissionKey) return false;
+      return true;
+    });
+  }
+
+  let unique = getMentionedVariantDocs({ docs: familyDocs, normalizedMessage });
+  let pairFamily = null;
+
+  if (unique.length < 2) {
+    pairFamily = inferFamilyDocsFromVariantPair({
+      docs,
+      normalizedMessage,
+      preferredMakeKey: sameFamily.makeKey || makeKey,
+      preferredModelKey: sameFamily.modelKey || modelKey,
+      preferredFuelKey: sameFamily.fuelKey || fuelKey,
+      preferredTransmissionKey: sameFamily.transmissionKey || transmissionKey,
+    });
+
+    if (pairFamily?.familyDocs?.length) {
+      familyDocs = pairFamily.familyDocs;
+      unique = getMentionedVariantDocs({ docs: familyDocs, normalizedMessage });
+    }
+  }
+
+  if (unique.length < 2) return null;
+
+  let baseDoc = unique[0];
+  let targetDoc = unique[1];
+
+  const fromTo = plainText.match(/\bfrom\s+(.+?)\s+to\s+(.+?)(?:\?|$|\s+(?:for|and|with|in)\b)/i);
+  if (fromTo) {
+    const fromText = normalizeKey(fromTo[1]);
+    const toText = normalizeKey(fromTo[2]);
+    const fromDoc = findDocForText(unique, fromText);
+    const toDoc = findDocForText(unique, toText);
+    if (fromDoc && toDoc) {
+      baseDoc = fromDoc;
+      targetDoc = toDoc;
+    }
+  } else if (/\bworth over\b|\bover\b/i.test(plainText)) {
+    // "Alpha worth over Zeta" = target Alpha, base Zeta.
+    targetDoc = unique[0];
+    baseDoc = unique[1];
+  } else if (/\bor\b|\bvs\b|\bversus\b/i.test(plainText)) {
+    // Compare two choices in price order for a practical "which one" answer.
+    const sorted = [...unique].sort((a, b) => Number(a.referenceExShowroomPrice || 0) - Number(b.referenceExShowroomPrice || 0));
+    baseDoc = sorted[0];
+    targetDoc = sorted[1] || unique[1];
+  }
+
+  return {
+    baseDoc,
+    targetDoc,
+    familyDocs,
+    resolutionSource: pairFamily ? "variant_pair_family" : "model_family",
+    ...sameFamily,
+  };
+};
+
+const buildVariantUpgradeInsightLine = ({ baseInsight, targetInsight } = {}) => {
+  if (!baseInsight || !targetInsight) {
+    return "I could not resolve both variants clearly enough for an upgrade-ladder answer.";
+  }
+
+  const baseName = baseInsight.variantFullName;
+  const targetName = targetInsight.variantFullName;
+
+  const basePrice = Number(baseInsight.referenceExShowroomPrice || baseInsight.price || baseInsight.data?.referenceExShowroomPrice);
+  const targetPrice = Number(targetInsight.referenceExShowroomPrice || targetInsight.price || targetInsight.data?.referenceExShowroomPrice);
+  const priceDelta = Number.isFinite(basePrice) && Number.isFinite(targetPrice)
+    ? targetPrice - basePrice
+    : null;
+
+  const baseSnapshot = getVariantScoreSnapshot(baseInsight);
+  const targetSnapshot = getVariantScoreSnapshot(targetInsight);
+  const featureDelta = scoreDifference(targetInsight, baseInsight, "features", "featureScore.score");
+  const valueDelta = scoreDifference(targetInsight, baseInsight, "value", "valueScore.score");
+  const safetyDelta = scoreDifference(targetInsight, baseInsight, "safety", "safetyScore.score");
+  const cityDelta = scoreDifference(targetInsight, baseInsight, "cityUse", "cityUseScore.score");
+  const premiumDelta = scoreDifference(targetInsight, baseInsight, "premiumComfort", "premiumComfortScore.score");
+  const regretDelta = scoreDifference(targetInsight, baseInsight, "regretRisk", "regretRisk.riskScore");
+
+  const deltaParts = [
+    scoreDeltaPhrase("features", featureDelta),
+    scoreDeltaPhrase("same-model value", valueDelta),
+    scoreDeltaPhrase("safety", safetyDelta),
+    scoreDeltaPhrase("city-use", cityDelta),
+    scoreDeltaPhrase("premium/comfort", premiumDelta),
+    riskDeltaPhrase("regret risk", regretDelta),
+  ].filter(Boolean);
+
+  let verdict = "";
+
+  if (Number.isFinite(featureDelta) && Number.isFinite(valueDelta) && featureDelta > 3 && valueDelta < -8) {
+    verdict = `${targetName} gives you more equipment than ${baseName}, but the value score drops sharply.`;
+  } else if (Number.isFinite(featureDelta) && featureDelta > 3) {
+    verdict = `${targetName} gives you a clearer equipment upgrade over ${baseName}.`;
+  } else if (Number.isFinite(valueDelta) && valueDelta < -8) {
+    verdict = `${targetName} is weaker value than ${baseName}; choose it only if the specific extras matter to you.`;
+  } else {
+    verdict = `${targetName} and ${baseName} are close on diagnostic module scores.`;
+  }
+
+  if (Number.isFinite(priceDelta) && priceDelta > 0) {
+    verdict += ` The ex-showroom price jump is about ${formatPriceDelta(priceDelta)}.`;
+  }
+
+  const moduleLine = deltaParts.length
+    ? `Score movement: ${deltaParts.join("; ")}.`
+    : "";
+
+  const snapshotLine =
+    `Snapshot: ${baseName} is ${Number.isFinite(baseSnapshot.price) ? formatPriceDelta(baseSnapshot.price) : "price NA"} ex-showroom with features ${formatScore(baseSnapshot.features)}, value ${formatScore(baseSnapshot.value)}, safety ${formatScore(baseSnapshot.safety)}, city-use ${formatScore(baseSnapshot.cityUse)}, premium/comfort ${formatScore(baseSnapshot.premiumComfort)}, regret risk ${formatScore(baseSnapshot.regretRisk)}; ${targetName} is ${Number.isFinite(targetSnapshot.price) ? formatPriceDelta(targetSnapshot.price) : "price NA"} ex-showroom with features ${formatScore(targetSnapshot.features)}, value ${formatScore(targetSnapshot.value)}, safety ${formatScore(targetSnapshot.safety)}, city-use ${formatScore(targetSnapshot.cityUse)}, premium/comfort ${formatScore(targetSnapshot.premiumComfort)}, regret risk ${formatScore(targetSnapshot.regretRisk)}.`;
+
+  const conclusion =
+    Number.isFinite(valueDelta) && valueDelta < -8
+      ? `Practical call: ${baseName} is the safer value pick; ${targetName} is for buyers who specifically want the higher-trim equipment.`
+      : `Practical call: ${targetName} can be justified if those upgrades match your use case.`;
+
+  return `${verdict} ${snapshotLine} ${moduleLine} ${conclusion}`.replace(/\s+/g, " ").trim();
+};
+
 
 const buildSameFamilyValueLine = (result = {}, params = {}) => {
   const variants = Array.isArray(result.variants) ? result.variants : [];
@@ -738,6 +1117,48 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
         operation: "model_score_insights",
         data: result,
         answer: `${result.count} score insight variants found for ${modelKey}.`,
+      });
+    }
+
+    if (["variant_upgrade_insight", "upgrade_ladder", "variant_upgrade"].includes(operation)) {
+      const inferred = await inferUpgradeInsightParamsFromMessage({
+        db: args.db,
+        userMessage: args.userMessage || args.message || args.query || "",
+        makeKey: args.makeKey || args.make_key,
+        modelKey: args.modelKey || args.model_key,
+        fuelKey: args.fuelKey || args.fuel_key,
+        transmissionKey: args.transmissionKey || args.transmission_key,
+      });
+
+      if (!inferred?.baseDoc || !inferred?.targetDoc) {
+        return createError({
+          operation,
+          code: "missing_upgrade_variants",
+          message: "Two variants are required for an upgrade-ladder score answer.",
+        });
+      }
+
+      const baseInsight = await getVariantScoreInsight({
+        db: args.db,
+        scoreProfileKey: inferred.baseDoc.scoreProfileKey,
+        variantProfileKey: inferred.baseDoc.variantProfileKey,
+      });
+
+      const targetInsight = await getVariantScoreInsight({
+        db: args.db,
+        scoreProfileKey: inferred.targetDoc.scoreProfileKey,
+        variantProfileKey: inferred.targetDoc.variantProfileKey,
+      });
+
+      return createSuccess({
+        operation: "variant_upgrade_insight",
+        data: {
+          base: baseInsight,
+          target: targetInsight,
+          baseVariantFullName: baseInsight?.variantFullName,
+          targetVariantFullName: targetInsight?.variantFullName,
+        },
+        answer: buildVariantUpgradeInsightLine({ baseInsight, targetInsight }),
       });
     }
 

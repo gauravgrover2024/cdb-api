@@ -101,7 +101,7 @@ const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expect
     );
 
     assert(
-      /Strengths:|Watchouts:|weak same-model value|good same-model value|feature-rich|Ranked ladder|strongest same-family value pick|next practical step/i.test(answerText),
+      /Strengths:|Watchouts:|weak same-model value|good same-model value|feature-rich|Ranked ladder|strongest same-family value pick|next practical step|Score movement|Practical call|price jump/i.test(answerText),
       `${id}: score answer is not buyer-readable enough: ${answerText}`
     );
 
@@ -168,6 +168,20 @@ const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expect
       expectedTools: ['vehicle_score_insight'],
       requireGuardrail: true,
       answerMustInclude: ['Ranked ladder', 'Maruti Baleno'],
+    },
+    {
+      id: 'score-baleno-alpha-worth-over-zeta',
+      message: 'Is Baleno Alpha worth over Zeta?',
+      expectedTools: ['vehicle_score_insight'],
+      requireGuardrail: true,
+      answerMustInclude: ['Maruti Baleno Alpha', 'Maruti Baleno Zeta'],
+    },
+    {
+      id: 'score-baleno-delta-to-zeta-gain',
+      message: 'What do I gain from Baleno Delta to Zeta?',
+      expectedTools: ['vehicle_score_insight'],
+      requireGuardrail: true,
+      answerMustInclude: ['Maruti Baleno Delta', 'Maruti Baleno Zeta'],
     },
     {
       id: 'price-creta-sx-delhi',
