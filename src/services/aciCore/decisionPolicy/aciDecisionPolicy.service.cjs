@@ -47,10 +47,11 @@ function evaluateDecisionPolicy(input = {}) {
   const buyerContext = asObject(input.buyerContext || output.buyerContext);
   const existingPolicy = createBaseDecisionPolicy(output.decisionPolicy);
 
+  const finalRecommendationRequested = input.requestedFinalRecommendation === true;
   const blockedReasons = [...(existingPolicy.blockedReasons || [])];
   const missingMandatoryInputs = uniq([
     ...(existingPolicy.missingMandatoryInputs || []),
-    ...getMissingFinalRecommendationInputs(buyerContext),
+    ...(finalRecommendationRequested ? getMissingFinalRecommendationInputs(buyerContext) : []),
   ]);
 
   const hasUsefulResult = decisionOutputHasUsefulResult(output);
@@ -77,10 +78,11 @@ function evaluateDecisionPolicy(input = {}) {
         : ALLOWED_ANSWER_TYPES.CLARIFICATION_REQUIRED;
   }
 
-  if (
-    evidence.evidenceStatus === EVIDENCE_STATUS.MISSING ||
-    Number(evidence.requiredEvidenceCount || 0) > Number(evidence.usableEvidenceCount || 0)
-  ) {
+  const evidenceIsMissing = evidence.evidenceStatus === EVIDENCE_STATUS.MISSING;
+  const evidenceBelowFinalThreshold =
+    Number(evidence.requiredEvidenceCount || 0) > Number(evidence.usableEvidenceCount || 0);
+
+  if (evidenceIsMissing || (finalRecommendationRequested && evidenceBelowFinalThreshold)) {
     blockedReasons.push(BLOCKED_REASONS.EVIDENCE_THRESHOLD_NOT_MET);
     degradedMode = degradedMode || DEGRADED_MODES.EVIDENCE_CONFIDENCE_TOO_LOW;
     if (allowedAnswerType !== ALLOWED_ANSWER_TYPES.RECOVERY_REQUIRED) {
@@ -122,7 +124,7 @@ function evaluateDecisionPolicy(input = {}) {
     !degradedMode;
 
   if (
-    input.requestedFinalRecommendation === true &&
+    finalRecommendationRequested &&
     evidenceReady &&
     missingMandatoryInputs.length === 0 &&
     blockedReasons.length === 0
@@ -132,7 +134,7 @@ function evaluateDecisionPolicy(input = {}) {
     claimType = CLAIM_TYPES.OPINION;
   }
 
-  if (input.requestedFinalRecommendation === true && !canUseForFinalRecommendation) {
+  if (finalRecommendationRequested && !canUseForFinalRecommendation) {
     blockedReasons.push(BLOCKED_REASONS.FINAL_RECOMMENDATION_POLICY_NOT_READY);
     degradedMode = degradedMode || DEGRADED_MODES.FINAL_RECOMMENDATION_BLOCKED;
     if (allowedAnswerType === ALLOWED_ANSWER_TYPES.FINAL_RECOMMENDATION_ALLOWED) {
