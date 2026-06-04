@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import scoreInsightService from "../../../aciCore/scoreProfiles/aciVariantScoreInsight.service.cjs";
 
 const {
@@ -9,6 +10,9 @@ const {
 } = scoreInsightService;
 
 const TOOL_NAME = "vehicle_score_insight";
+
+const SCORE_PROFILE_COLLECTION =
+  process.env.ACI_VARIANT_SCORE_PROFILE_COLLECTION || "aci_vehicle_variant_score_profile";
 
 const SCORE_PATH_BY_MODULE = {
   safety: "safetyScore.score",
@@ -57,6 +61,8 @@ const firstValue = (...values) =>
 const normalizeRuntimeArgs = (args = {}) => {
   const toolPlan = args.toolPlan || {};
   const input = toolPlan.input || toolPlan.args || toolPlan.params || {};
+  const entities = toolPlan.entities || {};
+  const filters = toolPlan.filters || {};
   const anchors = args.plan?.meaningFrame?.anchors || args.context?.meaningFrame?.anchors || {};
   const primaryVehicle = anchors.primaryVehicle || anchors.vehicle || {};
   const selectedVehicle =
@@ -64,6 +70,60 @@ const normalizeRuntimeArgs = (args = {}) => {
     args.context?.vehicle ||
     args.context?.aciSelectedVehicle ||
     {};
+
+  const makeValue = firstValue(
+    args.makeKey, args.make,
+    input.makeKey, input.make,
+    toolPlan.makeKey, toolPlan.make,
+    entities.makeKey, entities.make,
+    filters.makeKey, filters.make,
+    primaryVehicle.makeKey, primaryVehicle.make,
+    selectedVehicle.makeKey, selectedVehicle.make
+  );
+
+  const modelValue = firstValue(
+    args.modelKey, args.model,
+    input.modelKey, input.model,
+    toolPlan.modelKey, toolPlan.model,
+    entities.modelKey, entities.model, entities.primaryModel,
+    filters.modelKey, filters.model,
+    Array.isArray(entities.models) ? entities.models[0] : null,
+    Array.isArray(filters.models) ? filters.models[0] : null,
+    primaryVehicle.modelKey, primaryVehicle.model,
+    selectedVehicle.modelKey, selectedVehicle.model
+  );
+
+  const variantValue = firstValue(
+    args.variantKey, args.variant,
+    input.variantKey, input.variant,
+    toolPlan.variantKey, toolPlan.variant,
+    entities.variantKey, entities.variant, entities.primaryVariant,
+    filters.variantKey, filters.variant,
+    Array.isArray(entities.variants) ? entities.variants[0] : null,
+    Array.isArray(filters.variants) ? filters.variants[0] : null,
+    primaryVehicle.variantKey, primaryVehicle.variant,
+    selectedVehicle.variantKey, selectedVehicle.variant
+  );
+
+  const fuelValue = firstValue(
+    args.fuelKey, args.fuel,
+    input.fuelKey, input.fuel,
+    toolPlan.fuelKey, toolPlan.fuel,
+    entities.fuelKey, entities.fuel,
+    filters.fuelKey, filters.fuel,
+    primaryVehicle.fuelKey, primaryVehicle.fuel,
+    selectedVehicle.fuelKey, selectedVehicle.fuel
+  );
+
+  const transmissionValue = firstValue(
+    args.transmissionKey, args.transmission,
+    input.transmissionKey, input.transmission,
+    toolPlan.transmissionKey, toolPlan.transmission,
+    entities.transmissionKey, entities.transmission,
+    filters.transmissionKey, filters.transmission,
+    primaryVehicle.transmissionKey, primaryVehicle.transmission,
+    selectedVehicle.transmissionKey, selectedVehicle.transmission
+  );
 
   return {
     ...input,
@@ -77,17 +137,11 @@ const normalizeRuntimeArgs = (args = {}) => {
       OPERATION_BY_TOOL_NAME[args.tool],
       "variant_score_insight"
     ),
-    makeKey: firstValue(args.makeKey, input.makeKey, toolPlan.makeKey, primaryVehicle.makeKey, selectedVehicle.makeKey),
-    modelKey: firstValue(args.modelKey, input.modelKey, toolPlan.modelKey, primaryVehicle.modelKey, selectedVehicle.modelKey),
-    variantKey: firstValue(args.variantKey, input.variantKey, toolPlan.variantKey, primaryVehicle.variantKey, selectedVehicle.variantKey),
-    fuelKey: firstValue(args.fuelKey, input.fuelKey, toolPlan.fuelKey, primaryVehicle.fuelKey, selectedVehicle.fuelKey),
-    transmissionKey: firstValue(
-      args.transmissionKey,
-      input.transmissionKey,
-      toolPlan.transmissionKey,
-      primaryVehicle.transmissionKey,
-      selectedVehicle.transmissionKey
-    ),
+    makeKey: normalizeKey(makeValue),
+    modelKey: normalizeKey(modelValue),
+    variantKey: normalizeKey(variantValue),
+    fuelKey: normalizeKey(fuelValue),
+    transmissionKey: normalizeKey(transmissionValue),
     fuelTransmissionFamilyKey: firstValue(
       args.fuelTransmissionFamilyKey,
       input.fuelTransmissionFamilyKey,
@@ -101,6 +155,14 @@ const normalizeRuntimeArgs = (args = {}) => {
     limit: firstValue(args.limit, input.limit, toolPlan.limit),
     direction: firstValue(args.direction, input.direction, toolPlan.direction),
     filters: firstValue(args.filters, input.filters, toolPlan.filters, {}),
+    userMessage: firstValue(
+      args.userMessage,
+      args.message,
+      input.userMessage,
+      input.message,
+      toolPlan.userMessage,
+      toolPlan.message
+    ),
     db: args.db,
   };
 };
@@ -167,6 +229,134 @@ const createError = ({ operation, code, message, meta = {} }) => ({
   },
 });
 
+
+let cachedScoreProfileLookupDocs = null;
+
+const getScoreProfileLookupDb = (db) => {
+  if (db) return db;
+  if (mongoose.connection?.readyState === 1 && mongoose.connection?.db) {
+    return mongoose.connection.db;
+  }
+  return null;
+};
+
+const SCORE_TEXT_STOP_WORDS = new Set([
+  "is",
+  "the",
+  "a",
+  "an",
+  "good",
+  "bad",
+  "value",
+  "worth",
+  "strong",
+  "weak",
+  "at",
+  "what",
+  "which",
+  "show",
+  "score",
+  "scores",
+  "rating",
+  "ratings",
+  "variant",
+  "car",
+  "features",
+  "feature",
+  "and",
+  "or",
+  "in",
+  "of",
+  "for",
+  "to",
+]);
+
+const getScoreProfileLookupDocs = async (db) => {
+  if (cachedScoreProfileLookupDocs) return cachedScoreProfileLookupDocs;
+
+  const resolvedDb = getScoreProfileLookupDb(db);
+  if (!resolvedDb) return [];
+
+  const col = resolvedDb.collection(SCORE_PROFILE_COLLECTION);
+
+  cachedScoreProfileLookupDocs = await col
+    .find(
+      {},
+      {
+        projection: {
+          _id: 0,
+          scoreProfileKey: 1,
+          variantProfileKey: 1,
+          variantFullName: 1,
+          makeKey: 1,
+          modelKey: 1,
+          variantKey: 1,
+          fuelKey: 1,
+          transmissionKey: 1,
+          fuelTransmissionFamilyKey: 1,
+        },
+      }
+    )
+    .toArray();
+
+  return cachedScoreProfileLookupDocs;
+};
+
+const resolveScoreProfileKeyFromMessage = async ({ db, userMessage = "" } = {}) => {
+  const normalizedMessage = normalizeKey(userMessage);
+  if (!normalizedMessage) return null;
+
+  const messageTokens = new Set(
+    normalizedMessage
+      .split("_")
+      .filter((token) => token && token.length >= 2 && !SCORE_TEXT_STOP_WORDS.has(token))
+  );
+
+  const docs = await getScoreProfileLookupDocs(db);
+  let best = null;
+
+  for (const doc of docs) {
+    const makeKey = normalizeKey(doc.makeKey);
+    const modelKey = normalizeKey(doc.modelKey);
+    const variantKey = normalizeKey(doc.variantKey);
+    const fuelKey = normalizeKey(doc.fuelKey);
+    const transmissionKey = normalizeKey(doc.transmissionKey);
+    const fullNameKey = normalizeKey(doc.variantFullName);
+
+    const hasModel =
+      (modelKey && messageTokens.has(modelKey)) ||
+      (modelKey && normalizedMessage.includes(modelKey));
+
+    const hasVariant =
+      (variantKey && messageTokens.has(variantKey)) ||
+      (variantKey && normalizedMessage.includes(variantKey));
+
+    if (!hasModel || !hasVariant) continue;
+
+    let score = 0;
+    if (hasModel) score += 45;
+    if (hasVariant) score += 40;
+    if (makeKey && (messageTokens.has(makeKey) || normalizedMessage.includes(makeKey))) score += 8;
+    if (fuelKey && (messageTokens.has(fuelKey) || normalizedMessage.includes(fuelKey))) score += 4;
+    if (transmissionKey && (messageTokens.has(transmissionKey) || normalizedMessage.includes(transmissionKey))) score += 4;
+    if (fullNameKey && normalizedMessage.includes(fullNameKey)) score += 30;
+
+    if (!best || score > best.score) {
+      best = { score, doc };
+    }
+  }
+
+  if (!best || best.score < 80) return null;
+
+  return {
+    scoreProfileKey: best.doc.scoreProfileKey,
+    variantProfileKey: best.doc.variantProfileKey,
+    confidence: best.score,
+    matchedVariantFullName: best.doc.variantFullName,
+  };
+};
+
+
 const compactVariantLine = (insight) => {
   if (!insight) return null;
 
@@ -177,6 +367,31 @@ const compactVariantLine = (insight) => {
   const regretRisk = modules.regretRisk?.score ?? "NA";
 
   return `${insight.variantFullName}: safety ${safetyScore}, features ${featureScore}, same-model value ${valueScore}, regret risk ${regretRisk}.`;
+};
+
+const resolveVariantInsightFromMessage = async ({ db, userMessage = "" } = {}) => {
+  const textMatch = await resolveScoreProfileKeyFromMessage({
+    db,
+    userMessage,
+  });
+
+  if (!textMatch?.scoreProfileKey && !textMatch?.variantProfileKey) return null;
+
+  return {
+    insight: await getVariantScoreInsight({
+      db,
+      scoreProfileKey: textMatch.scoreProfileKey,
+      variantProfileKey: textMatch.variantProfileKey,
+    }),
+    error: null,
+    scoreProfileKey: textMatch.scoreProfileKey,
+    variantProfileKey: textMatch.variantProfileKey,
+    meta: {
+      resolutionSource: "user_message",
+      confidence: textMatch.confidence,
+      matchedVariantFullName: textMatch.matchedVariantFullName,
+    },
+  };
 };
 
 const resolveVariantInsight = async (params = {}) => {
@@ -202,8 +417,16 @@ const resolveVariantInsight = async (params = {}) => {
 
   const modelKey = normalizeKey(params.modelKey || params.model_key);
   const variantKey = normalizeKey(params.variantKey || params.variant_key);
+  const userMessage = params.userMessage || params.message || params.query || "";
 
   if (!modelKey || !variantKey) {
+    const messageMatch = await resolveVariantInsightFromMessage({
+      db: params.db,
+      userMessage,
+    });
+
+    if (messageMatch) return messageMatch;
+
     return {
       insight: null,
       error: {
@@ -227,6 +450,11 @@ const resolveVariantInsight = async (params = {}) => {
 
   const fuelKey = normalizeKey(params.fuelKey || params.fuel_key);
   const transmissionKey = normalizeKey(params.transmissionKey || params.transmission_key);
+  const messageMatch = async () =>
+    resolveVariantInsightFromMessage({
+      db: params.db,
+      userMessage,
+    });
 
   const matches = (result.variants || []).filter((variant) => {
     if (normalizeKey(variant.variantKey) !== variantKey) return false;
@@ -240,6 +468,9 @@ const resolveVariantInsight = async (params = {}) => {
   }
 
   if (matches.length > 1) {
+    const textResolved = await messageMatch();
+    if (textResolved?.insight) return textResolved;
+
     return {
       insight: null,
       error: {
@@ -257,6 +488,9 @@ const resolveVariantInsight = async (params = {}) => {
       },
     };
   }
+
+  const textResolved = await messageMatch();
+  if (textResolved?.insight) return textResolved;
 
   return {
     insight: null,

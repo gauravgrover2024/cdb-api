@@ -1999,6 +1999,101 @@ export const buildUsedCarPassthroughResponse = ({
     actions: runtimeData.actions || [],
   });
 
+
+export const buildVehicleScoreInsightResponse = ({
+  toolPlan = {},
+  runtimeData = {},
+  context = {},
+} = {}) => {
+  const data = runtimeData.data || runtimeData || {};
+  const operation =
+    runtimeData.operation ||
+    toolPlan.operation ||
+    toolPlan.input?.operation ||
+    "variant_score_insight";
+
+  const usageGuardrail =
+    runtimeData.usageGuardrail ||
+    data.usageGuardrail ||
+    {
+      canUseForFinalRecommendation: false,
+      finalRecommendationEnabled: false,
+      reason:
+        "These are diagnostic module scores only. Final recommendation needs buyer-context weighting, similar-cars graph, upgrade ladder, service/resale evidence and recommendation policy.",
+    };
+
+  const modules = data.modules || {};
+  const featureScore = modules.features?.score ?? "NA";
+  const safetyScore = modules.safety?.score ?? "NA";
+  const valueScore = modules.value?.score ?? "NA";
+  const regretRisk = modules.regretRisk?.score ?? "NA";
+
+  const variantName =
+    data.variantFullName ||
+    runtimeData.variantFullName ||
+    runtimeData.title ||
+    "Score insight";
+
+  const baseAnswer =
+    runtimeData.answer ||
+    data.answer ||
+    (
+      data.variantFullName
+        ? `${variantName}: safety ${safetyScore}, features ${featureScore}, same-model value ${valueScore}, regret risk ${regretRisk}.`
+        : `I found score insight data for ${variantName}.`
+    );
+
+  const guardrailText =
+    "These are diagnostic module scores, not a final recommendation.";
+
+  return {
+    intent: runtimeData.intent || toolPlan.tool || "vehicle_score_insight",
+    displayMode: "canvas",
+    canvasType: "score_insight_canvas",
+    inlineType: "score_insight_summary",
+    title: runtimeData.title || data.variantFullName || "Score insight",
+    answer: `${baseAnswer} ${guardrailText}`,
+    data,
+    rows: runtimeData.rows || data.variants || [],
+    variants: data.variants || runtimeData.variants || [],
+    usageGuardrail,
+    actions: runtimeData.actions || [],
+    leadingQuestions:
+      runtimeData.leadingQuestions ||
+      [
+        "Show strengths and weak points",
+        "Compare value within this model",
+        "Show safety score details",
+      ],
+    conversationSuggestions:
+      runtimeData.conversationSuggestions ||
+      [
+        "Show strengths and weak points",
+        "Compare value within this model",
+        "Show safety score details",
+      ],
+    contextPatch: runtimeData.contextPatch || {},
+    sourceTransparency:
+      runtimeData.sourceTransparency ||
+      {
+        modulesChecked: ["aci_vehicle_variant_score_profile"],
+        matched:
+          runtimeData.count ??
+          data.count ??
+          (Array.isArray(data.variants) ? data.variants.length : data.scoreProfileKey ? 1 : 0),
+        dataSource: "aci_vehicle_variant_score_profile",
+      },
+    meta: {
+      ...(runtimeData.meta || {}),
+      responseTool: "vehicle_score_insight",
+      operation,
+      finalRecommendationEnabled: false,
+      scoreInsightGuardrail: usageGuardrail,
+    },
+  };
+};
+
+
 /* -------------------------------------------------------------------------- */
 /*  Registry                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -2023,6 +2118,26 @@ export const ACI_RESPONSE_TOOLS = {
   vehicle_recommend: {
     id: "vehicle_recommend",
     run: buildVehicleRecommendResponse,
+  },
+  vehicle_score_insight: {
+    id: "vehicle_score_insight",
+    run: buildVehicleScoreInsightResponse,
+  },
+  vehicle_score_profile: {
+    id: "vehicle_score_profile",
+    run: buildVehicleScoreInsightResponse,
+  },
+  vehicle_model_score_insights: {
+    id: "vehicle_model_score_insights",
+    run: buildVehicleScoreInsightResponse,
+  },
+  vehicle_same_family_value_insights: {
+    id: "vehicle_same_family_value_insights",
+    run: buildVehicleScoreInsightResponse,
+  },
+  vehicle_top_score_insights: {
+    id: "vehicle_top_score_insights",
+    run: buildVehicleScoreInsightResponse,
   },
   vehicle_price_breakup: {
     id: "vehicle_price_breakup",

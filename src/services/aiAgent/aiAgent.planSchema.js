@@ -51,6 +51,7 @@ export const CONVERSATION_MODES = [
   "education",
   "internal_passthrough",
   "unavailable",
+  "decision_intelligence",
 ];
 
 export const CUSTOMER_STAGES = [
@@ -100,6 +101,7 @@ export const NEW_CAR_PLANNER_TOOLS = [
   "vehicle_compare",
   "vehicle_feature_comparison",
   "vehicle_recommend",
+  "vehicle_score_insight",
   "vehicle_price_breakup",
   "vehicle_emi",
   "vehicle_price_history",
@@ -218,6 +220,7 @@ export const CANVAS_TYPES = [
   "lead_capture_canvas",
   "explainer_canvas",
   "unavailable_notice_canvas",
+  "score_insight_canvas",
   "text_notice_canvas",
 
   // Future/detail canvases
@@ -240,6 +243,7 @@ export const INLINE_TYPES = [
   "variant_ambiguity_card",
   "text_notice",
   "unavailable_notice",
+  "score_insight_summary",
   "clarification_card",
   "explainer_card",
 ];
@@ -1166,6 +1170,10 @@ export const normalizePlannerOutput = (output = {}, tool = "") => {
     if (tool === "vehicle_compare") normalized.canvasType = "comparison_canvas";
     if (tool === "vehicle_recommend")
       normalized.canvasType = "recommendation_results_canvas";
+    if (tool === "vehicle_score_insight") {
+      normalized.canvasType = "score_insight_canvas";
+      normalized.inlineType = normalized.inlineType || "score_insight_summary";
+    }
     if (tool === "vehicle_price_breakup")
       normalized.canvasType = "price_breakup_canvas";
     if (tool === "vehicle_emi") normalized.canvasType = "emi_calculator_canvas";

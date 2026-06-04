@@ -169,7 +169,7 @@ const getBudgetMin = (meaningFrame = {}) => {
   return Number.isFinite(min) && min > 0 ? min : undefined;
 };
 
-const inferTool = (meaningFrame = {}) => {
+const inferTool = (meaningFrame = {}, rawMessage = '') => {
   const task = cleanText(meaningFrame.primaryTask).toLowerCase();
   const requestedFacts = meaningFrame.requestedFacts || {};
   const hasComparisonTargets = getComparisonTargets(meaningFrame).length >= 2;
@@ -179,6 +179,50 @@ const inferTool = (meaningFrame = {}) => {
 
   if (meaningFrame.safety?.shouldRefuse || task === 'unsupported') {
     return 'unavailable';
+  }
+
+  const preClarificationScoreIntentText = [
+    rawMessage,
+    task,
+    meaningFrame.primaryTask,
+    ...(Array.isArray(meaningFrame.secondaryTasks) ? meaningFrame.secondaryTasks : []),
+  ].join(' ').toLowerCase();
+
+  const preClarificationRequestedFactsText = JSON.stringify(requestedFacts || {}).toLowerCase();
+
+  const hasPreClarificationScoreInsightIntent =
+    requestedFacts.score ||
+    requestedFacts.scores ||
+    requestedFacts.value ||
+    requestedFacts.regret ||
+    requestedFacts.strengths ||
+    requestedFacts.weaknesses ||
+    /\b(score|scores|rating|ratings|value|worth|regret|strong|weak|strength|weakness|pros|cons|good value|bad value)\b/i.test(preClarificationScoreIntentText) ||
+    /\b(score|scores|rating|ratings|value|regret|strength|weakness)\b/i.test(preClarificationRequestedFactsText);
+
+  const hasPreClarificationVehicleContext =
+    Boolean(
+      meaningFrame.anchors?.primaryVehicle?.modelKey ||
+      meaningFrame.anchors?.primaryVehicle?.model ||
+      meaningFrame.anchors?.primaryVehicle?.variantKey ||
+      meaningFrame.anchors?.vehicle?.modelKey ||
+      meaningFrame.anchors?.vehicle?.model ||
+      meaningFrame.anchors?.vehicle?.variantKey ||
+      asArray(meaningFrame.anchors?.comparisonTargets).length ||
+      asArray(meaningFrame.filters?.models).length ||
+      asArray(meaningFrame.filters?.variants).length ||
+      /\b(alpha|zeta|delta|sigma|smart|sx|s\(o\)|htx|gtx|zx|vx|vxi|zxi|amt|ivt|dct|cvt|automatic|manual|petrol|diesel|cng|ev)\b/i.test(rawMessage || '')
+    );
+
+  if (
+    hasPreClarificationScoreInsightIntent &&
+    hasPreClarificationVehicleContext &&
+    !requestedFacts.price &&
+    !requestedFacts.onRoad &&
+    !requestedFacts.emi &&
+    !requestedFacts.colors
+  ) {
+    return 'vehicle_score_insight';
   }
 
   if (meaningFrame.clarification?.needed || task === 'clarification') {
@@ -554,7 +598,7 @@ function buildLegacyPlanFromAciMeaningFrame({
   context = {},
   message = '',
 } = {}) {
-  const tool = inferTool(meaningFrame);
+  const tool = inferTool(meaningFrame, message);
   const conversationMode = inferConversationMode(tool, meaningFrame);
   const confidence = getConfidence(meaningFrame);
   const output = inferOutput(tool, meaningFrame);

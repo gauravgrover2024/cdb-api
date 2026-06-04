@@ -764,34 +764,37 @@ export const runAciCoreLiveBridge = async ({
       ? "vehicle_discovery"
       : understanding.meaningFrame?.primaryTask || "";
 
+  const bridge = {
+    enabled: true,
+    durationMs: Date.now() - startedAt,
+    selectedParser: understanding.selectedParser || "",
+    usedGemini: Boolean(understanding.usedGemini),
+    primaryTask: bridgePrimaryTask,
+    tool: bridgeTool,
+    planMode: plan.mode || "",
+    contextIsolation: isolation,
+    originalMessage,
+    effectiveMessage,
+  };
+
+  const scoreInsightGuardrail =
+    bridgeTool === "vehicle_score_insight"
+      ? {
+          canUseForFinalRecommendation: false,
+          finalRecommendationEnabled: false,
+          reason:
+            "These are diagnostic module scores only. Final recommendation needs buyer-context weighting, similar-cars graph, upgrade ladder, service/resale evidence and recommendation policy.",
+        }
+      : null;
+
   return composeAciAnswer({
     ...normalized,
-    aciCoreBridge: {
-      enabled: true,
-      durationMs: Date.now() - startedAt,
-      selectedParser: understanding.selectedParser || "",
-      usedGemini: Boolean(understanding.usedGemini),
-      primaryTask: bridgePrimaryTask,
-      tool: bridgeTool,
-      planMode: plan.mode || "",
-      contextIsolation: isolation,
-      originalMessage,
-      effectiveMessage,
-    },
+    ...(scoreInsightGuardrail ? { usageGuardrail: scoreInsightGuardrail } : {}),
+    aciCoreBridge: bridge,
     meta: {
       ...(normalized.meta || {}),
-      aciCoreBridge: {
-        enabled: true,
-        durationMs: Date.now() - startedAt,
-        selectedParser: understanding.selectedParser || "",
-        usedGemini: Boolean(understanding.usedGemini),
-        primaryTask: bridgePrimaryTask,
-        tool: bridgeTool,
-        planMode: plan.mode || "",
-        contextIsolation: isolation,
-        originalMessage,
-        effectiveMessage,
-      },
+      ...(scoreInsightGuardrail ? { scoreInsightGuardrail } : {}),
+      aciCoreBridge: bridge,
     },
   });
 };
