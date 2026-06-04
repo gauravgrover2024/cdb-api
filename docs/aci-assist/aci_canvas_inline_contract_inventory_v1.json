@@ -1,0 +1,1127 @@
+{
+  "generatedAt": "2026-06-04T13:41:14.534Z",
+  "inventory": [
+    {
+      "type": "aci_quotation_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/scripts/testAiExecutor.js",
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.closingEngine.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.toolRegistry.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.tools.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/tools/newCars/vehicleColors.tool.js",
+        "src/services/aiAgent/tools/newCars/vehiclePricelist.tool.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "aiAgent.responseTools",
+        "src/scripts/testAiExecutor.js",
+        "src/services/aiAgent",
+        "vehicleColors",
+        "vehiclePricelist"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "availability_waiting_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "brand_results_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "car_overview_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.earlyFeatureGate.detector.js",
+        "src/services/aiAgent/aiAgent.earlyFeatureGate.runner.js",
+        "src/services/aiAgent/aiAgent.featureResolverV2.js",
+        "src/services/aiAgent/tools/newCars/vehicleFeatures.tool.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent",
+        "vehicleFeatures"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "color_gallery_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.featureResolverV2.js",
+        "src/services/aiAgent/tools/newCars/vehicleFeatures.tool.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent",
+        "vehicleFeatures"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "color_studio_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.planner.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/aiAgent.semanticCompiler.js",
+        "src/services/aiAgent/tools/newCars/vehiclePricelist.tool.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "aiAgent.responseTools",
+        "src/services/aiAgent",
+        "vehiclePricelist"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "comparison_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/scripts/testAiExecutor.js",
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/aiAgent.earlyFeatureGate.detector.js",
+        "src/services/aiAgent/aiAgent.featureResolverV2.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.planner.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/aiAgent.semanticCompiler.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "aiAgent.responseTools",
+        "src/scripts/testAiExecutor.js",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "emi_calculator_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/scripts/testAiExecutor.js",
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.tools.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.planner.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/aiAgent.semanticCompiler.js",
+        "src/services/aiAgent/tools/newCars/vehicleColors.tool.js",
+        "src/services/aiAgent/tools/newCars/vehiclePricelist.tool.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "aiAgent.responseTools",
+        "src/scripts/testAiExecutor.js",
+        "src/services/aiAgent",
+        "vehicleColors",
+        "vehiclePricelist"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "explainer_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "feature_comparison_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/aiAgent.featureComparisonAnswer.js",
+        "src/services/aiAgent/aiAgent.planSchema.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "feature_explorer_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.responseTools.js"
+      ],
+      "likelyOwningModules": [
+        "aiAgent.responseTools",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "feature_match_builder_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.featureIntelligence.js",
+        "src/services/aiAgent/aiAgent.featureResolverV2.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "features_explorer_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/_deprecated_v1/aiAgent.featureIntelligence.js",
+        "src/services/aiAgent/aiAgent.contractNormalizer.js",
+        "src/services/aiAgent/aiAgent.earlyFeatureGate.detector.js",
+        "src/services/aiAgent/aiAgent.featurePayloadBuilder.js",
+        "src/services/aiAgent/aiAgent.featureResolverV2.js",
+        "src/services/aiAgent/tools/newCars/vehicleFeatures.tool.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent",
+        "vehicleFeatures"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "finance_guide_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "fuel_decision_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "lead_capture_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.planner.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js",
+        "src/services/aiAgent/aiAgent.semanticCompiler.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "lifestyle_fit_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "model_overview_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "monthly_budget_planner_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "offers_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "ownership_service_warranty_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "performance_spec_ranking_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "price_breakup_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/aiAgent.semanticCompiler.js",
+        "src/services/aiAgent/tools/newCars/vehiclePricelist.tool.js"
+      ],
+      "likelyOwningModules": [
+        "aiAgent.responseTools",
+        "src/services/aiAgent",
+        "vehiclePricelist"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "price_history_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.responseTools.js"
+      ],
+      "likelyOwningModules": [
+        "aiAgent.responseTools",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "pricelist_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/scripts/testAiExecutor.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.tools.js",
+        "src/services/aiAgent/aiAgent.earlyFeatureGate.detector.js",
+        "src/services/aiAgent/aiAgent.featureResolverV2.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.planner.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/aiAgent.semanticCompiler.js",
+        "src/services/aiAgent/tools/newCars/vehicleColors.tool.js",
+        "src/services/aiAgent/tools/newCars/vehicleFeatures.tool.js",
+        "src/services/aiAgent/tools/newCars/vehiclePricelist.tool.js"
+      ],
+      "likelyOwningModules": [
+        "aiAgent.responseTools",
+        "src/scripts/testAiExecutor.js",
+        "src/services/aiAgent",
+        "vehicleColors",
+        "vehicleFeatures",
+        "vehiclePricelist"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "recommendation_results_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.planner.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/aiAgent.semanticCompiler.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "aiAgent.responseTools",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "resale_value_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "safety_advisor_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js",
+        "src/services/aiAgent/aiAgent.responseTools.js"
+      ],
+      "likelyOwningModules": [
+        "aiAgent.responseTools",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "score_insight_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/tools/newCars/vehicleScoreInsight.tool.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "aiAgent.responseTools",
+        "src/services/aiAgent",
+        "vehicleScoreInsight"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "senior_friendly_advisor_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "service_center_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "similar_cars_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "space_practicality_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "tco_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "unavailable_notice_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "unsupported_city_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreLiveBridge.service.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/tools/newCars/vehiclePricelist.tool.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreLiveBridge",
+        "aiAgent.responseTools",
+        "vehiclePricelist"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "variant_advisor_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/tools/newCars/vehiclePricelist.tool.js"
+      ],
+      "likelyOwningModules": [
+        "vehiclePricelist"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "variant_finder_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "variant_upgrade_value_canvas",
+      "kind": "canvas",
+      "backendFilePaths": [
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "canvasType"
+      ]
+    },
+    {
+      "type": "availability_answer_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "clarification_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.responseTools.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "aiAgent.responseTools",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "explainer_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/aiAgent.semanticCompiler.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "aiAgent.responseTools",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "fallback_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "feature_answer_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/scripts/testAiExecutor.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.actionBuilder.js",
+        "src/services/aiAgent/_deprecated_v1/aiAgent.featureIntelligence.js",
+        "src/services/aiAgent/aiAgent.featureResolverV2.js",
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.planner.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/aiAgent.semanticCompiler.js"
+      ],
+      "likelyOwningModules": [
+        "aiAgent.responseTools",
+        "src/scripts/testAiExecutor.js",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "feature_comparison_summary",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/aiAgent.featureComparisonAnswer.js",
+        "src/services/aiAgent/aiAgent.featureResolverV2.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "feature_discovery_summary",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.featureResolverV2.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "feature_explorer_summary",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.featureResolverV2.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "finance_faq_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "model_ambiguity_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "offer_summary_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "score_insight_summary",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/tools/newCars/vehicleScoreInsight.tool.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "aiAgent.responseTools",
+        "vehicleScoreInsight"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "service_center_answer_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "short_price_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "similar_cars_summary",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/tools/newCars/vehicleSimilar.tool.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "vehicleSimilar"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "spec_answer_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js"
+      ],
+      "likelyOwningModules": [
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "text_notice",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.responseTools.js"
+      ],
+      "likelyOwningModules": [
+        "aiAgent.responseTools",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "unavailable_notice",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/scripts/testAiExecutor.js",
+        "src/services/aciCore/integration/aciCoreToLegacyPlan.adapter.js",
+        "src/services/aiAgent/aiAgent.planSchema.js",
+        "src/services/aiAgent/aiAgent.planner.js",
+        "src/services/aiAgent/aiAgent.plannerRedFixes.js",
+        "src/services/aiAgent/aiAgent.responseSanitizer.js",
+        "src/services/aiAgent/aiAgent.responseTools.js",
+        "src/services/aiAgent/aiAgent.semanticCompiler.js",
+        "src/services/aiAgent/tools/newCars/vehicleFeatures.tool.js"
+      ],
+      "likelyOwningModules": [
+        "aciCoreToLegacyPlan.adapter",
+        "aiAgent.responseTools",
+        "src/scripts/testAiExecutor.js",
+        "src/services/aiAgent",
+        "vehicleFeatures"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    },
+    {
+      "type": "variant_ambiguity_card",
+      "kind": "inline",
+      "backendFilePaths": [
+        "src/services/aiAgent/aiAgent.newCarQuestionMap.js",
+        "src/services/aiAgent/aiAgent.responseTools.js"
+      ],
+      "likelyOwningModules": [
+        "aiAgent.responseTools",
+        "src/services/aiAgent"
+      ],
+      "appearsInPublicOrLiveBridgeSmoke": false,
+      "frontendSupported": true,
+      "status": "supported",
+      "keys": [
+        "inlineType"
+      ]
+    }
+  ]
+}
