@@ -550,6 +550,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "similar_cars_relation_mode_regression_eval", name: "Similar cars relation-mode regression eval", status: "partial" },
       { key: "decision_eval_suites", name: "Decision eval suites and pass/fail gates", status: "partial" },
       { key: "parallel_decision_gate_runner", name: "Parallel decision gate runner", status: "partial" },
+      { key: "fast_parallel_score_gate", name: "Fast parallel score decision gate", status: "partial" },
       { key: "market_judgement_isolation", name: "Market-judgment isolation tests", status: "partial" },
       { key: "empty_result_not_success", name: "Empty result must not pass as success", status: "ready" },
       { key: "sponsored_separation", name: "Sponsored/revenue separation from recommendation brain", status: "planned" },

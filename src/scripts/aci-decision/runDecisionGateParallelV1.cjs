@@ -8,7 +8,15 @@ const GATES = {
   score: [
     { id: 'score-user-query-smoke', cmd: 'npm run -s aci:decision:score-user-query:smoke' },
     { id: 'score-tool-language-audit', cmd: 'npm run -s aci:decision:score-tool-language:audit' },
-    { id: 'score-service-language-audit', cmd: 'npm run -s aci:decision:score-language:audit' },
+    { id: 'score-service-language-audit-fast', cmd: 'ACI_SCORE_LANGUAGE_SAMPLE_LIMIT=12 npm run -s aci:decision:score-language:audit' },
+    { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },
+    { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
+    { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
+  ],
+  scoreFull: [
+    { id: 'score-user-query-smoke', cmd: 'npm run -s aci:decision:score-user-query:smoke' },
+    { id: 'score-tool-language-audit', cmd: 'npm run -s aci:decision:score-tool-language:audit' },
+    { id: 'score-service-language-audit-full', cmd: 'ACI_SCORE_LANGUAGE_SAMPLE_LIMIT=50 npm run -s aci:decision:score-language:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },

@@ -11,6 +11,12 @@ const {
 
 const SCORE_PROFILE_COLLECTION = 'aci_vehicle_variant_score_profile';
 
+const DEFAULT_SAMPLE_LIMIT = 50;
+const SAMPLE_LIMIT = Math.max(
+  1,
+  Number(process.env.ACI_SCORE_LANGUAGE_SAMPLE_LIMIT || DEFAULT_SAMPLE_LIMIT)
+);
+
 const HARD_BANNED_PATTERNS = [
   /\bmust buy\b/i,
   /\bbuy this\b/i,
@@ -142,7 +148,7 @@ async function main() {
   await mongoose.connect(mongoUri);
   const db = getDb();
 
-  const samples = await getCandidateScoreProfiles(db);
+  const samples = await getCandidateScoreProfiles(db, SAMPLE_LIMIT);
   const violations = [];
   let variantOutputsChecked = 0;
   let modelOutputsChecked = 0;
@@ -183,6 +189,7 @@ async function main() {
     suite: 'ACI Score Insight Diagnostic Language Audit v1',
     ok: violations.length === 0,
     checked: {
+      requestedSampleLimit: SAMPLE_LIMIT,
       scoreProfileSamples: samples.length,
       variantOutputsChecked,
       modelOutputsChecked,
