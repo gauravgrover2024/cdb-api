@@ -366,7 +366,54 @@ const compactVariantLine = (insight) => {
   const valueScore = modules.value?.score ?? "NA";
   const regretRisk = modules.regretRisk?.score ?? "NA";
 
-  return `${insight.variantFullName}: safety ${safetyScore}, features ${featureScore}, same-model value ${valueScore}, regret risk ${regretRisk}.`;
+  const strengths = Array.isArray(insight.strengths)
+    ? insight.strengths.filter(Boolean).slice(0, 2)
+    : [];
+
+  const watchouts = Array.isArray(insight.watchouts)
+    ? insight.watchouts.filter(Boolean).slice(0, 2)
+    : [];
+
+  const valueScoreNumber = Number(modules.value?.score);
+  const featureScoreNumber = Number(modules.features?.score);
+  const regretRiskNumber = Number(modules.regretRisk?.score);
+
+  const isFeatureRich = Number.isFinite(featureScoreNumber) && featureScoreNumber >= 75;
+  const isWeakValue = Number.isFinite(valueScoreNumber) && valueScoreNumber <= 30;
+  const isGoodValue = Number.isFinite(valueScoreNumber) && valueScoreNumber >= 70;
+  const isLowRegret = Number.isFinite(regretRiskNumber) && regretRiskNumber <= 25;
+
+  let verdict = `${insight.variantFullName} has diagnostic score data available.`;
+
+  if (isWeakValue && isFeatureRich) {
+    verdict = `${insight.variantFullName} is feature-rich, but its same-model value is weak — you are paying more for the top-trim experience rather than getting the strongest value pick.`;
+  } else if (isGoodValue && isFeatureRich) {
+    verdict = `${insight.variantFullName} looks like a strong same-model value pick and is also feature-rich.`;
+  } else if (isGoodValue) {
+    verdict = `${insight.variantFullName} looks like a strong same-model value pick.`;
+  } else if (isWeakValue) {
+    verdict = `${insight.variantFullName} has a weak same-model value signal compared with other variants in its family.`;
+  } else if (isFeatureRich) {
+    verdict = `${insight.variantFullName} looks feature-rich, but value should be checked against nearby variants.`;
+  }
+
+  if (isLowRegret) {
+    verdict += " Regret-risk signal is low.";
+  }
+
+  const scoreLine = `Score snapshot: safety ${safetyScore}, features ${featureScore}, same-model value ${valueScore}, regret risk ${regretRisk}.`;
+
+  const watchoutLine = watchouts.length
+    ? `Watchouts: ${watchouts.join("; ")}.`
+    : "";
+
+  const strengthLine = strengths.length
+    ? `Strengths: ${strengths.join("; ")}.`
+    : "";
+
+  return [verdict, watchoutLine, strengthLine, scoreLine]
+    .filter(Boolean)
+    .join(" ");
 };
 
 const resolveVariantInsightFromMessage = async ({ db, userMessage = "" } = {}) => {

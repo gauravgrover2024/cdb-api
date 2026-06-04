@@ -762,7 +762,9 @@ export const runAciCoreLiveBridge = async ({
   const bridgePrimaryTask =
     bridgeTool === "vehicle_recommend" && isolation === "broad_discovery_without_model"
       ? "vehicle_discovery"
-      : understanding.meaningFrame?.primaryTask || "";
+      : bridgeTool === "vehicle_score_insight"
+        ? "score_insight"
+        : understanding.meaningFrame?.primaryTask || "";
 
   const bridge = {
     enabled: true,

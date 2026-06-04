@@ -92,6 +92,22 @@ const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expect
       !payloadText.includes('missing_variant_key'),
       `${id}: score tool did not receive model/variant identifiers`
     );
+
+    assert(
+      /Strengths:|Watchouts:|weak same-model value|good same-model value|feature-rich/i.test(answerText),
+      `${id}: score answer is not buyer-readable enough: ${answerText}`
+    );
+
+    assert(
+      !/looks weak same-model value, feature-rich/i.test(answerText),
+      `${id}: score answer still sounds like stitched score labels: ${answerText}`
+    );
+
+    const bridge = getBridge(response);
+    assert(
+      bridge?.primaryTask === 'score_insight',
+      `${id}: expected score_insight primaryTask, got ${bridge?.primaryTask}`
+    );
   }
 
   return {
