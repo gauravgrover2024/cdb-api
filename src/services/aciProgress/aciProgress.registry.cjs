@@ -542,6 +542,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "score_insight_output_policy_fixtures", name: "Score insight real-output policy fixtures", status: "partial" },
       { key: "similar_cars_output_policy_fixtures", name: "Similar cars real-output policy fixtures", status: "partial" },
       { key: "similar_cars_filtering_audit", name: "Similar cars tool filtering audit", status: "partial" },
+      { key: "similar_cars_relation_mode_regression_eval", name: "Similar cars relation-mode regression eval", status: "partial" },
       { key: "decision_eval_suites", name: "Decision eval suites and pass/fail gates", status: "partial" },
       { key: "market_judgement_isolation", name: "Market-judgment isolation tests", status: "partial" },
       { key: "empty_result_not_success", name: "Empty result must not pass as success", status: "ready" },

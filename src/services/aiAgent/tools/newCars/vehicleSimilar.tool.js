@@ -222,9 +222,7 @@ const filterSimilarModels = ({ anchor = {}, models = [], mode = "default" } = {}
   const cleanModels = asArray(models);
 
   if (mode === "premium") {
-    const filtered = cleanModels.filter(
-      (model) => model.relationType === "premium_step_up" || isPremiumAnchorBudgetStepDown({ anchor, model })
-    );
+    const filtered = cleanModels.filter((model) => model.relationType === "premium_step_up");
     return filtered.slice(0, 12);
   }
 

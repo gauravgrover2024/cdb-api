@@ -91,7 +91,8 @@
     "aci:decision:module-policy:eval": "node src/scripts/aci-decision/runDecisionModulePolicyProfilesEvalV1.cjs",
     "aci:decision:score-output-fixture:eval": "node src/scripts/aci-decision/runScoreInsightPolicyFixtureEvalV1.cjs",
     "aci:decision:similar-output-fixture:eval": "node src/scripts/aci-decision/runSimilarCarsPolicyFixtureEvalV1.cjs",
-    "aci:decision:similar-filter:audit": "node src/scripts/aci-decision/auditSimilarCarsToolFilteringV1.cjs"
+    "aci:decision:similar-filter:audit": "node src/scripts/aci-decision/auditSimilarCarsToolFilteringV1.cjs",
+    "aci:decision:similar-relation-mode:eval": "node src/scripts/aci-decision/runSimilarCarsRelationModeRegressionEvalV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
