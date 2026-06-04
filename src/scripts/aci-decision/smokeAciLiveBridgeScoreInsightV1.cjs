@@ -31,7 +31,7 @@ const hasGuardrailFalse = (value) => {
   );
 };
 
-const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expectedTools = [], requireGuardrail = false }) => {
+const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expectedTools = [], requireGuardrail = false, answerMustInclude = [] }) => {
   const startedAt = Date.now();
 
   const response = await runAciCoreLiveBridge({
@@ -82,6 +82,13 @@ const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expect
       `${id}: score answer does not look like a score insight answer: ${answerText}`
     );
 
+    for (const requiredText of answerMustInclude) {
+      assert(
+        answerText.includes(requiredText),
+        `${id}: expected answer to include "${requiredText}", got: ${answerText}`
+      );
+    }
+
     assert(
       !/I found score insight data for Score insight/i.test(answerText),
       `${id}: score answer is generic and missing resolved vehicle details`
@@ -94,7 +101,7 @@ const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expect
     );
 
     assert(
-      /Strengths:|Watchouts:|weak same-model value|good same-model value|feature-rich/i.test(answerText),
+      /Strengths:|Watchouts:|weak same-model value|good same-model value|feature-rich|Ranked ladder|strongest same-family value pick|next practical step/i.test(answerText),
       `${id}: score answer is not buyer-readable enough: ${answerText}`
     );
 
@@ -154,6 +161,13 @@ const runCase = async ({ runAciCoreLiveBridge, id, message, context = {}, expect
       message: 'What is Baleno Alpha strong and weak at?',
       expectedTools: ['vehicle_score_insight'],
       requireGuardrail: true,
+    },
+    {
+      id: 'score-baleno-petrol-manual-value-ladder',
+      message: 'Which Baleno petrol manual variant is better value?',
+      expectedTools: ['vehicle_score_insight'],
+      requireGuardrail: true,
+      answerMustInclude: ['Ranked ladder', 'Maruti Baleno'],
     },
     {
       id: 'price-creta-sx-delhi',

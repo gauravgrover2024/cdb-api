@@ -58,6 +58,28 @@ const safeLimit = (value, fallback = 20, max = 80) => {
 const firstValue = (...values) =>
   values.find((value) => value !== undefined && value !== null && value !== "");
 
+
+const inferScoreInsightOperationFromText = (text = "", fallback = "variant_score_insight") => {
+  const plainText = String(text || "").trim().toLowerCase();
+  const normalized = normalizeKey(text);
+  if (!plainText && !normalized) return fallback;
+
+  const hasValueIntent =
+    /\b(value|worth|better value|best value|better variant|which variant)\b/i.test(plainText) ||
+    normalized.includes("better_value") ||
+    normalized.includes("best_value") ||
+    normalized.includes("which_variant") ||
+    normalized.includes("better_variant");
+
+  const hasFamilyIntent =
+    /\b(which|best|better|rank|ranking|ladder|variant|variants|trim|trims)\b/i.test(plainText) ||
+    /\b(manual|automatic|amt|cvt|dct|ivt|petrol|diesel|cng|ev)\b/i.test(plainText);
+
+  if (hasValueIntent && hasFamilyIntent) return "same_family_value_insights";
+
+  return fallback;
+};
+
 const normalizeRuntimeArgs = (args = {}) => {
   const toolPlan = args.toolPlan || {};
   const input = toolPlan.input || toolPlan.args || toolPlan.params || {};
@@ -125,14 +147,33 @@ const normalizeRuntimeArgs = (args = {}) => {
     selectedVehicle.transmissionKey, selectedVehicle.transmission
   );
 
+  const userText = firstValue(
+    args.userMessage,
+    args.message,
+    input.userMessage,
+    input.message,
+    toolPlan.userMessage,
+    toolPlan.message
+  );
+
+  const explicitOperation = firstValue(
+    args.operation,
+    input.operation,
+    toolPlan.operation
+  );
+
+  const inferredOperation = inferScoreInsightOperationFromText(
+    userText,
+    OPERATION_BY_TOOL_NAME[toolPlan.tool] || OPERATION_BY_TOOL_NAME[args.tool] || "variant_score_insight"
+  );
+
   return {
     ...input,
     ...toolPlan,
     ...args,
     operation: firstValue(
-      args.operation,
-      input.operation,
-      toolPlan.operation,
+      explicitOperation,
+      inferredOperation,
       OPERATION_BY_TOOL_NAME[toolPlan.tool],
       OPERATION_BY_TOOL_NAME[args.tool],
       "variant_score_insight"
@@ -354,6 +395,92 @@ const resolveScoreProfileKeyFromMessage = async ({ db, userMessage = "" } = {}) 
     confidence: best.score,
     matchedVariantFullName: best.doc.variantFullName,
   };
+};
+
+
+
+const inferSameFamilyParamsFromMessage = async ({ db, userMessage = "" } = {}) => {
+  const normalizedMessage = normalizeKey(userMessage);
+  if (!normalizedMessage) return {};
+
+  const docs = await getScoreProfileLookupDocs(db);
+
+  const modelScores = new Map();
+  for (const doc of docs) {
+    const modelKey = normalizeKey(doc.modelKey);
+    if (!modelKey) continue;
+
+    const fullNameKey = normalizeKey(doc.variantFullName);
+    let score = 0;
+
+    if (normalizedMessage.includes(modelKey)) score += 50;
+    if (fullNameKey && normalizedMessage.includes(fullNameKey.split("_").slice(0, 2).join("_"))) score += 10;
+
+    if (score <= 0) continue;
+
+    const current = modelScores.get(modelKey) || { score: 0, doc };
+    if (score > current.score) modelScores.set(modelKey, { score, doc });
+  }
+
+  const bestModel = [...modelScores.values()].sort((a, b) => b.score - a.score)[0]?.doc;
+  if (!bestModel) return {};
+
+  const fuelKey =
+    /\bpetrol\b/i.test(userMessage) ? "petrol" :
+    /\bdiesel\b/i.test(userMessage) ? "diesel" :
+    /\bcng\b/i.test(userMessage) ? "cng" :
+    /\bev|electric\b/i.test(userMessage) ? "ev" :
+    "";
+
+  const transmissionKey =
+    /\bmanual|mt\b/i.test(userMessage) ? "manual" :
+    /\bautomatic|amt|cvt|dct|ivt|at\b/i.test(userMessage) ? "automatic" :
+    "";
+
+  return {
+    makeKey: normalizeKey(bestModel.makeKey),
+    modelKey: normalizeKey(bestModel.modelKey),
+    fuelKey,
+    transmissionKey,
+    fuelTransmissionFamilyKey: fuelKey && transmissionKey ? `${fuelKey}_${transmissionKey}` : "",
+  };
+};
+
+const buildSameFamilyValueLine = (result = {}, params = {}) => {
+  const variants = Array.isArray(result.variants) ? result.variants : [];
+  const modelLabel = variants[0]?.variantFullName?.split(" ").slice(0, 2).join(" ") || params.modelKey || "this model";
+
+  if (!variants.length) {
+    return `I could not find enough same-family value score data for ${modelLabel}.`;
+  }
+
+  const top = variants[0];
+  const second = variants[1];
+  const last = variants[variants.length - 1];
+
+  const topValue = top.modules?.value?.score ?? "NA";
+  const topFeature = top.modules?.features?.score ?? "NA";
+
+  const ranked = variants
+    .slice(0, 5)
+    .map((variant, index) => {
+      const valueScore = variant.modules?.value?.score ?? "NA";
+      const featureScore = variant.modules?.features?.score ?? "NA";
+      return `${index + 1}. ${variant.variantFullName} — value ${valueScore}, features ${featureScore}`;
+    })
+    .join("; ");
+
+  let verdict = `${top.variantFullName} is the strongest same-family value pick in this set with value score ${topValue}.`;
+
+  if (second) {
+    verdict += ` ${second.variantFullName} is the next practical step if you want more equipment without jumping straight to the weakest-value top trim.`;
+  }
+
+  if (last && last.scoreProfileKey !== top.scoreProfileKey) {
+    verdict += ` ${last.variantFullName} scores lowest on same-family value, so buy it only if its extra features matter to you.`;
+  }
+
+  return `${verdict} Ranked ladder: ${ranked}.`;
 };
 
 
@@ -615,7 +742,14 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
     }
 
     if (["same_family_value_insights", "same_family_value", "value_ladder"].includes(operation)) {
-      const modelKey = args.modelKey || args.model_key;
+      const inferred = await inferSameFamilyParamsFromMessage({
+        db: args.db,
+        userMessage: args.userMessage || args.message || args.query || "",
+      });
+
+      // Prefer message-inferred canonical keys because live bridge entities can be display labels
+      // such as "Maruti Baleno", while score profiles use canonical modelKey like "baleno".
+      const modelKey = inferred.modelKey || args.modelKey || args.model_key;
       if (!modelKey) {
         return createError({
           operation,
@@ -626,19 +760,21 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
 
       const result = await getSameFamilyValueInsights({
         db: args.db,
-        makeKey: args.makeKey || args.make_key,
+        makeKey: inferred.makeKey || args.makeKey || args.make_key,
         modelKey,
-        fuelKey: args.fuelKey || args.fuel_key,
-        transmissionKey: args.transmissionKey || args.transmission_key,
+        fuelKey: inferred.fuelKey || args.fuelKey || args.fuel_key,
+        transmissionKey: inferred.transmissionKey || args.transmissionKey || args.transmission_key,
         fuelTransmissionFamilyKey:
-          args.fuelTransmissionFamilyKey || args.fuel_transmission_family_key,
+          inferred.fuelTransmissionFamilyKey ||
+          args.fuelTransmissionFamilyKey ||
+          args.fuel_transmission_family_key,
         limit: safeLimit(args.limit, 20, 50),
       });
 
       return createSuccess({
         operation: "same_family_value_insights",
         data: result,
-        answer: `${result.count} same-family value insight variants found for ${modelKey}.`,
+        answer: buildSameFamilyValueLine(result, { modelKey, ...inferred }),
       });
     }
 
