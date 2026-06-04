@@ -521,6 +521,32 @@ const ACI_PROGRESS_MODULES = [
   },
 
   {
+    id: "decision-policy-contracts",
+    title: "Decision Policy, Contracts & Evals",
+    group: "Advisory Layer",
+    priority: "P0",
+    owner: "Product + Backend + QA",
+    status: "planned",
+    summary: "Production governance layer for ACI decision intelligence: final recommendation eligibility, strict decision output contracts, provenance/freshness controls, degraded modes, eval gates and market-judgment isolation.",
+    whatWillWork: "Block final buy-this recommendations until buyer context and evidence thresholds are met; allow fact-only or diagnostic-only answers when data is partial; ensure every decision claim carries evidence, freshness, provenance and degraded-mode status.",
+    currentState: "Phase 0 is being locked. The decision/read-model foundation and guarded similar-cars graph exist, but a central Decision Policy / Eligibility layer, shared decision output schema, provenance/freshness contract, degraded-mode taxonomy and decision eval gates are not implemented yet.",
+    pending: "Create decision policy contract skeleton, decision output normalizer, degraded-mode taxonomy constants, provenance/freshness helpers, final recommendation eligibility evaluator, decision eval corpus, market-judgment isolation tests and composer integration. Do not touch cross-model scoring or score wording until Phase 0 is locked.",
+    items: [
+      { key: "production_plan_v1", name: "ACI Decision Module Production Plan v1", status: "ready" },
+      { key: "decision_policy_contract", name: "Decision Policy / Eligibility contract", status: "planned" },
+      { key: "decision_output_schema", name: "Strict decision output schema", status: "planned" },
+      { key: "evidence_freshness_provenance", name: "Evidence/freshness/provenance fields", status: "planned" },
+      { key: "degraded_mode_taxonomy", name: "Degraded-mode taxonomy", status: "planned" },
+      { key: "final_recommendation_eligibility", name: "Final recommendation eligibility rules", status: "planned" },
+      { key: "decision_eval_suites", name: "Decision eval suites and pass/fail gates", status: "planned" },
+      { key: "market_judgement_isolation", name: "Market-judgment isolation tests", status: "planned" },
+      { key: "empty_result_not_success", name: "Empty result must not pass as success", status: "planned" },
+      { key: "sponsored_separation", name: "Sponsored/revenue separation from recommendation brain", status: "planned" },
+      { key: "central_language_layer", name: "Central composer/language layer for decision wording", status: "planned" }
+    ]
+  },
+
+  {
     id: "decision-conversion-intelligence",
     title: "Decision & Conversion Intelligence",
     group: "Conversion Engine",

@@ -518,3 +518,51 @@ ACI Assist will not use hardcoded persona/scoring shortcuts. Recommendation, saf
 4. Build offline read-model builders.
 5. Replace slow live recommendation path with fast profile reads.
 6. Re-run 40-query customer corpus.
+
+---
+
+<!-- ACI_DECISION_MODULE_PRODUCTION_PLAN_V1_2026_06_04_START -->
+
+## ACI Decision Module Production Plan v1 - Locked
+
+**Status:** Phase 0 locked / implementation not started.
+
+### Decision taken
+
+Do not continue to cross-model scoring or score wording cleanup yet. First build and lock the Decision Module Production Policy and Contracts layer.
+
+External architecture review correctly exposed missing production controls: decision policy, strict output schema, provenance/freshness, degraded-mode taxonomy, eval harnesses, market-judgment isolation tests, and final-recommendation blocking.
+
+### Correct order from here
+
+1. Decision policy + contracts + eval framework.
+2. Current score insight cleanup.
+3. Dedicated cross-model candidate resolver service.
+4. Cross-model diagnostic score insight.
+5. Evidence/freshness/degraded-mode hardening.
+6. Final recommendation eligibility engine.
+7. Final answer composer / centralized language layer.
+
+### Production rules
+
+- Every claim must be traceable to data.
+- Missing data must be disclosed.
+- Facts, diagnostic scores and opinions must stay separate.
+- No final buy-this verdict unless Decision Policy allows it.
+- No hardcoded car, variant, rival, persona or market-judgment logic.
+- No ad/sponsored/revenue influence on recommendation brain.
+- Empty result must not pass as success.
+- Route success is not enough; output must contain useful rows/evidence or a clear degraded-mode state.
+- Tools return structured facts/signals; central composer/language layer handles wording later.
+
+### Minimum inputs before final recommendation
+
+Final recommendation must require city, budget/price ceiling, body/use-case preference, family size or occupancy use, fuel preference or monthly running, transmission preference, safety priority, feature priority, and shortlisted models or discovery scope.
+
+### Phase 0 deliverable
+
+Primary plan doc:
+
+docs/aci-assist/ACI_DECISION_MODULE_PRODUCTION_PLAN_V1.md
+
+<!-- ACI_DECISION_MODULE_PRODUCTION_PLAN_V1_2026_06_04_END -->
