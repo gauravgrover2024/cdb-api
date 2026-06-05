@@ -26,6 +26,7 @@ import { maybeRunAciFeatureComparisonAnswer } from "./aiAgent.featureComparisonA
 import { mergeContextPatches } from "../aciCore/context/aciContextManager.service.js";
 import { runVehicleSpecAttributeLookup } from "../aciCore/specs/aciVehicleSpecAttributeResolver.service.js";
 import mongoose from "mongoose";
+import { runVehicleScoreInsightTool } from "./tools/newCars/vehicleScoreInsight.tool.js";
 
 /**
  * ACI Assist Executor
@@ -4217,6 +4218,271 @@ export const runtimeModularTool = async (args = {}) =>
   });
 
 
+
+const SCORE_EXECUTOR_TOOLS = new Set([
+  "vehicle_score_insight",
+  "vehicle_score_profile",
+  "vehicle_model_score_insights",
+  "vehicle_same_family_value_insights",
+  "vehicle_variant_upgrade_insight",
+  "vehicle_top_score_insights",
+  "vehicle_cross_model_score_diagnostic",
+  "vehicle_model_score_comparison",
+]);
+
+const SCORE_OPERATION_BY_TOOL = Object.freeze({
+  vehicle_score_insight: "variant_score_insight",
+  vehicle_score_profile: "variant_score_insight",
+  vehicle_model_score_insights: "model_score_insights",
+  vehicle_same_family_value_insights: "same_family_value_insights",
+  vehicle_variant_upgrade_insight: "variant_upgrade_insight",
+  vehicle_top_score_insights: "top_module_score_insights",
+  vehicle_cross_model_score_diagnostic: "cross_model_score_diagnostic",
+  vehicle_model_score_comparison: "cross_model_score_diagnostic",
+});
+
+const SCORE_EXECUTOR_ALLOWED_OPERATIONS = new Set([
+  "coverage",
+  "variant_score_insight",
+  "model_score_insights",
+  "variant_upgrade_insight",
+  "same_family_value_insights",
+  "cross_model_score_diagnostic",
+  "cross_model_score",
+  "model_score_comparison",
+  "top_module_score_insights",
+]);
+
+const pickScoreExecutorValue = (...values) =>
+  values.find((value) => value !== undefined && value !== null && value !== "");
+
+const asScoreExecutorArray = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (value === undefined || value === null || value === "") return [];
+  return [value];
+};
+
+const buildScoreInsightRuntimeArgs = ({
+  toolPlan = {},
+  plan = {},
+  context = {},
+  userMessage = "",
+  runtimeHints = {},
+  index = 0,
+} = {}) => {
+  const input = toolPlan.input || {};
+  const args = toolPlan.args || {};
+  const params = toolPlan.params || {};
+  const entities = toolPlan.entities || {};
+  const filters = toolPlan.filters || {};
+
+  const operation = pickScoreExecutorValue(
+    toolPlan.operation,
+    input.operation,
+    args.operation,
+    params.operation,
+    entities.operation,
+    filters.operation,
+    SCORE_OPERATION_BY_TOOL[toolPlan.tool],
+    "variant_score_insight",
+  );
+
+  const targets = pickScoreExecutorValue(
+    toolPlan.targets,
+    input.targets,
+    args.targets,
+    params.targets,
+    entities.targets,
+    filters.targets,
+  );
+
+  const models = pickScoreExecutorValue(
+    toolPlan.models,
+    input.models,
+    args.models,
+    params.models,
+    entities.models,
+    filters.models,
+  );
+
+  const comparisonModels = pickScoreExecutorValue(
+    toolPlan.comparisonModels,
+    input.comparisonModels,
+    args.comparisonModels,
+    params.comparisonModels,
+    entities.comparisonModels,
+    filters.comparisonModels,
+    models,
+  );
+
+  const fuelKey = pickScoreExecutorValue(
+    toolPlan.fuelKey,
+    input.fuelKey,
+    args.fuelKey,
+    params.fuelKey,
+    entities.fuelKey,
+    filters.fuelKey,
+    toolPlan.fuel,
+    input.fuel,
+    args.fuel,
+    params.fuel,
+    entities.fuel,
+    filters.fuel,
+  );
+
+  const transmissionKey = pickScoreExecutorValue(
+    toolPlan.transmissionKey,
+    input.transmissionKey,
+    args.transmissionKey,
+    params.transmissionKey,
+    entities.transmissionKey,
+    filters.transmissionKey,
+    toolPlan.transmission,
+    input.transmission,
+    args.transmission,
+    params.transmission,
+    entities.transmission,
+    filters.transmission,
+  );
+
+  const normalizedInput = {
+    ...input,
+    ...args,
+    ...params,
+    operation,
+    ...(targets ? { targets: asScoreExecutorArray(targets) } : {}),
+    ...(models ? { models: asScoreExecutorArray(models) } : {}),
+    ...(comparisonModels ? { comparisonModels: asScoreExecutorArray(comparisonModels) } : {}),
+    ...(fuelKey ? { fuelKey } : {}),
+    ...(transmissionKey ? { transmissionKey } : {}),
+  };
+
+  const normalizedToolPlan = {
+    ...toolPlan,
+    operation,
+    ...(targets ? { targets: asScoreExecutorArray(targets) } : {}),
+    ...(models ? { models: asScoreExecutorArray(models) } : {}),
+    ...(comparisonModels ? { comparisonModels: asScoreExecutorArray(comparisonModels) } : {}),
+    ...(fuelKey ? { fuelKey } : {}),
+    ...(transmissionKey ? { transmissionKey } : {}),
+    input: normalizedInput,
+    args: {
+      ...(toolPlan.args || {}),
+      ...normalizedInput,
+    },
+    params: {
+      ...(toolPlan.params || {}),
+      ...normalizedInput,
+    },
+    entities: {
+      ...(toolPlan.entities || {}),
+      ...(targets ? { targets: asScoreExecutorArray(targets) } : {}),
+      ...(models ? { models: asScoreExecutorArray(models) } : {}),
+      ...(comparisonModels ? { comparisonModels: asScoreExecutorArray(comparisonModels) } : {}),
+      operation,
+      ...(fuelKey ? { fuelKey } : {}),
+      ...(transmissionKey ? { transmissionKey } : {}),
+    },
+    filters: {
+      ...(toolPlan.filters || {}),
+      ...(fuelKey ? { fuelKey } : {}),
+      ...(transmissionKey ? { transmissionKey } : {}),
+    },
+    userMessage,
+    message: userMessage,
+  };
+
+  return {
+    ...normalizedInput,
+    toolPlan: normalizedToolPlan,
+    plan,
+    context,
+    runtimeHints,
+    index,
+    userMessage,
+    message: userMessage,
+    operation,
+  };
+};
+
+export const runtimeVehicleScoreInsight = async ({
+  toolPlan = {},
+  plan = {},
+  context = {},
+  userMessage = "",
+  runtimeHints = {},
+  index = 0,
+} = {}) => {
+  const runtimeArgs = buildScoreInsightRuntimeArgs({
+    toolPlan,
+    plan,
+    context,
+    userMessage,
+    runtimeHints,
+    index,
+  });
+
+  const isCrossModelScoreOperation =
+    runtimeArgs.operation === "cross_model_score_diagnostic" ||
+    runtimeArgs.operation === "cross_model_score" ||
+    runtimeArgs.operation === "model_score_comparison" ||
+    (Array.isArray(runtimeArgs.targets) && runtimeArgs.targets.length >= 2) ||
+    (Array.isArray(runtimeArgs.comparisonModels) && runtimeArgs.comparisonModels.length >= 2);
+
+  if (!isCrossModelScoreOperation) {
+    return runtimeModularTool({
+      toolPlan,
+      plan,
+      context,
+      userMessage,
+      runtimeHints,
+      index,
+    });
+  }
+
+  const result = await runVehicleScoreInsightTool(runtimeArgs);
+  const data = result?.data || {};
+  const count =
+    Number(result?.count) ||
+    Number(result?.matched) ||
+    Number(data.count) ||
+    Number(data.recordCount) ||
+    (Array.isArray(data.models) ? data.models.length : 0) ||
+    (Array.isArray(data.variants) ? data.variants.length : 0) ||
+    (Array.isArray(result?.rows) ? result.rows.length : 0) ||
+    0;
+
+  return {
+    ...(result || {}),
+    operation: result?.operation || data.operation || data.diagnosticType || runtimeArgs.operation,
+    matched: count,
+    count,
+    rows: result?.rows || data.rows || data.models || data.variants || [],
+    modulesChecked:
+      result?.modulesChecked ||
+      result?.sourceTransparency?.modulesChecked ||
+      data?.sourceTransparency?.modulesChecked ||
+      ["vehicle_score_insight"],
+    source:
+      result?.source ||
+      result?.dataSource ||
+      result?.sourceTransparency?.dataSource ||
+      data?.sourceTransparency?.dataSource ||
+      "vehicle_score_insight",
+    dataSource:
+      result?.dataSource ||
+      result?.source ||
+      result?.sourceTransparency?.dataSource ||
+      data?.sourceTransparency?.dataSource ||
+      "vehicle_score_insight",
+    meta: {
+      ...(result?.meta || {}),
+      scoreInsightRuntime: "typed_executor_adapter",
+      operation: result?.operation || data.operation || data.diagnosticType || runtimeArgs.operation,
+    },
+  };
+};
+
 const normalizeExecutorText = (value = "") =>
   String(value || "")
     .toLowerCase()
@@ -4629,11 +4895,14 @@ export const ACI_RUNTIME_DATA_TOOLS = {
   vehicle_offers: runtimeModularTool,
   vehicle_similar: runtimeModularTool,
   vehicle_safety_ranking: runtimeModularTool,
-  vehicle_score_insight: runtimeModularTool,
-  vehicle_score_profile: runtimeModularTool,
-  vehicle_model_score_insights: runtimeModularTool,
-  vehicle_same_family_value_insights: runtimeModularTool,
-  vehicle_top_score_insights: runtimeModularTool,
+  vehicle_score_insight: runtimeVehicleScoreInsight,
+  vehicle_score_profile: runtimeVehicleScoreInsight,
+  vehicle_model_score_insights: runtimeVehicleScoreInsight,
+  vehicle_same_family_value_insights: runtimeVehicleScoreInsight,
+  vehicle_top_score_insights: runtimeVehicleScoreInsight,
+  vehicle_variant_upgrade_insight: runtimeVehicleScoreInsight,
+  vehicle_cross_model_score_diagnostic: runtimeVehicleScoreInsight,
+  vehicle_model_score_comparison: runtimeVehicleScoreInsight,
   quotation_lead: runtimeModularTool,
 };
 
@@ -4687,6 +4956,185 @@ export const runAciRuntimeDataTool = async ({
   });
 };
 
+
+const buildScoreExecutorPatch = (toolPlan = {}) => {
+  if (!SCORE_EXECUTOR_TOOLS.has(String(toolPlan.tool || ""))) return {};
+
+  const input = toolPlan.input || {};
+  const args = toolPlan.args || {};
+  const params = toolPlan.params || {};
+  const entities = toolPlan.entities || {};
+  const filters = toolPlan.filters || {};
+
+  const rawOperation = pickScoreExecutorValue(
+    toolPlan.operation,
+    input.operation,
+    args.operation,
+    params.operation,
+    entities.operation,
+    filters.operation,
+  );
+
+  const operation = SCORE_EXECUTOR_ALLOWED_OPERATIONS.has(String(rawOperation || ""))
+    ? String(rawOperation)
+    : "";
+
+  const targets = pickScoreExecutorValue(
+    toolPlan.targets,
+    input.targets,
+    args.targets,
+    params.targets,
+    entities.targets,
+    filters.targets,
+  );
+
+  const models = pickScoreExecutorValue(
+    toolPlan.models,
+    input.models,
+    args.models,
+    params.models,
+    entities.models,
+    filters.models,
+  );
+
+  const comparisonModels = pickScoreExecutorValue(
+    toolPlan.comparisonModels,
+    input.comparisonModels,
+    args.comparisonModels,
+    params.comparisonModels,
+    entities.comparisonModels,
+    filters.comparisonModels,
+    models,
+  );
+
+  const fuelKey = pickScoreExecutorValue(
+    toolPlan.fuelKey,
+    input.fuelKey,
+    args.fuelKey,
+    params.fuelKey,
+    entities.fuelKey,
+    filters.fuelKey,
+  );
+
+  const transmissionKey = pickScoreExecutorValue(
+    toolPlan.transmissionKey,
+    input.transmissionKey,
+    args.transmissionKey,
+    params.transmissionKey,
+    entities.transmissionKey,
+    filters.transmissionKey,
+  );
+
+  return {
+    ...(operation ? { operation } : {}),
+    ...(targets ? { targets: asScoreExecutorArray(targets) } : {}),
+    ...(models ? { models: asScoreExecutorArray(models) } : {}),
+    ...(comparisonModels ? { comparisonModels: asScoreExecutorArray(comparisonModels) } : {}),
+    ...(fuelKey ? { fuelKey } : {}),
+    ...(transmissionKey ? { transmissionKey } : {}),
+  };
+};
+
+const mergeTypedScoreExecutorFields = ({ sanitizedTool = {}, originalTool = {} } = {}) => {
+  if (!SCORE_EXECUTOR_TOOLS.has(String(sanitizedTool.tool || originalTool.tool || ""))) {
+    return sanitizedTool;
+  }
+
+  const patch = {
+    ...buildScoreExecutorPatch(originalTool),
+    ...buildScoreExecutorPatch(sanitizedTool),
+  };
+
+  if (!Object.keys(patch).length) return sanitizedTool;
+
+  return {
+    ...sanitizedTool,
+    ...patch,
+    input: {
+      ...(sanitizedTool.input || {}),
+      ...(originalTool.input || {}),
+      ...patch,
+    },
+    args: {
+      ...(sanitizedTool.args || {}),
+      ...(originalTool.args || {}),
+      ...patch,
+    },
+    params: {
+      ...(sanitizedTool.params || {}),
+      ...(originalTool.params || {}),
+      ...patch,
+    },
+    entities: {
+      ...(sanitizedTool.entities || {}),
+      ...(originalTool.entities || {}),
+      ...(patch.models ? { models: patch.models } : {}),
+      ...(patch.comparisonModels ? { comparisonModels: patch.comparisonModels } : {}),
+      ...(patch.targets ? { targets: patch.targets } : {}),
+      ...(patch.operation ? { operation: patch.operation } : {}),
+      ...(patch.fuelKey ? { fuelKey: patch.fuelKey } : {}),
+      ...(patch.transmissionKey ? { transmissionKey: patch.transmissionKey } : {}),
+    },
+    filters: {
+      ...(sanitizedTool.filters || {}),
+      ...(originalTool.filters || {}),
+      ...(patch.fuelKey ? { fuelKey: patch.fuelKey } : {}),
+      ...(patch.transmissionKey ? { transmissionKey: patch.transmissionKey } : {}),
+    },
+  };
+};
+
+const preserveTypedScoreFieldsInExecutablePlan = ({ executablePlan = {}, originalPlan = {} } = {}) => {
+  const executableTools = asArray(executablePlan.tools);
+  const originalTools = asArray(originalPlan.tools);
+
+  if (!executableTools.length) return executablePlan;
+
+  return {
+    ...executablePlan,
+    tools: executableTools.map((toolPlan, index) =>
+      mergeTypedScoreExecutorFields({
+        sanitizedTool: toolPlan,
+        originalTool: originalTools[index] || {},
+      })
+    ),
+  };
+};
+
+const getTypedScoreRuntimeOperation = (runtimeResults = []) => {
+  const result = asArray(runtimeResults).find((item = {}) =>
+    SCORE_EXECUTOR_TOOLS.has(String(item.executorTool || item.tool || ""))
+  );
+
+  if (!result) return "";
+
+  return (
+    result.operation ||
+    result.data?.operation ||
+    result.data?.diagnosticType ||
+    result.meta?.operation ||
+    ""
+  );
+};
+
+const applyTypedScoreOperationToResponse = ({ response = {}, runtimeResults = [] } = {}) => {
+  const operation = getTypedScoreRuntimeOperation(runtimeResults);
+  if (!operation) return response;
+
+  return {
+    ...response,
+    operation: response.operation || operation,
+    data: {
+      ...(response.data || {}),
+      operation: response.data?.operation || operation,
+    },
+    meta: {
+      ...(response.meta || {}),
+      scoreInsightOperation: operation,
+    },
+  };
+};
+
 /* -------------------------------------------------------------------------- */
 /*  Main Executor                                                             */
 /* -------------------------------------------------------------------------- */
@@ -4705,7 +5153,10 @@ export const executeAciPlannerPlan = async ({
     message: userMessage,
   });
 
-  const executablePlan = planValidation.plan || sanitizedPlan;
+  const executablePlan = preserveTypedScoreFieldsInExecutablePlan({
+    executablePlan: planValidation.plan || sanitizedPlan,
+    originalPlan: plan,
+  });
   const tools = asArray(executablePlan.tools);
 
   const runtimeResults = [];
@@ -4774,6 +5225,11 @@ export const executeAciPlannerPlan = async ({
       }),
     };
   }
+
+  response = applyTypedScoreOperationToResponse({
+    response,
+    runtimeResults,
+  });
 
   const contractValidation = validate
     ? validateAciAssistResponseContract(response)

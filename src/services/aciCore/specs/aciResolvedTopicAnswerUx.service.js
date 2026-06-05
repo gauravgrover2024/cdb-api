@@ -1,5 +1,11 @@
 'use strict';
 
+import {
+  buildAciLanguageSeed,
+  getAciNextActionPrompts,
+  renderAciTemplate,
+} from '../language/aciAnswerLanguageComposer.js';
+
 const cleanText = (value = '') =>
   String(value || '')
     .replace(/\s+/g, ' ')
@@ -27,34 +33,23 @@ const specNextActions = ({ modelLabel = '', attributeLabel = '' } = {}) => {
   const model = cleanText(modelLabel) || 'this car';
   const attribute = cleanText(attributeLabel) || 'specs';
 
-  return [
-    makeAction({
-      id: 'compare-variants',
-      label: 'Compare variants',
-      query: `Compare ${model} variants`,
-      intent: 'vehicle_compare',
-    }),
-    makeAction({
-      id: 'battery-charging-info',
-      label: /range|battery|charging/i.test(attribute) ? 'Battery and charging' : 'Related specs',
-      query: /range|battery|charging/i.test(attribute)
-        ? `${model} battery and charging`
-        : `${model} ${attribute}`,
-      intent: 'vehicle_spec_attribute_lookup',
-    }),
-    makeAction({
-      id: 'check-price',
-      label: 'Check on-road price',
-      query: `${model} on road price`,
-      intent: 'vehicle_pricelist',
-    }),
-    makeAction({
-      id: 'compare-alternative',
-      label: 'Compare with rival',
-      query: `Compare ${model} with a rival`,
-      intent: 'vehicle_compare',
-    }),
-  ].slice(0, 4);
+  return getAciNextActionPrompts('spec', {
+    model,
+    topic: attribute,
+  })
+    .map((item) =>
+      makeAction({
+        id: item.id,
+        label: /range|battery|charging/i.test(attribute) && item.id === 'spec-battery'
+          ? 'Battery and charging'
+          : item.label,
+        query: /range|battery|charging/i.test(attribute) && item.id === 'spec-battery'
+          ? `${model} battery and charging`
+          : item.query,
+        intent: item.intent,
+      }),
+    )
+    .slice(0, 4);
 };
 
 function composeResolvedSpecAnswer({
@@ -77,10 +72,24 @@ function composeResolvedSpecAnswer({
   const uniqueValues = [...new Set(formattedValues)];
   const valueText = uniqueValues.slice(0, 6).join('; ');
   const extraCount = Math.max(0, uniqueValues.length - 6);
+  const valuesForTemplate = extraCount
+    ? [`${valueText}; plus ${extraCount} more variant value(s)`]
+    : uniqueValues.slice(0, 6);
+  const templateKey = valueText && !missingData
+    ? 'resolved_spec_value_summary'
+    : 'resolved_spec_missing_summary';
 
-  const answer = valueText && !missingData
-    ? `I found ${model}. You're asking about ${attribute}. In the current vehicle data, ${attribute} is listed as ${valueText}${extraCount ? `; plus ${extraCount} more variant value(s)` : ''}. Please verify the exact variant/source before final booking.`
-    : `I found ${model}. You're asking about ${attribute}. I don't have the exact certified ${attribute} value in the current spec data yet, so I won't guess.`;
+  const answer = renderAciTemplate(
+    templateKey,
+    {
+      model,
+      topic: attribute,
+      values: valuesForTemplate,
+    },
+    {
+      seed: buildAciLanguageSeed(templateKey, model, attribute, valuesForTemplate),
+    },
+  ).text;
 
   return {
     answer,
@@ -91,14 +100,18 @@ function composeResolvedSpecAnswer({
 const hasBuyerFriendlyResolvedTopicAnswer = (answer = '') => {
   const text = cleanText(answer).toLowerCase();
   return (
-    /\bi found\b/.test(text) &&
-    /\byou('|’)re asking about\b/.test(text) &&
+    (
+      /\bi found\b/.test(text) ||
+      /\bcurrent data lists\b/.test(text) ||
+      /\bis shown as\b/.test(text) ||
+      /\bis clear\b/.test(text)
+    ) &&
     (
       /\bwon't guess\b/.test(text) ||
-      /\bcurrent vehicle data\b/.test(text) ||
-      /\bcurrent vehicle data\b/.test(text) ||
-      /\bcurrent vehicle data\b/.test(text) ||
-      /\bcurrent spec data\b/.test(text)
+      /\bwill not guess\b/.test(text) ||
+      /\bwill not make one up\b/.test(text) ||
+      /\bcurrent data\b/.test(text) ||
+      /\bcurrent structured data\b/.test(text)
     )
   );
 };

@@ -458,7 +458,10 @@ function assertE2eAnswerQuality({ output = {}, expected = {}, failures = [] } = 
     if (bad) failures.push(`E2E answer included forbidden text: ${bad}`);
   }
 
-  if (tool !== "clarification" && /i need one more detail/i.test(answer)) {
+  if (
+    tool !== "clarification" &&
+    /i need one more detail|can you clarify what you want to check|need one detail/i.test(answer)
+  ) {
     failures.push("E2E real tool returned generic clarification wording.");
   }
 
@@ -480,6 +483,15 @@ function assertE2eAnswerQuality({ output = {}, expected = {}, failures = [] } = 
 
   if (expected.e2eNoDuplicateComparisonTitle && /creta vs seltos vs hyundai creta/i.test(title)) {
     failures.push(`E2E duplicate comparison title remains: ${title}`);
+  }
+
+  if (
+    expected.e2eNoDuplicateComparisonTitle &&
+    /creta/i.test(answer) &&
+    /seltos/i.test(answer) &&
+    /creta.*seltos.*creta.*seltos/i.test(answer.replace(/\s+/g, " "))
+  ) {
+    failures.push(`E2E duplicate comparison targets remain in answer: ${answer}`);
   }
 
   return {

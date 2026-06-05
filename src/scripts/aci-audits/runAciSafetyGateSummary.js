@@ -106,6 +106,12 @@ const tasks = [
     command: "node",
     args: ["src/scripts/aci-audits/auditAciBackendFreezeTrust.js"],
   },
+  {
+    key: "answerLanguage",
+    label: "Answer language registry audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciAnswerLanguageRegistryV1.js"],
+  },
 ];
 
 
@@ -118,6 +124,7 @@ const filterTasksForSafetyMode = (allTasks = []) => {
       "contextManager",
       "modelAliasFeatureQueries",
       "embarrassmentQueries",
+      "answerLanguage",
     ]);
 
     return allTasks.filter((task) => fastKeys.has(task.key));

@@ -12,6 +12,10 @@ import { composeAciAnswer } from "../../aiAgent/aiAgent.answerComposer.js";
 import { runVehiclePricelistNewCarsTool } from "../../aiAgent/tools/newCars/vehiclePricelist.tool.js";
 import { buildVehiclePricelistResponse } from "../../aiAgent/aiAgent.responseTools.js";
 import {
+  buildAciLanguageSeed,
+  renderAciTemplate,
+} from "../language/aciAnswerLanguageComposer.js";
+import {
   applyContextIsolationRules,
   buildContextPatchFromState,
   getContextForToolPlan,
@@ -291,7 +295,16 @@ const buildUnsupportedCityFastPathResponse = ({
     canvasType: "unsupported_city_canvas",
     inlineType: null,
     title: `Pricing unavailable in ${requestedCity}`,
-    answer: `I don't have live on-road pricing for ${requestedCity} yet. Pricing is currently available for Delhi, Noida, and Gurgaon.`,
+    answer: renderAciTemplate(
+      "unsupported_city_price",
+      {
+        city: requestedCity,
+        supportedCities: SUPPORTED_PRICE_CITY_LABELS_FOR_FAST_PATH,
+      },
+      {
+        seed: buildAciLanguageSeed("unsupported_city_price", requestedCity, message, effectiveMessage),
+      },
+    ).text,
     matched: 0,
     count: 0,
     rows: [],
@@ -695,6 +708,141 @@ const maybeReturnSupportedExactPriceFastPath = async ({
 };
 
 
+
+const ensureDiagnosticOnlyAnswerNote = (answer = "") => {
+  const text = cleanText(answer);
+  if (!text) return "This is diagnostic-only, not a final recommendation.";
+  if (/\bdiagnostic-only\b/i.test(text)) return text;
+  return `${text} This is diagnostic-only, not a final recommendation.`;
+};
+
+const detectCrossModelScoreDiagnosticRequest = ({ message = "", candidateSnapshot = {} } = {}) => {
+  const raw = String(message || "");
+  const normalized = cleanText(raw);
+
+  const hasComparison =
+    hasComparisonLanguage(raw) ||
+    /\b(vs|v\/s|versus|compare|comparison|against)\b/i.test(raw);
+
+  const hasScoreLanguage =
+    /\b(score|scores|scoring|overall|diagnostic|which\s+scores?\s+better|scores?\s+better|better\s+overall)\b/i.test(raw);
+
+  if (!hasComparison || !hasScoreLanguage) return null;
+
+  const modelKeys = asArray(candidateSnapshot?.vehicles?.models)
+    .map((item = {}) =>
+      item?.metadata?.raw?.shortModelKey ||
+      item?.metadata?.raw?.modelKey ||
+      item?.metadata?.raw?.rawModel ||
+      item?.metadata?.model ||
+      item?.rawText ||
+      item?.canonicalKey ||
+      item?.displayName ||
+      ""
+    )
+    .map((key) => normalizeFastPathSlug(key))
+    .filter(Boolean);
+
+  const uniqueModelKeys = [...new Set(modelKeys)].slice(0, 2);
+  if (uniqueModelKeys.length < 2) return null;
+
+  const fuelKey =
+    /\bcng\b/i.test(raw)
+      ? "cng"
+      : /\bdiesel\b/i.test(raw)
+        ? "diesel"
+        : /\belectric|ev\b/i.test(raw)
+          ? "electric"
+          : /\bhybrid\b/i.test(raw)
+            ? "hybrid"
+            : /\bpetrol\b/i.test(raw)
+              ? "petrol"
+              : "";
+
+  const transmissionKey =
+    /\bmanual|mt\b/i.test(raw)
+      ? "manual"
+      : /\bautomatic|auto|amt|cvt|dct|imt|iv?t\b/i.test(raw)
+        ? "automatic"
+        : "";
+
+  return {
+    operation: "cross_model_score_diagnostic",
+    targets: uniqueModelKeys.map((modelKey) => ({
+      modelKey,
+      ...(fuelKey ? { fuelKey } : {}),
+      ...(transmissionKey ? { transmissionKey } : {}),
+    })),
+    models: uniqueModelKeys,
+    comparisonModels: uniqueModelKeys,
+    ...(fuelKey ? { fuelKey } : {}),
+    ...(transmissionKey ? { transmissionKey } : {}),
+    routingReason: "cross_model_score_diagnostic_request",
+    normalizedMessage: normalized,
+  };
+};
+
+const applyCrossModelScoreDiagnosticPlanOverride = ({ plan = {}, override = null } = {}) => {
+  if (!override) return plan;
+
+  const baseTool = plan.tools?.[0] || {};
+
+  const patchedTool = {
+    ...baseTool,
+    tool: "vehicle_score_insight",
+    operation: override.operation,
+    targets: override.targets,
+    models: override.models,
+    comparisonModels: override.comparisonModels,
+    ...(override.fuelKey ? { fuelKey: override.fuelKey } : {}),
+    ...(override.transmissionKey ? { transmissionKey: override.transmissionKey } : {}),
+    input: {
+      ...(baseTool.input || {}),
+      ...override,
+    },
+    args: {
+      ...(baseTool.args || {}),
+      ...override,
+    },
+    params: {
+      ...(baseTool.params || {}),
+      ...override,
+    },
+    filters: {
+      ...(baseTool.filters || {}),
+      ...(override.fuelKey ? { fuelKey: override.fuelKey } : {}),
+      ...(override.transmissionKey ? { transmissionKey: override.transmissionKey } : {}),
+    },
+    entities: {
+      ...(baseTool.entities || {}),
+      models: override.models,
+      comparisonModels: override.comparisonModels,
+      targets: override.targets,
+      operation: override.operation,
+    },
+  };
+
+  return {
+    ...plan,
+    intent: "vehicle_score_insight",
+    conversationMode: "diagnostic",
+    mode: plan.mode || "single_tool",
+    tools: [patchedTool],
+    output: {
+      ...(plan.output || {}),
+      canvasType: "score_insight_canvas",
+      inlineType: "score_insight_summary",
+    },
+    meta: {
+      ...(plan.meta || {}),
+      crossModelScoreDiagnosticOverride: true,
+      crossModelScoreDiagnosticTargets: override.targets,
+    },
+  };
+};
+
+
+
 export const runAciCoreLiveBridge = async ({
   message = "",
   context = {},
@@ -763,10 +911,20 @@ export const runAciCoreLiveBridge = async ({
     parser: parseHybridMeaningFrame,
   });
 
-  const plan = buildLegacyPlanFromAciMeaningFrame({
+  const basePlan = buildLegacyPlanFromAciMeaningFrame({
     meaningFrame: understanding.meaningFrame,
     message,
     context: isolatedContext,
+  });
+
+  const crossModelScoreDiagnosticOverride = detectCrossModelScoreDiagnosticRequest({
+    message,
+    candidateSnapshot: managedCandidateSnapshot,
+  });
+
+  const plan = applyCrossModelScoreDiagnosticPlanOverride({
+    plan: basePlan,
+    override: crossModelScoreDiagnosticOverride,
   });
 
   const executed = await executeAciPlannerPlan({
@@ -782,6 +940,19 @@ export const runAciCoreLiveBridge = async ({
     message,
     context: isolatedContext,
   });
+
+  const responseForCompose = crossModelScoreDiagnosticOverride
+    ? {
+        ...normalized,
+        answer: ensureDiagnosticOnlyAnswerNote(normalized.answer),
+        operation: "cross_model_score_diagnostic",
+        data: {
+          ...(normalized.data || {}),
+          operation: "cross_model_score_diagnostic",
+        },
+      }
+    : normalized;
+
   const managedContextPatch = buildContextPatchFromState(contextState);
   const bridgeTool = plan.tools?.[0]?.tool || "";
   const bridgePrimaryTask =
@@ -804,6 +975,13 @@ export const runAciCoreLiveBridge = async ({
     contextIsolation: isolation,
     originalMessage,
     effectiveMessage,
+    ...(crossModelScoreDiagnosticOverride
+      ? {
+          operation: "cross_model_score_diagnostic",
+          routingReason: crossModelScoreDiagnosticOverride.routingReason,
+          crossModelScoreDiagnosticTargets: crossModelScoreDiagnosticOverride.targets,
+        }
+      : {}),
   };
 
   const scoreInsightGuardrail =
@@ -817,16 +995,16 @@ export const runAciCoreLiveBridge = async ({
       : null;
 
   return composeAciAnswer({
-    ...normalized,
+    ...responseForCompose,
     contextPatch: mergeContextPatches({
       previousPatch: context,
       managerPatch: managedContextPatch,
-      toolPatch: normalized.contextPatch || {},
+      toolPatch: responseForCompose.contextPatch || {},
     }),
     ...(scoreInsightGuardrail ? { usageGuardrail: scoreInsightGuardrail } : {}),
     aciCoreBridge: bridge,
     meta: {
-      ...(normalized.meta || {}),
+      ...(responseForCompose.meta || {}),
       ...(scoreInsightGuardrail ? { scoreInsightGuardrail } : {}),
       aciCoreBridge: bridge,
     },

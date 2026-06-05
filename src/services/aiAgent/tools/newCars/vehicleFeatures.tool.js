@@ -5,6 +5,10 @@ import {
   compareVariantFeaturesV2,
 } from "../../aiAgent.featureResolverV2.js";
 import { sampleVehicleColorImages } from "./vehiclePricelist.tool.js";
+import {
+  buildAciLanguageSeed,
+  renderAciTemplate,
+} from "../../../aciCore/language/aciAnswerLanguageComposer.js";
 
 const TOOL_NAME = "vehicle_features";
 const DEFAULT_CITY = "new-delhi";
@@ -806,8 +810,27 @@ const buildCustomerFeatureAnswer = ({
 
     if (availableRows.length > 0 && unavailableRows.length > 0) {
       const total = availableRows.length + unavailableRows.length + conflictedRows.length;
-      const skipText = unavailableRows.length === 1 ? "1 variant skips it" : `${unavailableRows.length} variants skip it`;
-      return `${target} offers ${readableFeature} on ${availableRows.length} of ${total} current variants. ${skipText}.`;
+      return renderAciTemplate(
+        "resolved_feature_available_summary",
+        {
+          model: target,
+          topic: readableFeature,
+          availableCount: availableRows.length,
+          totalCount: total,
+          missingCount: unavailableRows.length,
+        },
+        {
+          seed: buildAciLanguageSeed(
+            "resolved_feature_available_summary",
+            target,
+            readableFeature,
+            availableRows.length,
+            total,
+            unavailableRows.length,
+            userMessage,
+          ),
+        },
+      ).text;
     }
 
     if (/matching .* feature records/i.test(original) && (availableRows.length > 0 || rows.length > 0)) {

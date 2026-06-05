@@ -1,6 +1,10 @@
 import mongoose from "mongoose";
 import { formatMoney } from "../shared/pricing.js";
 import { buildV2PriceBreakup } from "./shared/priceBreakup.js";
+import {
+  buildAciLanguageSeed,
+  renderAciTemplate,
+} from "../../../aciCore/language/aciAnswerLanguageComposer.js";
 
 const DEFAULT_CITY = "new-delhi";
 const VEHICLE_COLORS_COLLECTION = "vehicle_colors_v2";
@@ -474,7 +478,16 @@ const buildUnsupportedCityPricingResponse = ({
     cleanText(requestedModel) ||
     "this vehicle";
   const title = `${vehicleLabel} pricing unavailable in ${displayRequestedCity}`;
-  const answer = `I don't have live on-road pricing for ${displayRequestedCity} yet. Pricing is currently available for Delhi, Noida, and Gurgaon.`;
+  const answer = renderAciTemplate(
+    "unsupported_city_price",
+    {
+      city: displayRequestedCity,
+      supportedCities: SUPPORTED_PRICE_CITY_LABELS,
+    },
+    {
+      seed: buildAciLanguageSeed("unsupported_city_price", displayRequestedCity, vehicleLabel),
+    },
+  ).text;
   const unsupportedCity = {
     requestedCity: displayRequestedCity,
     supportedCities: SUPPORTED_PRICE_CITY_LABELS,
@@ -3169,7 +3182,17 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     ? `${vehicleLabel} ${displayVariant} ${wantsOnRoadPrice ? "on-road price" : "price"}`
     : `${vehicleLabel} price list`;
   const subtitle = `${vehicle.city || displayCity(requestedCity)} · ${rows.length} variants · ${wantsOnRoadPrice ? "On-road" : "Ex-showroom"}`;
-  const listAnswer = `I found ${rows.length} ${vehicleLabel} variants in ${vehicle.city || displayCity(requestedCity)}. Default on-road prices exclude optional add-ons; optional add-on totals are available in each variant breakup.`;
+  const listAnswer = renderAciTemplate(
+    "pricelist_summary",
+    {
+      model: vehicleLabel,
+      city: vehicle.city || displayCity(requestedCity),
+      variantCount: rows.length,
+    },
+    {
+      seed: buildAciLanguageSeed("pricelist_summary", vehicleLabel, vehicle.city || displayCity(requestedCity), rows.length),
+    },
+  ).text;
 
   const actions = buildActions({
     vehicle,
@@ -3212,7 +3235,17 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     answer: rows.length
       ? isModelLevelListResult
         ? listAnswer
-        : `I found the ${title} for ${vehicle.city || displayCity(requestedCity)}.`
+        : renderAciTemplate(
+            "price_summary",
+            {
+              model: title,
+              city: vehicle.city || displayCity(requestedCity),
+              priceLine: "structured price details are available in the card.",
+            },
+            {
+              seed: buildAciLanguageSeed("price_summary", title, vehicle.city || displayCity(requestedCity)),
+            },
+          ).text
       : `I could not find live price rows for ${requestedModel || "this model"} in ${displayCity(requestedCity)}.`,
     city: vehicle.city || displayCity(requestedCity),
     citySlug: vehicle.citySlug || slugify(requestedCity || DEFAULT_CITY),

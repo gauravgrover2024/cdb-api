@@ -105,9 +105,11 @@
     "aci:decision:public-chat-score:smoke": "node src/scripts/aci-decision/smokePublicChatScoreInsightV1.cjs",
     "aci:decision:cross-model-score:eval": "node src/scripts/aci-decision/runCrossModelScoreDiagnosticEvalV1.cjs",
     "aci:decision:cross-model-score:tool-smoke": "node src/scripts/aci-decision/smokeCrossModelScoreInsightToolV1.cjs",
+    "aci:decision:cross-model-score:bridge-smoke": "node src/scripts/aci-decision/smokeCrossModelScoreLiveBridgeRoutingV1.cjs",
     "aci:context-manager:audit": "node src/scripts/aci-audits/auditAciContextManagerV1.js",
     "aci:context-manager:stress": "node src/scripts/aci-audits/auditAciContextManagerStressV1.js",
-    "aci:context-manager:public-smoke": "node src/scripts/aci-audits/smokeAciContextPublicChatV1.cjs"
+    "aci:context-manager:public-smoke": "node src/scripts/aci-audits/smokeAciContextPublicChatV1.cjs",
+    "aci:answer-language:audit": "node src/scripts/aci-audits/auditAciAnswerLanguageRegistryV1.js"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

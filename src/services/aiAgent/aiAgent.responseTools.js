@@ -1,4 +1,8 @@
 import { normalizeSearchKey } from "./aiAgent.planSchema.js";
+import {
+  buildAciLanguageSeed,
+  renderAciTemplate,
+} from "../aciCore/language/aciAnswerLanguageComposer.js";
 
 /**
  * ACI Assist Response Tools
@@ -290,6 +294,11 @@ export const getRuntimeDataForTool = ({
     {}
   );
 };
+
+const renderResponseLanguage = (templateKey = "", input = {}, seedParts = []) =>
+  renderAciTemplate(templateKey, input, {
+    seed: buildAciLanguageSeed(templateKey, ...asArray(seedParts)),
+  }).text;
 
 export const makeAction = ({
   id,
@@ -1969,7 +1978,13 @@ export const buildUnavailableAnswer = ({ reason = "", carLabel = "" } = {}) => {
     return "Bank-wise finance schemes are not available yet. I can create a finance callback request or calculate generic EMI.";
   }
 
-  return "This request needs data or functionality that is not available in the current ACI Assist backend yet.";
+  return renderResponseLanguage(
+    "generic_no_data_but_can_help",
+    {
+      topic: reason ? displayName(String(reason).replace(/_/g, " ")) : "this request",
+    },
+    [reason, carLabel],
+  );
 };
 
 export const buildUnavailableActions = ({ reason = "", model = "", variant = "", city = DEFAULT_CITY } = {}) => {
@@ -2025,6 +2040,42 @@ export const buildUnavailableActions = ({ reason = "", model = "", variant = "",
   return [];
 };
 
+const buildRegistryClarificationAnswer = ({
+  toolPlan = {},
+  runtimeData = {},
+  context = {},
+  plan = {},
+} = {}) => {
+  const model = getModel(toolPlan, context);
+  const topic = cleanText(
+    runtimeData.topic ||
+      runtimeData.feature ||
+      runtimeData.attributeLabel ||
+      plan.topic ||
+      getFeature(toolPlan),
+  );
+
+  if (runtimeData.question || plan.clarification) return "";
+
+  if (model && !topic) {
+    return renderResponseLanguage(
+      "clarification_known_model_missing_topic",
+      { model },
+      [model, toolPlan.tool, runtimeData.reason],
+    );
+  }
+
+  if (topic && !model) {
+    return renderResponseLanguage(
+      "clarification_known_topic_missing_model",
+      { topic },
+      [topic, toolPlan.tool, runtimeData.reason],
+    );
+  }
+
+  return "";
+};
+
 export const buildClarificationResponse = ({
   toolPlan = {},
   runtimeData = {},
@@ -2041,6 +2092,7 @@ export const buildClarificationResponse = ({
     inlineType: "clarification_card",
     title: "Need one detail",
     answer:
+      buildRegistryClarificationAnswer({ toolPlan, runtimeData, context, plan }) ||
       runtimeData.question ||
       plan.clarification ||
       "Can you clarify what you want to check?",

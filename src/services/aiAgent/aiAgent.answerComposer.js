@@ -1,3 +1,8 @@
+import {
+  buildAciLanguageSeed,
+  renderAciTemplate,
+} from "../aciCore/language/aciAnswerLanguageComposer.js";
+
 const cleanText = (value = "") =>
   String(value || "")
     .replace(/\s+/g, " ")
@@ -59,6 +64,31 @@ const getRowVehicleLabel = (row = {}) =>
 const getPriceLabel = (row = {}) =>
   firstText(row.onRoadPriceLabel, row.exShowroomPriceLabel, row.priceLabel);
 
+const getLanguageSeed = (response = {}, templateKey = "") =>
+  buildAciLanguageSeed(
+    templateKey,
+    response.sessionId,
+    response.requestId,
+    response.message,
+    response.userMessage,
+    response.meta?.sessionId,
+    response.meta?.requestId,
+    response.meta?.turnId,
+    response.meta?.caseId,
+    response.aciCoreBridge?.originalMessage,
+    response.aciCoreBridge?.effectiveMessage,
+    response.title,
+  );
+
+const renderLanguage = (templateKey = "", input = {}, response = {}) =>
+  renderAciTemplate(templateKey, input, {
+    seed: getLanguageSeed(response, templateKey),
+    previousVariantId:
+      response.previousVariantId ||
+      response.meta?.answerLanguage?.variantId ||
+      response.answerLanguage?.variantId,
+  });
+
 const composePriceAnswer = (response = {}) => {
   const rows = getRows(response);
   const row = rows[0] || {};
@@ -68,11 +98,19 @@ const composePriceAnswer = (response = {}) => {
     getVehicleLabel(responseVehicle) ||
     firstText(response.title, response.data?.title);
   const vehicle = rowVehicle || responseVehicleLabel;
-  const city = firstText(row.cityName, row.city, response.contextPatch?.anchorCity, "Delhi");
+  const city = firstText(row.cityName, row.city, response.contextPatch?.anchorCity, "selected city");
   const isListResponse = rows.length > 1 || response.canvasType === "pricelist_canvas";
 
   if (isListResponse && rows.length) {
-    return `I found ${rows.length} ${responseVehicleLabel || vehicle || "vehicle"} variants in ${city}. Default on-road prices exclude optional add-ons; optional add-on totals are available in each variant breakup.`;
+    return renderLanguage(
+      "pricelist_summary",
+      {
+        model: responseVehicleLabel || vehicle || "vehicle",
+        city,
+        variantCount: rows.length,
+      },
+      response,
+    ).text;
   }
 
   const onRoadWithoutOptional = firstText(
@@ -100,19 +138,51 @@ const composePriceAnswer = (response = {}) => {
       ? ` Optional add-ons are separate (${optionalTotal || "available separately"}), taking it to ${onRoadWithOptional} if selected.`
       : " Optional add-ons are not included in this default on-road figure.";
 
-    return `For ${vehicle} in ${city}, the on-road price excluding optional add-ons is ${onRoadWithoutOptional}. The ex-showroom price is ${exShowroom}.${optionalLine}`;
+    return renderLanguage(
+      "price_summary",
+      {
+        model: vehicle,
+        city,
+        priceLine: `the on-road price excluding optional add-ons is ${onRoadWithoutOptional}. The ex-showroom price is ${exShowroom}.${optionalLine}`,
+      },
+      response,
+    ).text;
   }
 
   if (onRoad && exShowroom) {
-    return `For ${vehicle} in ${city}, the on-road price is ${onRoad}. The ex-showroom price is ${exShowroom}.`;
+    return renderLanguage(
+      "price_summary",
+      {
+        model: vehicle,
+        city,
+        priceLine: `the on-road price is ${onRoad}. The ex-showroom price is ${exShowroom}.`,
+      },
+      response,
+    ).text;
   }
 
   if (onRoad) {
-    return `For ${vehicle} in ${city}, the on-road price is ${onRoad}.`;
+    return renderLanguage(
+      "price_summary",
+      {
+        model: vehicle,
+        city,
+        priceLine: `the on-road price is ${onRoad}.`,
+      },
+      response,
+    ).text;
   }
 
   if (exShowroom) {
-    return `For ${vehicle} in ${city}, the ex-showroom price is ${exShowroom}.`;
+    return renderLanguage(
+      "price_summary",
+      {
+        model: vehicle,
+        city,
+        priceLine: `the ex-showroom price is ${exShowroom}.`,
+      },
+      response,
+    ).text;
   }
 
   return response.answer;
@@ -329,11 +399,20 @@ const composeFeatureComparisonAnswer = (response = {}) => {
   const compared = vehicleLabels.slice(0, 2).join(" vs ");
   const scope = fuelFilter ? `${fuelFilter.toUpperCase()} variants` : "the selected comparison";
 
-  return `I compared ${compared} for ${scope} on ${featureNames.join(", ")}. ${
-    fuelFilter
-      ? `${fuelFilter.toUpperCase()} is being used as a fuel filter, not as a feature row.`
-      : "The answer focuses only on the requested comparison scope."
-  }`;
+  return renderLanguage(
+    "comparison_summary",
+    {
+      vehicleA: vehicleLabels[0],
+      vehicleB: vehicleLabels[1],
+      priceLine: `Scope: ${scope}.`,
+      differenceLine: `Requested features: ${featureNames.join(", ")}. ${
+        fuelFilter
+          ? `${fuelFilter.toUpperCase()} is being used as a fuel filter, not as a feature row.`
+          : "The answer focuses only on the requested comparison scope."
+      }`,
+    },
+    response,
+  ).text;
 };
 
 
@@ -380,7 +459,16 @@ const composeVehicleComparisonAnswer = (response = {}) => {
     ? `I also found ${differenceCount} feature/spec differences and ${commonCount} common highlights in the compared variant data.`
     : "Feature/spec differences were not available for these exact variants yet.";
 
-  return `I compared ${labels[0]} and ${labels[1]}. ${priceLine} ${differenceLine}`;
+  return renderLanguage(
+    "comparison_summary",
+    {
+      vehicleA: labels[0],
+      vehicleB: labels[1],
+      priceLine,
+      differenceLine,
+    },
+    response,
+  ).text;
 };
 
 const composeVehicleSpecAttributeAnswer = (response = {}) => {
@@ -399,10 +487,25 @@ const composeVehicleSpecAttributeAnswer = (response = {}) => {
     .filter(Boolean);
 
   if (values.length && !data.missingData) {
-    return `I found ${modelLabel}. You're asking about ${attribute}. In the current vehicle data, this is listed as ${values.join(", ")}.`;
+    return renderLanguage(
+      "resolved_spec_value_summary",
+      {
+        model: modelLabel,
+        topic: attribute,
+        values,
+      },
+      response,
+    ).text;
   }
 
-  return `I found ${modelLabel}. You're asking about ${attribute}. I don't have the exact certified ${attribute} value in the current spec data yet, so I won't guess.`;
+  return renderLanguage(
+    "resolved_spec_missing_summary",
+    {
+      model: modelLabel,
+      topic: attribute,
+    },
+    response,
+  ).text;
 };
 
 export const composeAciAnswer = (response = {}) => {
