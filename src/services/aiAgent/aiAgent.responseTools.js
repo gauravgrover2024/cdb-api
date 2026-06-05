@@ -40,6 +40,7 @@ export const ACI_RESPONSE_TOOL_IDS = [
   "vehicle_pricelist",
   "vehicle_colors",
   "vehicle_feature_lookup",
+  "vehicle_spec_attribute_lookup",
   "vehicle_compare",
   "vehicle_recommend",
   "vehicle_similar",
@@ -63,6 +64,7 @@ export const RESPONSE_INTENTS = {
   vehicle_pricelist: "vehicle_pricelist",
   vehicle_colors: "vehicle_colors",
   vehicle_feature_lookup: "vehicle_feature_answer",
+  vehicle_spec_attribute_lookup: "vehicle_spec_attribute_answer",
   vehicle_compare: "vehicle_comparison",
   vehicle_recommend: "vehicle_recommendation",
   vehicle_similar: "vehicle_similar",
@@ -82,6 +84,7 @@ export const RESPONSE_CANVAS_TYPES = {
   vehicle_pricelist: "pricelist_canvas",
   vehicle_colors: "color_studio_canvas",
   vehicle_feature_lookup: "",
+  vehicle_spec_attribute_lookup: "",
   vehicle_compare: "comparison_canvas",
   vehicle_recommend: "recommendation_results_canvas",
   vehicle_similar: "similar_cars_canvas",
@@ -101,6 +104,7 @@ export const RESPONSE_INLINE_TYPES = {
   vehicle_pricelist: "",
   vehicle_colors: "",
   vehicle_feature_lookup: "feature_answer_card",
+  vehicle_spec_attribute_lookup: "spec_attribute_answer_card",
   vehicle_compare: "",
   vehicle_recommend: "",
   vehicle_similar: "similar_cars_summary",
@@ -1084,11 +1088,59 @@ export const buildVehicleCompareResponse = ({
   runtimeData = {},
   context = {},
 } = {}) => {
-  const models = getModels(toolPlan, context);
+  const runtimeVehicles = asArray(runtimeData?.selectedComparisonSet?.vehicles);
+  const runtimeModels = asArray(runtimeData?.selectedComparisonSet?.models);
+  const runtimeVehicleLabels = runtimeVehicles
+    .map((vehicle = {}) =>
+      firstMeaningful(
+        vehicle.fullModel,
+        [vehicle.make || vehicle.brand, vehicle.model].filter(Boolean).join(" "),
+        vehicle.model,
+      ),
+    )
+    .filter(Boolean);
+
+  const models = runtimeModels.length >= 2
+    ? runtimeModels
+    : runtimeVehicleLabels.length >= 2
+      ? runtimeVehicleLabels
+      : getModels(toolPlan, context);
   const model = getModel(toolPlan, context);
   const variant = getVariant(toolPlan, context);
   const city = getCity(toolPlan, context);
   const rows = getRuntimeRows(runtimeData);
+
+  const compactComparisonRow = (row = {}) => ({
+    id: row.id || row._id || "",
+    make: row.make || row.brand || "",
+    brand: row.brand || row.make || "",
+    model: row.model || row.rawModel || "",
+    displayName: row.displayName || row.modelDisplayName || row.fullModel || row.model || "",
+    modelDisplayName: row.modelDisplayName || row.displayName || row.fullModel || row.model || "",
+    variant: row.variant || row.variantName || "",
+    variantName: row.variantName || row.variant || "",
+    fuel: row.fuel || row.fuelType || "",
+    fuelType: row.fuelType || row.fuel || "",
+    transmission: row.transmission || "",
+    city: row.city || row.citySlug || "",
+    exShowroomPrice: row.exShowroomPrice || row.exShowroomPriceValue || null,
+    exShowroomPriceLabel: row.exShowroomPriceLabel || "",
+    onRoadPrice: row.onRoadPrice || row.onRoadPriceValue || row.totalOnRoadPrice || null,
+    onRoadPriceLabel: row.onRoadPriceLabel || row.totalOnRoadPriceLabel || "",
+    rto: row.rto || row.rtoCharges || null,
+    insurance: row.insurance || row.insuranceCharges || null,
+    otherChargesTotal: row.otherChargesTotal || row.otherCharges || null,
+    unavailable: Boolean(row.unavailable),
+    variantResolution: row.variantResolution
+      ? {
+          status: row.variantResolution.status || "",
+          selectedVariant: row.variantResolution.selectedVariant || "",
+          reason: row.variantResolution.reason || "",
+        }
+      : null,
+  });
+
+  const compactRows = rows.map(compactComparisonRow);
 
   const compareLabel =
     models.length >= 2
@@ -1114,7 +1166,7 @@ export const buildVehicleCompareResponse = ({
       variant,
       city,
       comparisonLevel: toolPlan.resolution?.comparisonLevel || "model",
-      rows,
+      rows: compactRows,
       selectedComparisonSet: runtimeData.selectedComparisonSet || {},
       comparisonSummary: runtimeData.comparisonSummary || {},
       differenceSummary: runtimeData.differenceSummary || {},
@@ -2028,6 +2080,42 @@ export const buildGeneralResponse = ({
     actions: runtimeData.actions || [],
   });
 
+export const buildVehicleSpecAttributeResponse = ({
+  toolPlan = {},
+  runtimeData = {},
+  context = {},
+} = {}) =>
+  baseResponse({
+    toolPlan,
+    context,
+    runtimeData,
+    intent: runtimeData.intent || "vehicle_spec_attribute_answer",
+    displayMode: "inline",
+    canvasType: "",
+    inlineType: runtimeData.inlineType || "spec_attribute_answer_card",
+    title: runtimeData.title || "Vehicle specification",
+    answer:
+      runtimeData.answer ||
+      "I found the model, but the exact requested specification is not available in the indexed data yet.",
+    data: runtimeData.data || runtimeData,
+    actions: runtimeData.actions || runtimeData.data?.nextActions || [],
+    leadingQuestions:
+      runtimeData.leadingQuestions ||
+      runtimeData.data?.nextActions ||
+      [],
+    conversationSuggestions:
+      runtimeData.conversationSuggestions ||
+      runtimeData.leadingQuestions ||
+      runtimeData.data?.nextActions ||
+      [],
+    sourceTransparency: runtimeData.sourceTransparency || {},
+    contextPatch: runtimeData.contextPatch || null,
+    meta: {
+      ...(runtimeData.meta || {}),
+      responseTool: "vehicle_spec_attribute_lookup",
+    },
+  });
+
 export const buildInternalPassthroughResponse = ({
   toolPlan = {},
   runtimeData = {},
@@ -2184,6 +2272,10 @@ export const ACI_RESPONSE_TOOLS = {
   vehicle_feature_lookup: {
     id: "vehicle_feature_lookup",
     run: buildVehicleFeatureLookupResponse,
+  },
+  vehicle_spec_attribute_lookup: {
+    id: "vehicle_spec_attribute_lookup",
+    run: buildVehicleSpecAttributeResponse,
   },
   vehicle_compare: {
     id: "vehicle_compare",

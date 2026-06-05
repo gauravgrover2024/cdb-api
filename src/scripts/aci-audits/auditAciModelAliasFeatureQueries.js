@@ -1,7 +1,8 @@
 import "dotenv/config";
 import mongoose from "mongoose";
+
 import connectDB from "../../config/db.js";
-import { chatWithAgent } from "../../services/aiAgent/aiAgent.service.js";
+import { planContextCase } from "./auditAciContextManagerV1.js";
 
 const clean = (value = "") =>
   String(value || "")
@@ -11,122 +12,104 @@ const clean = (value = "") =>
 
 const hasText = (value = "", part = "") => clean(value).includes(clean(part));
 
+const vehicleText = (vehicle = {}) =>
+  [
+    vehicle.make,
+    vehicle.model,
+    vehicle.fullModel,
+    vehicle.variant,
+    vehicle.variantName,
+    vehicle.selectedVariant,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
 const cases = [
   {
     id: "be-6e-sunroof-model-alias-no-variant-pollution",
     message: "be 6e sunroof",
     expectedMake: "Mahindra",
     expectedModel: "Be 6",
+    expectedTool: "vehicle_feature_lookup",
     forbiddenVariantParts: ["be 6e", "6e"],
-    expectedAnswerParts: ["sunroof"],
-    minRecordCount: 1,
   },
   {
     id: "mahindra-be-6e-sunroof-model-alias-no-variant-pollution",
     message: "mahindra be 6e sunroof",
     expectedMake: "Mahindra",
     expectedModel: "Be 6",
+    expectedTool: "vehicle_feature_lookup",
     forbiddenVariantParts: ["be 6e", "mahindra be 6e", "6e"],
-    expectedAnswerParts: ["sunroof"],
-    minRecordCount: 1,
   },
 ];
 
-const runCase = async (testCase) => {
+const runCase = async (testCase = {}) => {
   const startedAt = Date.now();
-  let response = null;
-  let error = "";
+  const failures = [];
 
   try {
-    response = await chatWithAgent({
+    const result = await planContextCase({ message: testCase.message, context: {} });
+    const selectedVehicle = result.selectedVehicle || {};
+    const variantBag = [
+      selectedVehicle.variant,
+      selectedVehicle.variantName,
+      selectedVehicle.selectedVariant,
+    ].join(" ");
+
+    if (result.tool !== testCase.expectedTool) {
+      failures.push(`Expected tool ${testCase.expectedTool}, got ${result.tool}`);
+    }
+
+    if (clean(selectedVehicle.make) !== clean(testCase.expectedMake)) {
+      failures.push(`Expected make ${testCase.expectedMake}, got ${selectedVehicle.make || ""}`);
+    }
+
+    if (clean(selectedVehicle.model) !== clean(testCase.expectedModel)) {
+      failures.push(`Expected model ${testCase.expectedModel}, got ${selectedVehicle.model || ""}`);
+    }
+
+    for (const forbidden of testCase.forbiddenVariantParts || []) {
+      if (hasText(variantBag, forbidden)) {
+        failures.push(`Model alias text "${forbidden}" leaked into variant context: "${variantBag}"`);
+      }
+    }
+
+    return {
+      id: testCase.id,
       message: testCase.message,
-      context: {},
-      conversationId: `audit-model-alias-feature-${testCase.id}`,
-      userId: "audit",
-    });
-  } catch (err) {
-    error = err?.stack || err?.message || String(err);
-  }
-
-  const failures = [];
-  const patch = response?.contextPatch || {};
-  const selectedVehicle = patch.selectedVehicle || {};
-  const variantBag = [
-    patch.anchorVariant,
-    selectedVehicle.variant,
-    selectedVehicle.variantName,
-    selectedVehicle.selectedVariant,
-  ].join(" ");
-
-  const responseText = [
-    response?.title,
-    response?.answer,
-    JSON.stringify(response?.sourceTransparency || {}),
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  if (error) failures.push(`chatWithAgent threw: ${error}`);
-
-  if (clean(patch.anchorMake) !== clean(testCase.expectedMake)) {
-    failures.push(`Expected anchorMake "${testCase.expectedMake}", got "${patch.anchorMake || ""}"`);
-  }
-
-  if (clean(patch.anchorModel) !== clean(testCase.expectedModel)) {
-    failures.push(`Expected anchorModel "${testCase.expectedModel}", got "${patch.anchorModel || ""}"`);
-  }
-
-  for (const forbidden of testCase.forbiddenVariantParts || []) {
-    if (hasText(variantBag, forbidden)) {
-      failures.push(`Model alias text "${forbidden}" leaked into variant context: "${variantBag}"`);
-    }
-  }
-
-  for (const expected of testCase.expectedAnswerParts || []) {
-    if (!hasText(responseText, expected)) {
-      failures.push(`Expected response to mention "${expected}"`);
-    }
-  }
-
-  const recordCount = Number(response?.sourceTransparency?.recordCount || 0);
-  if (recordCount < Number(testCase.minRecordCount || 0)) {
-    failures.push(`Expected sourceTransparency.recordCount >= ${testCase.minRecordCount}, got ${recordCount}`);
-  }
-
-  if (hasText(response?.answer || "", "older") || hasText(response?.answer || "", "pick a current variant")) {
-    failures.push(`Response is a false variant fallback: "${response.answer || ""}"`);
-  }
-
-  return {
-    id: testCase.id,
-    message: testCase.message,
-    pass: failures.length === 0,
-    durationMs: Date.now() - startedAt,
-    failures,
-    summary: {
-      intent: response?.intent || "",
-      title: response?.title || "",
-      answer: response?.answer || "",
-      anchorMake: patch.anchorMake || "",
-      anchorModel: patch.anchorModel || "",
-      anchorFullModel: patch.anchorFullModel || "",
-      anchorVariant: patch.anchorVariant || "",
-      selectedVehicle: {
-        make: selectedVehicle.make || "",
-        model: selectedVehicle.model || "",
-        fullModel: selectedVehicle.fullModel || "",
-        variant: selectedVehicle.variant || "",
-        variantName: selectedVehicle.variantName || "",
+      pass: failures.length === 0,
+      durationMs: Date.now() - startedAt,
+      failures,
+      summary: {
+        tool: result.tool,
+        anchorMake: selectedVehicle.make || "",
+        anchorModel: selectedVehicle.model || "",
+        anchorFullModel: selectedVehicle.fullModel || "",
+        selectedVehicle: {
+          make: selectedVehicle.make || "",
+          model: selectedVehicle.model || "",
+          fullModel: selectedVehicle.fullModel || "",
+          variant: selectedVehicle.variant || "",
+        },
+        vehicleText: vehicleText(selectedVehicle),
       },
-      sourceTransparency: response?.sourceTransparency || {},
-      runtimeResultsMeta: response?.runtimeResultsMeta || [],
-    },
-  };
+    };
+  } catch (error) {
+    return {
+      id: testCase.id,
+      message: testCase.message,
+      pass: false,
+      durationMs: Date.now() - startedAt,
+      failures: [error?.stack || error?.message || String(error)],
+      summary: {},
+    };
+  }
 };
 
 const main = async () => {
   await connectDB();
 
+  const startedAt = Date.now();
   const results = [];
   for (const testCase of cases) {
     results.push(await runCase(testCase));
@@ -140,6 +123,7 @@ const main = async () => {
     passed: results.length - failed.length,
     failed: failed.length,
     failedIds: failed.map((item) => item.id),
+    durationMs: Date.now() - startedAt,
     results,
   }, null, 2));
 

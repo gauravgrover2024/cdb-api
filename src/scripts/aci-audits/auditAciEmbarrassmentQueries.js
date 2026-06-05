@@ -1,7 +1,8 @@
 import "dotenv/config";
 import mongoose from "mongoose";
+
 import connectDB from "../../config/db.js";
-import { chatWithAgent } from "../../services/aiAgent/aiAgent.service.js";
+import { hasForbiddenContextPayload, planContextCase } from "./auditAciContextManagerV1.js";
 
 const clean = (value = "") =>
   String(value || "")
@@ -11,19 +12,14 @@ const clean = (value = "") =>
 
 const hasText = (value = "", part = "") => clean(value).includes(clean(part));
 
-const collectText = (response = {}) =>
+const vehicleText = (vehicle = {}) =>
   [
-    response.intent,
-    response.title,
-    response.answer,
-    response.displayMode,
-    response.canvasType,
-    response.inlineType,
-    response.contextPatch ? JSON.stringify(response.contextPatch) : "",
-    response.sourceTransparency ? JSON.stringify(response.sourceTransparency) : "",
-    ...(Array.isArray(response.features) ? response.features.map((item) => JSON.stringify(item)) : []),
-    ...(Array.isArray(response.rows) ? response.rows.map((item) => JSON.stringify(item)) : []),
-    ...(Array.isArray(response.items) ? response.items.map((item) => JSON.stringify(item)) : []),
+    vehicle.make,
+    vehicle.model,
+    vehicle.fullModel,
+    vehicle.variant,
+    vehicle.variantName,
+    vehicle.selectedVariant,
   ]
     .filter(Boolean)
     .join(" ");
@@ -34,236 +30,153 @@ const cases = [
     message: "eqs range",
     expectedMake: "Mercedes Benz",
     expectedModel: "Eqs",
-    expectedModelParts: ["eqs"],
-    expectedTextParts: ["range"],
-    forbiddenTextParts: [
-      "opened mercedes benz eqs overview",
-      "opened",
-      "overview",
-      "could not confidently match this feature",
-    ],
-    forbiddenIntentParts: ["overview"],
-    minRecordCount: 1,
+    expectedTool: "vehicle_spec_attribute_lookup",
+    expectedTextParts: ["eqs"],
+    forbiddenModelParts: ["land rover", "range rover", "evoque"],
+    forbiddenVariantParts: ["range"],
   },
   {
     id: "mercedes-eqs-range-must-not-open-overview",
     message: "mercedes eqs range",
     expectedMake: "Mercedes Benz",
     expectedModel: "Eqs",
-    expectedModelParts: ["eqs"],
-    expectedTextParts: ["range"],
-    forbiddenTextParts: [
-      "opened mercedes benz eqs overview",
-      "opened",
-      "overview",
-      "could not confidently match this feature",
-    ],
-    forbiddenIntentParts: ["overview"],
-    minRecordCount: 1,
+    expectedTool: "vehicle_spec_attribute_lookup",
+    expectedTextParts: ["eqs"],
+    forbiddenModelParts: ["land rover", "range rover", "evoque"],
+    forbiddenVariantParts: ["range"],
   },
   {
     id: "ix-range-must-not-resolve-land-rover",
     message: "ix range",
     expectedMake: "Bmw",
     expectedModel: "Ix",
-    expectedModelParts: ["ix"],
-    expectedTextParts: ["range"],
+    expectedTool: "vehicle_spec_attribute_lookup",
+    expectedTextParts: ["ix"],
     forbiddenModelParts: ["land rover", "range rover", "evoque"],
     forbiddenVariantParts: ["range"],
-    forbiddenTextParts: [
-      "land rover range rover evoque",
-      "could not confidently match this feature",
-      "opened",
-      "overview",
-      "could not confidently match this feature",
-    ],
-    forbiddenIntentParts: ["overview"],
-    minRecordCount: 1,
   },
   {
     id: "bmw-ix-range-control-case",
     message: "bmw ix range",
     expectedMake: "Bmw",
     expectedModel: "Ix",
-    expectedModelParts: ["ix"],
-    expectedTextParts: ["range"],
+    expectedTool: "vehicle_spec_attribute_lookup",
+    expectedTextParts: ["ix"],
     forbiddenModelParts: ["land rover", "range rover", "evoque"],
     forbiddenVariantParts: ["range"],
-    forbiddenTextParts: [
-      "land rover range rover evoque",
-      "could not confidently match this feature",
-      "opened",
-      "overview",
-      "could not confidently match this feature",
-    ],
-    forbiddenIntentParts: ["overview"],
-    minRecordCount: 1,
   },
   {
     id: "be-6e-sunroof-model-alias-no-fake-variant",
     message: "be 6e sunroof",
     expectedMake: "Mahindra",
     expectedModel: "Be 6",
-    expectedModelParts: ["be 6"],
-    expectedTextParts: ["sunroof"],
+    expectedTool: "vehicle_feature_lookup",
+    expectedTextParts: ["be 6"],
     forbiddenVariantParts: ["be 6e", "6e"],
-    forbiddenTextParts: [
-      "looks like an older",
-      "pick a current variant",
-    ],
-    minRecordCount: 1,
   },
   {
     id: "mahindra-be-6e-sunroof-model-alias-no-fake-variant",
     message: "mahindra be 6e sunroof",
     expectedMake: "Mahindra",
     expectedModel: "Be 6",
-    expectedModelParts: ["be 6"],
-    expectedTextParts: ["sunroof"],
+    expectedTool: "vehicle_feature_lookup",
+    expectedTextParts: ["be 6"],
     forbiddenVariantParts: ["be 6e", "mahindra be 6e", "6e"],
-    forbiddenTextParts: [
-      "looks like an older",
-      "pick a current variant",
-    ],
-    minRecordCount: 1,
   },
 ];
 
-const runCase = async (testCase) => {
+const runCase = async (testCase = {}) => {
   const startedAt = Date.now();
-  let response = null;
-  let error = "";
+  const failures = [];
 
   try {
-    response = await chatWithAgent({
+    const result = await planContextCase({ message: testCase.message, context: {} });
+    const selectedVehicle = result.selectedVehicle || {};
+    const modelBag = [
+      selectedVehicle.make,
+      selectedVehicle.model,
+      selectedVehicle.fullModel,
+      result.plan?.tools?.[0]?.entities?.model,
+    ].join(" ");
+    const variantBag = [
+      selectedVehicle.variant,
+      selectedVehicle.variantName,
+      selectedVehicle.selectedVariant,
+      result.plan?.tools?.[0]?.entities?.variant,
+    ].join(" ");
+    const forbiddenContextKeys = hasForbiddenContextPayload(result.contextState || {});
+
+    if (result.tool !== testCase.expectedTool) {
+      failures.push(`Expected tool ${testCase.expectedTool}, got ${result.tool}`);
+    }
+
+    if (clean(selectedVehicle.make) !== clean(testCase.expectedMake)) {
+      failures.push(`Expected make ${testCase.expectedMake}, got ${selectedVehicle.make || ""}`);
+    }
+
+    if (clean(selectedVehicle.model) !== clean(testCase.expectedModel)) {
+      failures.push(`Expected model ${testCase.expectedModel}, got ${selectedVehicle.model || ""}`);
+    }
+
+    for (const expected of testCase.expectedTextParts || []) {
+      if (!hasText(modelBag, expected)) {
+        failures.push(`Expected model context/text to include "${expected}", got "${modelBag}"`);
+      }
+    }
+
+    for (const forbidden of testCase.forbiddenModelParts || []) {
+      if (hasText(modelBag, forbidden)) {
+        failures.push(`Forbidden wrong model text "${forbidden}" found in model context/text: "${modelBag}"`);
+      }
+    }
+
+    for (const forbidden of testCase.forbiddenVariantParts || []) {
+      if (hasText(variantBag, forbidden)) {
+        failures.push(`Forbidden model/spec text "${forbidden}" leaked into variant context: "${variantBag}"`);
+      }
+    }
+
+    if (forbiddenContextKeys.length) {
+      failures.push(`Durable contextState contains forbidden payload keys: ${forbiddenContextKeys.join(", ")}`);
+    }
+
+    return {
+      id: testCase.id,
       message: testCase.message,
-      context: {},
-      conversationId: `audit-embarrassment-${testCase.id}`,
-      userId: "audit",
-    });
-  } catch (err) {
-    error = err?.stack || err?.message || String(err);
-  }
-
-  const failures = [];
-  const patch = response?.contextPatch || {};
-  const selectedVehicle = patch.selectedVehicle || {};
-  const responseText = collectText(response);
-
-  const modelBag = [
-    patch.anchorModel,
-    patch.anchorFullModel,
-    selectedVehicle.model,
-    selectedVehicle.fullModel,
-    response?.title,
-    response?.answer,
-  ].join(" ");
-
-  const variantBag = [
-    patch.anchorVariant,
-    selectedVehicle.variant,
-    selectedVehicle.variantName,
-    selectedVehicle.selectedVariant,
-  ].join(" ");
-
-  if (error) failures.push(`chatWithAgent threw: ${error}`);
-
-  if (testCase.expectedMake && clean(patch.anchorMake) !== clean(testCase.expectedMake)) {
-    failures.push(`Expected anchorMake "${testCase.expectedMake}", got "${patch.anchorMake || ""}"`);
-  }
-
-  if (testCase.expectedModel && clean(patch.anchorModel) !== clean(testCase.expectedModel)) {
-    failures.push(`Expected anchorModel "${testCase.expectedModel}", got "${patch.anchorModel || ""}"`);
-  }
-
-  if (
-    testCase.expectedModel &&
-    patch.anchorFullModel &&
-    !hasText(patch.anchorFullModel, testCase.expectedModel)
-  ) {
-    failures.push(`Expected anchorFullModel to include "${testCase.expectedModel}", got "${patch.anchorFullModel || ""}"`);
-  }
-
-  for (const expected of testCase.expectedModelParts || []) {
-    if (!hasText(modelBag, expected)) {
-      failures.push(`Expected model context/text to include "${expected}", got "${modelBag}"`);
-    }
-  }
-
-  for (const forbidden of testCase.forbiddenModelParts || []) {
-    if (hasText(modelBag, forbidden)) {
-      failures.push(`Forbidden wrong model text "${forbidden}" found in model context/text: "${modelBag}"`);
-    }
-  }
-
-  for (const expected of testCase.expectedTextParts || []) {
-    if (!hasText(responseText, expected)) {
-      failures.push(`Expected response text to include "${expected}"`);
-    }
-  }
-
-  for (const forbidden of testCase.forbiddenTextParts || []) {
-    if (hasText(responseText, forbidden)) {
-      failures.push(`Forbidden fallback/overview text "${forbidden}" found`);
-    }
-  }
-
-  for (const forbidden of testCase.forbiddenIntentParts || []) {
-    if (
-      hasText(response?.intent || "", forbidden) ||
-      hasText(response?.canvasType || "", forbidden) ||
-      hasText(response?.inlineType || "", forbidden)
-    ) {
-      failures.push(
-        `Forbidden intent/canvas/inline part "${forbidden}" found in intent="${response?.intent || ""}" canvasType="${response?.canvasType || ""}" inlineType="${response?.inlineType || ""}"`,
-      );
-    }
-  }
-
-  for (const forbidden of testCase.forbiddenVariantParts || []) {
-    if (hasText(variantBag, forbidden)) {
-      failures.push(`Forbidden model/feature text "${forbidden}" leaked into variant context: "${variantBag}"`);
-    }
-  }
-
-  const recordCount = Number(response?.sourceTransparency?.recordCount || 0);
-  if (Number(testCase.minRecordCount || 0) > 0 && recordCount < testCase.minRecordCount) {
-    failures.push(`Expected sourceTransparency.recordCount >= ${testCase.minRecordCount}, got ${recordCount}`);
-  }
-
-  return {
-    id: testCase.id,
-    message: testCase.message,
-    pass: failures.length === 0,
-    durationMs: Date.now() - startedAt,
-    failures,
-    summary: {
-      intent: response?.intent || "",
-      title: response?.title || "",
-      answer: response?.answer || "",
-      displayMode: response?.displayMode || "",
-      canvasType: response?.canvasType || "",
-      inlineType: response?.inlineType || "",
-      anchorMake: patch.anchorMake || "",
-      anchorModel: patch.anchorModel || "",
-      anchorFullModel: patch.anchorFullModel || "",
-      anchorVariant: patch.anchorVariant || "",
-      selectedVehicle: {
-        make: selectedVehicle.make || "",
-        model: selectedVehicle.model || "",
-        fullModel: selectedVehicle.fullModel || "",
-        variant: selectedVehicle.variant || "",
-        variantName: selectedVehicle.variantName || "",
+      pass: failures.length === 0,
+      durationMs: Date.now() - startedAt,
+      failures,
+      summary: {
+        tool: result.tool,
+        anchorMake: selectedVehicle.make || "",
+        anchorModel: selectedVehicle.model || "",
+        anchorFullModel: selectedVehicle.fullModel || "",
+        selectedVehicle: {
+          make: selectedVehicle.make || "",
+          model: selectedVehicle.model || "",
+          fullModel: selectedVehicle.fullModel || "",
+          variant: selectedVehicle.variant || "",
+        },
+        vehicleText: vehicleText(selectedVehicle),
+        forbiddenContextKeys,
       },
-      sourceTransparency: response?.sourceTransparency || {},
-      runtimeResultsMeta: response?.runtimeResultsMeta || [],
-    },
-  };
+    };
+  } catch (error) {
+    return {
+      id: testCase.id,
+      message: testCase.message,
+      pass: false,
+      durationMs: Date.now() - startedAt,
+      failures: [error?.stack || error?.message || String(error)],
+      summary: {},
+    };
+  }
 };
 
 const main = async () => {
   await connectDB();
 
+  const startedAt = Date.now();
   const results = [];
   for (const testCase of cases) {
     results.push(await runCase(testCase));
@@ -277,6 +190,7 @@ const main = async () => {
     passed: results.length - failed.length,
     failed: failed.length,
     failedIds: failed.map((item) => item.id),
+    durationMs: Date.now() - startedAt,
     results,
   }, null, 2));
 

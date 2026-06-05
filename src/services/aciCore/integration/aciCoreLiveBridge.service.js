@@ -11,6 +11,13 @@ import { normalizeAciFinalResponse } from "../../aiAgent/aiAgent.contractNormali
 import { composeAciAnswer } from "../../aiAgent/aiAgent.answerComposer.js";
 import { runVehiclePricelistNewCarsTool } from "../../aiAgent/tools/newCars/vehiclePricelist.tool.js";
 import { buildVehiclePricelistResponse } from "../../aiAgent/aiAgent.responseTools.js";
+import {
+  applyContextIsolationRules,
+  buildContextPatchFromState,
+  getContextForToolPlan,
+  hydrateContextFromCandidates,
+  mergeContextPatches,
+} from "../context/aciContextManager.service.js";
 
 const truthy = (value = "") =>
   ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -50,11 +57,13 @@ const hasActiveComparisonFollowUp = ({ message = "", context = {} } = {}) => {
   const vehicles =
     context?.activeComparison?.vehicles ||
     context?.selectedComparisonSet?.vehicles ||
+    context?.contextState?.activeComparison?.vehicles ||
+    context?.aciContextState?.activeComparison?.vehicles ||
     [];
 
   if (!Array.isArray(vehicles) || vehicles.length < 2) return false;
 
-  return /\b(which one|which is better|better|which should i|should i buy|choose|pick|recommend|verdict|final choice)\b/i.test(
+  return /\b(which one|which is better|better|safer|safety|their|change city|which should i|should i buy|choose|pick|recommend|verdict|final choice)\b/i.test(
     message,
   );
 };
@@ -65,11 +74,15 @@ const expandActiveComparisonFollowUpMessage = ({ message = "", context = {} } = 
   const activeComparison =
     context?.activeComparison ||
     context?.selectedComparisonSet ||
+    context?.contextState?.activeComparison ||
+    context?.aciContextState?.activeComparison ||
     {};
 
   const vehicles =
     activeComparison?.vehicles ||
     context?.selectedComparisonSet?.vehicles ||
+    context?.contextState?.activeComparison?.vehicles ||
+    context?.aciContextState?.activeComparison?.vehicles ||
     [];
 
   const labels = vehicles
@@ -725,19 +738,28 @@ export const runAciCoreLiveBridge = async ({
     normalizedMessage,
     activeContext: context,
   });
-  const {
-    context: isolatedContext,
-    isolation,
-  } = isolateAciCoreBridgeContext({
+
+  const hydratedContext = await hydrateContextFromCandidates({
     message,
-    context,
     candidateSnapshot,
+    activeContext: context,
   });
+
+  const managedCandidateSnapshot = hydratedContext.candidateSnapshot || candidateSnapshot;
+  const {
+    contextState,
+    isolation,
+  } = applyContextIsolationRules({
+    message,
+    contextState: hydratedContext.contextState,
+    candidateSnapshot: managedCandidateSnapshot,
+  });
+  const isolatedContext = getContextForToolPlan(contextState);
 
   const understanding = await runAciUnderstandingEngine({
     message,
     activeContext: isolatedContext,
-    candidateSnapshot,
+    candidateSnapshot: managedCandidateSnapshot,
     parser: parseHybridMeaningFrame,
   });
 
@@ -760,6 +782,7 @@ export const runAciCoreLiveBridge = async ({
     message,
     context: isolatedContext,
   });
+  const managedContextPatch = buildContextPatchFromState(contextState);
   const bridgeTool = plan.tools?.[0]?.tool || "";
   const bridgePrimaryTask =
     bridgeTool === "vehicle_recommend" && isolation === "broad_discovery_without_model"
@@ -795,6 +818,11 @@ export const runAciCoreLiveBridge = async ({
 
   return composeAciAnswer({
     ...normalized,
+    contextPatch: mergeContextPatches({
+      previousPatch: context,
+      managerPatch: managedContextPatch,
+      toolPatch: normalized.contextPatch || {},
+    }),
     ...(scoreInsightGuardrail ? { usageGuardrail: scoreInsightGuardrail } : {}),
     aciCoreBridge: bridge,
     meta: {

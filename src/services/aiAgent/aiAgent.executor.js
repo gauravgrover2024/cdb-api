@@ -23,6 +23,8 @@ import { sanitizeAiAgentResponse } from "./aiAgent.responseSanitizer.js";
 import { runAciV2Tool } from "./tools/index.js";
 import { runVehiclePricelistNewCarsTool } from "./tools/newCars/vehiclePricelist.tool.js";
 import { maybeRunAciFeatureComparisonAnswer } from "./aiAgent.featureComparisonAnswer.js";
+import { mergeContextPatches } from "../aciCore/context/aciContextManager.service.js";
+import { runVehicleSpecAttributeLookup } from "../aciCore/specs/aciVehicleSpecAttributeResolver.service.js";
 import mongoose from "mongoose";
 
 /**
@@ -1689,39 +1691,163 @@ export const runtimeVehicleCompare = async ({
     return [value];
   };
 
+  const normalizeIdentityText = (value = "") =>
+    String(value || "")
+      .toLowerCase()
+      .replace(/&/g, " and ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const stripMakePrefix = (model = "", make = "") => {
+    const cleanModel = text(model);
+    const cleanMake = text(make);
+    if (!cleanModel || !cleanMake) return cleanModel;
+
+    const normalizedModel = normalizeIdentityText(cleanModel);
+    const normalizedMake = normalizeIdentityText(cleanMake);
+    if (!normalizedModel || !normalizedMake) return cleanModel;
+
+    if (normalizedModel === normalizedMake) return cleanModel;
+
+    if (normalizedModel.startsWith(`${normalizedMake} `)) {
+      return cleanModel.slice(cleanMake.length).trim() || cleanModel;
+    }
+
+    return cleanModel;
+  };
+
   const normalizeVehicleTarget = (target = {}) => {
     if (!target || typeof target !== "object") return null;
 
-    const model = text(
-      target.fullModel,
+    const make = text(target.make, target.brand);
+    const brand = text(target.brand, target.make);
+    const rawModel = text(
       target.model,
       target.displayName,
       target.name,
+      target.fullModel,
+    );
+    const rawFullModel = text(
+      target.fullModel,
+      make && rawModel ? `${make} ${stripMakePrefix(rawModel, make)}` : "",
+      rawModel,
+    );
+    const model = stripMakePrefix(rawModel || rawFullModel, make);
+    const fullModel = rawFullModel || (make && model ? `${make} ${model}` : model);
+
+    if (!model && !fullModel) return null;
+
+    const variant = text(
+      target.variantName,
+      target.variant,
+      target.fullVariant,
+      target.selectedVariant,
     );
 
-    if (!model) return null;
-
     return {
-      make: text(target.make, target.brand),
-      brand: text(target.brand, target.make),
-      model,
-      fullModel: model,
-      variant: text(
-        target.variantName,
-        target.variant,
-        target.fullVariant,
-        target.selectedVariant,
-      ),
-      variantName: text(
-        target.variantName,
-        target.variant,
-        target.fullVariant,
-        target.selectedVariant,
-      ),
+      make,
+      brand,
+      model: model || stripMakePrefix(fullModel, make),
+      fullModel,
+      modelKey: text(target.modelKey, target.canonicalKey),
+      shortModelKey: text(target.shortModelKey),
+      variant,
+      variantName: variant,
       fuel: text(target.fuel, target.fuelType),
       transmission: text(target.transmission),
       city: text(target.city, target.citySlug),
     };
+  };
+
+  const stripKnownMakePrefix = (model = "", knownMakeKeys = []) => {
+    let normalized = normalizeIdentityText(model);
+    if (!normalized) return "";
+
+    const orderedMakes = [...new Set(knownMakeKeys.filter(Boolean))]
+      .sort((a, b) => b.length - a.length);
+
+    for (const makeKey of orderedMakes) {
+      if (normalized === makeKey) continue;
+      if (normalized.startsWith(`${makeKey} `)) {
+        normalized = normalized.slice(makeKey.length).trim();
+        break;
+      }
+    }
+
+    return normalized;
+  };
+
+  const targetIdentityKey = (target = {}, knownMakeKeys = []) => {
+    const ownMakeKey = normalizeIdentityText(target.make || target.brand);
+    const allKnownMakes = [...knownMakeKeys, ownMakeKey].filter(Boolean);
+
+    const rawModelKey = normalizeIdentityText(
+      target.shortModelKey ||
+        target.modelKey ||
+        target.model ||
+        target.fullModel,
+    );
+
+    const modelKey = stripKnownMakePrefix(rawModelKey, allKnownMakes);
+    const variantKey = normalizeIdentityText(target.variant || target.variantName);
+    return `${modelKey}|${variantKey}`;
+  };
+
+  const targetQuality = (target = {}) =>
+    [
+      target.make,
+      target.brand,
+      target.fullModel,
+      target.modelKey,
+      target.shortModelKey,
+      target.variant,
+      target.fuel,
+      target.transmission,
+      target.city,
+    ].filter(Boolean).length;
+
+  const mergeVehicleTarget = (current = {}, incoming = {}) => {
+    const preferred = targetQuality(incoming) >= targetQuality(current) ? incoming : current;
+    const fallback = preferred === incoming ? current : incoming;
+
+    return {
+      ...fallback,
+      ...preferred,
+      make: text(preferred.make, fallback.make),
+      brand: text(preferred.brand, fallback.brand, preferred.make, fallback.make),
+      model: stripMakePrefix(text(preferred.model, fallback.model, preferred.fullModel, fallback.fullModel), text(preferred.make, fallback.make)),
+      fullModel: text(
+        preferred.fullModel,
+        fallback.fullModel,
+        [text(preferred.make, fallback.make), stripMakePrefix(text(preferred.model, fallback.model), text(preferred.make, fallback.make))].filter(Boolean).join(" "),
+      ),
+      variant: text(preferred.variant, fallback.variant),
+      variantName: text(preferred.variantName, fallback.variantName, preferred.variant, fallback.variant),
+      fuel: text(preferred.fuel, fallback.fuel),
+      transmission: text(preferred.transmission, fallback.transmission),
+      city: text(preferred.city, fallback.city),
+    };
+  };
+
+  const dedupeVehicleTargets = (targets = []) => {
+    const knownMakeKeys = [...new Set(
+      targets
+        .flatMap((target = {}) => [target.make, target.brand])
+        .map(normalizeIdentityText)
+        .filter(Boolean),
+    )];
+
+    const byKey = new Map();
+
+    for (const target of targets) {
+      const key = targetIdentityKey(target, knownMakeKeys);
+      if (!key || key === "|") continue;
+
+      byKey.set(key, byKey.has(key) ? mergeVehicleTarget(byKey.get(key), target) : target);
+    }
+
+    return [...byKey.values()];
   };
 
   const explicitTargets = [
@@ -1729,17 +1855,19 @@ export const runtimeVehicleCompare = async ({
     ...asList(toolPlan.resolution?.selectedComparisonVehicles),
     ...asList(toolPlan.contextPatch?.activeComparison?.vehicles),
     ...asList(toolPlan.contextPatch?.selectedComparisonSet?.vehicles),
+
+    // Critical for follow-up questions like "which one is better?"
+    // The ACI context manager stores comparison targets in runtime context,
+    // not necessarily inside the single toolPlan.
+    ...asList(context?.activeComparison?.vehicles),
+    ...asList(context?.selectedComparisonSet?.vehicles),
+    ...asList(context?.contextState?.activeComparison?.vehicles),
+    ...asList(context?.aciContextState?.activeComparison?.vehicles),
   ]
     .map(normalizeVehicleTarget)
     .filter(Boolean);
 
-  const seenTargets = new Set();
-  const uniqueTargets = explicitTargets.filter((target) => {
-    const key = `${target.model}|${target.variant}`.toLowerCase();
-    if (seenTargets.has(key)) return false;
-    seenTargets.add(key);
-    return true;
-  });
+  const uniqueTargets = dedupeVehicleTargets(explicitTargets);
 
   const fallbackModels = getModels(toolPlan, context);
   const fallbackVariants = [
@@ -1750,9 +1878,10 @@ export const runtimeVehicleCompare = async ({
     ),
   ].filter(Boolean);
 
-  const targets = uniqueTargets.length >= 2
-    ? uniqueTargets
-    : fallbackModels.map((model, index) => ({
+  const fallbackTargets = dedupeVehicleTargets([
+    ...explicitTargets,
+    ...fallbackModels.map((model, index) =>
+      normalizeVehicleTarget({
         model,
         fullModel: model,
         variant:
@@ -1774,7 +1903,13 @@ export const runtimeVehicleCompare = async ({
               )
             : ""),
         city: text(toolPlan.filters?.city, context?.anchorCity, context?.selectedVehicle?.city),
-      }));
+      }),
+    ).filter(Boolean),
+  ]);
+
+  const targets = uniqueTargets.length >= 2
+    ? uniqueTargets
+    : fallbackTargets;
 
   if (targets.length <= 1) {
     const data = await runtimeVehiclePricelist({ toolPlan, context });
@@ -4401,7 +4536,10 @@ const buildV2FeatureRuntimePassthrough = ({
     followUpSuggestions:
       runtimeData.followUpSuggestions ||
       leadingQuestions.map((item) => item.query || item.label).filter(Boolean),
-    contextPatch: runtimeData.contextPatch || {},
+    contextPatch: mergeContextPatches({
+      managerPatch: executablePlan.contextPatch || {},
+      toolPatch: runtimeData.contextPatch || {},
+    }),
     sourceTransparency: runtimeData.sourceTransparency || {
       modulesChecked: runtimeData.modulesChecked || [],
       recordCount:
@@ -4464,6 +4602,7 @@ export const ACI_RUNTIME_DATA_TOOLS = {
   vehicle_pricelist: runtimeVehiclePricelist,
   vehicle_colors: runtimeModularTool,
   vehicle_feature_lookup: runtimeModularTool,
+  vehicle_spec_attribute_lookup: runVehicleSpecAttributeLookup,
   vehicle_feature_answer: runtimeModularTool,
   vehicle_feature_discovery: runtimeModularTool,
   vehicle_feature_comparison: runtimeVehicleFeatureComparison,
@@ -4623,6 +4762,17 @@ export const executeAciPlannerPlan = async ({
       message: userMessage,
       context,
     });
+  }
+
+  if (executablePlan.contextPatch && Object.keys(executablePlan.contextPatch).length) {
+    response = {
+      ...response,
+      contextPatch: mergeContextPatches({
+        previousPatch: context,
+        managerPatch: executablePlan.contextPatch || {},
+        toolPatch: response.contextPatch || {},
+      }),
+    };
   }
 
   const contractValidation = validate

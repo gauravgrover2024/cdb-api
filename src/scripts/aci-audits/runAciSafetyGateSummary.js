@@ -83,6 +83,12 @@ const tasks = [
     args: ["src/scripts/aci-audits/auditAciModelAliasFeatureQueries.js"],
   },
   {
+    key: "contextManager",
+    label: "Context manager audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciContextManagerV1.js"],
+  },
+  {
     key: "embarrassmentQueries",
     label: "Embarrassment query audit",
     command: "node",
@@ -109,6 +115,7 @@ const filterTasksForSafetyMode = (allTasks = []) => {
       "modelResolver",
       "modelContextResolver",
       "contextPriority",
+      "contextManager",
       "modelAliasFeatureQueries",
       "embarrassmentQueries",
     ]);
@@ -154,6 +161,19 @@ const runTasksWithLimit = async (selectedTasks = [], workerCount = 4) => {
 
 const selectedTasks = filterTasksForSafetyMode(tasks);
 
+const runSelectedTasks = async () => {
+  if (SAFETY_MODE !== "fast") {
+    return runTasksWithLimit(selectedTasks, SAFETY_WORKERS);
+  }
+
+  const contextManagerTask = selectedTasks.find((task) => task.key === "contextManager");
+  const remainingTasks = selectedTasks.filter((task) => task.key !== "contextManager");
+  const contextResults = contextManagerTask ? [await runTask(contextManagerTask)] : [];
+  const remainingResults = await runTasksWithLimit(remainingTasks, SAFETY_WORKERS);
+
+  return [...contextResults, ...remainingResults];
+};
+
 const runTask = (task) =>
   new Promise((resolve) => {
     console.log(`\n▶ ${task.label}`);
@@ -181,7 +201,7 @@ const runTask = (task) =>
 
       resolve({
         ...task,
-        ok: results.every((item) => item.status === 0),
+        ok: false,
         status: 1,
         durationMs,
         output,
@@ -204,7 +224,7 @@ const runTask = (task) =>
   });
 
 const startedAt = Date.now();
-const results = await runTasksWithLimit(selectedTasks, SAFETY_WORKERS);
+const results = await runSelectedTasks();
 const totalDurationMs = Date.now() - startedAt;
 
 for (const result of results) {
@@ -239,12 +259,73 @@ const contextChecks = [
   "no-context-creta",
 ];
 
-const missingContextChecks = contextChecks.filter((key) => !allOutput.includes(key));
+const selectedTaskKeys = new Set(selectedTasks.map((task) => task.key));
+const missingContextChecks = selectedTaskKeys.has("contextSwitch")
+  ? contextChecks.filter((key) => !allOutput.includes(key))
+  : [];
+const durationFor = (key) => byKey[key]?.durationMs ?? 0;
 
+const parseTaskJson = (key) => {
+  const output = byKey[key]?.output || "";
+  const start = output.indexOf("{");
+  const end = output.lastIndexOf("}");
+
+  if (start < 0 || end < 0 || end <= start) return null;
+
+  try {
+    return JSON.parse(output.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+};
+
+const reportedDurationFor = (key) => {
+  const parsed = parseTaskJson(key);
+  const durationMs = Number(parsed?.durationMs);
+  return Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : null;
+};
+
+const slowCheckDurationFor = (key) => reportedDurationFor(key) ?? durationFor(key);
+
+const foundationKeys = ["executor", "v2", "contract"];
+const selectedFoundationKeys = foundationKeys.filter((key) => selectedTaskKeys.has(key));
 const foundationOk =
-  Boolean(byKey.executor?.ok) &&
-  Boolean(byKey.v2?.ok) &&
-  Boolean(byKey.contract?.ok);
+  selectedFoundationKeys.length === 0 ||
+  selectedFoundationKeys.every((key) => Boolean(byKey[key]?.ok));
+
+const foundationDurationMs =
+  (byKey.executor?.durationMs || 0) +
+  (byKey.v2?.durationMs || 0) +
+  (byKey.contract?.durationMs || 0);
+
+const slowThresholdsMs = {
+  contextManager: 15000,
+  modelAliasFeatureQueries: 60000,
+  embarrassmentQueries: 60000,
+  total: 90000,
+};
+
+const slowSuites = [
+  ...Object.entries(slowThresholdsMs)
+    .filter(([key]) => key !== "total" && selectedTaskKeys.has(key))
+    .map(([key, thresholdMs]) => ({
+      key,
+      label: byKey[key]?.label || key,
+      durationMs: slowCheckDurationFor(key),
+      wrapperDurationMs: durationFor(key),
+      suiteReportedDurationMs: reportedDurationFor(key),
+      thresholdMs,
+    }))
+    .filter((item) => item.durationMs > item.thresholdMs),
+  ...(totalDurationMs > slowThresholdsMs.total
+    ? [{
+        key: "total",
+        label: "Fast safety total",
+        durationMs: totalDurationMs,
+        thresholdMs: slowThresholdsMs.total,
+      }]
+    : []),
+];
 
 const hasFailures =
   !foundationOk ||
@@ -252,32 +333,15 @@ const hasFailures =
   /"failed"\s*:\s*[1-9]/.test(allOutput) ||
   /"pass"\s*:\s*false/.test(allOutput) ||
   /ReferenceError|TypeError|SyntaxError|MongoServerError|contractErrors"\s*:\s*\[[^\]]*\{/.test(allOutput) ||
-  missingContextChecks.length > 0;
-
-const foundationDurationMs =
-  (byKey.executor?.durationMs || 0) +
-  (byKey.v2?.durationMs || 0) +
-  (byKey.contract?.durationMs || 0);
-
-
-
-
-
-
-
-
-const selectedTaskKeys = new Set(selectedTasks.map((task) => task.key));
+  missingContextChecks.length > 0 ||
+  slowSuites.length > 0;
 
 const exitCodeFor = (key) => {
   if (!selectedTaskKeys.has(key)) return 0;
   return byKey[key]?.status ?? 1;
 };
 
-const durationFor = (key) => byKey[key]?.durationMs ?? 0;
-
 const selectedFoundationExitCode = () => {
-  const foundationKeys = ["executor", "v2", "contract"];
-  const selectedFoundationKeys = foundationKeys.filter((key) => selectedTaskKeys.has(key));
   if (!selectedFoundationKeys.length) return 0;
   return selectedFoundationKeys.some((key) => exitCodeFor(key) !== 0) ? 1 : 0;
 };
@@ -286,7 +350,7 @@ const summary = {
   mode: SAFETY_MODE,
   workers: SAFETY_WORKERS,
 
-  ok: results.every((item) => item.status === 0),
+  ok: !hasFailures,
 
   foundationExitCode: selectedFoundationExitCode(),
   executorExitCode: exitCodeFor("executor"),
@@ -301,12 +365,31 @@ const summary = {
   variantMultiFeatureQueriesExitCode: exitCodeFor("variantMultiFeatureQueries"),
   featureComparisonQueriesExitCode: exitCodeFor("featureComparisonQueries"),
   modelAliasFeatureQueriesExitCode: exitCodeFor("modelAliasFeatureQueries"),
+  contextManagerExitCode: exitCodeFor("contextManager"),
   embarrassmentQueriesExitCode: exitCodeFor("embarrassmentQueries"),
   contextSwitchExitCode: exitCodeFor("contextSwitch"),
   backendFreezeTrustExitCode: exitCodeFor("backendFreezeTrust"),
 
   passedMentions: count(/"pass"\s*:\s*true/g),
   failedMentions: count(/"pass"\s*:\s*false/g),
+
+  reportedDurationsMs: {
+    executor: reportedDurationFor("executor"),
+    v2: reportedDurationFor("v2"),
+    contract: reportedDurationFor("contract"),
+    modelResolver: reportedDurationFor("modelResolver"),
+    modelContextResolver: reportedDurationFor("modelContextResolver"),
+    contextPriority: reportedDurationFor("contextPriority"),
+    vehicleEntityIndex: reportedDurationFor("vehicleEntityIndex"),
+    multiFeatureQueries: reportedDurationFor("multiFeatureQueries"),
+    variantMultiFeatureQueries: reportedDurationFor("variantMultiFeatureQueries"),
+    featureComparisonQueries: reportedDurationFor("featureComparisonQueries"),
+    modelAliasFeatureQueries: reportedDurationFor("modelAliasFeatureQueries"),
+    contextManager: reportedDurationFor("contextManager"),
+    embarrassmentQueries: reportedDurationFor("embarrassmentQueries"),
+    contextSwitch: reportedDurationFor("contextSwitch"),
+    backendFreezeTrust: reportedDurationFor("backendFreezeTrust"),
+  },
 
   durationsMs: {
     executor: durationFor("executor"),
@@ -321,6 +404,7 @@ const summary = {
     variantMultiFeatureQueries: durationFor("variantMultiFeatureQueries"),
     featureComparisonQueries: durationFor("featureComparisonQueries"),
     modelAliasFeatureQueries: durationFor("modelAliasFeatureQueries"),
+    contextManager: durationFor("contextManager"),
     embarrassmentQueries: durationFor("embarrassmentQueries"),
     contextSwitch: durationFor("contextSwitch"),
     backendFreezeTrust: durationFor("backendFreezeTrust"),
@@ -340,7 +424,11 @@ const summary = {
     featureComparisonQueries: extractSuite("ACI feature comparison query audit"),
     embarrassmentQueries: extractSuite("ACI embarrassment query audit"),
     modelAliasFeatureQueries: extractSuite("ACI model alias feature query audit"),
+    contextManager: extractSuite("ACI Context Manager V1 audit"),
   },
+
+  slowThresholdsMs,
+  slowSuites,
 
   contextSwitch: {
     expectedChecks: contextChecks,

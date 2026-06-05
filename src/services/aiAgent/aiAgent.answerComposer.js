@@ -383,6 +383,28 @@ const composeVehicleComparisonAnswer = (response = {}) => {
   return `I compared ${labels[0]} and ${labels[1]}. ${priceLine} ${differenceLine}`;
 };
 
+const composeVehicleSpecAttributeAnswer = (response = {}) => {
+  const data = response.data || {};
+  const modelLabel = firstText(
+    data.anchorFullModel,
+    response.contextPatch?.anchorFullModel,
+    response.contextPatch?.selectedVehicle?.fullModel,
+    [data.anchorMake, data.anchorModel].filter(Boolean).join(" "),
+    response.title,
+    "this model",
+  );
+  const attribute = firstText(data.attributeLabel, data.attributeKey, "requested specification");
+  const values = asArray(data.values)
+    .map((item) => firstText(item.value, item.displayValue, item.text, item.label))
+    .filter(Boolean);
+
+  if (values.length && !data.missingData) {
+    return `I found ${modelLabel}. You're asking about ${attribute}. In the current vehicle data, this is listed as ${values.join(", ")}.`;
+  }
+
+  return `I found ${modelLabel}. You're asking about ${attribute}. I don't have the exact certified ${attribute} value in the current spec data yet, so I won't guess.`;
+};
+
 export const composeAciAnswer = (response = {}) => {
   if (!response || typeof response !== "object") return response;
 
@@ -399,6 +421,8 @@ export const composeAciAnswer = (response = {}) => {
     composedAnswer = composeFeatureComparisonAnswer(response);
   } else if (intent === "vehicle_comparison") {
     composedAnswer = composeVehicleComparisonAnswer(response);
+  } else if (intent === "vehicle_spec_attribute_answer") {
+    composedAnswer = composeVehicleSpecAttributeAnswer(response);
   }
 
   if (!composedAnswer || composedAnswer === response.answer) {

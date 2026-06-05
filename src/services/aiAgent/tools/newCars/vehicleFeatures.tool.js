@@ -174,7 +174,19 @@ const KNOWN_FEATURE_TERMS = [
   "speakers",
   "touch screen",
   "apple car play",
-  "carplay",];
+  "carplay",
+  "range",
+  "driving range",
+  "battery range",
+  "boot space",
+  "bootspace",
+  "ground clearance",
+  "clearance",
+  "length",
+  "width",
+  "height",
+  "wheelbase",
+];
 
 
 const FEATURE_QUERY_ALIASES = [

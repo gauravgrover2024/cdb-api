@@ -72,6 +72,7 @@ export const PLANNER_TOOLS = [
   "vehicle_pricelist",
   "vehicle_colors",
   "vehicle_feature_lookup",
+  "vehicle_spec_attribute_lookup",
   "vehicle_compare",
   "vehicle_feature_comparison",
   "vehicle_recommend",
@@ -93,12 +94,11 @@ export const PLANNER_TOOLS = [
   "clarification",
   "unavailable",
   "general_response",
-];
-
-export const NEW_CAR_PLANNER_TOOLS = [
+];export const NEW_CAR_PLANNER_TOOLS = [
   "vehicle_pricelist",
   "vehicle_colors",
   "vehicle_feature_lookup",
+  "vehicle_spec_attribute_lookup",
   "vehicle_compare",
   "vehicle_feature_comparison",
   "vehicle_recommend",
@@ -109,9 +109,7 @@ export const NEW_CAR_PLANNER_TOOLS = [
   "vehicle_price_history",
   "vehicle_explainer",
   "aci_lead_capture",
-];
-
-export const INTERNAL_PASSTHROUGH_DOMAINS = [
+];export const INTERNAL_PASSTHROUGH_DOMAINS = [
   "loan",
   "customer",
   "payment",
@@ -240,6 +238,7 @@ export const CANVAS_TYPES = [
 
 export const INLINE_TYPES = [
   "feature_answer_card",
+  "spec_attribute_answer_card",
   "feature_comparison_summary",
   "model_ambiguity_card",
   "variant_ambiguity_card",
@@ -322,6 +321,8 @@ export const ALLOWED_ENTITY_KEYS = [
   "features",
   "topic",
   "topics",
+  "attributeLabel",
+  "attributeKey",
   "leadType",
   "unavailableReason",
   "selectedServices",
@@ -360,6 +361,8 @@ export const ALLOWED_FILTER_KEYS = [
   "activeOnly",
   "includeDiscontinued",
   "mustHaveFeatures",
+  "attributeLabel",
+  "attributeKey",
   "compareFeatures",
   "color",
   "monthlyEmiBudget",
@@ -607,6 +610,8 @@ export const PlannerEntitiesSchema = z
       "Explainer topic like IVT, ADAS, ex-showroom vs on-road",
     ),
     topics: optionalStringArray("Multiple explainer topics"),
+    attributeKey: optionalString("Specific spec/attribute key, e.g. range, boot_space, ground_clearance"),
+    attributeLabel: optionalString("Human-readable spec/attribute label, e.g. range"),
     leadType: z.enum(LEAD_TYPES).optional(),
     unavailableReason: z.enum(UNAVAILABLE_REASONS).optional(),
     selectedServices: optionalStringArray(
@@ -653,6 +658,8 @@ export const PlannerFiltersSchema = z
     activeOnly: z.boolean().optional().describe("Default true"),
     includeDiscontinued: z.boolean().optional().describe("Default false"),
     mustHaveFeatures: optionalStringArray("Required features user asked for"),
+    attributeKey: optionalString("Specific spec/attribute key filter, e.g. range, boot_space, ground_clearance"),
+    attributeLabel: optionalString("Human-readable spec/attribute label filter, e.g. range"),
     compareFeatures: optionalStringArray(
       "Features specifically requested for comparison",
     ),

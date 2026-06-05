@@ -32,6 +32,10 @@ import {
   assertParserResultShape,
 } from './aciParserResult.schema.js';
 
+import {
+  buildResolvedVehicleAnchor,
+} from '../context/aciContextManager.service.js';
+
 const PARSER_VERSION = '0.1.0';
 
 const unique = (items = []) =>
@@ -62,6 +66,20 @@ const candidateKeys = (items = []) =>
 
 const candidateDisplayNames = (items = []) =>
   unique(asArray(items).map(getCandidateDisplayName));
+
+const uniqueByKey = (items = [], keyFn) => {
+  const seen = new Set();
+  const output = [];
+
+  for (const item of items) {
+    const key = cleanText(keyFn(item));
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
+  }
+
+  return output;
+};
 
 const validTask = (task) =>
   Object.values(ACI_TASKS).includes(task) ? task : null;
@@ -110,6 +128,10 @@ const choosePrimaryTask = ({ candidateTasks = [], modelCount = 0, featureCount =
 
   if (taskSet.has(ACI_TASKS.VEHICLE_COMPARISON) && modelCount >= 2) {
     return ACI_TASKS.VEHICLE_COMPARISON;
+  }
+
+  if (modelCount === 1 && featureCount > 0) {
+    return ACI_TASKS.FEATURE_ANSWER;
   }
 
   if (taskSet.has(ACI_TASKS.VEHICLE_DISCOVERY) && (hasBudget || featureCount > 0 || modelCount === 0)) {
@@ -207,21 +229,42 @@ const buildComparisonTargets = ({ modelNames = [], variantNames = [], fuelTypes 
     };
   });
 
-const buildPrimaryVehicle = ({ modelNames = [], variantNames = [], fuelTypes = [] } = {}) => {
-  const modelName = modelNames[0] || null;
+const buildComparisonTargetsFromAnchors = ({ modelAnchors = [], variantNames = [], fuelTypes = [] } = {}) =>
+  modelAnchors.map((anchor) => {
+    const variantName = findVariantForModel({ modelName: anchor.model, variants: variantNames });
+
+    return {
+      ...createEmptyVehicleAnchor(),
+      make: anchor.make || null,
+      model: anchor.model || null,
+      fullModel: anchor.fullModel || anchor.model || null,
+      variant: variantName || anchor.variant || null,
+      fullVariant: variantName || anchor.variant || null,
+      fuel: anchor.fuelType || (fuelTypes.length === 1 ? fuelTypes[0] : null),
+      transmission: anchor.transmission || null,
+      confidence: anchor.confidence || (variantName ? 0.9 : 0.8),
+      source: anchor.source || 'candidate_snapshot',
+    };
+  });
+
+const buildPrimaryVehicle = ({ modelAnchors = [], variantNames = [], fuelTypes = [] } = {}) => {
+  const modelAnchor = modelAnchors[0] || {};
+  const modelName = modelAnchor.model || null;
   const variantName = modelName
     ? findVariantForModel({ modelName, variants: variantNames })
     : variantNames[0] || null;
 
   return {
     ...createEmptyVehicleAnchor(),
+    make: modelAnchor.make || null,
     model: modelName,
-    fullModel: modelName,
-    variant: variantName,
-    fullVariant: variantName,
-    fuel: fuelTypes.length === 1 ? fuelTypes[0] : null,
-    confidence: modelName || variantName ? 0.85 : null,
-    source: modelName || variantName ? 'candidate_snapshot' : null,
+    fullModel: modelAnchor.fullModel || modelName,
+    variant: variantName || modelAnchor.variant || null,
+    fullVariant: variantName || modelAnchor.variant || null,
+    fuel: modelAnchor.fuelType || (fuelTypes.length === 1 ? fuelTypes[0] : null),
+    transmission: modelAnchor.transmission || null,
+    confidence: modelAnchor.confidence || (modelName || variantName ? 0.85 : null),
+    source: modelAnchor.source || (modelName || variantName ? 'candidate_snapshot' : null),
   };
 };
 
@@ -233,8 +276,19 @@ async function parseDeterministicMeaningFrame({
 } = {}) {
   const startedAt = Date.now();
 
-  const makes = candidateDisplayNames(candidateSnapshot?.vehicles?.makes || []);
-  const models = candidateDisplayNames(candidateSnapshot?.vehicles?.models || []);
+  const modelCandidates = asArray(candidateSnapshot?.vehicles?.models || []);
+  const modelAnchors = uniqueByKey(
+    modelCandidates
+      .map((candidate) => buildResolvedVehicleAnchor({ candidate }))
+      .filter((anchor) => anchor.model),
+    (anchor) => anchor.modelKey || anchor.fullModel || anchor.model,
+  );
+
+  const makes = unique([
+    ...candidateDisplayNames(candidateSnapshot?.vehicles?.makes || []),
+    ...modelAnchors.map((anchor) => anchor.make).filter(Boolean),
+  ]);
+  const models = unique(modelAnchors.map((anchor) => anchor.model).filter(Boolean));
   const variants = candidateDisplayNames(candidateSnapshot?.vehicles?.variants || []);
   const colors = candidateDisplayNames(candidateSnapshot?.vehicles?.colors || []);
 
@@ -289,10 +343,10 @@ async function parseDeterministicMeaningFrame({
     anchors: {
       ...createEmptyMeaningFrame().anchors,
       primaryVehicle: !isComparison
-        ? buildPrimaryVehicle({ modelNames: models, variantNames: variants, fuelTypes })
+        ? buildPrimaryVehicle({ modelAnchors, variantNames: variants, fuelTypes })
         : createEmptyVehicleAnchor(),
       comparisonTargets: isComparison
-        ? buildComparisonTargets({ modelNames: models, variantNames: variants, fuelTypes })
+        ? buildComparisonTargetsFromAnchors({ modelAnchors, variantNames: variants, fuelTypes })
         : [],
       customer: null,
       location: null,

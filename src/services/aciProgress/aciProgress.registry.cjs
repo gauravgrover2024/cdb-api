@@ -22,6 +22,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "live_bridge_context_isolation", name: "Live bridge context isolation", status: "ready" },
       { key: "comparison_context_contract", name: "Comparison context contract", status: "ready" },
       { key: "comparison_followup_routing", name: "Comparison follow-up routing", status: "ready" },
+      { key: "context_manager_v1", name: "ACI Context Manager v1", status: "partial" },
       { key: "variant_decision_comparison_enrichment", name: "Variant decision comparison enrichment", status: "ready" },
       { key: "answer_composer_v1", name: "ACI Answer Composer v1", status: "ready" },
       { key: "budget_explorer_preview_contract", name: "Budget explorer preview contract", status: "ready" },
