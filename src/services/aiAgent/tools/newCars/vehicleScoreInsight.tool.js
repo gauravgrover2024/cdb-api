@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import scoreInsightService from "../../../aciCore/scoreProfiles/aciVariantScoreInsight.service.cjs";
+import crossModelScoreDiagnosticService from "../../../aciCore/scoreProfiles/aciCrossModelScoreDiagnostic.service.cjs";
 
 const {
   getVariantScoreInsight,
@@ -8,6 +9,10 @@ const {
   getTopScoreInsights,
   getScoreProfileCoverage,
 } = scoreInsightService;
+
+const {
+  buildCrossModelScoreDiagnostic,
+} = crossModelScoreDiagnosticService;
 
 const TOOL_NAME = "vehicle_score_insight";
 
@@ -40,6 +45,8 @@ const OPERATION_BY_TOOL_NAME = {
   vehicle_same_family_value_insights: "same_family_value_insights",
   vehicle_variant_upgrade_insight: "variant_upgrade_insight",
   vehicle_top_score_insights: "top_module_score_insights",
+  vehicle_cross_model_score_diagnostic: "cross_model_score_diagnostic",
+  vehicle_model_score_comparison: "cross_model_score_diagnostic",
 };
 
 const normalizeKey = (value) =>
@@ -275,6 +282,73 @@ const pickScorePath = ({ scorePath, module, scoreModule } = {}) => {
   if (scorePath) return String(scorePath);
   const key = normalizeKey(module || scoreModule);
   return SCORE_PATH_BY_MODULE[key] || null;
+};
+
+const normalizeCrossModelTarget = (target = {}) => {
+  if (typeof target === "string") {
+    return { modelKey: normalizeKey(target) };
+  }
+
+  return {
+    makeKey: normalizeKey(target.makeKey || target.make_key || target.make || ""),
+    modelKey: normalizeKey(target.modelKey || target.model_key || target.model || ""),
+    fuelKey: normalizeKey(target.fuelKey || target.fuel_key || target.fuel || ""),
+    transmissionKey: normalizeKey(
+      target.transmissionKey || target.transmission_key || target.transmission || ""
+    ),
+  };
+};
+
+const collectCrossModelTargets = (args = {}, rawArgs = {}) => {
+  const toolPlan = rawArgs.toolPlan || {};
+  const input = toolPlan.input || toolPlan.args || toolPlan.params || {};
+  const entities = toolPlan.entities || {};
+  const filters = toolPlan.filters || {};
+
+  const source =
+    rawArgs.targets ||
+    rawArgs.models ||
+    rawArgs.comparisonModels ||
+    input.targets ||
+    input.models ||
+    input.comparisonModels ||
+    entities.targets ||
+    entities.models ||
+    entities.comparisonModels ||
+    filters.targets ||
+    filters.models ||
+    filters.comparisonModels ||
+    [];
+
+  return (Array.isArray(source) ? source : [source])
+    .map(normalizeCrossModelTarget)
+    .filter((target) => target.modelKey);
+};
+
+const buildCrossModelScoreDiagnosticLine = (result = {}) => {
+  const models = (Array.isArray(result.models) ? result.models : [])
+    .map((model) => model.label || model.modelKey)
+    .filter(Boolean);
+
+  const scope = [result.scope?.fuelKey, result.scope?.transmissionKey]
+    .filter(Boolean)
+    .join(" ");
+
+  const moduleLeaders = (Array.isArray(result.moduleComparisons) ? result.moduleComparisons : [])
+    .filter((item) => item.comparedCount >= 2 && item.leader?.label)
+    .slice(0, 5)
+    .map((item) => {
+      const delta = Number.isFinite(Number(item.delta)) ? ` by ${item.delta}` : "";
+      return `${item.label}: ${item.leader.label}${delta}`;
+    });
+
+  const modelText = models.length >= 2 ? models.join(" vs ") : "selected models";
+  const scopeText = scope ? ` (${scope})` : "";
+  const leaderText = moduleLeaders.length
+    ? ` Module signals: ${moduleLeaders.join("; ")}.`
+    : "";
+
+  return `Diagnostic score comparison for ${modelText}${scopeText}.${leaderText} This is diagnostic-only, not a final recommendation.`;
 };
 
 const createGuardrail = () => ({
@@ -1483,6 +1557,39 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
       });
     }
 
+
+    if (["cross_model_score_diagnostic", "cross_model_score", "model_score_comparison"].includes(operation)) {
+      const targets = collectCrossModelTargets(args, rawArgs);
+
+      const result = await buildCrossModelScoreDiagnostic({
+        db: args.db || rawArgs.db || mongoose.connection.db,
+        targets,
+        fuelKey: args.fuelKey || args.fuel_key,
+        transmissionKey: args.transmissionKey || args.transmission_key,
+        limitPerModel: safeLimit(args.limit, 40, 80),
+      });
+
+      if (!result.ok) {
+        return createError({
+          operation,
+          code: result.code || "cross_model_score_diagnostic_incomplete",
+          message:
+            result.message ||
+            "Could not build a complete cross-model score diagnostic for the requested targets.",
+          meta: {
+            targetCount: targets.length,
+            missingTargets: result.missingTargets || [],
+          },
+        });
+      }
+
+      return createSuccess({
+        operation: "cross_model_score_diagnostic",
+        data: result,
+        answer: buildCrossModelScoreDiagnosticLine(result),
+      });
+    }
+
     if (["top_module_score_insights", "top_scores", "module_ranking"].includes(operation)) {
       const scorePath = pickScorePath({
         scorePath: args.scorePath || args.score_path,
@@ -1521,7 +1628,7 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
       operation,
       code: "unsupported_operation",
       message:
-        "Unsupported score insight operation. Use coverage, variant_score_insight, model_score_insights, same_family_value_insights, or top_module_score_insights.",
+        "Unsupported score insight operation. Use coverage, variant_score_insight, model_score_insights, same_family_value_insights, cross_model_score_diagnostic, or top_module_score_insights.",
     });
   } catch (error) {
     return createError({
