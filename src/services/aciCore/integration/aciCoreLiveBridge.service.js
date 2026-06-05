@@ -393,6 +393,26 @@ const getCitySlugFromMessage = (message = "") => {
   return "";
 };
 
+const getSupportedCitySlugFromContext = (context = {}) => {
+  const selectedVehicle =
+    context?.selectedVehicle ||
+    context?.contextState?.selectedVehicle ||
+    context?.aciContextState?.selectedVehicle ||
+    {};
+  const city = cleanText(
+    selectedVehicle.citySlug ||
+      selectedVehicle.city ||
+      context?.anchorCity ||
+      context?.city ||
+      "",
+  );
+  const normalized = normalizeFastPathSlug(city);
+  if (["new-delhi", "noida", "gurgaon"].includes(normalized)) return normalized;
+  if (normalized === "delhi") return "new-delhi";
+  if (normalized === "gurugram") return "gurgaon";
+  return "";
+};
+
 
 const normalizeFastPathText = (value = "") =>
   String(value || "")
@@ -616,9 +636,10 @@ const maybeReturnSupportedExactPriceFastPath = async ({
   const text = effectiveMessage || message;
   if (!hasAciPriceIntent(text)) return null;
   if (isBroadDiscoveryOrComparison(text)) return null;
-  if (!hasSupportedCityMention(text)) return null;
 
-  const citySlug = getCitySlugFromMessage(text);
+  const citySlug = hasSupportedCityMention(text)
+    ? getCitySlugFromMessage(text)
+    : getSupportedCitySlugFromContext(context) || "new-delhi";
   if (!citySlug) return null;
 
   const resolved = await resolveSupportedExactPriceVehicleFromMessage({
@@ -843,6 +864,321 @@ const applyCrossModelScoreDiagnosticPlanOverride = ({ plan = {}, override = null
 
 
 
+
+const isExplicitDirectPriceLookupRequest = (message = "", primaryTask = "") => {
+  const raw = String(message || "");
+  const normalized = cleanText(raw);
+  const task = cleanText(primaryTask);
+
+  const hasPriceIntent =
+    task === "price_lookup" ||
+    /\b(price|on[-\s]?road|ex[-\s]?showroom|cost|kitna|rate|pricing)\b/i.test(raw);
+
+  if (!hasPriceIntent) return false;
+
+  // Keep comparison only when the user explicitly asks for a difference/comparison.
+  const asksComparisonPrice =
+    /\b(price\s+difference|difference|diff|compare|comparison|vs|versus|between|cheaper|costlier|expensive)\b/i.test(raw);
+
+  if (asksComparisonPrice) return false;
+
+  return normalized.length > 0;
+};
+
+const buildDirectPriceLookupOverride = ({ message = "", meaningFrame = {}, contextState = {} } = {}) => {
+  if (!isExplicitDirectPriceLookupRequest(message, meaningFrame?.primaryTask)) return null;
+
+  const vehicle =
+    contextState?.selectedVehicle ||
+    contextState?.anchors?.primaryVehicle ||
+    {};
+
+  const model =
+    vehicle.model ||
+    vehicle.fullModel ||
+    vehicle.shortModelKey ||
+    vehicle.modelKey ||
+    "";
+
+  if (!model) return null;
+
+  return {
+    tool: "vehicle_pricelist",
+    intent: "vehicle_pricelist",
+    routingReason: "direct_price_lookup_overrides_comparison_context",
+    model,
+    make: vehicle.make || vehicle.brand || "",
+    fullModel: vehicle.fullModel || vehicle.model || model,
+    variant: vehicle.variant || vehicle.variantName || "",
+    city: vehicle.citySlug || vehicle.city || "new-delhi",
+  };
+};
+
+const applyDirectPriceLookupOverride = ({ plan = {}, override = null } = {}) => {
+  if (!override) return plan;
+
+  const baseTool = plan.tools?.[0] || {};
+
+  return {
+    ...plan,
+    intent: "vehicle_pricelist",
+    conversationMode: "pricing",
+    mode: plan.mode || "single_tool",
+    tools: [
+      {
+        ...baseTool,
+        tool: "vehicle_pricelist",
+        input: {
+          ...(baseTool.input || {}),
+          model: override.model,
+          make: override.make,
+          fullModel: override.fullModel,
+          variant: override.variant,
+          city: override.city,
+        },
+        args: {
+          ...(baseTool.args || {}),
+          model: override.model,
+          make: override.make,
+          fullModel: override.fullModel,
+          variant: override.variant,
+          city: override.city,
+        },
+        params: {
+          ...(baseTool.params || {}),
+          model: override.model,
+          make: override.make,
+          fullModel: override.fullModel,
+          variant: override.variant,
+          city: override.city,
+        },
+        entities: {
+          ...(baseTool.entities || {}),
+          primaryModel: override.model,
+          primaryMake: override.make,
+          primaryVariant: override.variant,
+        },
+        filters: {
+          ...(baseTool.filters || {}),
+          city: override.city,
+        },
+      },
+    ],
+    output: {
+      ...(plan.output || {}),
+      canvasType: override.variant ? "price_breakup_canvas" : "pricelist_canvas",
+      inlineType: "",
+    },
+    meta: {
+      ...(plan.meta || {}),
+      directPriceLookupOverride: true,
+      directPriceLookupRoutingReason: override.routingReason,
+    },
+  };
+};
+
+
+
+
+const isExplicitScoreValueLookupRequest = (message = "", primaryTask = "") => {
+  const raw = String(message || "");
+  const task = cleanText(primaryTask);
+
+  const hasScoreTask =
+    task === "score_insight" ||
+    task === "vehicle_score_insight" ||
+    /\b(score|good|value|worth|value\s+for\s+money|good\s+value)\b/i.test(raw);
+
+  if (!hasScoreTask) return false;
+
+  const asksValue =
+    /\b(value|worth|value\s+for\s+money|good\s+value)\b/i.test(raw);
+
+  if (!asksValue) return false;
+
+  const asksComparison =
+    /\b(vs|v\/s|versus|compare|comparison|between|against|which\s+one|better)\b/i.test(raw);
+
+  return !asksComparison;
+};
+
+const normalizeVariantIdentityText = (value = "") =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const getScoreVariantCandidateFromSnapshot = (candidateSnapshot = {}) => {
+  const variants = asArray(candidateSnapshot?.vehicles?.variants);
+  const best = variants
+    .map((item = {}) => {
+      const raw = item.metadata?.raw || {};
+      return {
+        make: item.metadata?.make || raw.make || "",
+        model: item.metadata?.model || raw.model || "",
+        fullModel: raw.fullModel || [raw.make, raw.model].filter(Boolean).join(" "),
+        variant: item.metadata?.variant || raw.variant || item.rawText || item.displayName || "",
+        variantName: item.metadata?.variant || raw.variant || item.rawText || "",
+        variantKey: raw.variantKey || item.canonicalKey || "",
+        fullVariant: item.metadata?.fullVariant || raw.fullVariant || item.displayName || "",
+        confidence: Number(item.confidence || raw.score || 0),
+      };
+    })
+    .filter((item) => item.variant)
+    .sort((left, right) => right.confidence - left.confidence)[0];
+
+  return best || {};
+};
+
+const buildScoreValueLookupOverride = ({
+  message = "",
+  meaningFrame = {},
+  contextState = {},
+  context = {},
+  candidateSnapshot = {},
+} = {}) => {
+  if (!isExplicitScoreValueLookupRequest(message, meaningFrame?.primaryTask)) return null;
+
+  const contextVehicle = context?.selectedVehicle || {};
+  const variantCandidate = getScoreVariantCandidateFromSnapshot(candidateSnapshot);
+  const stateVehicle =
+    contextState?.selectedVehicle ||
+    contextState?.anchors?.primaryVehicle ||
+    {};
+  const vehicle = {
+    ...variantCandidate,
+    ...contextVehicle,
+    ...stateVehicle,
+    variant:
+      stateVehicle.variant ||
+      stateVehicle.variantName ||
+      contextVehicle.variant ||
+      contextVehicle.variantName ||
+      variantCandidate.variant ||
+      variantCandidate.variantName ||
+      "",
+    variantName:
+      stateVehicle.variantName ||
+      stateVehicle.variant ||
+      contextVehicle.variantName ||
+      contextVehicle.variant ||
+      variantCandidate.variantName ||
+      variantCandidate.variant ||
+      "",
+    variantKey:
+      stateVehicle.variantKey ||
+      contextVehicle.variantKey ||
+      variantCandidate.variantKey ||
+      "",
+  };
+
+  const model =
+    vehicle.shortModelKey ||
+    vehicle.modelKey ||
+    vehicle.model ||
+    vehicle.fullModel ||
+    "";
+
+  if (!model) return null;
+
+  const variant =
+    vehicle.variant ||
+    vehicle.variantName ||
+    "";
+
+  const raw = String(message || "");
+  const rawVariantToken = normalizeVariantIdentityText(variant);
+  const messageContainsVariant =
+    rawVariantToken &&
+    normalizeVariantIdentityText(raw).includes(rawVariantToken);
+
+  const hasExplicitVariant = Boolean(variant && messageContainsVariant);
+
+  return {
+    tool: "vehicle_score_insight",
+    intent: "vehicle_score_insight",
+    operation: hasExplicitVariant ? "variant_score_insight" : "same_family_value_insights",
+    routingReason: hasExplicitVariant
+      ? "variant_value_score_lookup"
+      : "model_family_value_score_lookup",
+    modelKey: vehicle.shortModelKey || vehicle.modelKey || vehicle.model || model,
+    makeKey: vehicle.makeKey || vehicle.make || vehicle.brand || "",
+    fullModel: vehicle.fullModel || vehicle.model || model,
+    variantKey: hasExplicitVariant ? (vehicle.variantKey || variant) : "",
+    variantName: hasExplicitVariant ? variant : "",
+    fuelKey: vehicle.fuelKey || vehicle.fuelType || "",
+    transmissionKey: vehicle.transmissionKey || vehicle.transmission || "",
+  };
+};
+
+const applyScoreValueLookupOverride = ({ plan = {}, override = null } = {}) => {
+  if (!override) return plan;
+
+  const baseTool = plan.tools?.[0] || {};
+
+  const payload = {
+    operation: override.operation,
+    modelKey: override.modelKey,
+    makeKey: override.makeKey,
+    fullModel: override.fullModel,
+    ...(override.variantKey ? { variantKey: override.variantKey } : {}),
+    ...(override.variantName ? { variant: override.variantName, variantName: override.variantName } : {}),
+    ...(override.fuelKey ? { fuelKey: override.fuelKey } : {}),
+    ...(override.transmissionKey ? { transmissionKey: override.transmissionKey } : {}),
+  };
+
+  return {
+    ...plan,
+    intent: "vehicle_score_insight",
+    conversationMode: "diagnostic",
+    mode: plan.mode || "single_tool",
+    tools: [
+      {
+        ...baseTool,
+        tool: "vehicle_score_insight",
+        operation: override.operation,
+        input: {
+          ...(baseTool.input || {}),
+          ...payload,
+        },
+        args: {
+          ...(baseTool.args || {}),
+          ...payload,
+        },
+        params: {
+          ...(baseTool.params || {}),
+          ...payload,
+        },
+        entities: {
+          ...(baseTool.entities || {}),
+          ...payload,
+          primaryModel: override.modelKey,
+          primaryMake: override.makeKey,
+          primaryVariant: override.variantName || "",
+        },
+        filters: {
+          ...(baseTool.filters || {}),
+          ...(override.fuelKey ? { fuelKey: override.fuelKey } : {}),
+          ...(override.transmissionKey ? { transmissionKey: override.transmissionKey } : {}),
+        },
+      },
+    ],
+    output: {
+      ...(plan.output || {}),
+      canvasType: "score_insight_canvas",
+      inlineType: "score_insight_summary",
+    },
+    meta: {
+      ...(plan.meta || {}),
+      scoreValueLookupOverride: true,
+      scoreValueLookupRoutingReason: override.routingReason,
+    },
+  };
+};
+
+
+
 export const runAciCoreLiveBridge = async ({
   message = "",
   context = {},
@@ -922,9 +1258,32 @@ export const runAciCoreLiveBridge = async ({
     candidateSnapshot: managedCandidateSnapshot,
   });
 
-  const plan = applyCrossModelScoreDiagnosticPlanOverride({
-    plan: basePlan,
-    override: crossModelScoreDiagnosticOverride,
+  const directPriceLookupOverride = buildDirectPriceLookupOverride({
+    message,
+    meaningFrame: understanding.meaningFrame,
+    contextState,
+  });
+
+  const scoreValueLookupOverride =
+    !directPriceLookupOverride && !crossModelScoreDiagnosticOverride
+      ? buildScoreValueLookupOverride({
+          message,
+          meaningFrame: understanding.meaningFrame,
+          contextState,
+          context,
+          candidateSnapshot: managedCandidateSnapshot,
+        })
+      : null;
+
+  const plan = applyDirectPriceLookupOverride({
+    plan: applyScoreValueLookupOverride({
+      plan: applyCrossModelScoreDiagnosticPlanOverride({
+        plan: basePlan,
+        override: crossModelScoreDiagnosticOverride,
+      }),
+      override: scoreValueLookupOverride,
+    }),
+    override: directPriceLookupOverride,
   });
 
   const executed = await executeAciPlannerPlan({
@@ -980,6 +1339,19 @@ export const runAciCoreLiveBridge = async ({
           operation: "cross_model_score_diagnostic",
           routingReason: crossModelScoreDiagnosticOverride.routingReason,
           crossModelScoreDiagnosticTargets: crossModelScoreDiagnosticOverride.targets,
+        }
+      : {}),
+    ...(directPriceLookupOverride
+      ? {
+          routingReason: directPriceLookupOverride.routingReason,
+          directTaskOverride: "vehicle_pricelist",
+        }
+      : {}),
+    ...(scoreValueLookupOverride
+      ? {
+          operation: scoreValueLookupOverride.operation,
+          routingReason: scoreValueLookupOverride.routingReason,
+          directTaskOverride: "vehicle_score_insight",
         }
       : {}),
   };

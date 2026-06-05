@@ -112,6 +112,12 @@ const tasks = [
     command: "node",
     args: ["src/scripts/aci-audits/auditAciAnswerLanguageRegistryV1.js"],
   },
+  {
+    key: "buyerAnswerQuality",
+    label: "Buyer answer quality audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciBuyerAnswerQualityV1.cjs"],
+  },
 ];
 
 
@@ -125,6 +131,7 @@ const filterTasksForSafetyMode = (allTasks = []) => {
       "modelAliasFeatureQueries",
       "embarrassmentQueries",
       "answerLanguage",
+      "buyerAnswerQuality",
     ]);
 
     return allTasks.filter((task) => fastKeys.has(task.key));

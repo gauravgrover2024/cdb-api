@@ -2242,11 +2242,36 @@ export const buildVehicleScoreInsightResponse = ({
   const valueScore = modules.value?.score ?? "NA";
   const regretRisk = modules.regretRisk?.score ?? "NA";
 
+  const firstVariant = asArray(data.variants || runtimeData.variants || runtimeData.rows)[0] || {};
+  const modelLabel = cleanText(
+    data.modelLabel ||
+      runtimeData.modelLabel ||
+      data.fullModel ||
+      runtimeData.fullModel ||
+      firstVariant.fullModel ||
+      firstVariant.modelLabel ||
+      firstVariant.model ||
+      toolPlan.input?.fullModel ||
+      toolPlan.input?.model ||
+      toolPlan.entities?.fullModel ||
+      toolPlan.entities?.model ||
+      context.selectedVehicle?.fullModel ||
+      [context.selectedVehicle?.make, context.selectedVehicle?.model].filter(Boolean).join(" "),
+  );
   const variantName =
     data.variantFullName ||
     runtimeData.variantFullName ||
+    firstVariant.variantFullName ||
+    firstVariant.fullVariantName ||
+    firstVariant.fullName ||
     runtimeData.title ||
-    "Score insight";
+    modelLabel ||
+    "this model";
+  const scoreTitle =
+    data.variantFullName ||
+    runtimeData.variantFullName ||
+    runtimeData.title ||
+    (modelLabel ? `${modelLabel} value diagnostics` : `${variantName} value diagnostics`);
 
   const baseAnswer =
     runtimeData.answer ||
@@ -2254,7 +2279,7 @@ export const buildVehicleScoreInsightResponse = ({
     (
       data.variantFullName
         ? `${variantName}: safety ${safetyScore}, features ${featureScore}, same-model value ${valueScore}, regret risk ${regretRisk}.`
-        : `I found score insight data for ${variantName}.`
+        : `${variantName}: diagnostic value data is available.`
     );
 
   const guardrailText =
@@ -2265,7 +2290,7 @@ export const buildVehicleScoreInsightResponse = ({
     displayMode: "canvas",
     canvasType: "score_insight_canvas",
     inlineType: "score_insight_summary",
-    title: runtimeData.title || data.variantFullName || "Score insight",
+    title: scoreTitle,
     answer: `${baseAnswer} ${guardrailText}`,
     data,
     rows: runtimeData.rows || data.variants || [],

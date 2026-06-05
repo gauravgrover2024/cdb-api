@@ -4345,6 +4345,60 @@ const buildScoreInsightRuntimeArgs = ({
     filters.transmission,
   );
 
+  const makeKey = pickScoreExecutorValue(
+    toolPlan.makeKey,
+    input.makeKey,
+    args.makeKey,
+    params.makeKey,
+    entities.makeKey,
+    filters.makeKey,
+    context?.selectedVehicle?.makeKey,
+    context?.selectedVehicle?.make,
+  );
+
+  const modelKey = pickScoreExecutorValue(
+    toolPlan.modelKey,
+    input.modelKey,
+    args.modelKey,
+    params.modelKey,
+    entities.modelKey,
+    filters.modelKey,
+    entities.primaryModelKey,
+    entities.primaryModel,
+    context?.selectedVehicle?.shortModelKey,
+    context?.selectedVehicle?.modelKey,
+    context?.selectedVehicle?.model,
+  );
+
+  const variantKey = pickScoreExecutorValue(
+    toolPlan.variantKey,
+    input.variantKey,
+    args.variantKey,
+    params.variantKey,
+    entities.variantKey,
+    filters.variantKey,
+    entities.primaryVariantKey,
+    context?.selectedVehicle?.variantKey,
+  );
+
+  const variantName = pickScoreExecutorValue(
+    toolPlan.variantName,
+    toolPlan.variant,
+    input.variantName,
+    input.variant,
+    args.variantName,
+    args.variant,
+    params.variantName,
+    params.variant,
+    entities.variantName,
+    entities.variant,
+    entities.primaryVariant,
+    filters.variantName,
+    filters.variant,
+    context?.selectedVehicle?.variantName,
+    context?.selectedVehicle?.variant,
+  );
+
   const normalizedInput = {
     ...input,
     ...args,
@@ -4355,6 +4409,10 @@ const buildScoreInsightRuntimeArgs = ({
     ...(comparisonModels ? { comparisonModels: asScoreExecutorArray(comparisonModels) } : {}),
     ...(fuelKey ? { fuelKey } : {}),
     ...(transmissionKey ? { transmissionKey } : {}),
+    ...(makeKey ? { makeKey } : {}),
+    ...(modelKey ? { modelKey } : {}),
+    ...(variantKey ? { variantKey } : {}),
+    ...(variantName ? { variant: variantName, variantName } : {}),
   };
 
   const normalizedToolPlan = {
@@ -4387,6 +4445,10 @@ const buildScoreInsightRuntimeArgs = ({
       ...(toolPlan.filters || {}),
       ...(fuelKey ? { fuelKey } : {}),
       ...(transmissionKey ? { transmissionKey } : {}),
+      ...(makeKey ? { makeKey } : {}),
+      ...(modelKey ? { modelKey } : {}),
+      ...(variantKey ? { variantKey } : {}),
+      ...(variantName ? { variant: variantName, variantName } : {}),
     },
     userMessage,
     message: userMessage,
@@ -4429,7 +4491,23 @@ export const runtimeVehicleScoreInsight = async ({
     (Array.isArray(runtimeArgs.targets) && runtimeArgs.targets.length >= 2) ||
     (Array.isArray(runtimeArgs.comparisonModels) && runtimeArgs.comparisonModels.length >= 2);
 
-  if (!isCrossModelScoreOperation) {
+  const normalizedUserMessage = String(userMessage || runtimeArgs.userMessage || "").toLowerCase();
+  const hasVariantIdentity = Boolean(
+    runtimeArgs.variantKey ||
+      runtimeArgs.variant ||
+      runtimeArgs.variantName ||
+      runtimeArgs.toolPlan?.variant ||
+      runtimeArgs.toolPlan?.variantName ||
+      runtimeArgs.toolPlan?.entities?.primaryVariant ||
+      runtimeArgs.toolPlan?.entities?.variant
+  );
+
+  const isModelLevelValueScoreOperation =
+    !hasVariantIdentity &&
+    !!runtimeArgs.modelKey &&
+    /\b(value|worth|value for money|good value|good\s+value)\b/i.test(normalizedUserMessage);
+
+  if (!isCrossModelScoreOperation && !isModelLevelValueScoreOperation) {
     return runtimeModularTool({
       toolPlan,
       plan,
@@ -4440,7 +4518,63 @@ export const runtimeVehicleScoreInsight = async ({
     });
   }
 
-  const result = await runVehicleScoreInsightTool(runtimeArgs);
+  let result;
+
+  if (isModelLevelValueScoreOperation) {
+    result = await runVehicleScoreInsightTool({
+      ...runtimeArgs,
+      operation: "same_family_value_insights",
+    });
+
+    const resultBlob = JSON.stringify(result || {});
+    const usable =
+      result?.status === "success" &&
+      !/I found score insight data for Score insight/i.test(resultBlob) &&
+      !/"error"\s*:/i.test(resultBlob);
+
+    if (!usable) {
+      result = await runVehicleScoreInsightTool({
+        ...runtimeArgs,
+        operation: "model_score_insights",
+      });
+    }
+
+    const fallbackBlob = JSON.stringify(result || {});
+    const fallbackUsable =
+      result?.status === "success" &&
+      !/I found score insight data for Score insight/i.test(fallbackBlob);
+
+    if (!fallbackUsable) {
+      const modelLabel = String(context?.selectedVehicle?.fullModel || runtimeArgs.modelKey || "this model")
+        .replace(/[_-]+/g, " ")
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+
+      return {
+        status: "needs_more_detail",
+        operation: "same_family_value_insights",
+        intent: "vehicle_score_insight",
+        canvasType: "score_insight_canvas",
+        inlineType: "score_insight_summary",
+        answer: `I found ${modelLabel}. To judge value properly, I need the fuel/transmission or variant, because value is scored within the same model family. These are diagnostic module scores, not a final recommendation.`,
+        data: {
+          modelKey: runtimeArgs.modelKey,
+          operation: "same_family_value_insights",
+          usageGuardrail: {
+            canUseForFinalRecommendation: false,
+            finalRecommendationEnabled: false,
+          },
+        },
+        usageGuardrail: {
+          canUseForFinalRecommendation: false,
+          finalRecommendationEnabled: false,
+        },
+        modulesChecked: ["vehicle_score_insight"],
+        source: "vehicle_score_insight",
+      };
+    }
+  } else {
+    result = await runVehicleScoreInsightTool(runtimeArgs);
+  }
   const data = result?.data || {};
   const count =
     Number(result?.count) ||
