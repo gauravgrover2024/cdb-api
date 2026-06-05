@@ -547,6 +547,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "score_insight_diagnostic_language_audit", name: "Score insight diagnostic-language audit", status: "partial" },
       { key: "score_insight_tool_language_audit", name: "Score insight tool-level language audit", status: "partial" },
       { key: "score_insight_user_query_smoke", name: "Score insight user-query smoke", status: "partial" },
+      { key: "cross_model_score_diagnostic_eval", name: "Cross-model score diagnostic eval", status: "partial" },
       { key: "similar_cars_output_policy_fixtures", name: "Similar cars real-output policy fixtures", status: "partial" },
       { key: "similar_cars_filtering_audit", name: "Similar cars tool filtering audit", status: "partial" },
       { key: "similar_cars_relation_mode_regression_eval", name: "Similar cars relation-mode regression eval", status: "partial" },
