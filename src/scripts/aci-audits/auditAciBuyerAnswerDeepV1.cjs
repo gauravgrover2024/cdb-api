@@ -372,8 +372,20 @@ const featureCase = (n, message, model, topic = "", options = {}) =>
     forbiddenAnswerAny: ["^I understood\\b"],
     customAssert: ({ body }) => {
       const blob = JSON.stringify(body || {});
+      const answer = text(body.answer || body.message || "");
+      const title = text(body.title || body.data?.title || body.widget?.title || "");
       if (model) assert(rx(model).test(blob), `feature answer/data must mention ${model}`);
       if (topic) assert(rx(topic).test(blob), `feature answer/data must mention ${topic}`);
+      assert(!/match\s+[“"]{1,2}\s*[”"]{1,2}\s+to a feature/i.test(answer), "feature-list query must not use blank feature-topic failure copy");
+      assert(!/could not safely match\s+[“"]{1,2}\s*[”"]{1,2}/i.test(blob), "feature response must not contain blank feature-topic match text");
+      if (/\bfeatures?\b/i.test(message) && !/\b(sunroof|airbags?|adas|camera|ventilated|rear\s+ac)\b/i.test(message)) {
+        assert(!/could not safely match/i.test(answer), "feature-list query must return a summary or honest limitation, not feature-match failure copy");
+        assert(/feature/i.test(answer), "feature-list query must mention feature-list context");
+      }
+      if (n === 48) {
+        assert(!/seating capacity/i.test(`${title} ${answer}`), "ventilated-seat query must not answer seating capacity");
+        assert(/ventilated/i.test(`${title} ${answer} ${blob}`), "ventilated-seat query must preserve ventilated-seat topic");
+      }
     },
     ...options,
   });
@@ -402,8 +414,15 @@ const specCase = (n, message, model, attribute, options = {}) =>
     dbEvidenceCheck: model && attribute ? () => specEvidence({ model, attribute }) : null,
     customAssert: ({ body }) => {
       const blob = JSON.stringify(body || {});
+      const answer = text(body.answer || body.message || "");
+      const title = text(body.title || body.data?.title || body.widget?.title || "");
       if (model) assert(rx(model).test(blob), `spec answer/data must mention ${model}`);
       if (attribute) assert(rx(attribute).test(blob), `spec answer/data must mention ${attribute}`);
+      assert(!/What would you like to check about the car\?/i.test(answer), "clear model+attribute spec query must not return generic clarification");
+      if (n === 79) {
+        assert(/Honda\s+City|City/i.test(`${title} ${answer} ${blob}`), "city power must resolve to Honda City model");
+        assert(!/\b(citySlug|new-delhi|noida|gurgaon|location)\b/i.test(`${title} ${answer}`), "city power must not be treated as a city/location query");
+      }
       if (/eqs/i.test(model || "")) {
         assert(/813\s*km|857\s*km/i.test(blob), "EQS range must include 813 km or 857 km when available");
         assert(!/not available|unavailable|don't have the exact/i.test(text(body.answer)), "EQS range must not be marked unavailable");

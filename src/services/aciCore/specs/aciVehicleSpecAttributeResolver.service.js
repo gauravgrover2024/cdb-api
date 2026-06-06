@@ -113,6 +113,24 @@ const SPEC_ATTRIBUTE_DEFINITIONS = [
     fields: ['mileage', 'fuelEfficiency', 'araiMileage'],
   },
   {
+    key: 'engine_displacement',
+    label: 'engine cc',
+    aliases: ['engine cc', 'engine capacity', 'displacement', 'engine displacement', 'cc'],
+    fields: ['engineDisplacement', 'displacement', 'engineCapacity', 'engineCc', 'cc'],
+  },
+  {
+    key: 'power',
+    label: 'power',
+    aliases: ['power', 'bhp', 'max power', 'maximum power'],
+    fields: ['power', 'maxPower', 'maximumPower', 'bhp'],
+  },
+  {
+    key: 'torque',
+    label: 'torque',
+    aliases: ['torque', 'max torque', 'maximum torque'],
+    fields: ['torque', 'maxTorque', 'maximumTorque'],
+  },
+  {
     key: 'tank_capacity',
     label: 'tank capacity',
     aliases: ['tank capacity', 'fuel tank', 'fuel tank capacity'],

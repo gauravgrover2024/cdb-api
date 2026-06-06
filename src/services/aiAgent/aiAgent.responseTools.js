@@ -210,7 +210,12 @@ export const getModel = (toolPlan = {}, context = {}) =>
     firstMeaningful(
       toolPlan.entities?.model,
       toolPlan.entities?.primaryModel,
+      toolPlan.entities?.fullModel,
       toolPlan.filters?.model,
+      toolPlan.filters?.fullModel,
+      toolPlan.input?.model,
+      toolPlan.input?.fullModel,
+      context?.selectedVehicle?.fullModel,
       context?.selectedVehicle?.model,
       context?.anchorModel,
       context?.model,
@@ -1238,10 +1243,18 @@ export const buildVehicleFeatureLookupResponse = ({
   const model = getModel(toolPlan, context);
   const variant = getVariant(toolPlan, context);
   const city = getCity(toolPlan, context);
-  const feature = getFeature(toolPlan) || "this feature";
+  const rawFeature = getFeature(toolPlan);
+  const feature = rawFeature || "features";
+  const featureKey = normalizeSearchKey(feature);
+  const isFeatureSummaryRequest =
+    !rawFeature ||
+    ["features", "feature", "feature_summary", "safety_features", "safety"].includes(featureKey);
   const rows = getRuntimeRows(runtimeData);
   const carLabel = cleanText(`${model}${variant ? ` ${variant}` : ""}`) || "this car";
   const hasMatch = rows.length > 0 || runtimeData.matched > 0;
+  const summaryAnswer = hasMatch
+    ? `I found feature records for ${carLabel}. Use the feature card to review the available feature list because equipment can differ by fuel/transmission sub-variant.`
+    : `I found ${carLabel}, but a full feature-list summary is not available in the indexed feature records yet. I will not guess features without matching data.`;
 
   return baseResponse({
     toolPlan,
@@ -1251,15 +1264,18 @@ export const buildVehicleFeatureLookupResponse = ({
     displayMode: "inline",
     canvasType: "",
     inlineType: "feature_answer_card",
-    title: `${feature} in ${carLabel}`,
-    answer: hasMatch
-      ? `Yes — ${carLabel} appears in the matching ${feature} feature records. Please confirm exact fuel/transmission sub-variant in the feature card, because features can differ within the same trim family.`
-      : `I could not confirm ${feature} for ${carLabel} from the available feature records.`,
+    title: isFeatureSummaryRequest ? `Features in ${carLabel}` : `${feature} in ${carLabel}`,
+    answer: isFeatureSummaryRequest
+      ? summaryAnswer
+      : hasMatch
+        ? `Yes — ${carLabel} appears in the matching ${feature} feature records. Please confirm exact fuel/transmission sub-variant in the feature card, because features can differ within the same trim family.`
+        : `I could not confirm ${feature} for ${carLabel} from the available feature records.`,
     data: {
       model,
       variant,
       city,
       feature,
+      featureRequestType: isFeatureSummaryRequest ? "feature_summary" : "feature_availability",
       rows,
       matched: hasMatch,
     },

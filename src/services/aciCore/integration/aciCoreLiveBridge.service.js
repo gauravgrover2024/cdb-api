@@ -5,6 +5,7 @@ import { parseHybridMeaningFrame } from "../understanding/hybridMeaningFrame.par
 import { runAciUnderstandingEngine } from "../understanding/aciUnderstandingEngine.js";
 import { normalizeAciBuyerLanguage } from "../understanding/aciLanguageNormalization.service.js";
 import mongoose from "mongoose";
+import resolveVehicleAlias from "../context/aciVehicleAliasRegistry.service.js";
 
 import { buildLegacyPlanFromAciMeaningFrame } from "./aciCoreToLegacyPlan.adapter.js";
 import { executeAciPlannerPlan } from "../../aiAgent/aiAgent.executor.js";
@@ -199,6 +200,28 @@ const detectDirectFactLookup = (message = "") => {
     };
   }
 
+  if (/\bventilated\s+seats?\b/i.test(message)) {
+    return {
+      tool: "vehicle_feature_lookup",
+      intent: "vehicle_feature_answer",
+      feature: "ventilated seats",
+      output: {
+        inlineType: "feature_answer_card",
+      },
+    };
+  }
+
+  if (/\bsunroof\b/i.test(message)) {
+    return {
+      tool: "vehicle_feature_lookup",
+      intent: "vehicle_feature_answer",
+      feature: "sunroof",
+      output: {
+        inlineType: "feature_answer_card",
+      },
+    };
+  }
+
   if (/\bmileage\b/i.test(message)) {
     return {
       tool: "vehicle_spec_attribute_lookup",
@@ -211,7 +234,213 @@ const detectDirectFactLookup = (message = "") => {
     };
   }
 
+  if (/\bboot\s+space\b/i.test(message)) {
+    return {
+      tool: "vehicle_spec_attribute_lookup",
+      intent: "vehicle_spec_attribute_answer",
+      attributeKey: "boot_space",
+      attributeLabel: "boot space",
+      output: {
+        inlineType: "spec_attribute_answer_card",
+      },
+    };
+  }
+
   return null;
+};
+
+const detectBatch2FeatureLookup = (message = "") => {
+  if (/\bventilated\s+seats?\b/i.test(message)) return { feature: "ventilated seats" };
+  if (/\b6\s*airbags?|six\s+airbags?\b/i.test(message)) return { feature: "6 airbags" };
+  if (/\bairbags?\b/i.test(message)) return { feature: "airbags" };
+  if (/\bsunroof\b/i.test(message)) return { feature: "sunroof" };
+  if (/\brear\s+(?:camera|parking\s+camera|view\s+camera)\b/i.test(message)) return { feature: "rear camera" };
+  if (/\brear\s+ac\s+vents?\b/i.test(message)) return { feature: "rear ac vents" };
+  if (/\badas\b/i.test(message)) return { feature: "ADAS" };
+  if (/\bsafety\s+features?\b/i.test(message)) return { feature: "", category: "safety", summary: true };
+  if (/\bfeatures?\b/i.test(message)) return { feature: "", category: "", summary: true };
+  return null;
+};
+
+const detectBatch2SpecLookup = (message = "") => {
+  if (/\bengine\s+(?:cc|capacity|displacement)\b|\bdisplacement\b/i.test(message)) {
+    return { attributeKey: "engine_displacement", attributeLabel: "engine cc" };
+  }
+  if (/\bpower\b|\bbhp\b|\bmax\s+power\b/i.test(message)) {
+    return { attributeKey: "power", attributeLabel: "power" };
+  }
+  if (/\btorque\b/i.test(message)) {
+    return { attributeKey: "torque", attributeLabel: "torque" };
+  }
+  if (/\bmileage\b|\bfuel\s+efficiency\b/i.test(message)) {
+    return { attributeKey: "mileage", attributeLabel: "mileage" };
+  }
+  if (/\bboot\s+space\b/i.test(message)) {
+    return { attributeKey: "boot_space", attributeLabel: "boot space" };
+  }
+  if (/\bground\s+clearance\b/i.test(message)) {
+    return { attributeKey: "ground_clearance", attributeLabel: "ground clearance" };
+  }
+  return null;
+};
+
+const getBatch2VehicleFromContextOrCandidates = async ({ contextState = {}, context = {}, candidateSnapshot = {} } = {}) => {
+  const stateVehicle =
+    contextState?.selectedVehicle ||
+    contextState?.anchors?.primaryVehicle ||
+    context?.selectedVehicle ||
+    {};
+  const variantCandidate = getScoreVariantCandidateFromSnapshot(candidateSnapshot);
+  const modelCandidate = getScoreModelCandidateFromSnapshot(candidateSnapshot);
+  const hasExplicitVariantModel = Boolean(variantCandidate.model || variantCandidate.fullModel);
+  const explicitVehicle = (hasExplicitVariantModel && variantCandidate.variant) || modelCandidate.model || modelCandidate.fullModel
+    ? {
+        ...modelCandidate,
+        ...(hasExplicitVariantModel ? variantCandidate : {}),
+      }
+    : {};
+
+  const aliasVehicle =
+    (await resolveVehicleAlias({ message: candidateSnapshot?.rawMessage || "" }).catch(() => null)) || {};
+
+  return {
+    ...stateVehicle,
+    ...aliasVehicle,
+    ...explicitVehicle,
+    make: explicitVehicle.make || aliasVehicle.make || stateVehicle.make || stateVehicle.brand || "",
+    model: explicitVehicle.model || aliasVehicle.model || stateVehicle.model || "",
+    fullModel:
+      explicitVehicle.fullModel ||
+      aliasVehicle.fullModel ||
+      stateVehicle.fullModel ||
+      [
+        explicitVehicle.make || aliasVehicle.make || stateVehicle.make || stateVehicle.brand,
+        explicitVehicle.model || aliasVehicle.model || stateVehicle.model,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    variant: explicitVehicle.variant || explicitVehicle.variantName || stateVehicle.variant || stateVehicle.variantName || "",
+    variantName: explicitVehicle.variantName || explicitVehicle.variant || stateVehicle.variantName || stateVehicle.variant || "",
+    variantKey: explicitVehicle.variantKey || stateVehicle.variantKey || "",
+  };
+};
+
+const maybeReturnDeterministicFeatureSpecFastPath = async ({
+  message = "",
+  context = {},
+  contextState = {},
+  candidateSnapshot = {},
+  user = null,
+  session = null,
+  meta = {},
+  originalMessage = "",
+  startedAt = 0,
+} = {}) => {
+  if (hasComparisonLanguage(message)) return null;
+
+  const featureLookup = detectBatch2FeatureLookup(message);
+  const specLookup = featureLookup ? null : detectBatch2SpecLookup(message);
+  if (!featureLookup && !specLookup) return null;
+
+  const vehicle = await getBatch2VehicleFromContextOrCandidates({ contextState, context, candidateSnapshot });
+  const model = cleanText(vehicle.model || selectedVehicleLabel(vehicle));
+  const fullModel = selectedVehicleLabel(vehicle) || model;
+  if (!model) return null;
+
+  const variant = vehicle.variant || vehicle.variantName || "";
+  const city = vehicle.citySlug || vehicle.city || context.anchorCity || "new-delhi";
+  const tool = featureLookup ? "vehicle_feature_lookup" : "vehicle_spec_attribute_lookup";
+  const intent = featureLookup ? "vehicle_feature_answer" : "vehicle_spec_attribute_answer";
+  const feature = featureLookup?.feature || "";
+  const category = featureLookup?.category || "";
+  const featureSummary = Boolean(featureLookup?.summary);
+  const attributeKey = specLookup?.attributeKey || "";
+  const attributeLabel = specLookup?.attributeLabel || "";
+
+  const payload = {
+    ...(featureSummary ? { intent: "vehicle_model_features_explorer" } : {}),
+    message,
+    query: message,
+    model,
+    fullModel,
+    make: vehicle.make || vehicle.brand || "",
+    variant,
+    variantName: variant,
+    city,
+    ...(feature ? { feature, features: [feature], topic: feature } : {}),
+    ...(category ? { category, categoryKey: category } : {}),
+    ...(attributeKey ? { attributeKey, attributeLabel, topic: attributeLabel } : {}),
+  };
+
+  const toolPlan = {
+    tool,
+    ...(featureSummary ? { intent: "vehicle_model_features_explorer" } : {}),
+    input: payload,
+    args: payload,
+    params: payload,
+    entities: {
+      ...payload,
+      primaryModel: model,
+      primaryMake: payload.make,
+      primaryVariant: variant,
+    },
+    filters: {
+      model,
+      city,
+      ...(variant ? { variant } : {}),
+      ...(feature ? { feature, mustHaveFeatures: [feature] } : {}),
+      ...(category ? { category, categoryKey: category } : {}),
+      ...(attributeKey ? { attributeKey, attributeLabel } : {}),
+    },
+    output: {
+      canvasType: null,
+      inlineType: featureLookup ? "feature_answer_card" : "spec_attribute_answer_card",
+    },
+  };
+
+  const plan = {
+    intent,
+    mode: "single_tool",
+    conversationMode: "direct_answer",
+    tools: [toolPlan],
+  };
+
+  const executed = await executeAciPlannerPlan({
+    plan,
+    userMessage: message,
+    context: getContextForToolPlan(contextState),
+    user,
+    session,
+    meta,
+  });
+
+  const normalized = await normalizeAciFinalResponse(executed, {
+    message,
+    context: getContextForToolPlan(contextState),
+  });
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "",
+    usedGemini: false,
+    primaryTask: featureLookup ? "feature_lookup" : "spec_attribute_lookup",
+    tool,
+    planMode: "single_tool",
+    contextIsolation: "deterministic_feature_spec_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: message,
+    routingReason: featureLookup ? "deterministic_feature_lookup" : "deterministic_spec_attribute_lookup",
+  };
+
+  return composeAciAnswer({
+    ...normalized,
+    aciCoreBridge: bridge,
+    meta: {
+      ...(normalized.meta || {}),
+      aciCoreBridge: bridge,
+    },
+  });
 };
 
 const maybeReturnContextDirectFactFastPath = async ({
@@ -1781,6 +2010,25 @@ export const runAciCoreLiveBridge = async ({
     candidateSnapshot: managedCandidateSnapshot,
   });
   const isolatedContext = getContextForToolPlan(contextState);
+
+  const deterministicFeatureSpecFastPath = await maybeReturnDeterministicFeatureSpecFastPath({
+    message,
+    context,
+    contextState,
+    candidateSnapshot: {
+      ...managedCandidateSnapshot,
+      rawMessage: message,
+    },
+    user,
+    session,
+    meta,
+    originalMessage,
+    startedAt,
+  });
+
+  if (deterministicFeatureSpecFastPath) {
+    return deterministicFeatureSpecFastPath;
+  }
 
   const crossModelScoreDiagnosticFastPath = detectCrossModelScoreDiagnosticRequest({
     message,

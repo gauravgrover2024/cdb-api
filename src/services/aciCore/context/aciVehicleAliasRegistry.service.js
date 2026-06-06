@@ -17,6 +17,36 @@ const normalizeText = (value = '') =>
 
 const keyify = (value = '') => normalizeText(value);
 
+const compactAlphaNumKey = (value = '') =>
+  normalizeText(value)
+    .replace(/([a-z])\s+([0-9])/g, '$1$2')
+    .replace(/([0-9])\s+([a-z])/g, '$1$2');
+
+const hasAlphaNumSignal = (value = '') => {
+  const compact = compactAlphaNumKey(value);
+  return /[a-z]/.test(compact) && /[0-9]/.test(compact);
+};
+
+const compactAliasContains = (message = '', alias = '') => {
+  if (!message || !alias || !hasAlphaNumSignal(alias)) return false;
+
+  if (aliasContains(message, alias)) return true;
+
+  const compactAlias = compactAlphaNumKey(alias);
+  if (!compactAlias || compactAlias.length < 3) return false;
+
+  const tokens = normalizeText(message).split(' ').filter(Boolean);
+
+  for (let start = 0; start < tokens.length; start += 1) {
+    for (let size = 1; size <= 4 && start + size <= tokens.length; size += 1) {
+      const compactWindow = compactAlphaNumKey(tokens.slice(start, start + size).join(' '));
+      if (compactWindow === compactAlias) return true;
+    }
+  }
+
+  return false;
+};
+
 const firstMeaningful = (...values) =>
   values.find((value) => value !== undefined && value !== null && cleanText(value) !== '') || '';
 
@@ -111,31 +141,213 @@ const compactAliasAnchor = ({ row = {}, rule = {} } = {}) => {
   };
 };
 
-async function resolveVehicleAlias({ message = '' } = {}) {
-  const rule = findAliasRule(message);
-  if (!rule) return null;
 
+
+const buildDbBackedAliasCandidates = (row = {}) => {
+  const make = firstMeaningful(row.make, row.brand);
+  const model = firstMeaningful(row.model);
+  return uniqueTextValues([
+    row.fullModel,
+    [make, model].filter(Boolean).join(' '),
+    model,
+    row.modelKey,
+    row.shortModelKey,
+  ]);
+};
+
+const COMPACT_ALIAS_COLLECTIONS = [
+  {
+    name: 'aci_vehicle_model_summary',
+    limit: 3000,
+    source: 'model_summary',
+  },
+  {
+    name: 'vehicle_variant_feature_matrix_v2',
+    limit: 8000,
+    source: 'feature_matrix',
+  },
+  {
+    name: 'aci_vehicle_price_rows',
+    limit: 8000,
+    source: 'price_rows',
+  },
+  {
+    name: 'vehicles',
+    limit: 8000,
+    source: 'vehicles',
+  },
+];
+
+const compactAliasProjection = {
+  make: 1,
+  brand: 1,
+  model: 1,
+  fullModel: 1,
+  displayName: 1,
+  makeKey: 1,
+  modelKey: 1,
+  shortModelKey: 1,
+  fuelTypes: 1,
+  transmissions: 1,
+};
+
+const collectionExists = async (db, name) => {
+  try {
+    return Boolean(await db.listCollections({ name }).hasNext());
+  } catch {
+    return false;
+  }
+};
+
+
+const compactAliasMessageCandidates = (message = '') => {
+  const tokens = normalizeText(message).split(' ').filter(Boolean);
+  const candidates = new Set();
+
+  for (let start = 0; start < tokens.length; start += 1) {
+    for (let size = 1; size <= 4 && start + size <= tokens.length; size += 1) {
+      const phrase = tokens.slice(start, start + size).join(' ');
+      const compact = compactAlphaNumKey(phrase);
+
+      if (!compact || compact.length < 3 || !hasAlphaNumSignal(compact)) continue;
+
+      candidates.add(compact);
+      candidates.add(phrase);
+    }
+  }
+
+  return [...candidates]
+    .map(cleanText)
+    .filter(Boolean)
+    .sort((left, right) => compactAlphaNumKey(right).length - compactAlphaNumKey(left).length)
+    .slice(0, 12);
+};
+
+const looseAlphaNumRegex = (value = '') => {
+  const compact = compactAlphaNumKey(value);
+  if (!compact || compact.length < 3 || !hasAlphaNumSignal(compact)) return null;
+
+  const parts = compact.match(/[a-z]+|[0-9]+/g) || [compact];
+  const core = parts.map(escapeRegex).join('[\\s-]*');
+
+  return new RegExp(`(^|[^a-z0-9])${core}([^a-z0-9]|$)`, 'i');
+};
+
+const buildCompactAliasDbQuery = (message = '') => {
+  const regexes = compactAliasMessageCandidates(message)
+    .map(looseAlphaNumRegex)
+    .filter(Boolean);
+
+  if (!regexes.length) return null;
+
+  const fields = [
+    'make',
+    'brand',
+    'model',
+    'fullModel',
+    'displayName',
+    'modelKey',
+    'shortModelKey',
+  ];
+
+  return {
+    $or: fields.map((field) => ({ [field]: { $in: regexes } })),
+  };
+};
+
+
+async function resolveGenericCompactVehicleAlias({ message = '', db = null } = {}) {
+  if (!db || !hasAlphaNumSignal(message)) return null;
+
+  const query = buildCompactAliasDbQuery(message);
+  if (!query) return null;
+
+  const matches = [];
+
+  for (const collection of COMPACT_ALIAS_COLLECTIONS) {
+    if (!(await collectionExists(db, collection.name))) continue;
+
+    const rows = await db.collection(collection.name)
+      .find(query, { projection: compactAliasProjection })
+      .limit(Math.min(collection.limit || 250, 250))
+      .toArray();
+
+    for (const row of rows) {
+      const aliases = buildDbBackedAliasCandidates(row);
+      for (const alias of aliases) {
+        if (!hasAlphaNumSignal(alias)) continue;
+        if (!compactAliasContains(message, alias)) continue;
+
+        matches.push({
+          row,
+          alias,
+          compactAlias: compactAlphaNumKey(alias),
+          source: collection.source,
+        });
+      }
+    }
+  }
+
+  matches.sort((left, right) => {
+    if (right.compactAlias.length !== left.compactAlias.length) {
+      return right.compactAlias.length - left.compactAlias.length;
+    }
+
+    const sourceRank = {
+      model_summary: 4,
+      feature_matrix: 3,
+      price_rows: 2,
+      vehicles: 1,
+    };
+
+    const leftRank = sourceRank[left.source] || 0;
+    const rightRank = sourceRank[right.source] || 0;
+    if (rightRank !== leftRank) return rightRank - leftRank;
+
+    return String(right.alias || '').length - String(left.alias || '').length;
+  });
+
+  const best = matches[0];
+  if (!best?.row) return null;
+
+  return compactAliasAnchor({
+    row: best.row,
+    rule: {
+      id: `db-backed-compact-alphanum-alias:${best.source || 'unknown'}`,
+      confidence: best.source === 'model_summary' ? 0.86 : 0.82,
+    },
+  });
+}
+
+
+async function resolveVehicleAlias({ message = '' } = {}) {
   const db = getDb();
   if (!db) return null;
 
-  const row = await db.collection('aci_vehicle_model_summary').findOne(
-    buildRowQuery(rule),
-    {
-      projection: {
-        make: 1,
-        brand: 1,
-        model: 1,
-        fullModel: 1,
-        makeKey: 1,
-        modelKey: 1,
-        shortModelKey: 1,
-        fuelTypes: 1,
-        transmissions: 1,
-      },
-    },
-  );
+  const rule = findAliasRule(message);
 
-  return row ? compactAliasAnchor({ row, rule }) : null;
+  if (rule) {
+    const row = await db.collection('aci_vehicle_model_summary').findOne(
+      buildRowQuery(rule),
+      {
+        projection: {
+          make: 1,
+          brand: 1,
+          model: 1,
+          fullModel: 1,
+          makeKey: 1,
+          modelKey: 1,
+          shortModelKey: 1,
+          fuelTypes: 1,
+          transmissions: 1,
+        },
+      },
+    );
+
+    if (row) return compactAliasAnchor({ row, rule });
+  }
+
+  return resolveGenericCompactVehicleAlias({ message, db });
 }
 
 export {

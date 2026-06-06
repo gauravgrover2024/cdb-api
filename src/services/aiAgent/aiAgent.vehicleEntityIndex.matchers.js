@@ -1,15 +1,41 @@
 import { normalizeSearchKey } from "./aiAgent.planSchema.js";
 
-export const containsAlias = (textKey = "", aliasKey = "") => {
+const escapeRegex = (value = "") =>
+  String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+export const normalizeCompactAlphaNumKey = (value = "") =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/([a-z])\s+([0-9])/g, "$1$2")
+    .replace(/([0-9])\s+([a-z])/g, "$1$2");
+
+const containsAliasExact = (textKey = "", aliasKey = "") => {
   if (!textKey || !aliasKey) return false;
 
-  const escaped = aliasKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = escapeRegex(aliasKey);
   const pattern = new RegExp(
     `(^|\\s)${escaped.replace(/\s+/g, "\\s+")}(\\s|$)`,
     "i",
   );
 
   return pattern.test(textKey);
+};
+
+export const containsAlias = (textKey = "", aliasKey = "") => {
+  if (containsAliasExact(textKey, aliasKey)) return true;
+
+  const compactTextKey = normalizeCompactAlphaNumKey(textKey);
+  const compactAliasKey = normalizeCompactAlphaNumKey(aliasKey);
+
+  if (!compactTextKey || !compactAliasKey || compactTextKey === textKey && compactAliasKey === aliasKey) {
+    return false;
+  }
+
+  return containsAliasExact(compactTextKey, compactAliasKey);
 };
 
 export const isGenericCityUse = (textKey = "", aliasKey = "") => {

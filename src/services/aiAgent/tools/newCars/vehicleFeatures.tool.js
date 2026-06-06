@@ -791,8 +791,31 @@ const buildCustomerFeatureAnswer = ({
   const unavailableRows = asArray(data.unavailableRows);
   const conflictedRows = asArray(data.conflictedRows);
   const rows = asArray(data.rows);
+  const featureRows = asArray(data.features);
+  const groups = asArray(data.groups || data.featureGroups);
   const totalChecked =
     availableRows.length + unavailableRows.length + conflictedRows.length || rows.length;
+  const isFeatureSummaryQuery = /\bfeatures?\b/i.test(userMessage || "") && !/\b(?:sunroof|airbags?|adas|camera|ventilated|rear\s+ac|tpms|isofix|cruise)\b/i.test(userMessage || "");
+  const isSafetyFeatureQuery = /\bsafety\s+features?\b/i.test(userMessage || "");
+
+  if (
+    isFeatureSummaryQuery &&
+    (!original || /could not safely match\s+[“"]{1,2}\s*[”"]{1,2}\s+to a feature/i.test(original))
+  ) {
+    const evidenceCount = featureRows.length || rows.length || groups.reduce((sum, group = {}) => {
+      if (Array.isArray(group.features)) return sum + group.features.length;
+      if (Number.isFinite(Number(group.count))) return sum + Number(group.count);
+      return sum;
+    }, 0);
+
+    if (evidenceCount > 0) {
+      const scope = isSafetyFeatureQuery ? "safety feature" : "feature";
+      return `I found ${evidenceCount} ${scope}${evidenceCount === 1 ? "" : "s"} for ${target}. Review the feature card because equipment can differ by fuel/transmission sub-variant.`;
+    }
+
+    const scope = isSafetyFeatureQuery ? "safety feature list" : "feature list";
+    return `I found ${target}, but a full ${scope} is not available in the indexed feature records yet. I will not guess features without matching data.`;
+  }
 
   if (result.intent === "vehicle_feature_answer" && featureLabel) {
     const readableFeature = getReadableFeatureValue({
@@ -1264,7 +1287,14 @@ export const runVehicleFeaturesTool = async (args = {
     userMessage,
     model,
   });
-  const requestedVariant = variants[0] || "";
+  const contextFeatureSummary =
+    /\b(this|it|its|same|current|selected)\b/i.test(userMessage || "") &&
+    /\bfeatures?\b/i.test(userMessage || "");
+  const safetyFeatureSummary = /\bsafety\s+features?\b/i.test(userMessage || "");
+  const requestedVariant =
+    contextFeatureSummary || safetyFeatureSummary
+      ? ""
+      : variants[0] || "";
 
   if (!model) {
     return buildUnavailableResponse({
