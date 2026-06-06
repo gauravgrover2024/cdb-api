@@ -419,6 +419,21 @@ const maybeReturnDeterministicFeatureSpecFastPath = async ({
     context: getContextForToolPlan(contextState),
   });
 
+  if (discovery.fuelType === "electric") {
+    const scopedTitle = cleanText(normalized.title || normalized.data?.title || "");
+    if (scopedTitle && !/electric|\bev\b/i.test(scopedTitle)) {
+      normalized.title = `Electric ${scopedTitle}`;
+      if (normalized.data && typeof normalized.data === "object") {
+        normalized.data.title = normalized.title;
+      }
+    }
+
+    const scopedAnswer = cleanText(normalized.answer || "");
+    if (scopedAnswer && !/electric|\bev\b/i.test(scopedAnswer)) {
+      normalized.answer = scopedAnswer.replace(/^I found\s+/i, "I found electric ");
+    }
+  }
+
   const bridge = {
     enabled: true,
     durationMs: startedAt ? Date.now() - startedAt : 0,
@@ -637,6 +652,629 @@ const maybeReturnActiveComparisonFollowUpFastPath = async ({
       aciCoreBridge: bridge,
     },
   });
+};
+
+
+const parseBudgetRupeesFromBuyerMessage = (message = "") => {
+  const source = String(message || "").toLowerCase();
+
+  const lakhMatch = source.match(/\b(?:under|below|upto|up to|within|budget(?:\s+of)?|less than)?\s*(\d+(?:\.\d+)?)\s*(?:lakh|lakhs|lac|lacs|l)\b/i);
+  if (lakhMatch) return Math.round(Number(lakhMatch[1]) * 100000);
+
+  const croreMatch = source.match(/\b(?:under|below|upto|up to|within|budget(?:\s+of)?|less than)?\s*(\d+(?:\.\d+)?)\s*(?:crore|crores|cr)\b/i);
+  if (croreMatch) return Math.round(Number(croreMatch[1]) * 10000000);
+
+  return 0;
+};
+
+const detectBatch4BroadDiscoveryRequest = (message = "") => {
+  const normalized = String(message || "").toLowerCase();
+  const budgetMax = parseBudgetRupeesFromBuyerMessage(message);
+  const hasBudget = budgetMax > 0;
+  const hasBroadCar = /\b(cars?|vehicles?|models?|options?|suvs?|sedans?|hatchbacks?|mpvs?|muvs?)\b/i.test(normalized);
+  const wantsFamily = /\bfamily\b|\bpractical\b|\bspacious\b|\bspace\b/i.test(normalized);
+  const wantsElectric = /\belectric\b|\bev\b/i.test(normalized);
+  const wantsSuv = /\bsuvs?\b/i.test(normalized);
+  const wantsAutomatic = /\bautomatic\b|\bauto\b|\bat\b|\bdct\b|\bcvt\b|\bamt\b/i.test(normalized);
+
+  if (!hasBudget || (!hasBroadCar && !wantsFamily && !wantsElectric && !wantsSuv && !wantsAutomatic)) {
+    return null;
+  }
+
+  if (/\b(price|on road|on-road|insurance|service cost|service|offer|discount)\b/i.test(normalized)) {
+    return null;
+  }
+
+  return {
+    budgetMax,
+    bodyType: wantsSuv ? "suv" : "",
+    fuelType: wantsElectric ? "electric" : "",
+    transmission: wantsAutomatic ? "automatic" : "",
+    buyerUseCase: wantsFamily ? "family" : "",
+    reason: wantsFamily
+      ? "family_budget_discovery"
+      : wantsElectric || wantsSuv || wantsAutomatic
+        ? "filtered_budget_discovery"
+        : "budget_discovery",
+  };
+};
+
+const detectBatch4FuelAdviceRequest = (message = "") => {
+  const normalized = String(message || "").toLowerCase();
+
+  if (/\bservice\b|\binsurance\b|\boffers?\b|\bdiscount\b|\bprice\b|\bon road\b|\bon-road\b/i.test(normalized)) {
+    return null;
+  }
+
+  if (
+    /\bpetrol\s+or\s+diesel\b|\bdiesel\s+or\s+petrol\b|\bfuel\s+should\s+i\s+choose\b|\bwhat\s+fuel\b|\bwhich\s+fuel\b|\bdiesel\s+worth\b|\b\d+\s*km\s+daily\b|\bdaily\s+running\b/i.test(normalized)
+  ) {
+    return {
+      reason: "fuel_choice_guidance",
+    };
+  }
+
+  return null;
+};
+
+const detectBatch4PendingModuleRequest = (message = "") => {
+  const normalized = String(message || "").toLowerCase();
+
+  if (/\b(wait\s+for\s+discount|discount|offers?|deal|benefit)\b/i.test(normalized)) {
+    return {
+      unavailableReason: "offers_discount_data_not_available",
+      topic: "discount or offer",
+    };
+  }
+
+  if (/\bservice\s+(cost|costs|price|prices|estimate|maintenance)\b|\bmaintenance\s+cost\b/i.test(normalized)) {
+    return {
+      unavailableReason: "service_cost_not_available",
+      topic: "service cost",
+    };
+  }
+
+  if (/\binsurance\b.*\b(price|prices|cost|premium|quote|estimate)\b|\b(price|cost|premium|quote|estimate)\b.*\binsurance\b/i.test(normalized)) {
+    return {
+      unavailableReason: "insurance_price_not_available",
+      topic: "insurance price",
+    };
+  }
+
+  return null;
+};
+
+
+const findVehicleLabelFromMessage = async (message = "") => {
+  const aliasVehicle = (await resolveVehicleAlias({ message }).catch(() => null)) || {};
+  const aliasLabel = cleanText(
+    aliasVehicle.fullModel ||
+      [aliasVehicle.make || aliasVehicle.brand, aliasVehicle.model].filter(Boolean).join(" ") ||
+      aliasVehicle.model ||
+      "",
+  );
+  if (aliasLabel) return aliasLabel;
+
+  const db = getFastPathDb();
+  if (!db) return "";
+
+  const normalized = normalizeFastPathText(message);
+  if (!normalized) return "";
+
+  const rows = await db.collection("aci_vehicle_model_summary")
+    .find(
+      {},
+      {
+        projection: {
+          make: 1,
+          brand: 1,
+          model: 1,
+          fullModel: 1,
+          modelKey: 1,
+        },
+      },
+    )
+    .limit(3000)
+    .toArray()
+    .catch(() => []);
+
+  const matches = rows
+    .map((row = {}) => {
+      const label = cleanText(row.fullModel || [row.make || row.brand, row.model].filter(Boolean).join(" ") || row.model || "");
+      const modelText = normalizeFastPathText(row.model || row.modelKey || label);
+      const fullText = normalizeFastPathText(label);
+      const hit = modelText && new RegExp(`(^|\\\\s)${escapeFastPathRegex(modelText)}($|\\\\s)`, "i").test(normalized)
+        ? modelText.length
+        : fullText && new RegExp(`(^|\\\\s)${escapeFastPathRegex(fullText)}($|\\\\s)`, "i").test(normalized)
+          ? fullText.length
+          : 0;
+      return { row, label, hit };
+    })
+    .filter((item) => item.hit > 0)
+    .sort((a, b) => b.hit - a.hit);
+
+  return matches[0]?.label || "";
+};
+
+
+
+const buildBatch4VehicleTokenRegexes = (message = "") => {
+  const stopWords = new Set([
+    "are", "there", "offer", "offers", "discount", "discounts", "deal", "deals",
+    "service", "cost", "costs", "insurance", "price", "premium", "quote",
+    "should", "wait", "for", "of", "on", "the", "a", "an", "in", "me", "my",
+    "what", "which", "is", "it", "now", "live", "verified",
+  ]);
+
+  const tokens = normalizeFastPathText(message)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3 && !stopWords.has(token))
+    .slice(0, 6);
+
+  return tokens.map((token) => new RegExp(`(^|\\s|-)${escapeFastPathRegex(token)}($|\\s|-)`, "i"));
+};
+
+const resolveBatch4VehicleLabel = async ({ message = "", context = {} } = {}) => {
+  const contextVehicle =
+    context?.selectedVehicle ||
+    context?.contextState?.selectedVehicle ||
+    context?.aciContextState?.selectedVehicle ||
+    {};
+
+  const contextLabel = cleanText(
+    contextVehicle.fullModel ||
+      [contextVehicle.make || contextVehicle.brand, contextVehicle.model].filter(Boolean).join(" ") ||
+      contextVehicle.model ||
+      "",
+  );
+  if (contextLabel) return contextLabel;
+
+  const regexes = buildBatch4VehicleTokenRegexes(message);
+  if (!regexes.length) return "";
+
+  const db = getFastPathDb();
+  if (!db) return "";
+
+  const query = {
+    $or: [
+      { model: { $in: regexes } },
+      { fullModel: { $in: regexes } },
+      { displayName: { $in: regexes } },
+      { modelKey: { $in: regexes } },
+      { shortModelKey: { $in: regexes } },
+    ],
+  };
+
+  const projection = {
+    make: 1,
+    brand: 1,
+    model: 1,
+    fullModel: 1,
+    displayName: 1,
+    modelKey: 1,
+    shortModelKey: 1,
+  };
+
+  const collections = [
+    "aci_vehicle_model_summary",
+    "aci_vehicle_price_rows",
+    "vehicle_variant_feature_matrix_v2",
+  ];
+
+  const matches = [];
+
+  for (const name of collections) {
+    const exists = await db.listCollections({ name }).hasNext().catch(() => false);
+    if (!exists) continue;
+
+    const rows = await db.collection(name)
+      .find(query, { projection })
+      .limit(20)
+      .toArray()
+      .catch(() => []);
+
+    for (const row of rows) {
+      const label = cleanText(
+        row.fullModel ||
+          row.displayName ||
+          [row.make || row.brand, row.model].filter(Boolean).join(" ") ||
+          row.model ||
+          "",
+      );
+      if (!label) continue;
+
+      const labelKey = normalizeFastPathText(label);
+      const modelKey = normalizeFastPathText(row.model || row.modelKey || row.shortModelKey || "");
+      const messageKey = normalizeFastPathText(message);
+
+      const messageTokens = new Set(messageKey.split(" ").filter(Boolean));
+      const rowModelKey = normalizeFastPathText(row.model || "");
+      const rowCanonicalKey = normalizeFastPathText(row.modelKey || row.shortModelKey || "");
+      const messageRequestsElectric = /(^|\\s)(electric|ev)($|\\s)/i.test(messageKey);
+      const rowLooksElectric = /(^|\\s)(electric|ev)($|\\s)/i.test(`${labelKey} ${rowModelKey} ${rowCanonicalKey}`);
+
+      const exactModelTokenHit =
+        (rowModelKey && messageTokens.has(rowModelKey)) ||
+        (rowCanonicalKey && messageTokens.has(rowCanonicalKey));
+
+      const fullPhraseHit =
+        labelKey && new RegExp(`(^|\\s)${escapeFastPathRegex(labelKey)}($|\\s)`, "i").test(messageKey);
+
+      const partialModelHit =
+        rowModelKey && new RegExp(`(^|\\s)${escapeFastPathRegex(rowModelKey)}($|\\s)`, "i").test(messageKey);
+
+      const electricPenalty = !messageRequestsElectric && rowLooksElectric ? 5000 : 0;
+
+      const score =
+        (exactModelTokenHit ? 10000 : 0) +
+        (fullPhraseHit ? 3000 + labelKey.length : 0) +
+        (partialModelHit ? 1000 + rowModelKey.length : 0) +
+        normalizeFastPathText(row.model || "").length -
+        electricPenalty;
+
+      matches.push({ label, score });
+    }
+
+    if (matches.length) break;
+  }
+
+  matches.sort((left, right) => right.score - left.score || right.label.length - left.label.length);
+  return matches[0]?.label || "";
+};
+
+const buildBatch4ExplainerFastPathResponse = async ({
+  message = "",
+  originalMessage = "",
+  effectiveMessage = "",
+  context = {},
+  startedAt = 0,
+  kind = "",
+  unavailableReason = "",
+  topic = "",
+} = {}) => {
+  const vehicleLabel =
+    kind === "fuel_advice"
+      ? ""
+      : await resolveBatch4VehicleLabel({
+          message: effectiveMessage || message,
+          context,
+        });
+
+  const title =
+    kind === "fuel_advice"
+      ? "Fuel choice guidance"
+      : "Not available yet";
+
+  const answer =
+    kind === "fuel_advice"
+      ? "For fuel choice, use your running pattern first: petrol usually suits lower running and simpler city use, diesel starts making sense only with high monthly highway/running needs, CNG can work for very high daily use if boot-space compromise is acceptable, and EV depends on charging access. For 100 km daily running, compare monthly fuel cost, registration rules, maintenance, resale, and the exact car shortlist before deciding."
+      : topic === "insurance price"
+        ? `I do not have verified live insurance premium data${vehicleLabel ? ` for ${vehicleLabel}` : ""} yet. Insurance depends on IDV, insurer, add-ons, NCB, registration city, and coverage type, so I should not show a made-up figure.`
+        : topic === "discount or offer"
+          ? `I do not have verified live discount or offer data${vehicleLabel ? ` for ${vehicleLabel}` : ""} yet. Offers change by city, dealer stock, variant, and month, so I should not invent a discount.`
+          : `I do not have verified service-cost data${vehicleLabel ? ` for ${vehicleLabel}` : ""} yet. I can explain ownership cost generally, but I should not invent exact service figures.`;
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "",
+    usedGemini: false,
+    primaryTask: "vehicle_explainer",
+    tool: "vehicle_explainer",
+    planMode: "single_tool",
+    contextIsolation: kind === "fuel_advice" ? "batch4_fuel_advice_fast_path" : "batch4_pending_module_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: effectiveMessage || message,
+    routingReason: kind === "fuel_advice" ? "fuel_advice_request" : unavailableReason || "pending_module_request",
+  };
+
+  return {
+    intent: kind === "fuel_advice" ? "vehicle_explainer" : "unavailable",
+    displayMode: "inline",
+    canvasType: "",
+    inlineType: kind === "fuel_advice" ? "explainer_card" : "unavailable_notice",
+    title,
+    answer,
+    matched: 0,
+    count: 0,
+    rows: [],
+    items: [],
+    data: {
+      title,
+      answer,
+      rows: [],
+      items: [],
+      ...(vehicleLabel ? { model: vehicleLabel, fullModel: vehicleLabel } : {}),
+      ...(unavailableReason ? { unavailableReason } : {}),
+    },
+    sourceTransparency: {
+      modulesChecked: ["vehicle_explainer"],
+      matched: 0,
+      dataSource: kind === "fuel_advice" ? "deterministic_fuel_advice" : "pending_module_guardrail",
+      recordCount: 0,
+    },
+    aciCoreBridge: bridge,
+    meta: {
+      aciCoreBridge: bridge,
+    },
+  };
+};
+
+
+const maybeReturnBatch4BareClarificationFastPath = ({
+  message = "",
+  originalMessage = "",
+  effectiveMessage = "",
+  startedAt = 0,
+} = {}) => {
+  const normalized = normalizeFastPathText(effectiveMessage || message);
+
+  if (!/^(price|sunroof|mileage|colors|colours|which one is better|compare these|best car|recommend me a car)$/.test(normalized)) {
+    return null;
+  }
+
+  const answer =
+    normalized === "price"
+      ? "Which car and city should I check the price for?"
+      : "Which car should I check this for?";
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "",
+    usedGemini: false,
+    primaryTask: "clarification",
+    tool: "clarification",
+    planMode: "clarification",
+    contextIsolation: "bare_query_clarification_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: effectiveMessage || message,
+    routingReason: "bare_ambiguous_query",
+  };
+
+  return {
+    intent: "clarification",
+    tool: "clarification",
+    displayMode: "inline",
+    canvasType: "",
+    inlineType: "clarification",
+    title: "Need one detail",
+    answer,
+    rows: [],
+    items: [],
+    matched: 0,
+    count: 0,
+    data: {
+      title: "Need one detail",
+      answer,
+      rows: [],
+      items: [],
+    },
+    aciCoreBridge: bridge,
+    meta: {
+      aciCoreBridge: bridge,
+    },
+  };
+};
+
+
+const maybeReturnBatch4BroadDiscoveryFastPath = async ({
+  message = "",
+  context = {},
+  contextState = {},
+  user = null,
+  session = null,
+  meta = {},
+  originalMessage = "",
+  effectiveMessage = "",
+  startedAt = 0,
+} = {}) => {
+  const discovery = detectBatch4BroadDiscoveryRequest(effectiveMessage || message);
+  if (!discovery) return null;
+
+  const evRequested = discovery.fuelType === "electric";
+  const fuelKey = evRequested ? "ev" : discovery.fuelType;
+
+  const filters = {
+    budgetMax: discovery.budgetMax,
+    maxBudget: discovery.budgetMax,
+    maxPrice: discovery.budgetMax,
+    maxExShowroomPrice: discovery.budgetMax,
+    budgetMaxLakh: Math.round(discovery.budgetMax / 100000),
+    ...(discovery.transmission ? {
+      transmission: discovery.transmission,
+      transmissionType: discovery.transmission,
+      transmissionKey: discovery.transmission,
+    } : {}),
+    ...(fuelKey ? {
+      fuelType: evRequested ? "electric" : fuelKey,
+      fuel: evRequested ? "electric" : fuelKey,
+      fuelKey,
+      requestedFuelType: discovery.fuelType,
+      requestedFuelLabel: evRequested ? "Electric" : discovery.fuelType,
+    } : {}),
+    ...(discovery.bodyType ? {
+      bodyType: discovery.bodyType,
+      bodyStyle: discovery.bodyType,
+      bodyTypeKey: discovery.bodyType,
+    } : {}),
+    ...(discovery.buyerUseCase ? {
+      buyerUseCase: discovery.buyerUseCase,
+      useCase: discovery.buyerUseCase,
+      buyerIntent: discovery.buyerUseCase,
+    } : {}),
+  };
+
+  const toolPlan = {
+    tool: "vehicle_recommend",
+    input: {
+      message,
+      query: message,
+      ...filters,
+    },
+    args: {
+      message,
+      query: message,
+      ...filters,
+    },
+    params: {
+      message,
+      query: message,
+      ...filters,
+    },
+    entities: {
+      ...filters,
+    },
+    filters,
+    output: {
+      canvasType: "recommendation_results_canvas",
+      inlineType: "recommendation_summary",
+    },
+  };
+
+  const plan = {
+    intent: "vehicle_recommendation",
+    mode: "single_tool",
+    conversationMode: "direct_answer",
+    tools: [toolPlan],
+    output: {
+      canvasType: "recommendation_results_canvas",
+    },
+  };
+
+  const executed = await executeAciPlannerPlan({
+    plan,
+    userMessage: message,
+    context: getContextForToolPlan(contextState || {}),
+    user,
+    session,
+    meta,
+  });
+
+  const normalized = await normalizeAciFinalResponse(executed, {
+    message,
+    context: getContextForToolPlan(contextState || {}),
+  });
+
+  if (evRequested) {
+    const currentTitle = cleanText(normalized.title || normalized.data?.title || "Best SUV cars under budget");
+    const electricTitle = /electric|\bev\b/i.test(currentTitle)
+      ? currentTitle
+      : currentTitle.replace(/^Best\s+/i, "Best Electric ");
+
+    normalized.title = electricTitle;
+
+    const currentAnswer = cleanText(normalized.answer || "");
+    normalized.answer = /electric|\bev\b/i.test(currentAnswer)
+      ? currentAnswer
+      : /^I found\s+(\d+)\s+/i.test(currentAnswer)
+        ? currentAnswer.replace(/^I found\s+(\d+)\s+/i, "I found $1 electric ")
+        : `For electric SUV under budget: ${currentAnswer}`;
+
+    if (normalized.data && typeof normalized.data === "object") {
+      normalized.data.title = normalized.title;
+      normalized.data.answer = normalized.answer;
+      normalized.data.requestedFuelType = "electric";
+      normalized.data.requestedFuelKey = "ev";
+    }
+  }
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "",
+    usedGemini: false,
+    primaryTask: "vehicle_recommendation",
+    tool: "vehicle_recommend",
+    planMode: "single_tool",
+    contextIsolation: "broad_discovery_without_model",
+    originalMessage: originalMessage || message,
+    effectiveMessage: effectiveMessage || message,
+    routingReason: discovery.reason,
+  };
+
+  const composed = composeAciAnswer({
+    ...normalized,
+    intent: normalized.intent || "vehicle_recommendation",
+    aciCoreBridge: bridge,
+    meta: {
+      ...(normalized.meta || {}),
+      aciCoreBridge: bridge,
+    },
+  });
+
+  if (evRequested) {
+    const title = cleanText(composed.title || composed.data?.title || normalized.title || "");
+    const answer = cleanText(composed.answer || normalized.answer || "");
+
+    if (title && !/electric|\\bev\\b/i.test(title)) {
+      composed.title = title.replace(/^Best\\s+/i, "Best Electric ");
+    }
+
+    if (answer && !/electric|\bev\b/i.test(answer)) {
+      const withElectricScope = answer
+        .replace(/suv models/i, "electric SUV models")
+        .replace(/suv cars/i, "electric SUV cars")
+        .replace(/models under/i, "electric SUV models under");
+
+      composed.answer = /electric|\bev\b/i.test(withElectricScope)
+        ? withElectricScope
+        : `For electric SUV under budget: ${answer}`;
+    }
+
+    if (composed.answer) {
+      composed.answer = String(composed.answer)
+        .replace(/electric\s+suv\s+electric\s+suv\s+models/ig, "electric SUV models")
+        .replace(/electric\s+suv\s+electric\s+suv\s+cars/ig, "electric SUV cars");
+    }
+
+    if (composed.data && typeof composed.data === "object") {
+      composed.data.title = composed.title || title;
+      composed.data.answer = composed.answer || answer;
+      composed.data.requestedFuelType = "electric";
+      composed.data.requestedFuelKey = "ev";
+      composed.data.requestedBodyType = "suv";
+    }
+  }
+
+  return composed;
+};
+
+const maybeReturnBatch4ExplainerFastPath = async ({
+  message = "",
+  context = {},
+  originalMessage = "",
+  effectiveMessage = "",
+  startedAt = 0,
+} = {}) => {
+  const pending = detectBatch4PendingModuleRequest(effectiveMessage || message);
+  if (pending) {
+    return await buildBatch4ExplainerFastPathResponse({
+      message,
+      originalMessage,
+      effectiveMessage,
+      context,
+      startedAt,
+      kind: "pending_module",
+      unavailableReason: pending.unavailableReason,
+      topic: pending.topic,
+    });
+  }
+
+  const fuelAdvice = detectBatch4FuelAdviceRequest(effectiveMessage || message);
+  if (fuelAdvice) {
+    return await buildBatch4ExplainerFastPathResponse({
+      message,
+      originalMessage,
+      effectiveMessage,
+      context,
+      startedAt,
+      kind: "fuel_advice",
+    });
+  }
+
+  return null;
 };
 
 const hasBroadVehicleLanguage = (message = "") =>
@@ -1972,6 +2610,45 @@ export const runAciCoreLiveBridge = async ({
 
   if (unsupportedCityFastPath) {
     return unsupportedCityFastPath;
+  }
+
+  const batch4BareClarificationFastPath = maybeReturnBatch4BareClarificationFastPath({
+    message,
+    originalMessage,
+    effectiveMessage,
+    startedAt,
+  });
+
+  if (batch4BareClarificationFastPath) {
+    return batch4BareClarificationFastPath;
+  }
+
+  const batch4ExplainerFastPath = await maybeReturnBatch4ExplainerFastPath({
+    message,
+    context,
+    originalMessage,
+    effectiveMessage,
+    startedAt,
+  });
+
+  if (batch4ExplainerFastPath) {
+    return batch4ExplainerFastPath;
+  }
+
+  const batch4BroadDiscoveryFastPath = await maybeReturnBatch4BroadDiscoveryFastPath({
+    message,
+    context,
+    contextState: context?.contextState || context?.aciContextState || {},
+    user,
+    session,
+    meta,
+    originalMessage,
+    effectiveMessage,
+    startedAt,
+  });
+
+  if (batch4BroadDiscoveryFastPath) {
+    return batch4BroadDiscoveryFastPath;
   }
 
   const supportedExactPriceFastPath = await maybeReturnSupportedExactPriceFastPath({

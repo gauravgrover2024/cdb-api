@@ -674,18 +674,75 @@ const rawCases = [
   honestyCase(146, "compare these"),
   honestyCase(147, "best car"),
   honestyCase(148, "recommend me a car"),
-  honestyCase(149, "car under 20 lakh automatic"),
-  honestyCase(150, "electric suv under 25 lakh"),
+  honestyCase(149, "car under 20 lakh automatic", {
+    expectedTool: "vehicle_recommend",
+    forbiddenTools: ["clarification", "vehicle_score_insight", "vehicle_pricelist"],
+    expectedRowsMin: 1,
+    expectedModelCountMin: 1,
+    forbiddenAnswerAny: ["What would you like to check about the car", "Need one detail"],
+  }),
+  honestyCase(150, "electric suv under 25 lakh", {
+    expectedTool: "vehicle_recommend",
+    forbiddenTools: ["clarification", "vehicle_score_insight", "vehicle_pricelist"],
+    expectedRowsMin: 1,
+    expectedModelCountMin: 1,
+    requiredAnswerAny: ["electric", "EV"],
+    forbiddenAnswerAny: ["What would you like to check about the car", "Need one detail"],
+    customAssert: ({ body }) => {
+      const blob = JSON.stringify(body || {});
+      assert(/electric|\bev\b/i.test(blob), "electric SUV query must preserve electric/EV scope in answer/data");
+      assert(/suv/i.test(blob), "electric SUV query must preserve SUV scope in answer/data");
+    },
+  }),
   honestyCase(151, "cars with sunroof under 15 lakh"),
   honestyCase(152, "safest car under 20 lakh"),
-  honestyCase(153, "family car under 15 lakh"),
-  honestyCase(154, "I drive 100 km daily, what fuel should I choose"),
-  honestyCase(155, "should I buy petrol or diesel"),
-  honestyCase(156, "is diesel worth it now"),
+  honestyCase(153, "family car under 15 lakh", {
+    expectedTool: "vehicle_recommend",
+    forbiddenTools: ["clarification", "vehicle_score_insight", "vehicle_pricelist"],
+    expectedRowsMin: 1,
+    expectedModelCountMin: 1,
+    forbiddenAnswerAny: ["What would you like to check about the car", "Need one detail"],
+  }),
+  honestyCase(154, "I drive 100 km daily, what fuel should I choose", {
+    expectedTool: "vehicle_explainer",
+    forbiddenTools: ["vehicle_score_insight", "vehicle_pricelist"],
+    requiredAnswerAny: ["fuel", "petrol", "diesel", "cng", "ev", "daily", "running"],
+    forbiddenAnswerAny: ["What would you like to check about the car", "Need one detail", "value diagnostics"],
+  }),
+  honestyCase(155, "should I buy petrol or diesel", {
+    expectedTool: "vehicle_explainer",
+    forbiddenTools: ["vehicle_score_insight", "vehicle_pricelist"],
+    requiredAnswerAny: ["petrol", "diesel", "running", "usage", "fuel"],
+    forbiddenAnswerAny: ["Alto Tour", "value diagnostics"],
+  }),
+  honestyCase(156, "is diesel worth it now", {
+    expectedTool: "vehicle_explainer",
+    forbiddenTools: ["vehicle_score_insight", "vehicle_pricelist"],
+    requiredAnswerAny: ["diesel", "running", "usage", "worth", "fuel"],
+    forbiddenAnswerAny: ["Gurkha", "value diagnostics"],
+  }),
   honestyCase(157, "should I wait for discount"),
   honestyCase(158, "are there offers on Creta"),
-  honestyCase(159, "service cost of Creta"),
-  honestyCase(160, "insurance price for Creta"),
+  honestyCase(159, "service cost of Creta", {
+    expectedTool: "vehicle_explainer",
+    expectedIntent: "unavailable",
+    forbiddenTools: ["vehicle_pricelist", "vehicle_score_insight"],
+    forbiddenCanvasTypes: ["pricelist_canvas", "price_breakup_canvas"],
+    expectedModels: ["Creta"],
+    requiredAnswerAll: ["Creta", "service"],
+    requiredAnswerAny: ["not available", "do not have", "yet"],
+
+    forbiddenAnswerAny: ["Creta Electric"],  }),
+  honestyCase(160, "insurance price for Creta", {
+    expectedTool: "vehicle_explainer",
+    expectedIntent: "unavailable",
+    forbiddenTools: ["vehicle_pricelist", "vehicle_score_insight"],
+    forbiddenCanvasTypes: ["pricelist_canvas", "price_breakup_canvas"],
+    expectedModels: ["Creta"],
+    requiredAnswerAll: ["Creta", "insurance"],
+    requiredAnswerAny: ["not available", "do not have", "yet"],
+
+    forbiddenAnswerAny: ["Creta Electric"],  }),
 
   priceCase(161, "creta ka price delhi", "Creta"),
   featureCase(162, "seltos me sunroof hai kya", "Seltos", "sunroof"),
