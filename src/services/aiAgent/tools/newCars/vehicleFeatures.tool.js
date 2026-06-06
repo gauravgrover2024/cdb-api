@@ -556,7 +556,7 @@ const getVariantCandidates = ({
   if (cleanModel && cleanMessage) {
     const withoutModel = cleanMessage
       .replace(new RegExp(`\\b${escapeRegExp(cleanModel)}\\b`, "ig"), " ")
-      .replace(/\b(show|all|features|feature|does|have|with|of|in|available|which|variant|variants|compare|vs|and|price|colors|colours|open|overview|on road|on-road)\b/gi, " ")
+      .replace(/\b(show|all|features|feature|does|have|with|of|in|available|which|variant|variants|compare|vs|and|price|colors|colours|open|overview|on road|on-road|this|it|its|same|current|selected|tell|me|safety|lose|lost|miss|missing|what|do|i)\b/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
 
@@ -763,6 +763,30 @@ const getReadableFeatureValue = ({ featureLabel = "", rows = [] } = {}) => {
   return feature;
 };
 
+const getFeatureDisplayName = (row = {}) =>
+  normalizeCustomerCopy(
+    firstText(
+      row.displayName,
+      row.feature,
+      row.featureName,
+      row.label,
+      row.name,
+      row.title,
+    ),
+  );
+
+const summarizeFeatureNames = (features = [], limit = 6) => {
+  const names = [
+    ...new Set(asArray(features).map(getFeatureDisplayName).filter(Boolean)),
+  ];
+
+  if (!names.length) return "";
+
+  const shown = names.slice(0, limit);
+  const extra = names.length > shown.length ? ` +${names.length - shown.length} more` : "";
+  return `${shown.join(", ")}${extra}`;
+};
+
 const getFeatureLabelForAnswer = ({ result = {}, data = {}, userMessage = "" } = {}) =>
   normalizeCustomerCopy(
     firstText(
@@ -797,6 +821,36 @@ const buildCustomerFeatureAnswer = ({
     availableRows.length + unavailableRows.length + conflictedRows.length || rows.length;
   const isFeatureSummaryQuery = /\bfeatures?\b/i.test(userMessage || "") && !/\b(?:sunroof|airbags?|adas|camera|ventilated|rear\s+ac|tpms|isofix|cruise)\b/i.test(userMessage || "");
   const isSafetyFeatureQuery = /\bsafety\s+features?\b/i.test(userMessage || "");
+  const isFeatureExplorer =
+    result.intent === "vehicle_model_features_explorer" ||
+    result.canvasType === "features_explorer_canvas";
+  const isModelLevelFeatureSummary = isFeatureExplorer && !variant;
+
+  if (isFeatureExplorer && (isFeatureSummaryQuery || isSafetyFeatureQuery)) {
+    const evidenceCount = featureRows.length || groups.reduce((sum, group = {}) => {
+      if (Array.isArray(group.features)) return sum + group.features.length;
+      if (Number.isFinite(Number(group.count))) return sum + Number(group.count);
+      return sum;
+    }, 0);
+    const sample = summarizeFeatureNames(featureRows);
+
+    if (evidenceCount > 0) {
+      const scope = isSafetyFeatureQuery ? "safety features" : "features";
+      const exampleScope = isSafetyFeatureQuery ? "safety feature" : "feature";
+      const prefix = isModelLevelFeatureSummary
+        ? `Here are indexed ${exampleScope} examples across ${target} variants`
+        : isSafetyFeatureQuery
+          ? `Here are ${target}'s safety features`
+          : `Here are ${target}'s available features`;
+      const suffix = sample ? `: ${sample}.` : ` — ${evidenceCount} indexed ${scope}.`;
+      const limitation = /lose|lost|miss|missing|without/i.test(userMessage || "")
+        ? " I can show the indexed feature rows, but this view does not yet calculate a complete upgrade-loss ladder."
+        : isModelLevelFeatureSummary
+          ? " Features vary by variant."
+          : " Equipment can differ by fuel/transmission sub-variant.";
+      return `${prefix}${suffix}${limitation}`;
+    }
+  }
 
   if (
     isFeatureSummaryQuery &&
@@ -1031,10 +1085,14 @@ const toPublicResponse = async ({
   const data = result.data || {};
   const inactiveVariant = isInactiveVariantResult(result);
   const modelLevelExplorer = isExplicitModelLevelFeatureExplorerQuery(userMessage);
+  const modelLevelFeatureSummary =
+    result.intent === "vehicle_model_features_explorer" &&
+    !cleanText(variant) &&
+    /\bfeatures?\b/i.test(userMessage || "");
 
   const responseModel = firstText(data.model, result.model, model);
   const responseVariant =
-    inactiveVariant || modelLevelExplorer
+    inactiveVariant || modelLevelExplorer || modelLevelFeatureSummary
       ? ""
       : firstText(
           data.variant,
@@ -1083,7 +1141,7 @@ const toPublicResponse = async ({
     responseImageFrame = responseImageFrame || selectedVisual?.imageFrame || null;
   }
 
-  if (modelLevelExplorer) {
+  if (modelLevelExplorer || modelLevelFeatureSummary) {
     data.selectedVariant = "";
     data.selectedVariantKey = "";
     data.requestedVariant = "";
@@ -1140,7 +1198,10 @@ const toPublicResponse = async ({
     vehicle: selectedVehicle,
     model: selectedVehicle.model,
     variant: selectedVehicle.variant,
-    selectedVariant: inactiveVariant || modelLevelExplorer ? null : data.selectedVariant || null,
+    selectedVariant:
+      inactiveVariant || modelLevelExplorer || modelLevelFeatureSummary
+        ? null
+        : data.selectedVariant || null,
     variants: data.variants || data.variantOptions || [],
     variantOptions: data.variantOptions || data.variants || [],
     features: data.features || [],
@@ -1171,7 +1232,10 @@ const toPublicResponse = async ({
     rows: data.rows || [],
     features: data.features || [],
     variants: data.variants || data.variantOptions || [],
-    selectedVariant: inactiveVariant || modelLevelExplorer ? null : data.selectedVariant || null,
+    selectedVariant:
+      inactiveVariant || modelLevelExplorer || modelLevelFeatureSummary
+        ? null
+        : data.selectedVariant || null,
     leadingQuestions,
     conversationSuggestions: leadingQuestions,
     data,
@@ -1281,6 +1345,17 @@ export const runVehicleFeaturesTool = async (args = {
   const model = getModel({ toolPlan, context, userMessage });
   const city = getCity({ toolPlan, context });
   const feature = getFeature({ toolPlan, userMessage });
+  const normalizedFeature = normalizeText(feature);
+  const featureIsSummaryTopic =
+    !normalizedFeature ||
+    [
+      "feature",
+      "features",
+      "feature summary",
+      "features summary",
+      "safety",
+      "safety features",
+    ].includes(normalizedFeature);
   const variants = getVariantCandidates({
     toolPlan,
     context,
@@ -1291,10 +1366,15 @@ export const runVehicleFeaturesTool = async (args = {
     /\b(this|it|its|same|current|selected)\b/i.test(userMessage || "") &&
     /\bfeatures?\b/i.test(userMessage || "");
   const safetyFeatureSummary = /\bsafety\s+features?\b/i.test(userMessage || "");
-  const requestedVariant =
-    contextFeatureSummary || safetyFeatureSummary
-      ? ""
-      : variants[0] || "";
+  const genericFeatureSummary =
+    /\bfeatures?\b/i.test(userMessage || "") &&
+    featureIsSummaryTopic &&
+    !wantsComparison({ intent, userMessage, toolPlan });
+  const featureLossSummary =
+    /\bfeatures?\b/i.test(userMessage || "") &&
+    /\b(lose|lost|miss|missing)\b/i.test(userMessage || "") &&
+    !wantsComparison({ intent, userMessage, toolPlan });
+  const requestedVariant = variants[0] || "";
 
   if (!model) {
     return buildUnavailableResponse({
@@ -1320,7 +1400,10 @@ export const runVehicleFeaturesTool = async (args = {
     normalizedIntent.includes("vehicle model features explorer") ||
     normalizedIntent.includes("vehicle features explorer") ||
     normalizedIntent.includes("features explorer canvas") ||
-    explicitExplorerMessage;
+    explicitExplorerMessage ||
+    safetyFeatureSummary ||
+    genericFeatureSummary ||
+    featureLossSummary;
 
   if (wantsExplorer) {
     result = await getModelFeatureExplorerV2({
@@ -1362,7 +1445,7 @@ export const runVehicleFeaturesTool = async (args = {
   }
 
   return await toPublicResponse({
-    result: isFeatureExplorerIntent(toolPlan) && requestedCategory.key
+    result: result?.intent === "vehicle_model_features_explorer" && requestedCategory.key
       ? filterFeatureExplorerByCategory({
           result,
           categoryKey: requestedCategory.key,

@@ -876,13 +876,24 @@ export const getModelFeatureExplorerV2 = async ({
     };
   }
 
-  const query = buildVariantMatchQuery({
+  const baseQuery = getActiveVariantQuery({
     modelKey: resolvedModel.modelKey,
-    variant,
     includeArchived,
   });
+  const variantNorm = slug(variant);
+  const exactVariantQuery = variant
+    ? {
+        ...baseQuery,
+        $or: [
+          { variantKey: variantNorm },
+          { variant: new RegExp(`^${escapeRegExp(variant)}$`, "i") },
+        ],
+      }
+    : null;
 
-  const rawVariants = await db
+  const query = exactVariantQuery || baseQuery;
+
+  let rawVariants = await db
     .collection(MATRIX_COLLECTION)
     .find(query)
     .project({
@@ -903,6 +914,35 @@ export const getModelFeatureExplorerV2 = async ({
       featuresByKey: 1,
     })
     .toArray();
+
+  if (variant && !rawVariants.length) {
+    rawVariants = await db
+      .collection(MATRIX_COLLECTION)
+      .find(buildVariantMatchQuery({
+        modelKey: resolvedModel.modelKey,
+        variant,
+        includeArchived,
+      }))
+      .project({
+        brand: 1,
+        model: 1,
+        variant: 1,
+        variantKey: 1,
+        variantFull: 1,
+        lifecycleStatus: 1,
+        activeForFeatureExplorer: 1,
+        priceMin: 1,
+        priceMax: 1,
+        activePricelistMatched: 1,
+        fuels: 1,
+        transmissions: 1,
+        imageUrl: 1,
+        featureGroups: 1,
+        featuresByKey: 1,
+      })
+      .limit(12)
+      .toArray();
+  }
 
   const variants = sortVariantRows(rawVariants);
 
