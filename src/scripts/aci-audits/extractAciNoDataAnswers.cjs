@@ -39,20 +39,6 @@ const compactRow = (entry = {}) => ({
   answerPreview: entry.answerPreview || entry.response?.answerPreview || "",
 });
 
-const dbEvidenceCount = (dbEvidence = {}) => {
-  if (!dbEvidence || typeof dbEvidence !== "object") return 0;
-
-  return [
-    "priceRows",
-    "colorRows",
-    "featureRows",
-    "specRows",
-    "scoreRows",
-    "rows",
-    "count",
-  ].reduce((total, key) => total + (Number(dbEvidence[key] || 0) || 0), 0);
-};
-
 const findLatestAuditLog = () => {
   let entries = [];
 
@@ -103,7 +89,6 @@ const classifyNoDataAnswer = (entry = {}) => {
   const title = text(entry.title || entry.response?.title).toLowerCase();
   const tool = text(entry.tool || entry.response?.tool).toLowerCase();
   const blob = `${message} ${answer} ${title} ${tool}`;
-  const evidenceCount = dbEvidenceCount(entry.dbEvidence);
 
   if (
     /\b(mumbai|bangalore|bengaluru|jaipur)\b/.test(blob) &&
@@ -119,14 +104,28 @@ const classifyNoDataAnswer = (entry = {}) => {
     return "expectedPendingModule";
   }
 
-  if (entry.noDataSuspicion === "false_negative_possible" || evidenceCount > 0) {
-    return "likelyAuditEvidenceGap";
+  if (tool === "vehicle_compare") {
+    return "likelyComparisonEvidenceGap";
   }
 
   if (
-    /\b(no confirmed|could not find|not showing|not available|not have|do not have|don't have|without matching data|not indexed)\b/.test(blob)
+    tool === "vehicle_colors" &&
+    /\bexact\b.*\b(?:color|colour|shade)\b.*\bnot found|could not find an exact\b.*\b(?:color|colour|shade)\b/.test(blob) &&
+    /\bavailable colors include|available colours include\b/.test(blob)
   ) {
-    return "likelyRealDataGap";
+    return "validNegativeResult";
+  }
+
+  if (tool === "vehicle_feature_lookup") {
+    return "likelyFeatureReadModelGap";
+  }
+
+  if (tool === "vehicle_spec_attribute_lookup") {
+    return "likelySpecReadModelGap";
+  }
+
+  if (tool === "vehicle_score_insight") {
+    return "likelyScoreDataGap";
   }
 
   return "needsManualReview";
@@ -136,8 +135,11 @@ const bucketNoDataAnswers = (noDataAnswers = []) => {
   const buckets = {
     expectedUnsupportedCity: [],
     expectedPendingModule: [],
-    likelyAuditEvidenceGap: [],
-    likelyRealDataGap: [],
+    validNegativeResult: [],
+    likelyComparisonEvidenceGap: [],
+    likelyFeatureReadModelGap: [],
+    likelySpecReadModelGap: [],
+    likelyScoreDataGap: [],
     needsManualReview: [],
   };
 
