@@ -1200,7 +1200,7 @@ const buildModelScoreSummaryLine = (result = {}, params = {}) => {
     summaryParts.push(`Watchouts: ${watchouts.join("; ")}.`);
   }
 
-  summaryParts.push("This is still diagnostic score insight, not a final recommendation.");
+  summaryParts.push("This is diagnostic-only module scoring, not a final recommendation.");
 
   return summaryParts.join(" ");
 };

@@ -1032,12 +1032,18 @@ const detectCrossModelScoreDiagnosticRequest = ({ message = "", candidateSnapsho
 
   const hasComparison =
     hasComparisonLanguage(raw) ||
-    /\b(vs|v\/s|versus|compare|comparison|against)\b/i.test(raw);
+    /\b(vs|v\/s|versus|compare|comparison|against|between| or | and )\b/i.test(raw);
 
   const hasScoreLanguage =
     /\b(score|scores|scoring|overall|diagnostic|which\s+scores?\s+better|scores?\s+better|better\s+overall)\b/i.test(raw);
 
   if (!hasComparison || !hasScoreLanguage) return null;
+
+  const isSpuriousScoreModuleModelKey = (modelKey = "") => {
+    if (modelKey !== "city") return false;
+    if (!/\bcity\s+score\b|\bcity\s+use\b|\bfor\s+city\b/i.test(raw)) return false;
+    return !/\bhonda\s+city\b|\bcity\s+(?:vs|v\/s|versus|and|or)\b|\b(?:vs|v\/s|versus|and|or)\s+city\b/i.test(raw);
+  };
 
   const modelKeys = asArray(candidateSnapshot?.vehicles?.models)
     .map((item = {}) =>
@@ -1051,9 +1057,26 @@ const detectCrossModelScoreDiagnosticRequest = ({ message = "", candidateSnapsho
       ""
     )
     .map((key) => normalizeFastPathSlug(key))
-    .filter(Boolean);
+    .filter((key) => key && !isSpuriousScoreModuleModelKey(key));
 
-  const uniqueModelKeys = [...new Set(modelKeys)].slice(0, 2);
+  const contextVehicle = getSelectedVehicleFromContext(
+    candidateSnapshot?.activeContext ||
+      candidateSnapshot?.context ||
+      {},
+  );
+  const contextModelKey = normalizeFastPathSlug(
+    contextVehicle.shortModelKey ||
+      contextVehicle.modelKey ||
+      contextVehicle.model ||
+      contextVehicle.fullModel ||
+      "",
+  );
+  const uniqueModelKeys = [
+    ...new Set([
+      ...(hasContextReference(raw) && contextModelKey ? [contextModelKey] : []),
+      ...modelKeys,
+    ]),
+  ].slice(0, 2);
   if (uniqueModelKeys.length < 2) return null;
 
   const fuelKey =
@@ -1293,7 +1316,7 @@ const isExplicitScoreValueLookupRequest = (message = "", primaryTask = "") => {
 
 const isDirectScoreInsightRequest = (message = "") =>
   /\b(score|scores|how good|overall|good|value|worth|value for money|good value)\b/i.test(message) &&
-  !/\b(vs|v\/s|versus|compare|comparison|between|against|which one|better between)\b/i.test(message);
+  !/\b(vs|v\/s|versus|compare|comparison|between|against|which one|better between|which\s+has\s+better|scores?\s+better| or | and )\b/i.test(message);
 
 const normalizeVariantIdentityText = (value = "") =>
   String(value || "")
@@ -1381,6 +1404,10 @@ const maybeReturnDirectScoreInsightFastPath = async ({
     rawVariantToken &&
     rawVariantToken.length >= 2 &&
     new RegExp(`(^|\\s)${rawVariantToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`).test(normalizedMessage);
+  const hasContextVariant =
+    !explicitScorpioN &&
+    /\b(this|it|its|same|current|selected)\b/i.test(message) &&
+    Boolean(stateVehicle.variantKey || stateVehicle.variant || stateVehicle.variantName);
   const candidateVehicle = hasExplicitVariant
     ? {
         ...modelCandidate,
@@ -1415,7 +1442,7 @@ const maybeReturnDirectScoreInsightFastPath = async ({
   if (!modelKey) return null;
 
   const asksValue = /\b(value|worth|value for money|good value)\b/i.test(message);
-  const operation = hasExplicitVariant
+  const operation = hasExplicitVariant || hasContextVariant
     ? "variant_score_insight"
     : asksValue
       ? "same_family_value_insights"
@@ -1426,7 +1453,7 @@ const maybeReturnDirectScoreInsightFastPath = async ({
     modelKey,
     makeKey: vehicle.makeKey || vehicle.make || vehicle.brand || "",
     fullModel: vehicle.fullModel || vehicle.model || modelKey,
-    ...(hasExplicitVariant ? {
+    ...(hasExplicitVariant || hasContextVariant ? {
       variantKey: vehicle.variantKey || vehicle.variant || vehicle.variantName || "",
       variant: vehicle.variant || vehicle.variantName || "",
       variantName: vehicle.variantName || vehicle.variant || "",
@@ -1754,6 +1781,79 @@ export const runAciCoreLiveBridge = async ({
     candidateSnapshot: managedCandidateSnapshot,
   });
   const isolatedContext = getContextForToolPlan(contextState);
+
+  const crossModelScoreDiagnosticFastPath = detectCrossModelScoreDiagnosticRequest({
+    message,
+    candidateSnapshot: {
+      ...managedCandidateSnapshot,
+      activeContext: isolatedContext,
+    },
+  });
+
+  if (crossModelScoreDiagnosticFastPath) {
+    const crossPlan = applyCrossModelScoreDiagnosticPlanOverride({
+      plan: {
+        intent: "vehicle_score_insight",
+        mode: "single_tool",
+        conversationMode: "diagnostic",
+        tools: [
+          {
+            tool: "vehicle_score_insight",
+            output: {
+              canvasType: "score_insight_canvas",
+              inlineType: "score_insight_summary",
+            },
+          },
+        ],
+      },
+      override: crossModelScoreDiagnosticFastPath,
+    });
+
+    const executed = await executeAciPlannerPlan({
+      plan: crossPlan,
+      userMessage: message,
+      context: isolatedContext,
+      user,
+      session,
+      meta,
+    });
+
+    const normalized = await normalizeAciFinalResponse(executed, {
+      message,
+      context: isolatedContext,
+    });
+
+    const bridge = {
+      enabled: true,
+      durationMs: Date.now() - startedAt,
+      selectedParser: "",
+      usedGemini: false,
+      primaryTask: "score_insight",
+      tool: "vehicle_score_insight",
+      planMode: "single_tool",
+      contextIsolation: "cross_model_score_diagnostic_fast_path",
+      originalMessage,
+      effectiveMessage: message,
+      operation: "cross_model_score_diagnostic",
+      routingReason: crossModelScoreDiagnosticFastPath.routingReason,
+      crossModelScoreDiagnosticTargets: crossModelScoreDiagnosticFastPath.targets,
+    };
+
+    return composeAciAnswer({
+      ...normalized,
+      answer: ensureDiagnosticOnlyAnswerNote(normalized.answer),
+      operation: "cross_model_score_diagnostic",
+      data: {
+        ...(normalized.data || {}),
+        operation: "cross_model_score_diagnostic",
+      },
+      aciCoreBridge: bridge,
+      meta: {
+        ...(normalized.meta || {}),
+        aciCoreBridge: bridge,
+      },
+    });
+  }
 
   const directScoreInsightFastPath = await maybeReturnDirectScoreInsightFastPath({
     message,

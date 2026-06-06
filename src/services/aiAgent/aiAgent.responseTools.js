@@ -2501,16 +2501,54 @@ export const buildVehicleScoreInsightResponse = ({
 
   const guardrailText =
     "These are diagnostic module scores, not a final recommendation.";
+  const isCrossModelScoreDiagnostic =
+    operation === "cross_model_score_diagnostic" ||
+    data.diagnosticType === "cross_model_score_diagnostic";
+  const modelSummaries = asArray(
+    data.modelSummaries ||
+      data.models ||
+      runtimeData.modelSummaries ||
+      runtimeData.models ||
+      data.rows ||
+      runtimeData.rows,
+  );
+  const moduleComparisons = asArray(
+    data.moduleComparisons ||
+      runtimeData.moduleComparisons ||
+      data.scoreComparison?.moduleComparisons ||
+      runtimeData.scoreComparison?.moduleComparisons,
+  );
+  const responseRows = isCrossModelScoreDiagnostic
+    ? modelSummaries
+    : (runtimeData.rows || data.variants || []);
 
   return {
     intent: runtimeData.intent || toolPlan.tool || "vehicle_score_insight",
     displayMode: "canvas",
     canvasType: "score_insight_canvas",
     inlineType: "score_insight_summary",
+    operation,
+    diagnosticType: isCrossModelScoreDiagnostic ? "cross_model_score_diagnostic" : data.diagnosticType,
     title: scoreTitle,
     answer: `${baseAnswer} ${guardrailText}`,
     data,
-    rows: runtimeData.rows || data.variants || [],
+    rows: responseRows,
+    ...(isCrossModelScoreDiagnostic
+      ? {
+          models: modelSummaries,
+          modelSummaries,
+          moduleComparisons,
+          scoreComparison: {
+            diagnosticType: "cross_model_score_diagnostic",
+            models: modelSummaries,
+            modelSummaries,
+            moduleComparisons,
+          },
+          modelCount: modelSummaries.length,
+          rowsCount: responseRows.length,
+          moduleComparisonCount: moduleComparisons.length,
+        }
+      : {}),
     variants: data.variants || runtimeData.variants || [],
     usageGuardrail,
     actions: runtimeData.actions || [],

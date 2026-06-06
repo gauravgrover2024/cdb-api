@@ -99,7 +99,9 @@ const getIntent = (body = {}) =>
 
 const getOperation = (body = {}) =>
   body.operation ||
+  body.diagnosticType ||
   body.data?.operation ||
+  body.data?.diagnosticType ||
   body.meta?.scoreInsightOperation ||
   body.meta?.aciCoreBridge?.operation ||
   body.aciCoreBridge?.operation ||
@@ -116,6 +118,10 @@ const getRows = (body = {}) => {
   const direct =
     body.rows ||
     body.data?.rows ||
+    body.modelSummaries ||
+    body.data?.modelSummaries ||
+    body.scoreComparison?.modelSummaries ||
+    body.data?.scoreComparison?.modelSummaries ||
     body.variants ||
     body.data?.variants ||
     body.items ||
@@ -128,20 +134,37 @@ const getRows = (body = {}) => {
 };
 
 const countUniqueModels = (body = {}) => {
+  if (Number.isFinite(Number(body.modelCount))) return Number(body.modelCount);
+  if (Number.isFinite(Number(body.data?.modelCount))) return Number(body.data.modelCount);
   const rows = getRows(body);
   const names = new Set();
   rows.forEach((row = {}) => {
-    const label = row.fullModel || row.modelName || row.model || row.displayName || "";
+    const label = row.fullModel || row.modelName || row.model || row.displayName || row.label || row.modelKey || "";
     if (label) names.add(lower(label));
   });
-  asArray(body.models || body.data?.models || body.comparison?.models).forEach((model = {}) => {
-    const label = model.fullModel || model.model || model.name || "";
+  asArray(
+    body.models ||
+      body.modelSummaries ||
+      body.data?.models ||
+      body.data?.modelSummaries ||
+      body.comparison?.models ||
+      body.scoreComparison?.models ||
+      body.scoreComparison?.modelSummaries ||
+      body.data?.scoreComparison?.models ||
+      body.data?.scoreComparison?.modelSummaries,
+  ).forEach((model = {}) => {
+    const label = model.fullModel || model.model || model.name || model.label || model.modelKey || "";
     if (label) names.add(lower(label));
   });
   return names.size;
 };
 
 const countModuleComparisons = (body = {}) =>
+  Number.isFinite(Number(body.moduleComparisonCount))
+    ? Number(body.moduleComparisonCount)
+    : Number.isFinite(Number(body.data?.moduleComparisonCount))
+      ? Number(body.data.moduleComparisonCount)
+      :
   asArray(
     body.moduleComparisons ||
       body.data?.moduleComparisons ||
