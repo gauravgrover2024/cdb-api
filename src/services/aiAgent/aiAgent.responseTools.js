@@ -339,6 +339,111 @@ const getOnRoadLabel = (row = {}) =>
     ],
   );
 
+const COLOR_FAMILY_DEFS = [
+  { key: "dual tone", label: "dual tone", aliases: ["dual tone", "dual-tone", "dualtone", "dual"] },
+  { key: "black", label: "black", aliases: ["black"] },
+  { key: "white", label: "white", aliases: ["white"] },
+  { key: "red", label: "red", aliases: ["red"] },
+  { key: "blue", label: "blue", aliases: ["blue"] },
+  { key: "grey", label: "grey", aliases: ["grey", "gray"] },
+  { key: "silver", label: "silver", aliases: ["silver"] },
+  { key: "green", label: "green", aliases: ["green"] },
+  { key: "brown", label: "brown", aliases: ["brown"] },
+  { key: "orange", label: "orange", aliases: ["orange"] },
+  { key: "yellow", label: "yellow", aliases: ["yellow"] },
+  { key: "gold", label: "gold", aliases: ["gold", "golden"] },
+];
+
+const normalizedColorText = (value = "") =>
+  searchKey(value).replace(/\bgray\b/g, "grey");
+
+const colorNameFromRow = (row = {}) =>
+  cleanText(
+    firstMeaningful(
+      row.colorName,
+      row.color_name,
+      row.color,
+      row.colour,
+      row.name,
+      row.displayName,
+      row.title,
+    ),
+  );
+
+const detectRequestedColorFamily = ({ userMessage = "", toolPlan = {}, context = {} } = {}) => {
+  const text = normalizedColorText(
+    [
+      userMessage,
+      toolPlan.entities?.color,
+      toolPlan.filters?.color,
+      context?.selectedColor?.colorName,
+      context?.selectedColor?.name,
+      context?.anchorColor,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+
+  if (!text) return null;
+
+  return COLOR_FAMILY_DEFS.find((family) =>
+    family.aliases.some((alias) =>
+      new RegExp(`(^|\\s)${searchKey(alias).replace(/\s+/g, "\\s+")}(\\s|$)`, "i").test(text),
+    ),
+  ) || null;
+};
+
+const colorMatchesFamily = (row = {}, family = null) => {
+  if (!family) return false;
+  const name = normalizedColorText(colorNameFromRow(row));
+  if (!name) return false;
+
+  if (family.key === "dual tone") {
+    return /\bdual\s*tone\b|\bdual\b|\btwo\s*tone\b|\bdt\b/.test(name);
+  }
+
+  return family.aliases.some((alias) =>
+    new RegExp(`(^|\\s)${normalizedColorText(alias).replace(/\s+/g, "\\s+")}(\\s|$)`, "i").test(name),
+  );
+};
+
+const buildRequestedColorAnswer = ({
+  colors = [],
+  requestedFamily = null,
+  vehicleLabel = "",
+  fallbackAnswer = "",
+} = {}) => {
+  if (!requestedFamily) return cleanText(fallbackAnswer);
+
+  const colorRows = asArray(colors);
+  if (!colorRows.length) return cleanText(fallbackAnswer);
+
+  const matchingNames = uniqueBy(
+    colorRows
+      .filter((row) => colorMatchesFamily(row, requestedFamily))
+      .map(colorNameFromRow)
+      .filter(Boolean),
+    (name) => name,
+  );
+
+  const availableNames = uniqueBy(
+    colorRows.map(colorNameFromRow).filter(Boolean),
+    (name) => name,
+  ).slice(0, 6);
+  const label = requestedFamily.label;
+  const carLabel = cleanText(vehicleLabel) || "this model";
+
+  if (matchingNames.length) {
+    return `Yes, ${carLabel} has ${label} shade(s): ${matchingNames.join(", ")}.`;
+  }
+
+  if (availableNames.length) {
+    return `I could not find an exact ${label} shade for ${carLabel} in the current color data. Available colors include ${availableNames.join(", ")}.`;
+  }
+
+  return cleanText(fallbackAnswer);
+};
+
 const getPriceRange = (rows = [], keys = [], labelFor = () => "") => {
   const pricedRows = asArray(rows)
     .map((row) => ({
@@ -1048,6 +1153,7 @@ export const buildVehicleColorsResponse = ({
   toolPlan = {},
   runtimeData = {},
   context = {},
+  userMessage = "",
 } = {}) => {
   /* ACI_COLORS_V2_PASSTHROUGH_START */
   if (
@@ -1106,6 +1212,23 @@ export const buildVehicleColorsResponse = ({
       selectedColor,
       visualGallery,
     };
+    const requestedFamily = detectRequestedColorFamily({
+      userMessage,
+      toolPlan,
+      context,
+    });
+    const fallbackAnswer =
+      runtimeData.answer ||
+      widget.answer ||
+      `I found ${colors.length} colors for ${
+        finalVehicle.displayName || finalVehicle.model || "this model"
+      }.`;
+    const answer = buildRequestedColorAnswer({
+      colors,
+      requestedFamily,
+      vehicleLabel: finalVehicle.displayName || finalVehicle.fullModel || finalVehicle.model || "",
+      fallbackAnswer,
+    });
 
     return {
       intent: runtimeData.intent || "vehicle_colors",
@@ -1114,12 +1237,7 @@ export const buildVehicleColorsResponse = ({
       inlineType: null,
 
       title: widget.title || runtimeData.title || "Colors",
-      answer:
-        runtimeData.answer ||
-        widget.answer ||
-        `I found ${colors.length} colors for ${
-          finalVehicle.displayName || finalVehicle.model || "this model"
-        }.`,
+      answer,
 
       data: {
         ...runtimeData,
@@ -1186,6 +1304,16 @@ export const buildVehicleColorsResponse = ({
   const color = cleanText(
     firstMeaningful(toolPlan.entities?.color, toolPlan.filters?.color),
   );
+  const requestedFamily = detectRequestedColorFamily({
+    userMessage,
+    toolPlan,
+    context,
+  });
+  const fallbackAnswer = colors.length
+    ? color
+      ? `I found model-level colour information for ${model}. Exact variant-wise ${color} stock availability needs confirmation.`
+      : `Here are the available model-level colours for ${model || "this car"}.`
+    : `I do not have confirmed colour records for ${model || "this car"} yet.`;
 
   return baseResponse({
     toolPlan,
@@ -1195,11 +1323,12 @@ export const buildVehicleColorsResponse = ({
     displayMode: "canvas",
     canvasType: "color_studio_canvas",
     title: `${model || "Vehicle"} colors`,
-    answer: colors.length
-      ? color
-        ? `I found model-level colour information for ${model}. Exact variant-wise ${color} stock availability needs confirmation.`
-        : `Here are the available model-level colours for ${model || "this car"}.`
-      : `I do not have confirmed colour records for ${model || "this car"} yet.`,
+    answer: buildRequestedColorAnswer({
+      colors,
+      requestedFamily,
+      vehicleLabel: model,
+      fallbackAnswer,
+    }),
     data: {
       model,
       variant,

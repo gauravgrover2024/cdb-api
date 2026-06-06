@@ -255,6 +255,204 @@ const buildCompactAliasDbQuery = (message = '') => {
   };
 };
 
+const FUZZY_MODEL_TYPO_STOP_WORDS = new Set([
+  'price',
+  'prices',
+  'pricing',
+  'pricelist',
+  'list',
+  'on',
+  'road',
+  'onroad',
+  'ex',
+  'showroom',
+  'colors',
+  'colours',
+  'color',
+  'colour',
+  'features',
+  'feature',
+  'specs',
+  'spec',
+  'range',
+  'mileage',
+  'sunroof',
+  'variants',
+  'variant',
+  'compare',
+  'vs',
+  'and',
+  'with',
+  'for',
+  'in',
+  'of',
+  'the',
+  'a',
+  'an',
+  'new',
+  'delhi',
+  'noida',
+  'gurgaon',
+  'gurugram',
+  'mumbai',
+  'bangalore',
+  'bengaluru',
+  'jaipur',
+]);
+
+const alphaTokens = (value = '') =>
+  normalizeText(value)
+    .split(' ')
+    .map((token) => token.trim())
+    .filter((token) => /^[a-z]+$/.test(token));
+
+const levenshteinDistance = (left = '', right = '') => {
+  const a = String(left || '');
+  const b = String(right || '');
+  if (a === b) return 0;
+  if (!a) return b.length;
+  if (!b) return a.length;
+
+  const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  const current = Array.from({ length: b.length + 1 }, () => 0);
+
+  for (let i = 1; i <= a.length; i += 1) {
+    current[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + cost,
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+
+  return previous[b.length];
+};
+
+const isSingleTokenModel = (value = '') => {
+  const tokens = alphaTokens(value);
+  return tokens.length === 1 && tokens[0].length >= 4;
+};
+
+const fuzzyModelTypoTokens = ({ message = '', make = '', brand = '' } = {}) => {
+  const makeTokens = new Set([
+    ...alphaTokens(make),
+    ...alphaTokens(brand),
+  ]);
+
+  return alphaTokens(message)
+    .filter((token) => token.length >= 4)
+    .filter((token) => !makeTokens.has(token))
+    .filter((token) => !FUZZY_MODEL_TYPO_STOP_WORDS.has(token));
+};
+
+const findExplicitMakeForFuzzyRecovery = ({ rows = [], message = '' } = {}) => {
+  const makeMatches = new Map();
+
+  rows.forEach((row = {}) => {
+    uniqueTextValues([row.make, row.brand]).forEach((make) => {
+      if (!make || !aliasContains(message, make)) return;
+      const key = keyify(make);
+      if (!key) return;
+      makeMatches.set(key, {
+        make: firstMeaningful(row.make, row.brand, make),
+        brand: firstMeaningful(row.brand, row.make, make),
+      });
+    });
+  });
+
+  return makeMatches.size === 1 ? [...makeMatches.values()][0] : null;
+};
+
+async function resolveFuzzyModelTypoAlias({ message = '', db = null } = {}) {
+  if (!db) return null;
+
+  const rows = await db.collection('aci_vehicle_model_summary')
+    .find(
+      {},
+      {
+        projection: {
+          make: 1,
+          brand: 1,
+          model: 1,
+          fullModel: 1,
+          makeKey: 1,
+          modelKey: 1,
+          shortModelKey: 1,
+          fuelTypes: 1,
+          transmissions: 1,
+        },
+      },
+    )
+    .limit(3000)
+    .toArray();
+
+  const explicitMake = findExplicitMakeForFuzzyRecovery({ rows, message });
+  if (!explicitMake?.make && !explicitMake?.brand) return null;
+
+  const tokens = fuzzyModelTypoTokens({
+    message,
+    make: explicitMake.make,
+    brand: explicitMake.brand,
+  });
+  if (!tokens.length) return null;
+
+  const makeKey = keyify(firstMeaningful(explicitMake.make, explicitMake.brand));
+  const matches = [];
+
+  rows
+    .filter((row = {}) => keyify(firstMeaningful(row.make, row.brand)) === makeKey)
+    .forEach((row = {}) => {
+      if (!isSingleTokenModel(row.model)) return;
+      const modelToken = alphaTokens(row.model)[0];
+      if (!modelToken) return;
+
+      tokens.forEach((token) => {
+        if (token === modelToken) return;
+        if (token[0] !== modelToken[0]) return;
+        const distance = levenshteinDistance(token, modelToken);
+        if (distance > 1) return;
+
+        matches.push({
+          row,
+          token,
+          modelToken,
+          distance,
+          lengthDelta: Math.abs(token.length - modelToken.length),
+        });
+      });
+    });
+
+  matches.sort((left, right) =>
+    left.distance - right.distance ||
+    left.lengthDelta - right.lengthDelta ||
+    String(left.modelToken).localeCompare(String(right.modelToken)),
+  );
+
+  const best = matches[0];
+  if (!best?.row) return null;
+
+  const bestKey = keyify([best.row.make || best.row.brand, best.row.model].filter(Boolean).join(' '));
+  const ambiguous = matches.some((match) =>
+    match !== best &&
+    match.distance === best.distance &&
+    match.lengthDelta === best.lengthDelta &&
+    keyify([match.row.make || match.row.brand, match.row.model].filter(Boolean).join(' ')) !== bestKey,
+  );
+  if (ambiguous) return null;
+
+  return compactAliasAnchor({
+    row: best.row,
+    rule: {
+      id: 'db-backed-fuzzy-model-typo',
+      confidence: 0.8,
+    },
+  });
+}
+
 
 async function resolveGenericCompactVehicleAlias({ message = '', db = null } = {}) {
   if (!db || !hasAlphaNumSignal(message)) return null;
@@ -347,7 +545,10 @@ async function resolveVehicleAlias({ message = '' } = {}) {
     if (row) return compactAliasAnchor({ row, rule });
   }
 
-  return resolveGenericCompactVehicleAlias({ message, db });
+  return (
+    (await resolveGenericCompactVehicleAlias({ message, db })) ||
+    (await resolveFuzzyModelTypoAlias({ message, db }))
+  );
 }
 
 export {

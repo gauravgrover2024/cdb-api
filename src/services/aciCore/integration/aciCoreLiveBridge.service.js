@@ -419,21 +419,6 @@ const maybeReturnDeterministicFeatureSpecFastPath = async ({
     context: getContextForToolPlan(contextState),
   });
 
-  if (discovery.fuelType === "electric") {
-    const scopedTitle = cleanText(normalized.title || normalized.data?.title || "");
-    if (scopedTitle && !/electric|\bev\b/i.test(scopedTitle)) {
-      normalized.title = `Electric ${scopedTitle}`;
-      if (normalized.data && typeof normalized.data === "object") {
-        normalized.data.title = normalized.title;
-      }
-    }
-
-    const scopedAnswer = cleanText(normalized.answer || "");
-    if (scopedAnswer && !/electric|\bev\b/i.test(scopedAnswer)) {
-      normalized.answer = scopedAnswer.replace(/^I found\s+/i, "I found electric ");
-    }
-  }
-
   const bridge = {
     enabled: true,
     durationMs: startedAt ? Date.now() - startedAt : 0,
@@ -582,7 +567,7 @@ const maybeReturnActiveComparisonFollowUpFastPath = async ({
       query: message,
     },
     entities: {
-      comparisonVehicles: targets,
+      comparisonVehicles: pruneSubstringComparisonTargets({ vehicles: targets, message }),
       models: targets.map((target) => target.fullModel || target.model).filter(Boolean),
     },
     filters: {
@@ -594,7 +579,7 @@ const maybeReturnActiveComparisonFollowUpFastPath = async ({
     },
     resolution: {
       comparisonLevel: "model",
-      selectedComparisonVehicles: targets,
+      selectedComparisonVehicles: pruneSubstringComparisonTargets({ vehicles: targets, message }),
     },
     contextPatch: {
       activeComparison: {
@@ -1004,6 +989,7 @@ const buildBatch4ExplainerFastPathResponse = async ({
 
 const maybeReturnBatch4BareClarificationFastPath = ({
   message = "",
+  context = {},
   originalMessage = "",
   effectiveMessage = "",
   startedAt = 0,
@@ -1011,6 +997,16 @@ const maybeReturnBatch4BareClarificationFastPath = ({
   const normalized = normalizeFastPathText(effectiveMessage || message);
 
   if (!/^(price|sunroof|mileage|colors|colours|which one is better|compare these|best car|recommend me a car)$/.test(normalized)) {
+    return null;
+  }
+
+  const selectedVehicle =
+    context?.selectedVehicle ||
+    context?.contextState?.selectedVehicle ||
+    context?.aciContextState?.selectedVehicle ||
+    {};
+
+  if (normalized === "price" && (selectedVehicle.model || selectedVehicle.fullModel || selectedVehicle.modelKey)) {
     return null;
   }
 
@@ -1311,6 +1307,391 @@ const stripVehicleContextForTurn = ({ context = {}, clearComparison = false } = 
   return isolated;
 };
 
+
+const normalizeComparisonModelText = (value = "") =>
+  normalizeFastPathText(value).replace(/-/g, " ").replace(/\s+/g, " ").trim();
+
+const getComparisonModelLabel = (vehicle = {}) =>
+  cleanText(
+    vehicle.fullModel ||
+      [vehicle.make || vehicle.brand, vehicle.model].filter(Boolean).join(" ") ||
+      vehicle.displayName ||
+      vehicle.model ||
+      "",
+  );
+
+const getComparisonModelKeyParts = (vehicle = {}) => {
+  const label = normalizeComparisonModelText(getComparisonModelLabel(vehicle));
+  const model = normalizeComparisonModelText(vehicle.model || "");
+  const modelKey = normalizeComparisonModelText(vehicle.modelKey || "");
+  const shortModelKey = normalizeComparisonModelText(vehicle.shortModelKey || "");
+  return [...new Set([label, model, modelKey, shortModelKey].filter(Boolean))];
+};
+
+const getComparisonPruningKeyParts = (vehicle = {}) => {
+  const parts = getComparisonModelKeyParts(vehicle);
+  const looseBaseParts = [];
+
+  parts.forEach((part) => {
+    const tokens = part.split(/\s+/).filter(Boolean);
+    const suffix = tokens[tokens.length - 1] || "";
+    if (tokens.length >= 2 && suffix.length <= 2) {
+      looseBaseParts.push(tokens.slice(0, -1).join(" "));
+      looseBaseParts.push(tokens[tokens.length - 2]);
+    }
+  });
+
+  return [...new Set([...parts, ...looseBaseParts].filter(Boolean))];
+};
+
+const findComparisonPhraseSpans = ({ messageTokens = [], phrase = "" } = {}) => {
+  const phraseTokens = normalizeComparisonModelText(phrase).split(/\s+/).filter(Boolean);
+  if (!messageTokens.length || !phraseTokens.length || phraseTokens.length > messageTokens.length) return [];
+
+  const spans = [];
+  for (let index = 0; index <= messageTokens.length - phraseTokens.length; index += 1) {
+    const matches = phraseTokens.every((token, offset) => messageTokens[index + offset] === token);
+    if (matches) {
+      spans.push({
+        start: index,
+        end: index + phraseTokens.length - 1,
+        length: phraseTokens.length,
+      });
+    }
+  }
+  return spans;
+};
+
+const isSpanCoveredByLongerSpan = ({ span, longerSpans = [] } = {}) =>
+  longerSpans.some((other) =>
+    other.length > span.length &&
+    other.start <= span.start &&
+    other.end >= span.end,
+  );
+
+const hasExplicitUncoveredComparisonMention = ({ messageTokens = [], candidateParts = [], longerExplicitSpans = [] } = {}) =>
+  candidateParts.some((part) =>
+    findComparisonPhraseSpans({ messageTokens, phrase: part }).some((span) =>
+      !isSpanCoveredByLongerSpan({ span, longerSpans: longerExplicitSpans }),
+    ),
+  );
+
+const pruneSubstringComparisonTargets = ({ vehicles = [], message = "" } = {}) => {
+  const list = asArray(vehicles).filter(Boolean);
+  if (list.length <= 2) return list;
+
+  const messageTokens = normalizeComparisonModelText(message).split(/\s+/).filter(Boolean);
+  if (!messageTokens.length) return list;
+
+  const partsByIndex = list.map((vehicle) => getComparisonModelKeyParts(vehicle));
+  const pruningPartsByIndex = list.map((vehicle) => getComparisonPruningKeyParts(vehicle));
+
+  const allExplicitSpans = [];
+  pruningPartsByIndex.forEach((parts, index) => {
+    parts.forEach((part) => {
+      findComparisonPhraseSpans({ messageTokens, phrase: part }).forEach((span) => {
+        allExplicitSpans.push({ ...span, index, part });
+      });
+    });
+  });
+
+  return list.filter((candidate, candidateIndex) => {
+    const candidateParts = pruningPartsByIndex[candidateIndex] || [];
+    if (!candidateParts.length) return true;
+
+    const candidateHasUncoveredExplicitMention = hasExplicitUncoveredComparisonMention({
+      messageTokens,
+      candidateParts,
+      longerExplicitSpans: allExplicitSpans,
+    });
+
+    // Keep if the user explicitly mentions this model outside a longer model phrase.
+    // Example: "Scorpio N and Scorpio" keeps both.
+    if (candidateHasUncoveredExplicitMention) return true;
+
+    const isSubstringOfLongerCandidate = list.some((other, otherIndex) => {
+      if (otherIndex === candidateIndex) return false;
+
+      const otherParts = pruningPartsByIndex[otherIndex] || [];
+      const otherHasExplicitMention = hasExplicitUncoveredComparisonMention({
+        messageTokens,
+        candidateParts: otherParts,
+        longerExplicitSpans: [],
+      }) || otherParts.some((part) => findComparisonPhraseSpans({ messageTokens, phrase: part }).length > 0);
+
+      if (!otherHasExplicitMention) return false;
+
+      return candidateParts.some((candidatePart) =>
+        otherParts.some((otherPart) =>
+          otherPart !== candidatePart &&
+          otherPart.length > candidatePart.length &&
+          new RegExp(`(^|\\s)${escapeFastPathRegex(candidatePart)}($|\\s)`, "i").test(otherPart),
+        ),
+      );
+    });
+
+    return !isSubstringOfLongerCandidate;
+  });
+};
+
+const comparisonVehicleLabelFromTarget = (vehicle = {}) =>
+  getComparisonModelLabel(vehicle) || cleanText(vehicle.model || vehicle.fullModel || "");
+
+const comparisonModelEntryFromTarget = (vehicle = {}) => {
+  const label = comparisonVehicleLabelFromTarget(vehicle);
+  return {
+    ...(vehicle.make || vehicle.brand ? { make: vehicle.make || vehicle.brand } : {}),
+    ...(vehicle.brand || vehicle.make ? { brand: vehicle.brand || vehicle.make } : {}),
+    model: vehicle.model || label,
+    ...(label ? { fullModel: label } : {}),
+    ...(vehicle.modelKey ? { modelKey: vehicle.modelKey } : {}),
+    ...(vehicle.shortModelKey ? { shortModelKey: vehicle.shortModelKey } : {}),
+  };
+};
+
+const comparisonTargetFromModelValue = (value) => {
+  if (value && typeof value === "object") {
+    const label = comparisonVehicleLabelFromTarget(value);
+    return label ? { ...value, fullModel: value.fullModel || label } : value;
+  }
+
+  const label = cleanText(value || "");
+  return label ? { model: label, fullModel: label } : null;
+};
+
+const comparisonTargetRichScore = (vehicle = {}) =>
+  (vehicle.make || vehicle.brand ? 4 : 0) +
+  (vehicle.fullModel ? 2 : 0) +
+  (vehicle.modelKey ? 1 : 0) +
+  (vehicle.shortModelKey ? 1 : 0);
+
+const comparisonTargetLookupKeys = (vehicle = {}) =>
+  [
+    comparisonVehicleLabelFromTarget(vehicle),
+    vehicle.model,
+    vehicle.fullModel,
+    vehicle.modelKey,
+    vehicle.shortModelKey,
+  ]
+    .map(normalizeComparisonModelText)
+    .filter(Boolean);
+
+const collectComparisonTargetSources = ({ toolPlan = {}, rootContextPatch = {} } = {}) => {
+  const sources = [];
+  const addSource = (items, name) => {
+    const targets = asArray(items).map(comparisonTargetFromModelValue).filter(Boolean);
+    if (!targets.length) return;
+    sources.push({
+      name,
+      targets,
+      richScore: targets.reduce((sum, target) => sum + comparisonTargetRichScore(target), 0),
+    });
+  };
+
+  addSource(toolPlan.entities?.comparisonVehicles, "entities.comparisonVehicles");
+  addSource(toolPlan.resolution?.selectedComparisonVehicles, "resolution.selectedComparisonVehicles");
+  addSource(toolPlan.contextPatch?.selectedComparisonSet?.vehicles, "contextPatch.selectedComparisonSet.vehicles");
+  addSource(toolPlan.contextPatch?.activeComparison?.vehicles, "contextPatch.activeComparison.vehicles");
+  addSource(toolPlan.contextPatch?.contextState?.activeComparison?.vehicles, "contextPatch.contextState.activeComparison.vehicles");
+  addSource(toolPlan.contextPatch?.contextState?.anchors?.comparisonTargets, "contextPatch.contextState.anchors.comparisonTargets");
+  addSource(toolPlan.contextPatch?.aciContextState?.activeComparison?.vehicles, "contextPatch.aciContextState.activeComparison.vehicles");
+  addSource(toolPlan.contextPatch?.aciContextState?.anchors?.comparisonTargets, "contextPatch.aciContextState.anchors.comparisonTargets");
+  addSource(rootContextPatch?.activeComparison?.vehicles, "root.contextPatch.activeComparison.vehicles");
+  addSource(rootContextPatch?.selectedComparisonSet?.vehicles, "root.contextPatch.selectedComparisonSet.vehicles");
+  addSource(rootContextPatch?.contextState?.activeComparison?.vehicles, "root.contextPatch.contextState.activeComparison.vehicles");
+  addSource(rootContextPatch?.contextState?.anchors?.comparisonTargets, "root.contextPatch.contextState.anchors.comparisonTargets");
+  addSource(rootContextPatch?.aciContextState?.activeComparison?.vehicles, "root.contextPatch.aciContextState.activeComparison.vehicles");
+  addSource(rootContextPatch?.aciContextState?.anchors?.comparisonTargets, "root.contextPatch.aciContextState.anchors.comparisonTargets");
+  addSource(toolPlan.resolution?.selectedModels, "resolution.selectedModels");
+  addSource(toolPlan.filters?.models, "filters.models");
+  addSource(toolPlan.entities?.models, "entities.models");
+  addSource(toolPlan.entities?.comparisonModels, "entities.comparisonModels");
+  addSource(rootContextPatch?.selectedComparisonSet?.models, "root.contextPatch.selectedComparisonSet.models");
+
+  return sources;
+};
+
+const chooseComparisonTargetSource = (sources = []) =>
+  [...sources].sort((left, right) =>
+    right.targets.length - left.targets.length ||
+    right.richScore - left.richScore ||
+    left.name.localeCompare(right.name),
+  )[0] || null;
+
+const buildComparisonTargetLookup = (sources = []) => {
+  const lookup = new Map();
+
+  sources
+    .flatMap((source) => source.targets)
+    .sort((left, right) => comparisonTargetRichScore(right) - comparisonTargetRichScore(left))
+    .forEach((target) => {
+      comparisonTargetLookupKeys(target).forEach((key) => {
+        if (!lookup.has(key)) lookup.set(key, target);
+      });
+    });
+
+  return lookup;
+};
+
+const enrichComparisonTarget = ({ target = {}, lookup = new Map() } = {}) => {
+  const match = comparisonTargetLookupKeys(target)
+    .map((key) => lookup.get(key))
+    .find(Boolean);
+
+  return match ? { ...match } : target;
+};
+
+const patchComparisonContextTargets = ({ contextPatch = null, prunedVehicles = [], prunedModels = [] } = {}) => {
+  if (!contextPatch || typeof contextPatch !== "object") return contextPatch;
+
+  const patchNestedState = (state = null) => {
+    if (!state || typeof state !== "object") return state;
+    return {
+      ...state,
+      ...(state.activeComparison
+        ? {
+            activeComparison: {
+              ...(state.activeComparison || {}),
+              vehicles: prunedVehicles,
+            },
+          }
+        : {}),
+      ...(state.anchors
+        ? {
+            anchors: {
+              ...(state.anchors || {}),
+              comparisonTargets: prunedVehicles,
+            },
+          }
+        : {}),
+    };
+  };
+
+  return {
+    ...contextPatch,
+    ...(contextPatch.activeComparison
+      ? {
+          activeComparison: {
+            ...(contextPatch.activeComparison || {}),
+            vehicles: prunedVehicles,
+          },
+        }
+      : {}),
+    ...(contextPatch.selectedComparisonSet
+      ? {
+          selectedComparisonSet: {
+            ...(contextPatch.selectedComparisonSet || {}),
+            vehicles: prunedVehicles,
+            models: prunedModels,
+          },
+        }
+      : {}),
+    ...(contextPatch.contextState
+      ? {
+          contextState: patchNestedState(contextPatch.contextState),
+        }
+      : {}),
+    ...(contextPatch.aciContextState
+      ? {
+          aciContextState: patchNestedState(contextPatch.aciContextState),
+        }
+      : {}),
+  };
+};
+
+const sanitizeComparisonTargetsInPlan = ({ plan = {}, message = "" } = {}) => {
+  if (!plan || typeof plan !== "object") return plan;
+
+  let rootPrunedVehicles = null;
+  let rootPrunedModels = null;
+
+  const nextPlan = {
+    ...plan,
+    tools: asArray(plan.tools).map((toolPlan = {}) => {
+      if (toolPlan.tool !== "vehicle_compare") return toolPlan;
+
+      const targetSources = collectComparisonTargetSources({
+        toolPlan,
+        rootContextPatch: plan.contextPatch || {},
+      });
+      const selectedSource = chooseComparisonTargetSource(targetSources);
+      const existingVehicles = selectedSource?.targets || [];
+      const targetLookup = buildComparisonTargetLookup(targetSources);
+
+      const prunedVehicles = pruneSubstringComparisonTargets({ vehicles: existingVehicles, message })
+        .map((target) => enrichComparisonTarget({ target, lookup: targetLookup }));
+
+      if (!existingVehicles.length || prunedVehicles.length === existingVehicles.length) {
+        return toolPlan;
+      }
+
+      const prunedModels = prunedVehicles.map(comparisonVehicleLabelFromTarget).filter(Boolean);
+      const prunedSelectedModels = prunedVehicles.map(comparisonModelEntryFromTarget);
+      rootPrunedVehicles = prunedVehicles;
+      rootPrunedModels = prunedModels;
+
+      return {
+        ...toolPlan,
+        entities: {
+          ...(toolPlan.entities || {}),
+          comparisonVehicles: prunedVehicles,
+          models: prunedModels,
+          comparisonModels: prunedModels,
+        },
+        filters: {
+          ...(toolPlan.filters || {}),
+          models: prunedModels,
+        },
+        resolution: {
+          ...(toolPlan.resolution || {}),
+          selectedModels: prunedSelectedModels,
+          selectedComparisonVehicles: prunedVehicles,
+          comparisonLevel: toolPlan.resolution?.comparisonLevel || "model",
+        },
+        contextPatch: patchComparisonContextTargets({
+          contextPatch: toolPlan.contextPatch || {},
+          prunedVehicles,
+          prunedModels,
+        }),
+      };
+    }),
+  };
+
+  if (!rootPrunedVehicles) return nextPlan;
+
+  return {
+    ...nextPlan,
+    contextPatch: patchComparisonContextTargets({
+      contextPatch: nextPlan.contextPatch || {},
+      prunedVehicles: rootPrunedVehicles,
+      prunedModels: rootPrunedModels || [],
+    }),
+  };
+};
+
+const sanitizeComparisonContextFromPlan = ({ context = {}, plan = {} } = {}) => {
+  const comparisonTool = asArray(plan.tools).find((toolPlan = {}) => toolPlan.tool === "vehicle_compare");
+  if (!comparisonTool) return context;
+
+  const targetSources = collectComparisonTargetSources({
+    toolPlan: comparisonTool,
+    rootContextPatch: plan.contextPatch || {},
+  });
+  const selectedSource = chooseComparisonTargetSource(targetSources);
+  const targets = selectedSource?.targets || [];
+  if (targets.length < 2) return context;
+
+  const targetLookup = buildComparisonTargetLookup(targetSources);
+  const prunedVehicles = targets.map((target) => enrichComparisonTarget({ target, lookup: targetLookup }));
+  const prunedModels = prunedVehicles.map(comparisonVehicleLabelFromTarget).filter(Boolean);
+
+  return patchComparisonContextTargets({
+    contextPatch: context || {},
+    prunedVehicles,
+    prunedModels,
+  });
+};
+
 const isolateAciCoreBridgeContext = ({
   message = "",
   context = {},
@@ -1587,7 +1968,7 @@ const FAST_PRICE_ENTITY_STOP_WORDS = new Set([
   "show", "tell", "me", "please", "what", "is", "the", "for", "of", "in",
   "on", "road", "onroad", "price", "pricing", "pricelist", "list",
   "breakup", "break", "up", "ex", "showroom", "delhi", "new", "noida",
-  "gurgaon", "gurugram", "mumbai", "quote", "quotation",
+  "gurgaon", "gurugram", "mumbai", "quote", "quotation", "a", "an",
 ]);
 
 const extractVehiclePhraseForSupportedPriceFastPath = (message = "") => {
@@ -1613,13 +1994,21 @@ const getFastPathDb = () =>
 const scoreFastPathModelSummary = ({ row = {}, vehiclePhrase = "", tokens = [] } = {}) => {
   const makeText = normalizeFastPathText(row.make || row.brand || "");
   const modelText = normalizeFastPathText(row.model || "");
+  const modelKeyText = normalizeFastPathText(row.modelKey || row.shortModelKey || "");
   const fullText = normalizeFastPathText(
-    [row.make, row.model, row.fullModel, row.displayName, row.modelKey]
+    [row.make, row.model, row.fullModel, row.displayName, row.modelKey, row.shortModelKey]
       .filter(Boolean)
       .join(" "),
   );
   const modelTokens = new Set(modelText.split(/\s+/).filter(Boolean));
   const fullTokens = new Set(fullText.split(/\s+/).filter(Boolean));
+
+  const tokenNgrams = new Set();
+  for (let size = 1; size <= Math.min(5, tokens.length); size += 1) {
+    for (let index = 0; index <= tokens.length - size; index += 1) {
+      tokenNgrams.add(tokens.slice(index, index + size).join(" "));
+    }
+  }
 
   let score = 0;
 
@@ -1629,15 +2018,26 @@ const scoreFastPathModelSummary = ({ row = {}, vehiclePhrase = "", tokens = [] }
     else if (fullText.includes(token)) score += 1;
   }
 
-  if (modelText && vehiclePhrase === modelText) score += 40;
-  if (modelText && vehiclePhrase.startsWith(`${modelText} `)) score += 30;
-  if (modelText && vehiclePhrase.includes(modelText)) score += 18;
+  if (modelText && tokenNgrams.has(modelText)) score += 120;
+  if (modelKeyText && tokenNgrams.has(modelKeyText)) score += 140;
+  if (modelText && vehiclePhrase === modelText) score += 80;
+  if (modelKeyText && vehiclePhrase === modelKeyText) score += 90;
+  if (modelText && vehiclePhrase.includes(modelText)) score += 40;
+  if (modelKeyText && vehiclePhrase.includes(modelKeyText)) score += 45;
   if (makeText && vehiclePhrase.includes(makeText)) score += 4;
 
   // Penalise model summaries that add extra model words not mentioned by the user
   // e.g. prefer "Creta" over "Creta Electric" for "Creta SX".
   for (const modelToken of modelTokens) {
-    if (modelToken && !tokens.includes(modelToken)) score -= 7;
+    if (modelToken && !tokens.includes(modelToken)) score -= 20;
+  }
+
+  // If the user typed a longer exact model n-gram, penalise shorter partial models.
+  const longestTypedModelNgramLength = Math.max(...[...tokenNgrams].map((value) => value.split(/\s+/).length), 0);
+  const modelTokenLength = modelText.split(/\s+/).filter(Boolean).length;
+  if (modelTokenLength < longestTypedModelNgramLength && modelText && vehiclePhrase.includes(modelText)) {
+    const longerMatchingNgramExists = [...tokenNgrams].some((ngram) => ngram.length > modelText.length && ngram.includes(modelText));
+    if (longerMatchingNgramExists) score -= 35;
   }
 
   return score;
@@ -1654,7 +2054,7 @@ const resolveSupportedExactPriceVehicleFromMessage = async ({
   const tokens = vehiclePhrase
     .split(/\s+/)
     .map((token) => token.trim())
-    .filter((token) => token.length >= 2 && !FAST_PRICE_ENTITY_STOP_WORDS.has(token));
+    .filter((token) => token.length >= 1 && !FAST_PRICE_ENTITY_STOP_WORDS.has(token));
 
   if (!tokens.length) return null;
 
@@ -1662,7 +2062,13 @@ const resolveSupportedExactPriceVehicleFromMessage = async ({
     .slice(0, 8)
     .map((token) => new RegExp(`(^|\\b)${escapeFastPathRegex(token)}(\\b|$)`, "i"));
 
-  const modelKeys = tokens.map((token) => token.replace(/\s+/g, "-")).filter(Boolean);
+  const modelKeySet = new Set(tokens.map((token) => token.replace(/\s+/g, "-")).filter(Boolean));
+  for (let size = 2; size <= Math.min(4, tokens.length); size += 1) {
+    for (let index = 0; index <= tokens.length - size; index += 1) {
+      modelKeySet.add(tokens.slice(index, index + size).join("-"));
+    }
+  }
+  const modelKeys = [...modelKeySet].filter(Boolean);
 
   const rows = await db
     .collection("aci_vehicle_model_summary")
@@ -1759,9 +2165,10 @@ const validateSupportedExactPriceFastPathResult = ({
   const modelMatches =
     expectedModel &&
     rowModel &&
-    (rowModel === expectedModel ||
-      rowModel.includes(expectedModel) ||
-      expectedModel.includes(rowModel));
+    (
+      rowModel === expectedModel ||
+      rowModel.includes(expectedModel)
+    );
 
   if (!modelMatches) return false;
 
@@ -1798,10 +2205,41 @@ const maybeReturnSupportedExactPriceFastPath = async ({
     : getSupportedCitySlugFromContext(context) || "new-delhi";
   if (!citySlug) return null;
 
-  const resolved = await resolveSupportedExactPriceVehicleFromMessage({
+  let resolved = await resolveSupportedExactPriceVehicleFromMessage({
     message: text,
     citySlug,
   });
+
+  if (!resolved?.model) {
+    const selectedVehicle =
+      context?.selectedVehicle ||
+      context?.contextState?.selectedVehicle ||
+      context?.aciContextState?.selectedVehicle ||
+      {};
+
+    const hasSelectedVehicle =
+      selectedVehicle?.model ||
+      selectedVehicle?.fullModel ||
+      selectedVehicle?.modelKey;
+
+    const isBareOrContextualPrice =
+      /^price$/i.test(normalizeFastPathText(text)) ||
+      hasContextReference(text);
+
+    if (hasSelectedVehicle && isBareOrContextualPrice) {
+      resolved = {
+        make: selectedVehicle.make || selectedVehicle.brand || "",
+        model: selectedVehicle.model || selectedVehicle.fullModel || "",
+        modelKey: selectedVehicle.modelKey || "",
+        variant: selectedVehicle.variant || selectedVehicle.variantName || "",
+        citySlug:
+          normalizeFastPathSlug(selectedVehicle.citySlug || selectedVehicle.city || citySlug) ||
+          citySlug,
+        vehiclePhrase: selectedVehicle.fullModel || selectedVehicle.model || "",
+        score: 100000,
+      };
+    }
+  }
 
   if (!resolved?.model) return null;
 
@@ -2614,6 +3052,7 @@ export const runAciCoreLiveBridge = async ({
 
   const batch4BareClarificationFastPath = maybeReturnBatch4BareClarificationFastPath({
     message,
+    context,
     originalMessage,
     effectiveMessage,
     startedAt,
@@ -2831,7 +3270,7 @@ export const runAciCoreLiveBridge = async ({
         })
       : null;
 
-  const plan = applyDirectPriceLookupOverride({
+  const rawPlan = applyDirectPriceLookupOverride({
     plan: applyScoreValueLookupOverride({
       plan: applyCrossModelScoreDiagnosticPlanOverride({
         plan: basePlan,
@@ -2842,10 +3281,19 @@ export const runAciCoreLiveBridge = async ({
     override: directPriceLookupOverride,
   });
 
+  const plan = sanitizeComparisonTargetsInPlan({
+    plan: rawPlan,
+    message,
+  });
+  const executionContext = sanitizeComparisonContextFromPlan({
+    context: isolatedContext,
+    plan,
+  });
+
   const executed = await executeAciPlannerPlan({
     plan,
     userMessage: message,
-    context: isolatedContext,
+    context: executionContext,
     user,
     session,
     meta,
@@ -2853,7 +3301,7 @@ export const runAciCoreLiveBridge = async ({
 
   const normalized = await normalizeAciFinalResponse(executed, {
     message,
-    context: isolatedContext,
+    context: executionContext,
   });
 
   const responseForCompose = crossModelScoreDiagnosticOverride

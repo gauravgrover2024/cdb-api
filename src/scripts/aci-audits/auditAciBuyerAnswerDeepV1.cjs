@@ -251,13 +251,49 @@ const priceEvidence = async ({ model, citySlug = "new-delhi" }) => ({
   }),
 });
 
-const colorEvidence = async ({ model }) => ({
-  kind: "colors",
-  model,
-  colorRows: await collectionCount("aci_vehicle_color_rows", {
+const nestedColorCount = async ({ model }) => {
+  if (!db()) return 0;
+  try {
+    const [result = {}] = await db().collection("vehicle_colors_v2")
+      .aggregate([
+        { $match: { model: rx(model) } },
+        {
+          $project: {
+            colorCount: {
+              $size: {
+                $ifNull: ["$colors", []],
+              },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$colorCount" },
+          },
+        },
+      ])
+      .toArray();
+    return Number(result.total || 0) || 0;
+  } catch {
+    return 0;
+  }
+};
+
+const colorEvidence = async ({ model }) => {
+  const rowCount = await collectionCount("aci_vehicle_color_rows", {
     model: rx(model),
-  }),
-});
+  });
+  const nestedCount = await nestedColorCount({ model });
+
+  return {
+    kind: "colors",
+    model,
+    colorRows: rowCount + nestedCount,
+    colorRowDocs: rowCount,
+    nestedColorRows: nestedCount,
+  };
+};
 
 const specEvidence = async ({ model, attribute }) => ({
   kind: "spec",
@@ -846,7 +882,11 @@ const assertCase = async (testCase, body, dbEvidence, precomputedSummary = null)
   asArray(testCase.expectedModels).forEach((model) => {
     assert(rx(model).test(blob), `response/data missing expected model: ${model}`);
   });
-  if (asArray(testCase.expectedModels).some((model) => /scorpio\s*n/i.test(model))) {
+  const expectedModelsForScorpioCheck = asArray(testCase.expectedModels);
+  const expectsScorpioN = expectedModelsForScorpioCheck.some((model) => /scorpio\s*n/i.test(model));
+  const alsoExpectsBaseScorpio = expectedModelsForScorpioCheck.some((model) => /^\s*scorpio\s*$/i.test(model));
+
+  if (expectsScorpioN && !alsoExpectsBaseScorpio) {
     assert(!/\bScorpio\s+S\b/i.test(blob), "Scorpio N case must not resolve to Scorpio S");
   }
   asArray(testCase.expectedVariants).forEach((variant) => {
@@ -877,6 +917,8 @@ const envInt = (name, fallback = 0) => {
   const value = Number.parseInt(process.env[name] || "", 10);
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 };
+
+const clampInt = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const isDebug = () => process.env.ACI_DEEP_AUDIT_DEBUG === "1";
 
@@ -1076,6 +1118,7 @@ async function main() {
   const requestedCaseIds = parseCaseIds(process.env.ACI_DEEP_AUDIT_CASE_IDS || "");
   const from = envInt("ACI_DEEP_AUDIT_FROM", 0);
   const limit = envInt("ACI_DEEP_AUDIT_LIMIT", 0);
+  const workers = clampInt(envInt("ACI_DEEP_AUDIT_WORKERS", 1), 1, 10);
   const startedAllAt = Date.now();
   const totalDeadline = totalTimeoutMs ? startedAllAt + totalTimeoutMs : 0;
 
@@ -1095,7 +1138,7 @@ async function main() {
     }
   }
 
-  const results = [];
+  const resultSlots = [];
   const filteredCases = cases
     .map((testCase, index) => ({ ...testCase, originalIndex: index }))
     .filter((testCase) => caseMatchesGroup(testCase, requestedGroup))
@@ -1104,7 +1147,7 @@ async function main() {
   const auditWarnings = [];
 
   console.error(
-    `[deep-audit] start mode=${publicMode ? "public" : "bridge"} totalCases=${cases.length} selected=${selectedCases.length} group=${requestedGroup || "ALL"} caseIds=${requestedCaseIds.join(",") || "ALL"} from=${from} limit=${limit || "ALL"} caseTimeoutMs=${caseTimeoutMs} totalTimeoutMs=${totalTimeoutMs || "NONE"}`,
+    `[deep-audit] start mode=${publicMode ? "public" : "bridge"} totalCases=${cases.length} selected=${selectedCases.length} workers=${workers} group=${requestedGroup || "ALL"} caseIds=${requestedCaseIds.join(",") || "ALL"} from=${from} limit=${limit || "ALL"} caseTimeoutMs=${caseTimeoutMs} totalTimeoutMs=${totalTimeoutMs || "NONE"}`,
   );
   if (isDebug()) {
     console.error(`[deep-audit][debug] publicEndpoint=${PUBLIC_ENDPOINT}`);
@@ -1114,14 +1157,10 @@ async function main() {
     auditWarnings.push(`No cases selected for group ${requestedGroup}`);
   }
 
-  for (const [index, testCase] of selectedCases.entries()) {
-    if (totalDeadline && Date.now() >= totalDeadline) {
-      console.error(
-        `[deep-audit] total-timeout reached before case ${index + 1}/${selectedCases.length}; stopping early`,
-      );
-      break;
-    }
+  let nextCaseIndex = 0;
+  let totalTimeoutLogged = false;
 
+  const runSelectedCase = async (index, testCase) => {
     const startedAt = Date.now();
     console.error(
       `[deep-audit] ${index + 1}/${selectedCases.length} group=${testCase.groupKey || groupKey(testCase.group)} id=${testCase.id} message=${JSON.stringify(testCase.message)}`,
@@ -1154,7 +1193,8 @@ async function main() {
       response: caseResult.response,
       timedOut: Boolean(caseResult.timedOut),
     };
-    results.push(result);
+
+    resultSlots[index] = result;
 
     if (result.pass) {
       console.error(
@@ -1165,7 +1205,31 @@ async function main() {
         `[fail] id=${result.id} durationMs=${durationMs} failures=${formatFailure(result.failures)}`,
       );
     }
-  }
+  };
+
+  const runWorker = async () => {
+    while (nextCaseIndex < selectedCases.length) {
+      if (totalDeadline && Date.now() >= totalDeadline) {
+        if (!totalTimeoutLogged) {
+          totalTimeoutLogged = true;
+          console.error(
+            `[deep-audit] total-timeout reached before case ${nextCaseIndex + 1}/${selectedCases.length}; stopping early`,
+          );
+        }
+        break;
+      }
+
+      const index = nextCaseIndex;
+      nextCaseIndex += 1;
+      await runSelectedCase(index, selectedCases[index]);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(workers, selectedCases.length || 1) }, () => runWorker()),
+  );
+
+  const results = resultSlots.filter(Boolean);
 
   const failed = results.filter((item) => !item.pass);
   const hardFailures = results.filter((item) => item.hardFailures?.length);
@@ -1192,6 +1256,7 @@ async function main() {
     ok: failed.length === 0,
     totalCases: cases.length,
     selected: selectedCases.length,
+    workers,
     executed: results.length,
     passed: results.length - failed.length,
     failed: failed.length,
