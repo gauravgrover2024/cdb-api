@@ -112,7 +112,8 @@
     "aci:answer-language:audit": "node src/scripts/aci-audits/auditAciAnswerLanguageRegistryV1.js",
     "aci:buyer-answer-quality:audit": "node src/scripts/aci-audits/auditAciBuyerAnswerQualityV1.cjs",
     "aci:buyer-answer:deep-audit": "node src/scripts/aci-audits/auditAciBuyerAnswerDeepV1.cjs",
-    "aci:buyer-answer:deep-aggregate": "node src/scripts/aci-audits/aggregateAciBuyerAnswerDeepLogsV1.cjs"
+    "aci:buyer-answer:deep-aggregate": "node src/scripts/aci-audits/aggregateAciBuyerAnswerDeepLogsV1.cjs",
+    "aci:no-data:extract": "node src/scripts/aci-audits/extractAciNoDataAnswers.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
