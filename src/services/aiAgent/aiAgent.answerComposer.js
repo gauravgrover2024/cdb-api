@@ -64,6 +64,112 @@ const getRowVehicleLabel = (row = {}) =>
 const getPriceLabel = (row = {}) =>
   firstText(row.onRoadPriceLabel, row.exShowroomPriceLabel, row.priceLabel);
 
+const getRowVariantLabel = (row = {}) =>
+  firstText(row.variant, row.variantName, row.fullVariant, row.fullVariantName);
+
+const priceLabelFromRow = (row = {}, labelKeys = [], valueKeys = []) => {
+  for (const key of labelKeys) {
+    const label = firstText(row?.[key]);
+    if (label) return label;
+  }
+
+  for (const key of valueKeys) {
+    const value = Number(row?.[key] || 0);
+    if (!Number.isFinite(value) || value <= 0) continue;
+    if (value >= 10000000) return `₹${(value / 10000000).toFixed(value % 10000000 === 0 ? 0 : 2)}Cr`;
+    if (value >= 100000) return `₹${(value / 100000).toFixed(value % 100000 === 0 ? 0 : 2)}L`;
+    return `₹${Math.round(value).toLocaleString("en-IN")}`;
+  }
+
+  return "";
+};
+
+const numericPriceFromRow = (row = {}, keys = []) => {
+  for (const key of keys) {
+    const value = Number(row?.[key] || 0);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+};
+
+const getExShowroomLabel = (row = {}) =>
+  priceLabelFromRow(row, ["exShowroomPriceLabel", "exShowroomLabel"], ["exShowroomPrice", "ex_showroom_price"]);
+
+const getOnRoadWithoutOptionalLabel = (row = {}) =>
+  priceLabelFromRow(
+    row,
+    ["onRoadPriceWithoutOptionalLabel", "onRoadWithoutOptionalLabel"],
+    ["onRoadPriceWithoutOptional"],
+  );
+
+const getOnRoadLabel = (row = {}) =>
+  getOnRoadWithoutOptionalLabel(row) ||
+  priceLabelFromRow(
+    row,
+    ["onRoadPriceLabel", "onRoadLabel", "priceLabel"],
+    ["onRoadPrice", "on_road_price", "price"],
+  );
+
+const getOptionalAddOnsLabel = (row = {}) =>
+  firstText(
+    row.optionalChargesTotalLabel,
+    row.priceBreakup?.optionalCharges?.formatted,
+    row.priceBreakup?.totals?.optionalDeltaFormatted,
+  );
+
+const getOptionalOnRoadLabel = (row = {}) =>
+  firstText(
+    row.onRoadPriceWithOptionalLabel,
+    row.priceBreakup?.totals?.onRoadWithOptionalFormatted,
+  );
+
+const getRange = (rows = [], keys = [], labelFor = () => "") => {
+  const priced = asArray(rows)
+    .map((row) => ({
+      row,
+      value: numericPriceFromRow(row, keys),
+      label: labelFor(row),
+    }))
+    .filter((item) => item.value > 0 && item.label)
+    .sort((left, right) => left.value - right.value);
+
+  if (!priced.length) return null;
+
+  const min = priced[0];
+  const max = priced[priced.length - 1];
+  return {
+    minLabel: min.label,
+    maxLabel: max.label,
+    minVariant: getRowVariantLabel(min.row),
+    maxVariant: getRowVariantLabel(max.row),
+    isSingle: min.value === max.value,
+  };
+};
+
+const rangeSentence = (prefix = "", range = null) => {
+  if (!range) return "";
+  if (range.isSingle) return `${prefix} price is ${range.minLabel}`;
+  const start = range.minVariant ? ` from ${range.minVariant} at ${range.minLabel}` : ` from ${range.minLabel}`;
+  const end = range.maxVariant ? ` to ${range.maxVariant} at ${range.maxLabel}` : ` to ${range.maxLabel}`;
+  return `${prefix} prices range${start}${end}`;
+};
+
+const normalizePriceAnswer = (answer = "") =>
+  cleanText(answer)
+    .replace(/\. the on-road/g, ". The on-road")
+    .replace(/\. the ex-showroom/g, ". The ex-showroom")
+    .replace(/\bprice rows\b/gi, "prices");
+
+const getPriceQueryText = (response = {}) =>
+  firstText(
+    response.aciCoreBridge?.effectiveMessage,
+    response.aciCoreBridge?.originalMessage,
+    response.meta?.aciCoreBridge?.effectiveMessage,
+    response.meta?.aciCoreBridge?.originalMessage,
+    response.userMessage,
+    response.message,
+  );
+
 const getLanguageSeed = (response = {}, templateKey = "") =>
   buildAciLanguageSeed(
     templateKey,
@@ -99,93 +205,78 @@ const composePriceAnswer = (response = {}) => {
     firstText(response.title, response.data?.title);
   const vehicle = rowVehicle || responseVehicleLabel;
   const city = firstText(row.cityName, row.city, response.contextPatch?.anchorCity, "selected city");
-  const isListResponse = rows.length > 1 || response.canvasType === "pricelist_canvas";
+  const queryText = getPriceQueryText(response);
+  const wantsOnRoad = /\bon\s*road\b|\bonroad\b/i.test(queryText);
+  const wantsExShowroom = /\bex\s*showroom\b|\bexshowroom\b/i.test(queryText);
 
-  if (isListResponse && rows.length) {
-    return renderLanguage(
-      "pricelist_summary",
-      {
-        model: responseVehicleLabel || vehicle || "vehicle",
-        city,
-        variantCount: rows.length,
-      },
-      response,
-    ).text;
-  }
-
-  const onRoadWithoutOptional = firstText(
-    row.onRoadPriceWithoutOptionalLabel,
-    row.priceBreakup?.totals?.onRoadWithoutOptionalFormatted,
-    row.onRoadPriceWithoutOptional,
-  );
-  const onRoadWithOptional = firstText(
-    row.onRoadPriceWithOptionalLabel,
-    row.priceBreakup?.totals?.onRoadWithOptionalFormatted,
-    row.onRoadPriceWithOptional,
-  );
-  const optionalTotal = firstText(
-    row.optionalChargesTotalLabel,
-    row.priceBreakup?.optionalCharges?.formatted,
-    row.priceBreakup?.totals?.optionalDeltaFormatted,
-  );
-  const onRoad = onRoadWithoutOptional || firstText(row.onRoadPriceLabel, row.onRoadPrice);
-  const exShowroom = firstText(row.exShowroomPriceLabel, row.exShowroomPrice);
+  const onRoadWithoutOptional = getOnRoadWithoutOptionalLabel(row);
+  const onRoadWithOptional = getOptionalOnRoadLabel(row);
+  const optionalTotal = getOptionalAddOnsLabel(row);
+  const onRoad = getOnRoadLabel(row);
+  const exShowroom = getExShowroomLabel(row);
 
   if (!vehicle) return response.answer;
 
+  if (rows.length > 1) {
+    const exShowroomRange = getRange(rows, ["exShowroomPrice", "ex_showroom_price"], getExShowroomLabel);
+    const onRoadRange = getRange(
+      rows,
+      ["onRoadPriceWithoutOptional", "onRoadPrice", "on_road_price", "price"],
+      getOnRoadLabel,
+    );
+    const evidence = [];
+
+    if (wantsOnRoad) {
+      const onRoadLine = rangeSentence("On-road", onRoadRange);
+      if (onRoadLine) evidence.push(onRoadLine);
+      const exLine = rangeSentence("Ex-showroom", exShowroomRange);
+      if (exLine) evidence.push(exLine);
+    } else if (wantsExShowroom) {
+      const exLine = rangeSentence("Ex-showroom", exShowroomRange);
+      if (exLine) evidence.push(exLine);
+      const onRoadLine = rangeSentence("On-road", onRoadRange);
+      if (onRoadLine) evidence.push(onRoadLine);
+    } else {
+      const exLine = rangeSentence("Ex-showroom", exShowroomRange);
+      if (exLine) evidence.push(exLine);
+      const onRoadLine = rangeSentence("On-road", onRoadRange);
+      if (onRoadLine) evidence.push(onRoadLine);
+    }
+
+    if (evidence.length) {
+      return normalizePriceAnswer(
+        `I found ${responseVehicleLabel || vehicle || "this model"} prices in ${city} across ${rows.length} variants. ${evidence.join(". ")}. Optional add-ons remain separate from the default on-road figures.`,
+      );
+    }
+
+    return normalizePriceAnswer(response.answer);
+  }
+
   if (onRoadWithoutOptional && exShowroom) {
     const optionalLine = onRoadWithOptional && onRoadWithOptional !== onRoadWithoutOptional
-      ? ` Optional add-ons are separate (${optionalTotal || "available separately"}), taking it to ${onRoadWithOptional} if selected.`
-      : " Optional add-ons are not included in this default on-road figure.";
+      ? ` Optional add-ons are ${optionalTotal || "available separately"} if selected, taking the on-road total to ${onRoadWithOptional}.`
+      : " Optional add-ons remain separate from this default on-road figure.";
 
-    return renderLanguage(
-      "price_summary",
-      {
-        model: vehicle,
-        city,
-        priceLine: `the on-road price excluding optional add-ons is ${onRoadWithoutOptional}. The ex-showroom price is ${exShowroom}.${optionalLine}`,
-      },
-      response,
-    ).text;
+    return normalizePriceAnswer(
+      `${vehicle} in ${city} is ${exShowroom} ex-showroom and ${onRoadWithoutOptional} on-road excluding optional add-ons.${optionalLine}`,
+    );
   }
 
   if (onRoad && exShowroom) {
-    return renderLanguage(
-      "price_summary",
-      {
-        model: vehicle,
-        city,
-        priceLine: `the on-road price is ${onRoad}. The ex-showroom price is ${exShowroom}.`,
-      },
-      response,
-    ).text;
+    return normalizePriceAnswer(
+      `${vehicle} in ${city} is ${exShowroom} ex-showroom and ${onRoad} on-road.`,
+    );
   }
 
   if (onRoad) {
-    return renderLanguage(
-      "price_summary",
-      {
-        model: vehicle,
-        city,
-        priceLine: `the on-road price is ${onRoad}.`,
-      },
-      response,
-    ).text;
+    return normalizePriceAnswer(`${vehicle} in ${city} has an on-road price of ${onRoad}.`);
   }
 
   if (exShowroom) {
-    return renderLanguage(
-      "price_summary",
-      {
-        model: vehicle,
-        city,
-        priceLine: `the ex-showroom price is ${exShowroom}.`,
-      },
-      response,
-    ).text;
+    return normalizePriceAnswer(`${vehicle} in ${city} has an ex-showroom price of ${exShowroom}.`);
   }
 
-  return response.answer;
+  return normalizePriceAnswer(response.answer);
 };
 
 const composeFeatureDiscoveryAnswer = (response = {}) => {

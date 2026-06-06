@@ -40,7 +40,14 @@ export const findModelMatches = (
 
   const seen = new Set();
 
-  return matches.filter((item) => {
+  return matches
+    .sort((left, right) => {
+      const leftAliasLength = normalizeSearchKey(left.matchedAlias || "").length;
+      const rightAliasLength = normalizeSearchKey(right.matchedAlias || "").length;
+      if (rightAliasLength !== leftAliasLength) return rightAliasLength - leftAliasLength;
+      return (right.confidence || 0) - (left.confidence || 0);
+    })
+    .filter((item) => {
     const key = item.modelKey || item.shortModelKey;
     if (seen.has(key)) return false;
     seen.add(key);

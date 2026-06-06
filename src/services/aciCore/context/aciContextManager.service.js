@@ -578,7 +578,12 @@ function shouldPreserveComparison({ message = '', previousContext = {}, candidat
   const explicitModels = asArray(candidateSnapshot?.vehicles?.models);
   if (explicitModels.length >= 2) return true;
 
-  return /\b(which one|which is better|better|safer|safety|their|change city|choose|pick|recommend|verdict|final choice)\b/i.test(message);
+  if (/\b(colors?|colours?|sunroof|airbags?|features?|mileage|range|boot space|ground clearance|engine cc|power|price|on road|on-road|ex showroom|ex-showroom)\b/i.test(message) &&
+    !/\b(price difference|show price difference|which is cheaper|compare|vs|v\/s|versus|difference between)\b/i.test(message)) {
+    return false;
+  }
+
+  return /\b(which one|which is better|better|safer|safety|their|price difference|show price difference|which is cheaper|cheaper|costlier|expensive|choose|pick|recommend|verdict|final choice)\b/i.test(message);
 }
 
 function shouldClearStaleVehicleContext({ message = '', contextState = {}, candidateSnapshot = {} } = {}) {
@@ -802,7 +807,7 @@ const hasContextReference = (message = '') =>
   /\b(this|that|it|its|one|same|current|selected|previous|earlier|above)\b/i.test(message);
 
 const hasComparisonLanguage = (message = '') =>
-  /\b(vs|v\/s|versus|compare|comparison|compared|better|better than|difference between|which one|which should|choose|pick|recommend|verdict)\b/i.test(message);
+  /\b(vs|v\/s|versus|compare|comparison|compared|better|better than|difference between|price difference|show price difference|which is cheaper|cheaper|costlier|more expensive|which one|which should|choose|pick|recommend|verdict)\b/i.test(message);
 
 const hasBroadVehicleLanguage = (message = '') =>
   /\b(cars?|vehicles?|models?|options?|suvs?|sedans?|hatchbacks?|mpvs?|muvs?)\b/i.test(message);

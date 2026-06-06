@@ -110,7 +110,9 @@
     "aci:context-manager:stress": "node src/scripts/aci-audits/auditAciContextManagerStressV1.js",
     "aci:context-manager:public-smoke": "node src/scripts/aci-audits/smokeAciContextPublicChatV1.cjs",
     "aci:answer-language:audit": "node src/scripts/aci-audits/auditAciAnswerLanguageRegistryV1.js",
-    "aci:buyer-answer-quality:audit": "node src/scripts/aci-audits/auditAciBuyerAnswerQualityV1.cjs"
+    "aci:buyer-answer-quality:audit": "node src/scripts/aci-audits/auditAciBuyerAnswerQualityV1.cjs",
+    "aci:buyer-answer:deep-audit": "node src/scripts/aci-audits/auditAciBuyerAnswerDeepV1.cjs",
+    "aci:buyer-answer:deep-aggregate": "node src/scripts/aci-audits/aggregateAciBuyerAnswerDeepLogsV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

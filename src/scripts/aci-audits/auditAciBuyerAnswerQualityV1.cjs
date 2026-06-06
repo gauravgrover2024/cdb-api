@@ -28,6 +28,23 @@ async function main() {
       model: /scorpio\s*n/i,
       citySlug: "new-delhi",
     });
+  const balenoScoreProfileCount = await mongoose.connection.db
+    .collection("aci_vehicle_variant_score_profile")
+    .countDocuments({
+      model: /baleno/i,
+    });
+  const balenoAlphaScoreProfileCount = await mongoose.connection.db
+    .collection("aci_vehicle_variant_score_profile")
+    .countDocuments({
+      model: /baleno/i,
+      variant: /alpha/i,
+    });
+
+  const dbEvidence = {
+    scorpioNPriceRowsNewDelhi: scorpioNPriceRowCount,
+    balenoScoreProfiles: balenoScoreProfileCount,
+    balenoAlphaScoreProfiles: balenoAlphaScoreProfileCount,
+  };
 
   const cases = [
     {
@@ -62,6 +79,7 @@ async function main() {
         assert(/diagnostic/i.test(answer), "answer must remain diagnostic-only");
         assert(!hasUnsafeRecommendationLanguage(blob), "unsafe recommendation wording leaked");
       },
+      dbEvidence,
     },
     {
       id: "variant-value-baleno-alpha-keeps-variant",
@@ -93,6 +111,7 @@ async function main() {
         assert(/diagnostic/i.test(answer), "answer must remain diagnostic-only");
         assert(!hasUnsafeRecommendationLanguage(blob), "unsafe recommendation wording leaked");
       },
+      dbEvidence,
     },
     {
       id: "direct-price-overrides-stale-comparison-context",
@@ -127,6 +146,7 @@ async function main() {
         assert(/scorpio\s*n/i.test(blob), "response must mention Scorpio N");
         assert(/₹|price/i.test(blob), "response must include price labels or rupee pricing");
       },
+      dbEvidence,
     },
   ];
 
@@ -149,6 +169,7 @@ async function main() {
         id: testCase.id,
         pass: true,
         durationMs: Date.now() - startedAt,
+        dbEvidence: testCase.dbEvidence || {},
         summary: {
           intent: output.intent,
           tool: output.aciCoreBridge?.tool || output.meta?.aciCoreBridge?.tool || output.tool,
@@ -170,6 +191,7 @@ async function main() {
         id: testCase.id,
         pass: false,
         durationMs: Date.now() - startedAt,
+        dbEvidence: testCase.dbEvidence || {},
         failures: [error.message || String(error)],
       });
     }

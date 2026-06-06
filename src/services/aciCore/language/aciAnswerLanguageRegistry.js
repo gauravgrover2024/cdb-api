@@ -120,8 +120,8 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     forbiddenWording: ['hidden Delhi fallback', 'clear winner', 'best choice', 'buy this'],
     variants: [
       { id: 'pricelist_a', text: 'I found {{variantCount}} {{model}} variants in {{city}}. Default on-road prices exclude optional add-ons; optional add-on totals are available in each variant breakup.' },
-      { id: 'pricelist_b', text: 'For {{model}} in {{city}}, {{variantCount}} current variants have price rows. Optional add-ons stay separate from the default on-road figure.' },
-      { id: 'pricelist_c', text: '{{city}} pricing is available for {{variantCount}} {{model}} variants. The default on-road view keeps optional accessories separate.' },
+      { id: 'pricelist_b', text: 'For {{model}} in {{city}}, I found prices for {{variantCount}} current variants. Optional add-ons stay separate from the default on-road figure.' },
+      { id: 'pricelist_c', text: '{{city}} pricing is available across {{variantCount}} {{model}} variants. The default on-road view keeps optional accessories separate.' },
       { id: 'pricelist_d', text: 'I found the {{model}} price list for {{city}} with {{variantCount}} variants. Optional add-ons are shown separately where available.' },
     ],
   },

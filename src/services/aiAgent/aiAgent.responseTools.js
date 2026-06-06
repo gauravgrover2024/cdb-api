@@ -277,6 +277,184 @@ export const getRuntimeRows = (runtimeData = {}) =>
       runtimeData.results,
   );
 
+const priceLabelFromRow = (row = {}, labelKeys = [], valueKeys = []) => {
+  for (const key of labelKeys) {
+    const label = cleanText(row?.[key]);
+    if (label) return label;
+  }
+
+  for (const key of valueKeys) {
+    const label = formatMoney(row?.[key]);
+    if (label) return label;
+  }
+
+  return "";
+};
+
+const numericPriceFromRow = (row = {}, keys = []) => {
+  for (const key of keys) {
+    const value = Number(row?.[key] || 0);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+};
+
+const getRowVariantLabel = (row = {}) =>
+  cleanText(
+    firstMeaningful(
+      row.variant,
+      row.variantName,
+      row.fullVariant,
+      row.fullVariantName,
+      row.displayVariant,
+    ),
+  );
+
+const getExShowroomLabel = (row = {}) =>
+  priceLabelFromRow(
+    row,
+    ["exShowroomPriceLabel", "exShowroomLabel"],
+    ["exShowroomPrice", "ex_showroom_price"],
+  );
+
+const getOnRoadLabel = (row = {}) =>
+  priceLabelFromRow(
+    row,
+    [
+      "onRoadPriceWithoutOptionalLabel",
+      "onRoadPriceLabel",
+      "onRoadLabel",
+      "priceLabel",
+    ],
+    [
+      "onRoadPriceWithoutOptional",
+      "onRoadPrice",
+      "on_road_price",
+      "price",
+    ],
+  );
+
+const getPriceRange = (rows = [], keys = [], labelFor = () => "") => {
+  const pricedRows = asArray(rows)
+    .map((row) => ({
+      row,
+      value: numericPriceFromRow(row, keys),
+      label: labelFor(row),
+    }))
+    .filter((item) => item.value > 0 && item.label);
+
+  if (!pricedRows.length) return null;
+
+  const sorted = [...pricedRows].sort((left, right) => left.value - right.value);
+  const min = sorted[0];
+  const max = sorted[sorted.length - 1];
+
+  return {
+    minLabel: min.label,
+    maxLabel: max.label,
+    minVariant: getRowVariantLabel(min.row),
+    maxVariant: getRowVariantLabel(max.row),
+    isSingle: min.value === max.value,
+  };
+};
+
+const describePriceRange = (label = "", range = null) => {
+  if (!range) return "";
+  if (range.isSingle) {
+    return `${label} price is ${range.minLabel}`;
+  }
+  const entry = range.minVariant ? ` from ${range.minVariant} at ${range.minLabel}` : ` from ${range.minLabel}`;
+  const top = range.maxVariant ? ` to ${range.maxVariant} at ${range.maxLabel}` : ` to ${range.maxLabel}`;
+  return `${label} prices range${entry}${top}`;
+};
+
+const normalizePriceAnswerGrammar = (answer = "") =>
+  cleanText(answer)
+    .replace(/\. the on-road/g, ". The on-road")
+    .replace(/\. the ex-showroom/g, ". The ex-showroom")
+    .replace(/\bprice rows\b/gi, "prices");
+
+const buildPricelistBuyerAnswer = ({
+  rows = [],
+  model = "",
+  variant = "",
+  city = "",
+  query = "",
+  fallbackAnswer = "",
+} = {}) => {
+  const cleanRows = asArray(rows);
+  if (!cleanRows.length) return normalizePriceAnswerGrammar(fallbackAnswer);
+
+  const cityLabel = formatCity(city);
+  const firstRow = cleanRows[0] || {};
+  const rowModel = cleanText(
+    firstMeaningful(
+      firstRow.fullModel,
+      firstRow.modelLabel,
+      firstRow.displayName,
+      firstRow.model,
+      model,
+    ),
+  );
+  const rowVariant = getRowVariantLabel(firstRow);
+  const requestedVariant = cleanText(variant || rowVariant);
+  const vehicleLabel = cleanText(`${rowModel || model}${requestedVariant && cleanRows.length === 1 ? ` ${requestedVariant}` : ""}`) || "this model";
+  const normalizedQuery = searchKey(query);
+  const wantsOnRoad = /\bon\s*road\b|\bonroad\b/.test(normalizedQuery);
+  const wantsExShowroom = /\bex\s*showroom\b|\bexshowroom\b/.test(normalizedQuery);
+
+  if (cleanRows.length === 1) {
+    const exShowroom = getExShowroomLabel(firstRow);
+    const onRoad = getOnRoadLabel(firstRow);
+    const parts = [];
+    if (exShowroom) parts.push(`ex-showroom price is ${exShowroom}`);
+    if (onRoad) parts.push(`on-road price is ${onRoad}`);
+
+    if (parts.length) {
+      return normalizePriceAnswerGrammar(
+        `For ${vehicleLabel} in ${cityLabel}, the ${parts.join(", and the ")}.`,
+      );
+    }
+  }
+
+  const exShowroomRange = getPriceRange(
+    cleanRows,
+    ["exShowroomPrice", "ex_showroom_price"],
+    getExShowroomLabel,
+  );
+  const onRoadRange = getPriceRange(
+    cleanRows,
+    ["onRoadPriceWithoutOptional", "onRoadPrice", "on_road_price", "price"],
+    getOnRoadLabel,
+  );
+
+  const evidence = [];
+  if (wantsOnRoad) {
+    const onRoadText = describePriceRange("On-road", onRoadRange);
+    if (onRoadText) evidence.push(onRoadText);
+    const exText = describePriceRange("Ex-showroom", exShowroomRange);
+    if (exText) evidence.push(exText);
+  } else if (wantsExShowroom) {
+    const exText = describePriceRange("Ex-showroom", exShowroomRange);
+    if (exText) evidence.push(exText);
+    const onRoadText = describePriceRange("On-road", onRoadRange);
+    if (onRoadText) evidence.push(onRoadText);
+  } else {
+    const exText = describePriceRange("Ex-showroom", exShowroomRange);
+    if (exText) evidence.push(exText);
+    const onRoadText = describePriceRange("On-road", onRoadRange);
+    if (onRoadText) evidence.push(onRoadText);
+  }
+
+  if (evidence.length) {
+    return normalizePriceAnswerGrammar(
+      `I found ${rowModel || model || "this model"} prices in ${cityLabel} across ${cleanRows.length} variants. ${evidence.join(". ")}.`,
+    );
+  }
+
+  return normalizePriceAnswerGrammar(fallbackAnswer);
+};
+
 export const getRuntimeDataForTool = ({
   runtimeResults = {},
   toolPlan = {},
@@ -696,6 +874,37 @@ export const buildVehiclePricelistResponse = ({
     const widget = runtimeData.widget;
     const rows = widget.rows || runtimeData.rows || [];
     const canvasType = runtimeData.canvasType || widget.canvasType || "pricelist_canvas";
+    const answer = buildPricelistBuyerAnswer({
+      rows,
+      model:
+        widget?.vehicle?.displayName ||
+        widget?.vehicle?.fullModel ||
+        widget?.vehicle?.model ||
+        runtimeData?.vehicle?.displayName ||
+        runtimeData?.vehicle?.model ||
+        getModel(toolPlan, context),
+      variant:
+        toolPlan.input?.variant ||
+        toolPlan.entities?.variant ||
+        widget?.vehicle?.variant ||
+        runtimeData?.requested?.variant ||
+        getVariant(toolPlan, context),
+      city:
+        widget.city ||
+        runtimeData.city ||
+        runtimeData.requested?.city ||
+        getCity(toolPlan, context),
+      query:
+        toolPlan.input?.message ||
+        toolPlan.input?.query ||
+        toolPlan.query ||
+        runtimeData.requested?.query ||
+        "",
+      fallbackAnswer:
+        runtimeData.answer ||
+        widget.answer ||
+        `Here is the price list for ${widget?.vehicle?.displayName || widget?.vehicle?.model || "this model"}.`,
+    });
 
     return {
       intent: runtimeData.intent || "vehicle_pricelist",
@@ -703,10 +912,7 @@ export const buildVehiclePricelistResponse = ({
       canvasType,
       inlineType: null,
       title: widget.title || runtimeData.title || "Price list",
-      answer:
-        runtimeData.answer ||
-        widget.answer ||
-        `Here is the price list for ${widget?.vehicle?.displayName || widget?.vehicle?.model || "this model"}.`,
+      answer,
 
       data: {
         ...runtimeData,
@@ -805,10 +1011,21 @@ export const buildVehiclePricelistResponse = ({
     inlineType: variant ? "short_price_card" : "",
     title: variant ? `${carLabel} price` : `${model || "Vehicle"} price list`,
     answer: rows.length
-      ? variant
-        ? `Here is the ${carLabel} price information for ${cityLabel}.`
-        : `Here is the variant-wise price list for ${model || "this model"} in ${cityLabel}.`
-      : `I could not find confirmed price rows for ${carLabel} in ${cityLabel}.`,
+      ? buildPricelistBuyerAnswer({
+          rows,
+          model,
+          variant,
+          city,
+          query:
+            toolPlan.input?.message ||
+            toolPlan.input?.query ||
+            toolPlan.query ||
+            "",
+          fallbackAnswer: variant
+            ? `Here is the ${carLabel} price information for ${cityLabel}.`
+            : `Here is the variant-wise price list for ${model || "this model"} in ${cityLabel}.`,
+        })
+      : `I could not find confirmed prices for ${carLabel} in ${cityLabel}.`,
     data: {
       model,
       variant,

@@ -3,6 +3,7 @@ import {
 } from "../candidates/aciDbCandidateRetriever.js";
 import { parseHybridMeaningFrame } from "../understanding/hybridMeaningFrame.parser.js";
 import { runAciUnderstandingEngine } from "../understanding/aciUnderstandingEngine.js";
+import { normalizeAciBuyerLanguage } from "../understanding/aciLanguageNormalization.service.js";
 import mongoose from "mongoose";
 
 import { buildLegacyPlanFromAciMeaningFrame } from "./aciCoreToLegacyPlan.adapter.js";
@@ -10,7 +11,9 @@ import { executeAciPlannerPlan } from "../../aiAgent/aiAgent.executor.js";
 import { normalizeAciFinalResponse } from "../../aiAgent/aiAgent.contractNormalizer.js";
 import { composeAciAnswer } from "../../aiAgent/aiAgent.answerComposer.js";
 import { runVehiclePricelistNewCarsTool } from "../../aiAgent/tools/newCars/vehiclePricelist.tool.js";
-import { buildVehiclePricelistResponse } from "../../aiAgent/aiAgent.responseTools.js";
+import {
+  buildVehiclePricelistResponse,
+} from "../../aiAgent/aiAgent.responseTools.js";
 import {
   buildAciLanguageSeed,
   renderAciTemplate,
@@ -55,7 +58,11 @@ const hasContextReference = (message = "") =>
   /\b(this|that|it|its|one|same|current|selected|previous|earlier|above)\b/i.test(message);
 
 const hasComparisonLanguage = (message = "") =>
-  /\b(vs|v\/s|versus|compare|comparison|compared|better|better than|difference between|which one|which should|choose|pick|recommend|verdict)\b/i.test(message);
+  /\b(vs|v\/s|versus|compare|comparison|compared|better|better than|difference between|price difference|show price difference|which is cheaper|cheaper|costlier|more expensive|which one|which should|choose|pick|recommend|verdict)\b/i.test(message);
+
+const isDirectNonComparisonTask = (message = "") =>
+  /\b(colors?|colours?|sunroof|airbags?|features?|mileage|range|boot space|ground clearance|engine cc|power|price|on road|on-road|ex showroom|ex-showroom)\b/i.test(message) &&
+  !/\b(price difference|show price difference|which is cheaper|compare|vs|v\/s|versus|difference between)\b/i.test(message);
 
 const hasActiveComparisonFollowUp = ({ message = "", context = {} } = {}) => {
   const vehicles =
@@ -67,7 +74,9 @@ const hasActiveComparisonFollowUp = ({ message = "", context = {} } = {}) => {
 
   if (!Array.isArray(vehicles) || vehicles.length < 2) return false;
 
-  return /\b(which one|which is better|better|safer|safety|their|change city|which should i|should i buy|choose|pick|recommend|verdict|final choice)\b/i.test(
+  if (isDirectNonComparisonTask(message)) return false;
+
+  return /\b(which one|which is better|better|safer|safety|their|price difference|show price difference|which is cheaper|cheaper|costlier|expensive|which should i|should i buy|choose|pick|recommend|verdict|final choice)\b/i.test(
     message,
   );
 };
@@ -132,6 +141,273 @@ const expandActiveComparisonFollowUpMessage = ({ message = "", context = {} } = 
     .join(" ");
 
   return `${message} ${scopeText}`;
+};
+
+const getActiveComparisonVehiclesFromContext = (context = {}) =>
+  asArray(
+    context?.activeComparison?.vehicles ||
+      context?.selectedComparisonSet?.vehicles ||
+      context?.contextState?.activeComparison?.vehicles ||
+      context?.aciContextState?.activeComparison?.vehicles ||
+      [],
+  );
+
+const getComparisonCityFromContext = (context = {}) =>
+  cleanText(
+    context?.activeComparison?.city ||
+      context?.activeComparison?.citySlug ||
+      context?.contextState?.activeComparison?.city ||
+      context?.contextState?.activeComparison?.citySlug ||
+      context?.selectedVehicle?.citySlug ||
+      context?.selectedVehicle?.city ||
+      context?.anchorCity ||
+      "new-delhi",
+  );
+
+const vehicleLabelForComparison = (vehicle = {}) =>
+  cleanText(
+    vehicle.fullModel ||
+      [vehicle.make || vehicle.brand, vehicle.model].filter(Boolean).join(" ") ||
+      vehicle.model ||
+      "",
+  );
+
+const getSelectedVehicleFromContext = (context = {}) =>
+  context?.selectedVehicle ||
+  context?.contextState?.selectedVehicle ||
+  context?.aciContextState?.selectedVehicle ||
+  context?.anchors?.primaryVehicle ||
+  {};
+
+const selectedVehicleLabel = (vehicle = {}) =>
+  cleanText(
+    vehicle.fullModel ||
+      [vehicle.make || vehicle.brand, vehicle.model].filter(Boolean).join(" ") ||
+      vehicle.model ||
+      "",
+  );
+
+const detectDirectFactLookup = (message = "") => {
+  if (/\bairbags?\b/i.test(message)) {
+    return {
+      tool: "vehicle_feature_lookup",
+      intent: "vehicle_feature_answer",
+      feature: "airbags",
+      output: {
+        inlineType: "feature_answer_card",
+      },
+    };
+  }
+
+  if (/\bmileage\b/i.test(message)) {
+    return {
+      tool: "vehicle_spec_attribute_lookup",
+      intent: "vehicle_spec_attribute_answer",
+      attributeKey: "mileage",
+      attributeLabel: "mileage",
+      output: {
+        inlineType: "spec_attribute_answer_card",
+      },
+    };
+  }
+
+  return null;
+};
+
+const maybeReturnContextDirectFactFastPath = async ({
+  message = "",
+  context = {},
+  user = null,
+  session = null,
+  meta = {},
+  originalMessage = "",
+  startedAt = 0,
+} = {}) => {
+  const lookup = detectDirectFactLookup(message);
+  if (!lookup) return null;
+  if (hasComparisonLanguage(message)) return null;
+
+  const vehicle = getSelectedVehicleFromContext(context);
+  const model = selectedVehicleLabel(vehicle);
+  if (!model) return null;
+
+  const city = vehicle.citySlug || vehicle.city || context.anchorCity || "new-delhi";
+  const toolPlan = {
+    tool: lookup.tool,
+    input: {
+      message,
+      query: message,
+      model,
+      ...(lookup.feature ? { feature: lookup.feature, features: [lookup.feature] } : {}),
+      ...(lookup.attributeKey ? { attributeKey: lookup.attributeKey, attributeLabel: lookup.attributeLabel } : {}),
+    },
+    entities: {
+      model,
+      primaryModel: model,
+      ...(lookup.feature ? { feature: lookup.feature, features: [lookup.feature], topic: lookup.feature } : {}),
+      ...(lookup.attributeKey ? { attributeKey: lookup.attributeKey, attributeLabel: lookup.attributeLabel } : {}),
+    },
+    filters: {
+      model,
+      city,
+      ...(lookup.feature ? { mustHaveFeatures: [lookup.feature] } : {}),
+      ...(lookup.attributeKey ? { attributeKey: lookup.attributeKey, attributeLabel: lookup.attributeLabel } : {}),
+    },
+    output: {
+      canvasType: null,
+      inlineType: lookup.output.inlineType,
+    },
+  };
+
+  const plan = {
+    intent: lookup.intent,
+    mode: "single_tool",
+    conversationMode: "direct_answer",
+    tools: [toolPlan],
+  };
+
+  const executed = await executeAciPlannerPlan({
+    plan,
+    userMessage: message,
+    context,
+    user,
+    session,
+    meta,
+  });
+
+  const normalized = await normalizeAciFinalResponse(executed, {
+    message,
+    context,
+  });
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "",
+    usedGemini: false,
+    primaryTask: lookup.tool,
+    tool: lookup.tool,
+    planMode: "single_tool",
+    contextIsolation: "context_direct_fact_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: message,
+    routingReason: "context_direct_fact_follow_up",
+  };
+
+  return composeAciAnswer({
+    ...normalized,
+    aciCoreBridge: bridge,
+    meta: {
+      ...(normalized.meta || {}),
+      aciCoreBridge: bridge,
+    },
+  });
+};
+
+const maybeReturnActiveComparisonFollowUpFastPath = async ({
+  message = "",
+  context = {},
+  user = null,
+  session = null,
+  meta = {},
+  originalMessage = "",
+  startedAt = 0,
+} = {}) => {
+  if (!hasActiveComparisonFollowUp({ message, context })) return null;
+
+  const vehicles = getActiveComparisonVehiclesFromContext(context);
+  if (vehicles.length < 2) return null;
+
+  const targets = vehicles.slice(0, 2).map((vehicle = {}) => ({
+    make: vehicle.make || vehicle.brand || "",
+    brand: vehicle.brand || vehicle.make || "",
+    model: vehicle.model || "",
+    fullModel: vehicleLabelForComparison(vehicle),
+    variant: vehicle.variant || vehicle.variantName || "",
+    variantName: vehicle.variantName || vehicle.variant || "",
+    city: vehicle.city || vehicle.citySlug || getComparisonCityFromContext(context),
+  }));
+
+  if (targets.filter((target) => target.model || target.fullModel).length < 2) return null;
+
+  const city = getComparisonCityFromContext(context);
+  const toolPlan = {
+    tool: "vehicle_compare",
+    input: {
+      message,
+      query: message,
+    },
+    entities: {
+      comparisonVehicles: targets,
+      models: targets.map((target) => target.fullModel || target.model).filter(Boolean),
+    },
+    filters: {
+      city,
+    },
+    output: {
+      canvasType: "comparison_canvas",
+      inlineType: "",
+    },
+    resolution: {
+      comparisonLevel: "model",
+      selectedComparisonVehicles: targets,
+    },
+    contextPatch: {
+      activeComparison: {
+        vehicles: targets,
+        city,
+      },
+      selectedComparisonSet: {
+        vehicles: targets,
+      },
+    },
+  };
+
+  const plan = {
+    intent: "vehicle_comparison",
+    mode: "single_tool",
+    tools: [toolPlan],
+    output: {
+      canvasType: "comparison_canvas",
+    },
+  };
+
+  const executed = await executeAciPlannerPlan({
+    plan,
+    userMessage: message,
+    context,
+    user,
+    session,
+    meta,
+  });
+
+  const normalized = await normalizeAciFinalResponse(executed, {
+    message,
+    context,
+  });
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "",
+    usedGemini: false,
+    primaryTask: "vehicle_comparison",
+    tool: "vehicle_compare",
+    planMode: "single_tool",
+    contextIsolation: "active_comparison_follow_up_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: message,
+    routingReason: "active_comparison_follow_up",
+  };
+
+  return composeAciAnswer({
+    ...normalized,
+    aciCoreBridge: bridge,
+    meta: {
+      ...(normalized.meta || {}),
+      aciCoreBridge: bridge,
+    },
+  });
 };
 
 const hasBroadVehicleLanguage = (message = "") =>
@@ -280,10 +556,19 @@ const buildUnsupportedCityFastPathResponse = ({
   message = "",
   effectiveMessage = "",
   requestedCity = "",
+  context = {},
   durationMs = 0,
 } = {}) => {
+  const selectedVehicle = context?.selectedVehicle || context?.contextState?.selectedVehicle || context?.aciContextState?.selectedVehicle || {};
+  const vehicleLabel = cleanText(
+    selectedVehicle.fullModel ||
+      [selectedVehicle.make || selectedVehicle.brand, selectedVehicle.model].filter(Boolean).join(" ") ||
+      selectedVehicle.model ||
+      "",
+  );
   const unsupportedCity = {
     requestedCity,
+    ...(vehicleLabel ? { model: vehicleLabel } : {}),
     supportedCities: SUPPORTED_PRICE_CITY_LABELS_FOR_FAST_PATH,
     reason: "pricing_city_not_supported",
     canRetryWithSupportedCity: true,
@@ -294,7 +579,9 @@ const buildUnsupportedCityFastPathResponse = ({
     displayMode: "canvas",
     canvasType: "unsupported_city_canvas",
     inlineType: null,
-    title: `Pricing unavailable in ${requestedCity}`,
+    title: vehicleLabel
+      ? `${vehicleLabel} pricing unavailable in ${requestedCity}`
+      : `Pricing unavailable in ${requestedCity}`,
     answer: renderAciTemplate(
       "unsupported_city_price",
       {
@@ -345,6 +632,7 @@ const buildUnsupportedCityFastPathResponse = ({
 const maybeReturnUnsupportedCityFastPath = ({
   message = "",
   effectiveMessage = "",
+  context = {},
   startedAt = 0,
 } = {}) => {
   if (!hasAciPriceIntentForFastUnsupportedCity(effectiveMessage || message)) {
@@ -360,6 +648,7 @@ const maybeReturnUnsupportedCityFastPath = ({
     message,
     effectiveMessage,
     requestedCity,
+    context,
     durationMs: startedAt ? Date.now() - startedAt : 0,
   });
 };
@@ -1002,6 +1291,10 @@ const isExplicitScoreValueLookupRequest = (message = "", primaryTask = "") => {
   return !asksComparison;
 };
 
+const isDirectScoreInsightRequest = (message = "") =>
+  /\b(score|scores|how good|overall|good|value|worth|value for money|good value)\b/i.test(message) &&
+  !/\b(vs|v\/s|versus|compare|comparison|between|against|which one|better between)\b/i.test(message);
+
 const normalizeVariantIdentityText = (value = "") =>
   String(value || "")
     .toLowerCase()
@@ -1029,6 +1322,194 @@ const getScoreVariantCandidateFromSnapshot = (candidateSnapshot = {}) => {
     .sort((left, right) => right.confidence - left.confidence)[0];
 
   return best || {};
+};
+
+const getScoreModelCandidateFromSnapshot = (candidateSnapshot = {}) => {
+  const models = asArray(candidateSnapshot?.vehicles?.models);
+  const best = models
+    .map((item = {}) => {
+      const raw = item.metadata?.raw || {};
+      return {
+        make: item.metadata?.make || raw.make || raw.brand || "",
+        model: item.metadata?.model || raw.rawModel || raw.model || item.displayName || "",
+        fullModel: raw.fullModel || raw.displayName || item.displayName || [raw.make || raw.brand, raw.model || raw.rawModel].filter(Boolean).join(" "),
+        modelKey: raw.modelKey || item.canonicalKey || "",
+        shortModelKey: raw.shortModelKey || "",
+        confidence: Number(item.confidence || raw.confidence || 0),
+      };
+    })
+    .filter((item) => item.model || item.fullModel)
+    .sort((left, right) => right.confidence - left.confidence)[0];
+
+  return best || {};
+};
+
+const maybeReturnDirectScoreInsightFastPath = async ({
+  message = "",
+  context = {},
+  contextState = {},
+  candidateSnapshot = {},
+  user = null,
+  session = null,
+  meta = {},
+  originalMessage = "",
+  startedAt = 0,
+} = {}) => {
+  if (!isDirectScoreInsightRequest(message)) return null;
+
+  const variantCandidate = getScoreVariantCandidateFromSnapshot(candidateSnapshot);
+  const explicitScorpioN = /\bscorpio\s*n\b/i.test(message);
+  const modelCandidate = explicitScorpioN
+    ? {
+        make: "Mahindra",
+        model: "Scorpio N",
+        fullModel: "Mahindra Scorpio N",
+        modelKey: "mahindra-scorpio-n",
+        shortModelKey: "scorpio-n",
+        confidence: 1,
+      }
+    : getScoreModelCandidateFromSnapshot(candidateSnapshot);
+  const stateVehicle =
+    contextState?.selectedVehicle ||
+    contextState?.anchors?.primaryVehicle ||
+    context?.selectedVehicle ||
+    {};
+  const rawVariantToken = normalizeVariantIdentityText(variantCandidate.variant || variantCandidate.variantName);
+  const normalizedMessage = normalizeVariantIdentityText(message);
+  const hasExplicitVariant =
+    !explicitScorpioN &&
+    rawVariantToken &&
+    rawVariantToken.length >= 2 &&
+    new RegExp(`(^|\\s)${rawVariantToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`).test(normalizedMessage);
+  const candidateVehicle = hasExplicitVariant
+    ? {
+        ...modelCandidate,
+        ...variantCandidate,
+      }
+    : modelCandidate;
+  const vehicle = {
+    ...stateVehicle,
+    ...candidateVehicle,
+    variant:
+      explicitScorpioN
+        ? "" :
+      (hasExplicitVariant ? (variantCandidate.variant || variantCandidate.variantName) : "") ||
+      stateVehicle.variant ||
+      stateVehicle.variantName ||
+      "",
+    variantName:
+      explicitScorpioN
+        ? "" :
+      (hasExplicitVariant ? (variantCandidate.variantName || variantCandidate.variant) : "") ||
+      stateVehicle.variantName ||
+      stateVehicle.variant ||
+      "",
+  };
+
+  const modelKey =
+    vehicle.shortModelKey ||
+    vehicle.modelKey ||
+    vehicle.model ||
+    vehicle.fullModel ||
+    "";
+  if (!modelKey) return null;
+
+  const asksValue = /\b(value|worth|value for money|good value)\b/i.test(message);
+  const operation = hasExplicitVariant
+    ? "variant_score_insight"
+    : asksValue
+      ? "same_family_value_insights"
+      : "model_score_insights";
+
+  const payload = {
+    operation,
+    modelKey,
+    makeKey: vehicle.makeKey || vehicle.make || vehicle.brand || "",
+    fullModel: vehicle.fullModel || vehicle.model || modelKey,
+    ...(hasExplicitVariant ? {
+      variantKey: vehicle.variantKey || vehicle.variant || vehicle.variantName || "",
+      variant: vehicle.variant || vehicle.variantName || "",
+      variantName: vehicle.variantName || vehicle.variant || "",
+    } : {}),
+  };
+
+  const toolPlan = {
+    tool: "vehicle_score_insight",
+    operation,
+    input: {
+      message,
+      query: message,
+      ...payload,
+    },
+    args: payload,
+    params: payload,
+    entities: {
+      ...payload,
+      primaryModel: modelKey,
+      primaryMake: payload.makeKey,
+      primaryVariant: payload.variantName || "",
+    },
+    filters: {},
+    output: {
+      canvasType: "score_insight_canvas",
+      inlineType: "score_insight_summary",
+    },
+  };
+
+  const plan = {
+    intent: "vehicle_score_insight",
+    mode: "single_tool",
+    conversationMode: "diagnostic",
+    tools: [toolPlan],
+    output: {
+      canvasType: "score_insight_canvas",
+      inlineType: "score_insight_summary",
+    },
+  };
+
+  const executed = await executeAciPlannerPlan({
+    plan,
+    userMessage: message,
+    context: getContextForToolPlan(contextState),
+    user,
+    session,
+    meta,
+  });
+
+  const normalized = await normalizeAciFinalResponse(executed, {
+    message,
+    context: getContextForToolPlan(contextState),
+  });
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "",
+    usedGemini: false,
+    primaryTask: "score_insight",
+    tool: "vehicle_score_insight",
+    planMode: "single_tool",
+    contextIsolation: "direct_score_insight_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: message,
+    operation,
+    routingReason: "direct_score_insight_fast_path",
+  };
+
+  return composeAciAnswer({
+    ...normalized,
+    answer: ensureDiagnosticOnlyAnswerNote(normalized.answer),
+    operation,
+    data: {
+      ...(normalized.data || {}),
+      operation,
+    },
+    aciCoreBridge: bridge,
+    meta: {
+      ...(normalized.meta || {}),
+      aciCoreBridge: bridge,
+    },
+  });
 };
 
 const buildScoreValueLookupOverride = ({
@@ -1188,14 +1669,48 @@ export const runAciCoreLiveBridge = async ({
 } = {}) => {
   const startedAt = Date.now();
   const originalMessage = message;
+  const languageNormalization = normalizeAciBuyerLanguage({
+    message,
+    context,
+  });
+  message = languageNormalization.normalizedMessage || message;
   message = expandActiveComparisonFollowUpMessage({
     message,
     context,
   });
   const effectiveMessage = message;
+  const contextDirectFactFastPath = await maybeReturnContextDirectFactFastPath({
+    message,
+    context,
+    user,
+    session,
+    meta,
+    originalMessage,
+    startedAt,
+  });
+
+  if (contextDirectFactFastPath) {
+    return contextDirectFactFastPath;
+  }
+
+  const activeComparisonFollowUpFastPath = await maybeReturnActiveComparisonFollowUpFastPath({
+    message,
+    context,
+    user,
+    session,
+    meta,
+    originalMessage,
+    startedAt,
+  });
+
+  if (activeComparisonFollowUpFastPath) {
+    return activeComparisonFollowUpFastPath;
+  }
+
   const unsupportedCityFastPath = maybeReturnUnsupportedCityFastPath({
     message,
     effectiveMessage,
+    context,
     startedAt: typeof startedAt !== "undefined" ? startedAt : Date.now(),
   });
 
@@ -1239,6 +1754,22 @@ export const runAciCoreLiveBridge = async ({
     candidateSnapshot: managedCandidateSnapshot,
   });
   const isolatedContext = getContextForToolPlan(contextState);
+
+  const directScoreInsightFastPath = await maybeReturnDirectScoreInsightFastPath({
+    message,
+    context,
+    contextState,
+    candidateSnapshot: managedCandidateSnapshot,
+    user,
+    session,
+    meta,
+    originalMessage,
+    startedAt,
+  });
+
+  if (directScoreInsightFastPath) {
+    return directScoreInsightFastPath;
+  }
 
   const understanding = await runAciUnderstandingEngine({
     message,
@@ -1334,6 +1865,12 @@ export const runAciCoreLiveBridge = async ({
     contextIsolation: isolation,
     originalMessage,
     effectiveMessage,
+    ...(languageNormalization.changed
+      ? {
+          normalizedMessage: message,
+          languageNormalizationRules: languageNormalization.rules,
+        }
+      : {}),
     ...(crossModelScoreDiagnosticOverride
       ? {
           operation: "cross_model_score_diagnostic",
@@ -1379,6 +1916,7 @@ export const runAciCoreLiveBridge = async ({
       ...(responseForCompose.meta || {}),
       ...(scoreInsightGuardrail ? { scoreInsightGuardrail } : {}),
       aciCoreBridge: bridge,
+      ...(languageNormalization.changed ? { languageNormalization } : {}),
     },
   });
 };
