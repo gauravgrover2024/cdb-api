@@ -119,6 +119,16 @@ const tasks = [
     args: ["src/scripts/aci-audits/auditAciNoHardcodedVehicleFacts.cjs"],
   },
   {
+    key: "factualTraceMetadata",
+    label: "Factual trace metadata audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciFactualTraceMetadataV1.cjs"],
+    env: {
+      ACI_TRACE_AUDIT_MODE: "bridge",
+      ACI_TRACE_AUDIT_STRICT: "1",
+    },
+  },
+  {
     key: "buyerAnswerQuality",
     label: "Buyer answer quality audit",
     command: "node",
@@ -138,6 +148,7 @@ const filterTasksForSafetyMode = (allTasks = []) => {
       "embarrassmentQueries",
       "answerLanguage",
       "noHardcodedVehicleFacts",
+      "factualTraceMetadata",
       "buyerAnswerQuality",
     ]);
 
@@ -324,6 +335,7 @@ const slowThresholdsMs = {
   modelAliasFeatureQueries: 60000,
   embarrassmentQueries: 60000,
   noHardcodedVehicleFacts: 60000,
+  factualTraceMetadata: 60000,
   total: 90000,
 };
 
@@ -392,6 +404,7 @@ const summary = {
   contextSwitchExitCode: exitCodeFor("contextSwitch"),
   backendFreezeTrustExitCode: exitCodeFor("backendFreezeTrust"),
   noHardcodedVehicleFactsExitCode: exitCodeFor("noHardcodedVehicleFacts"),
+  factualTraceMetadataExitCode: exitCodeFor("factualTraceMetadata"),
 
   passedMentions: count(/"pass"\s*:\s*true/g),
   failedMentions: count(/"pass"\s*:\s*false/g),
@@ -413,6 +426,7 @@ const summary = {
     contextSwitch: reportedDurationFor("contextSwitch"),
     backendFreezeTrust: reportedDurationFor("backendFreezeTrust"),
     noHardcodedVehicleFacts: reportedDurationFor("noHardcodedVehicleFacts"),
+    factualTraceMetadata: reportedDurationFor("factualTraceMetadata"),
   },
 
   durationsMs: {
@@ -433,6 +447,7 @@ const summary = {
     contextSwitch: durationFor("contextSwitch"),
     backendFreezeTrust: durationFor("backendFreezeTrust"),
     noHardcodedVehicleFacts: durationFor("noHardcodedVehicleFacts"),
+    factualTraceMetadata: durationFor("factualTraceMetadata"),
     total: totalDurationMs,
   },
 
@@ -451,6 +466,7 @@ const summary = {
     modelAliasFeatureQueries: extractSuite("ACI model alias feature query audit"),
     contextManager: extractSuite("ACI Context Manager V1 audit"),
     noHardcodedVehicleFacts: extractSuite("ACI No-Hardcoded Vehicle Facts Audit"),
+    factualTraceMetadata: extractSuite("ACI Factual Trace Metadata Audit v1"),
   },
 
   slowThresholdsMs,
