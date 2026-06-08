@@ -2496,12 +2496,171 @@ export const buildGeneralResponse = ({
     actions: runtimeData.actions || [],
   });
 
+const removeDuplicateMakePrefixFromText = (value = "") =>
+  cleanText(value).replace(/\b([A-Z][a-z]+)\s+\1\s+/g, "$1 ");
+
+const stripMakeFromModelLabel = ({ make = "", model = "" } = {}) => {
+  const brand = cleanText(make);
+  let label = cleanText(model);
+
+  if (!brand || !label) return label;
+
+  let guard = 0;
+  while (
+    guard < 3 &&
+    normalizeSearchKey(label).startsWith(`${normalizeSearchKey(brand)} `)
+  ) {
+    const makeWordCount = brand.split(/\s+/).filter(Boolean).length;
+    const next = cleanText(label.split(/\s+/).slice(makeWordCount).join(" "));
+    if (!next || normalizeSearchKey(next) === normalizeSearchKey(label)) break;
+    label = next;
+    guard += 1;
+  }
+
+  return label;
+};
+
+const normalizeSpecSelectedVehicleLabel = (vehicle = {}, fallback = {}) => {
+  const source = vehicle && typeof vehicle === "object" ? vehicle : {};
+  const make = cleanText(
+    source.make ||
+      source.brand ||
+      fallback.make ||
+      fallback.brand ||
+      "",
+  );
+
+  const model = stripMakeFromModelLabel({
+    make,
+    model:
+      source.model ||
+      fallback.model ||
+      source.fullModel ||
+      source.displayName ||
+      fallback.fullModel ||
+      fallback.displayName ||
+      "",
+  });
+
+  const fullModelRaw = cleanText(
+    source.fullModel ||
+      source.displayName ||
+      fallback.fullModel ||
+      fallback.displayName ||
+      "",
+  );
+
+  const fullModelBase =
+    stripMakeFromModelLabel({ make, model: fullModelRaw }) ||
+    model ||
+    stripMakeFromModelLabel({ make, model: fallback.model || "" });
+
+  const fullModel = removeDuplicateMakePrefixFromText(
+    make && fullModelBase ? `${make} ${fullModelBase}` : fullModelBase || model || make,
+  );
+
+  return {
+    ...source,
+    make,
+    brand: cleanText(source.brand || source.make || "") || make,
+    model,
+    fullModel,
+    displayName: fullModel,
+  };
+};
+
 export const buildVehicleSpecAttributeResponse = ({
   toolPlan = {},
   runtimeData = {},
   context = {},
-} = {}) =>
-  baseResponse({
+} = {}) => {
+  const rawData = runtimeData.data || runtimeData || {};
+  const rawContextPatch = runtimeData.contextPatch || rawData.contextPatch || null;
+
+  const selectedVehicle = normalizeSpecSelectedVehicleLabel(
+    rawContextPatch?.selectedVehicle ||
+      rawData.selectedVehicle ||
+      context.selectedVehicle ||
+      {},
+    {
+      make:
+        rawContextPatch?.anchorMake ||
+        rawData.anchorMake ||
+        context.anchorMake ||
+        context.selectedVehicle?.make ||
+        context.selectedVehicle?.brand ||
+        "",
+      model:
+        rawContextPatch?.anchorModel ||
+        rawData.anchorModel ||
+        context.anchorModel ||
+        context.selectedVehicle?.model ||
+        "",
+      fullModel:
+        rawContextPatch?.anchorFullModel ||
+        rawData.anchorFullModel ||
+        context.anchorFullModel ||
+        context.selectedVehicle?.fullModel ||
+        "",
+    },
+  );
+
+  const cleanContextPatch = rawContextPatch
+    ? {
+        ...rawContextPatch,
+        selectedVehicle,
+        anchorMake: rawContextPatch.anchorMake || selectedVehicle.make || "",
+        anchorModel: selectedVehicle.model || rawContextPatch.anchorModel || "",
+        anchorFullModel: selectedVehicle.fullModel || rawContextPatch.anchorFullModel || "",
+        contextState: rawContextPatch.contextState
+          ? {
+              ...rawContextPatch.contextState,
+              selectedVehicle: normalizeSpecSelectedVehicleLabel(
+                rawContextPatch.contextState.selectedVehicle || selectedVehicle,
+                selectedVehicle,
+              ),
+              anchors: rawContextPatch.contextState.anchors
+                ? {
+                    ...rawContextPatch.contextState.anchors,
+                    primaryVehicle: normalizeSpecSelectedVehicleLabel(
+                      rawContextPatch.contextState.anchors.primaryVehicle || selectedVehicle,
+                      selectedVehicle,
+                    ),
+                  }
+                : rawContextPatch.contextState.anchors,
+            }
+          : rawContextPatch.contextState,
+        aciContextState: rawContextPatch.aciContextState
+          ? {
+              ...rawContextPatch.aciContextState,
+              selectedVehicle: normalizeSpecSelectedVehicleLabel(
+                rawContextPatch.aciContextState.selectedVehicle || selectedVehicle,
+                selectedVehicle,
+              ),
+              anchors: rawContextPatch.aciContextState.anchors
+                ? {
+                    ...rawContextPatch.aciContextState.anchors,
+                    primaryVehicle: normalizeSpecSelectedVehicleLabel(
+                      rawContextPatch.aciContextState.anchors.primaryVehicle || selectedVehicle,
+                      selectedVehicle,
+                    ),
+                  }
+                : rawContextPatch.aciContextState.anchors,
+            }
+          : rawContextPatch.aciContextState,
+      }
+    : null;
+
+  const cleanData = {
+    ...rawData,
+    anchorMake: rawData.anchorMake || selectedVehicle.make || "",
+    anchorModel: selectedVehicle.model || rawData.anchorModel || "",
+    anchorFullModel: selectedVehicle.fullModel || rawData.anchorFullModel || "",
+    selectedVehicle,
+    ...(cleanContextPatch ? { contextPatch: cleanContextPatch } : {}),
+  };
+
+  return baseResponse({
     toolPlan,
     context,
     runtimeData,
@@ -2509,11 +2668,11 @@ export const buildVehicleSpecAttributeResponse = ({
     displayMode: "inline",
     canvasType: "",
     inlineType: runtimeData.inlineType || "spec_attribute_answer_card",
-    title: runtimeData.title || "Vehicle specification",
+    title: removeDuplicateMakePrefixFromText(runtimeData.title || "Vehicle specification"),
     answer:
-      runtimeData.answer ||
+      removeDuplicateMakePrefixFromText(runtimeData.answer || "") ||
       "I found the model, but the exact requested specification is not available in the indexed data yet.",
-    data: runtimeData.data || runtimeData,
+    data: cleanData,
     actions: runtimeData.actions || runtimeData.data?.nextActions || [],
     leadingQuestions:
       runtimeData.leadingQuestions ||
@@ -2525,12 +2684,13 @@ export const buildVehicleSpecAttributeResponse = ({
       runtimeData.data?.nextActions ||
       [],
     sourceTransparency: runtimeData.sourceTransparency || {},
-    contextPatch: runtimeData.contextPatch || null,
+    contextPatch: cleanContextPatch,
     meta: {
       ...(runtimeData.meta || {}),
       responseTool: "vehicle_spec_attribute_lookup",
     },
   });
+};
 
 export const buildInternalPassthroughResponse = ({
   toolPlan = {},

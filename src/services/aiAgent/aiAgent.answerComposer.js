@@ -620,15 +620,24 @@ const summarizeSpecValues = (items = []) => {
   return summaries;
 };
 
+const cleanDuplicateMakeModelLabel = (label = "") => {
+  const clean = firstText(label);
+  if (!clean) return "";
+
+  return clean.replace(/\b([A-Z][a-z]+)\s+\1\s+/g, "$1 ");
+};
+
 const composeVehicleSpecAttributeAnswer = (response = {}) => {
   const data = response.data || {};
-  const modelLabel = firstText(
-    data.anchorFullModel,
-    response.contextPatch?.anchorFullModel,
-    response.contextPatch?.selectedVehicle?.fullModel,
-    [data.anchorMake, data.anchorModel].filter(Boolean).join(" "),
-    response.title,
-    "this model",
+  const modelLabel = cleanDuplicateMakeModelLabel(
+    firstText(
+      data.anchorFullModel,
+      response.contextPatch?.anchorFullModel,
+      response.contextPatch?.selectedVehicle?.fullModel,
+      [data.anchorMake, data.anchorModel].filter(Boolean).join(" "),
+      response.title,
+      "this model",
+    ),
   );
   const attribute = firstText(data.attributeLabel, data.attributeKey, "requested specification");
   const values = summarizeSpecValues(data.values);

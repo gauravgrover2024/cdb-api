@@ -31,6 +31,11 @@ const getBlob = (response = {}) =>
 
 const duplicatePatterns = [
   {
+    id: "duplicate_any_make_model_prefix",
+    pattern: /\b([A-Z][a-z]+)\s+\1\s+[A-Z][A-Za-z0-9-]+\b/,
+    description: "Duplicate make prefix in model label.",
+  },
+  {
     id: "duplicate_tata_prefix",
     pattern: /\bTata\s+Tata\b/i,
     description: "Duplicate Tata make prefix.",
@@ -76,6 +81,15 @@ const cases = [
   {
     id: "tata-punch-mileage-label",
     messages: ["Tata Punch mileage"],
+    expectedIntent: "vehicle_spec_attribute_answer",
+  },
+  {
+    id: "tata-punch-context-mileage-label",
+    messages: [
+      "Does the Tata Punch have a sunroof and ADAS?",
+      "Does Tata Punch Adventure S have sunroof and ADAS?",
+      "Tata Punch mileage"
+    ],
     expectedIntent: "vehicle_spec_attribute_answer",
   },
   {
