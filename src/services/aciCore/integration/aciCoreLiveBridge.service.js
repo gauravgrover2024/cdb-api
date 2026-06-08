@@ -1782,6 +1782,10 @@ const UNSUPPORTED_PRICE_CITY_ALIASES_FOR_FAST_PATH = [
   ["hyderabad", "Hyderabad"],
   ["kolkata", "Kolkata"],
   ["ahmedabad", "Ahmedabad"],
+  ["jaipur", "Jaipur"],
+  ["chandigarh", "Chandigarh"],
+  ["faridabad", "Faridabad"],
+  ["ghaziabad", "Ghaziabad"],
 ];
 
 const hasAciPriceIntentForFastUnsupportedCity = (message = "") => {
@@ -1883,11 +1887,20 @@ const maybeReturnUnsupportedCityFastPath = ({
   context = {},
   startedAt = 0,
 } = {}) => {
-  if (!hasAciPriceIntentForFastUnsupportedCity(effectiveMessage || message)) {
+  const text = effectiveMessage || message;
+  if (!hasAciPriceIntentForFastUnsupportedCity(text)) {
     return null;
   }
 
-  const match = findUnsupportedPriceCityForFastPath(effectiveMessage || message);
+  const explicitMatch = findUnsupportedPriceCityForFastPath(text);
+  const contextMatch =
+    !explicitMatch &&
+    !hasSupportedCityMention(text) &&
+    isContextualPriceFastPathFollowUp(text)
+      ? findUnsupportedPriceCityForContext(context)
+      : null;
+
+  const match = explicitMatch || contextMatch;
   if (!match) return null;
 
   const [, requestedCity] = match;
@@ -1930,24 +1943,68 @@ const getCitySlugFromMessage = (message = "") => {
   return "";
 };
 
-const getSupportedCitySlugFromContext = (context = {}) => {
+const getFastPathCityCandidatesFromContext = (context = {}) => {
   const selectedVehicle =
     context?.selectedVehicle ||
     context?.contextState?.selectedVehicle ||
     context?.aciContextState?.selectedVehicle ||
     {};
-  const city = cleanText(
-    selectedVehicle.citySlug ||
-      selectedVehicle.city ||
-      context?.anchorCity ||
-      context?.city ||
-      "",
-  );
-  const normalized = normalizeFastPathSlug(city);
+
+  const contextState = context?.contextState || {};
+  const aciContextState = context?.aciContextState || {};
+  const anchors = contextState?.anchors || aciContextState?.anchors || {};
+
+  return [
+    context?.anchorCity,
+    context?.citySlug,
+    context?.city,
+    anchors?.anchorCity,
+    anchors?.citySlug,
+    anchors?.city,
+    contextState?.anchorCity,
+    contextState?.citySlug,
+    contextState?.city,
+    aciContextState?.anchorCity,
+    aciContextState?.citySlug,
+    aciContextState?.city,
+    selectedVehicle.citySlug,
+    selectedVehicle.city,
+  ]
+    .map((value) => cleanText(value))
+    .filter(Boolean);
+};
+
+const normalizeSupportedFastPathCitySlug = (value = "") => {
+  const normalized = normalizeFastPathSlug(value);
   if (["new-delhi", "noida", "gurgaon"].includes(normalized)) return normalized;
   if (normalized === "delhi") return "new-delhi";
   if (normalized === "gurugram") return "gurgaon";
   return "";
+};
+
+const getSupportedCitySlugFromContext = (context = {}) => {
+  for (const city of getFastPathCityCandidatesFromContext(context)) {
+    const normalized = normalizeSupportedFastPathCitySlug(city);
+    if (normalized) return normalized;
+  }
+  return "";
+};
+
+const findUnsupportedPriceCityForContext = (context = {}) => {
+  for (const city of getFastPathCityCandidatesFromContext(context)) {
+    const match = findUnsupportedPriceCityForFastPath(city);
+    if (match) return match;
+  }
+  return null;
+};
+
+const isContextualPriceFastPathFollowUp = (message = "") => {
+  const normalized = normalizeFastPathText(message);
+  return (
+    /^price$/.test(normalized) ||
+    /\b(price there|there price|same price|same in|price in that city|price in this city)\b/i.test(String(message || "")) ||
+    hasContextReference(message)
+  );
 };
 
 
