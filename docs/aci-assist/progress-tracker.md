@@ -841,3 +841,33 @@ The audit fails if:
 This should be wired into a freeze/full gate, not `aci:safety:fast`, because it depends on a full 185 audit log.
 
 <!-- ACI_NO_DATA_BASELINE_GUARDRAIL_2026_06_08_END -->
+---
+
+<!-- ACI_NO_DATA_FREEZE_GATE_WIRING_2026_06_08_START -->
+
+## Guardrail Update — No-Data Baseline Wired Into Freeze Gate
+
+### Status
+Wired into freeze/full gate and passing.
+
+### What changed
+The no-data baseline freeze gate now runs a fresh full 185 buyer-answer deep audit, verifies JSON markers, and then validates the strict 10-case no-data baseline against that exact fresh log.
+
+### Verified
+- `aci:no-data:freeze-gate`: passing
+- `ACI No-Data Baseline Audit v1`: passing
+- Expected no-data count: 10
+- Actual no-data count: 10
+- Failed no-data baseline IDs: none
+
+### Important note
+Overall `aci:safety:freeze` is still not clean because of pre-existing failures outside the no-data guardrail:
+- `contract-internal-private`
+- `punch-sunroof-and-adas`
+- `punch-seven-feature-bundle`
+- `punch-variant-sunroof-and-adas`
+- `backendFreezeTrust`
+
+Next cleanup should start with `contract-internal-private`.
+
+<!-- ACI_NO_DATA_FREEZE_GATE_WIRING_2026_06_08_END -->
