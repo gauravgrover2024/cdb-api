@@ -448,6 +448,88 @@ const ACI_PROGRESS_MODULES = [
   },
 
   {
+    id: "aci-assist-premortem-guardrails",
+    title: "ACI Assist Pre-Mortem Guardrail System",
+    group: "Trust, Safety & Launch Readiness",
+    priority: "P0",
+    owner: "Product + Backend + QA",
+    status: "planned",
+    summary: "Locked governing pre-mortem guardrail system to prevent wrong/stale facts, hidden unsupported-city fallback, slow core flows, generic chatbot behavior, hardcoded vehicle/scoring logic, LLM-as-truth, revenue pollution, stale progress tracking, weak SEO utility, poor mobile UX, and weak lead conversion.",
+    currentState: "Pre-mortem document has been added at docs/aci-assist/ACI_ASSIST_PREMORTEM.md. This is a governing guardrail and should be implemented before expanding broad decision-intelligence work.",
+    done: "Pre-mortem failure modes, launch gates, risk register, and priority order are locked.",
+    remaining: [
+      "Wire no-hardcoded vehicle fact audit into safety/freeze gates.",
+      "Add/verify unsupported-city honesty guard coverage.",
+      "Add trace metadata requirements for price, feature, color, and spec answers.",
+      "Keep no-data/data-quality review visible before public launch.",
+      "Prevent progress tracker fallback/stale registry states.",
+      "Use the pre-mortem as a review gate before decision module, SEO scale, and monetization systems."
+    ],
+    nextSteps: [
+      "Finish current spec no-data mapping cleanup.",
+      "Review remaining comparison/score no-data buckets.",
+      "Implement guardrail audits and trace requirements.",
+      "Re-run full bridge/public audit and safety gates before marking production-ready."
+    ],
+    dependencies: [
+      "docs/aci-assist/ACI_ASSIST_PREMORTEM.md",
+      "ACI buyer answer deep audit",
+      "ACI safety fast/freeze gates",
+      "No-hardcoded-facts audit"
+    ],
+    items: [
+      { key: "premortem_doc", name: "Pre-mortem plan document", status: "done" },
+      { key: "no_hardcoded_facts_audit", name: "No-hardcoded vehicle fact audit", status: "planned" },
+      { key: "unsupported_city_honesty_guard", name: "Unsupported-city honesty guard", status: "in_progress" },
+      { key: "answer_trace_metadata", name: "Price / feature / color / spec trace metadata", status: "planned" },
+      { key: "no_data_quality_review", name: "No-data and data-quality review", status: "in_progress" },
+      { key: "buyer_journey_evals", name: "Core buyer journey evals", status: "planned" },
+      { key: "progress_registry_guard", name: "Progress registry fallback/staleness prevention", status: "planned" }
+    ]
+  },
+
+  {
+    id: "local-gemma-language-intent-layer",
+    title: "Local Gemma / TranslateGemma Language & Intent Layer",
+    group: "Understanding & Language Layer",
+    priority: "P1",
+    owner: "Backend + AI Platform",
+    status: "planned",
+    summary: "Locked planned provider-adapter layer for local Hindi/Hinglish semantic understanding, translation/rewriting, typo/context interpretation, and meaning-frame extraction using Gemma/TranslateGemma where useful.",
+    currentState: "Planned and locked, not started. Gemini remains the current fallback/escalation path. Gemma must not become factual car truth.",
+    done: "Scope and architectural boundaries locked: Gemma may interpret language and meaning; DB/read-model tools remain the source of facts.",
+    remaining: [
+      "Design provider adapter behind env flag.",
+      "Evaluate Gemma local for Hindi/Hinglish semantic understanding.",
+      "Evaluate TranslateGemma for translation/rewriting quality if useful.",
+      "Validate all extracted entities against DB/read-models before tool execution.",
+      "Add evals for Hindi, Hinglish, typo recovery, entity resolution, and follow-up context.",
+      "Keep Gemini as fallback/escalation only.",
+      "Block Gemma/Gemini from owning price, features, variants, rankings, safety judgment, city support, offers, dealer routing, or sponsored logic."
+    ],
+    nextSteps: [
+      "Start only after current no-data cleanup and pre-mortem guardrails are stable.",
+      "Build a small offline POC first, not live routing replacement.",
+      "Compare against current deterministic language normalization before enabling runtime use."
+    ],
+    dependencies: [
+      "Pre-mortem guardrails",
+      "DB entity validation",
+      "Hindi/Hinglish eval set",
+      "Provider adapter interface",
+      "Feature flag / rollback switch"
+    ],
+    items: [
+      { key: "provider_adapter_design", name: "Provider adapter and feature flag design", status: "planned" },
+      { key: "gemma_local_poc", name: "Local Gemma Hindi/Hinglish semantic POC", status: "planned" },
+      { key: "translategemma_eval", name: "TranslateGemma translation/rewriting evaluation", status: "planned" },
+      { key: "db_entity_validation", name: "DB validation for extracted entities", status: "planned" },
+      { key: "hindi_hinglish_eval_set", name: "Hindi/Hinglish typo/context eval set", status: "planned" },
+      { key: "runtime_safety_boundary", name: "Block Gemma/Gemini from factual car truth", status: "planned" }
+    ]
+  },
+
+  {
     id: "locked-intelligence-roadmap",
     title: "Locked Intelligence & UX Roadmap",
     group: "Product Strategy",

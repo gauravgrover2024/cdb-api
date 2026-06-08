@@ -448,6 +448,87 @@ Then let frontend render premium UI from structured data.
 This protects ACI Assist from becoming a pile of features and keeps it as a serious buyer decision-intelligence product.
 <!-- ACI_LOCKED_SCOPE_2026_05_28_END -->
 
+
+---
+
+<!-- ACI_PREMORTEM_GEMMA_LOCK_2026_06_08_START -->
+
+## ACI Assist Pre-Mortem Guardrails & Local Gemma Layer — Locked
+
+### Status
+Planned / locked into roadmap. Not production implemented yet.
+
+### Decision taken
+The ACI Assist pre-mortem is now a governing product and engineering guardrail. It must be used before further broad module work, especially decision intelligence, SEO scale, and monetization systems.
+
+The local Gemma / TranslateGemma layer is also locked as a planned understanding-language layer, not as a factual car-truth source.
+
+### Pre-mortem guardrail scope
+The guardrail system must prevent:
+
+- wrong or stale DB facts
+- slow exact-price and core flows
+- generic chatbot behavior
+- hardcoded vehicle, variant, persona, market, or scoring logic
+- hidden unsupported-city fallback
+- LLM/Gemma/Gemini becoming factual source of truth
+- recommendation pollution by ads or dealer monetization
+- stale progress tracker states
+- weak SEO utility pages
+- weak mobile buyer journey
+- weak lead conversion timing
+
+### Required pre-mortem implementation items
+
+- no-hardcoded vehicle fact audit
+- unsupported-city honesty audit
+- price / feature / color / spec trace metadata
+- stale/missing data visibility
+- buyer journey evals
+- progress registry fallback prevention
+- full audit and safety gate before production-ready status
+
+### Local Gemma / TranslateGemma scope
+
+Gemma may be used for:
+
+- Hindi/Hinglish semantic understanding
+- translation / rewriting if TranslateGemma performs better
+- typo/context interpretation
+- intent and meaning-frame extraction
+- clarification phrasing support
+
+Gemma must not own:
+
+- price
+- feature availability
+- variant ranking
+- sponsored logic
+- safety judgment
+- offer validity
+- dealer routing
+- city support
+- final factual car claims
+
+All extracted models, variants, cities, features, and buyer intents must be validated against DB/read-models/tools before execution.
+
+### Correct sequence from here
+
+1. Finish current no-data/spec cleanup and keep full bridge/public audits green.
+2. Implement pre-mortem guardrail audits and trace requirements.
+3. Run core buyer journey evals.
+4. Build a small local Gemma/TranslateGemma POC behind an env flag.
+5. Only then continue broader decision intelligence modules.
+
+### Linked documents
+
+- `docs/aci-assist/ACI_ASSIST_PREMORTEM.md`
+- `docs/aci-assist/ACI_DECISION_MODULE_PRODUCTION_PLAN_V1.md`
+- `docs/aci-assist/EVAL_AND_QA_PLAN.md`
+- `docs/aci-assist/SECURITY_PRIVACY_AND_GUARDRAILS_PLAN.md`
+
+<!-- ACI_PREMORTEM_GEMMA_LOCK_2026_06_08_END -->
+
 <!-- ACI_LAUNCH_DISTRIBUTION_REVENUE_2026_05_30_START -->
 
 ## Launch Distribution, Social Presence & Revenue Systems — Locked
