@@ -116,7 +116,8 @@
     "aci:no-data:extract": "node src/scripts/aci-audits/extractAciNoDataAnswers.cjs",
     "aci:no-data:features:audit": "node src/scripts/aci-audits/auditAciFeatureNoDataSourceCoverage.cjs",
     "aci:no-data:specs:audit": "node src/scripts/aci-audits/auditAciSpecNoDataSourceCoverage.cjs",
-    "aci:no-hardcoded-facts:audit": "node src/scripts/aci-audits/auditAciNoHardcodedVehicleFacts.cjs"
+    "aci:no-hardcoded-facts:audit": "node src/scripts/aci-audits/auditAciNoHardcodedVehicleFacts.cjs",
+    "aci:factual-trace:audit": "node src/scripts/aci-audits/auditAciFactualTraceMetadataV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

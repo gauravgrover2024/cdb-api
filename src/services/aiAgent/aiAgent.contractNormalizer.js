@@ -89,6 +89,67 @@ const normalizeFeatureSourceTransparency = (response = {}, source = {}) => {
 
 
 
+const COMPARISON_TRACE_COLLECTIONS = [
+  "aci_vehicle_price_rows",
+  "vehicle_variant_feature_matrix_v2",
+];
+
+const isComparisonTraceResponse = (response = {}, widget = null) => {
+  const intent = String(response.intent || widget?.intent || response.data?.intent || "");
+  const tool = String(response.tool || widget?.tool || response.data?.tool || "");
+  const canvasType = String(response.canvasType || widget?.canvasType || response.data?.canvasType || "");
+
+  return (
+    intent === "vehicle_comparison" ||
+    intent === "vehicle_compare" ||
+    tool === "vehicle_compare" ||
+    canvasType === "comparison_canvas" ||
+    canvasType === "variant_comparison_canvas" ||
+    Boolean(response.comparisonSummary || response.data?.comparisonSummary) ||
+    Boolean(response.matrixCoverage || response.data?.matrixCoverage) ||
+    toArray(response.featureDifferences || response.data?.featureDifferences).length > 0 ||
+    toArray(response.commonHighlights || response.data?.commonHighlights).length > 0
+  );
+};
+
+const normalizeComparisonSourceTransparency = (response = {}, widget = null, source = {}) => {
+  if (!isComparisonTraceResponse(response, widget)) return source;
+
+  const modulesChecked = [
+    ...toArray(source.modulesChecked),
+    ...COMPARISON_TRACE_COLLECTIONS,
+  ].filter(Boolean);
+
+  const rows = getRows(response, widget);
+  const featureDifferenceCount = toArray(response.featureDifferences || response.data?.featureDifferences).length;
+  const commonHighlightCount = toArray(response.commonHighlights || response.data?.commonHighlights).length;
+  const matrixCoverage = response.matrixCoverage || response.data?.matrixCoverage || {};
+
+  return {
+    ...source,
+    responseTool: source.responseTool || "vehicle_compare",
+    modulesChecked: [...new Set(modulesChecked)],
+    recordCount:
+      source.recordCount ??
+      source.matched ??
+      source.matchedCount ??
+      rows.length,
+    matched:
+      source.matched ??
+      source.matchedCount ??
+      source.recordCount ??
+      rows.length,
+    dataSource: "vehicle_compare_read_models",
+    comparisonTrace: {
+      rowCount: rows.length,
+      featureDifferenceCount,
+      commonHighlightCount,
+      hasMatrixCoverage: Boolean(matrixCoverage && Object.keys(matrixCoverage).length),
+    },
+  };
+};
+
+
 const normalizeReadModelSourceTransparency = (response = {}, source = {}) => {
   const responseModules = toArray(
     response.modulesChecked ||
@@ -176,22 +237,26 @@ const normalizeSourceTransparency = (response = {}, widget = null) => {
         ? toArray(raw.modulesChecked)
         : toArray(raw.module || raw.collection || raw.dataSource);
 
-    return normalizeReadModelSourceTransparency(
+    return normalizeComparisonSourceTransparency(
       response,
-      normalizeFeatureSourceTransparency(response, {
-        ...raw,
-        modulesChecked,
-        recordCount:
-          raw.recordCount ??
-          raw.matched ??
-          raw.matchedCount ??
-          getRows(response, widget).length,
-        matched:
-          raw.matched ??
-          raw.matchedCount ??
-          raw.recordCount ??
-          getRows(response, widget).length,
-      }),
+      widget,
+      normalizeReadModelSourceTransparency(
+        response,
+        normalizeFeatureSourceTransparency(response, {
+          ...raw,
+          modulesChecked,
+          recordCount:
+            raw.recordCount ??
+            raw.matched ??
+            raw.matchedCount ??
+            getRows(response, widget).length,
+          matched:
+            raw.matched ??
+            raw.matchedCount ??
+            raw.recordCount ??
+            getRows(response, widget).length,
+        }),
+      ),
     );
   }
 
@@ -204,14 +269,18 @@ const normalizeSourceTransparency = (response = {}, widget = null) => {
           ? "vehicles"
           : response.tool || response.intent || "";
 
-  return normalizeReadModelSourceTransparency(
+  return normalizeComparisonSourceTransparency(
     response,
-    normalizeFeatureSourceTransparency(response, {
-      modulesChecked: inferredModule ? [inferredModule] : [],
-      recordCount: getRows(response, widget).length,
-      matched: getRows(response, widget).length,
-      dataSource: inferredModule,
-    }),
+    widget,
+    normalizeReadModelSourceTransparency(
+      response,
+      normalizeFeatureSourceTransparency(response, {
+        modulesChecked: inferredModule ? [inferredModule] : [],
+        recordCount: getRows(response, widget).length,
+        matched: getRows(response, widget).length,
+        dataSource: inferredModule,
+      }),
+    ),
   );
 };
 
