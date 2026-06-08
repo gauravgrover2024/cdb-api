@@ -69,12 +69,14 @@ const SPEC_ATTRIBUTE_DEFINITIONS = [
     label: 'boot space',
     aliases: ['boot space', 'boot capacity', 'luggage space'],
     fields: ['bootSpace', 'bootCapacity', 'luggageSpace'],
+    matrixKeys: ['reported_boot_space', 'boot_space', 'bootSpace'],
   },
   {
     key: 'ground_clearance',
     label: 'ground clearance',
     aliases: ['ground clearance'],
     fields: ['groundClearance'],
+    matrixKeys: ['ground_clearance_unladen', 'ground_clearance', 'groundClearance'],
   },
   {
     key: 'dimensions',
@@ -111,6 +113,14 @@ const SPEC_ATTRIBUTE_DEFINITIONS = [
     label: 'mileage',
     aliases: ['mileage', 'fuel efficiency'],
     fields: ['mileage', 'fuelEfficiency', 'araiMileage'],
+    matrixKeys: [
+      'arai_mileage',
+      'petrol_mileage_arai',
+      'diesel_mileage_arai',
+      'cng_mileage_arai',
+      'mileage',
+      'reported_mileage',
+    ],
   },
   {
     key: 'engine_displacement',
@@ -123,6 +133,7 @@ const SPEC_ATTRIBUTE_DEFINITIONS = [
     label: 'power',
     aliases: ['power', 'bhp', 'max power', 'maximum power'],
     fields: ['power', 'maxPower', 'maximumPower', 'bhp'],
+    matrixKeys: ['max_power', 'power', 'reported_power'],
   },
   {
     key: 'torque',
@@ -302,27 +313,39 @@ const buildFeatureMatrixVehicleQuery = (anchor = {}) => {
   return ors.length ? { $or: ors } : null;
 };
 
+const buildFeatureMatrixQueryFromAnchors = (anchors = []) => {
+  const ors = anchors
+    .map((anchor) => buildFeatureMatrixVehicleQuery(anchor))
+    .filter(Boolean)
+    .flatMap((query) => query.$or || [query]);
+
+  return ors.length ? { $or: ors } : null;
+};
+
 const valueFromFeatureCell = (cell = {}) => {
   if (!cell || typeof cell !== 'object') return '';
   if (cell.available === false || cell.availabilityStatus === 'not_available') return '';
   return firstMeaningful(cell.value, cell.displayValue, cell.text, cell.label);
 };
 
+const matrixAttributeKeys = (definition = {}) =>
+  [...new Set([definition.key, ...(definition.matrixKeys || [])].filter(Boolean))];
+
 const collectMatrixAttributeValues = ({ row = {}, definition = {} } = {}) => {
-  const cells = [
-    ['featuresByKey', row?.featuresByKey?.[definition.key]],
-    ['decisionSignals.featuresByKey', row?.decisionSignals?.featuresByKey?.[definition.key]],
-  ];
+  const cells = matrixAttributeKeys(definition).flatMap((key) => [
+    ['featuresByKey', key, row?.featuresByKey?.[key]],
+    ['decisionSignals.featuresByKey', key, row?.decisionSignals?.featuresByKey?.[key]],
+  ]);
 
   return cells
-    .map(([field, cell]) => {
+    .map(([field, key, cell]) => {
       const value = valueFromFeatureCell(cell);
       if (!value) return null;
 
       return compactObject({
         attributeKey: definition.key,
         attributeLabel: definition.label,
-        field: `${field}.${definition.key}`,
+        field: `${field}.${key}`,
         value: String(value),
         variant: firstMeaningful(row.variantFull, row.variant, row.variantName, row.variantKey),
         variantKey: row.variantKey,
@@ -389,7 +412,18 @@ async function lookupVehicleSpecAttribute({
   const modelSummaryRows = await db.collection('aci_vehicle_model_summary').find(query, { projection }).limit(10).toArray();
   const modelSummaryValues = modelSummaryRows.flatMap((row) => collectAttributeValues({ row, definition }));
 
-  const matrixQuery = buildFeatureMatrixVehicleQuery(anchor);
+  const matrixAnchors = [
+    anchor,
+    ...modelSummaryRows.map((row = {}) => ({
+      make: firstMeaningful(row.make, row.brand),
+      brand: firstMeaningful(row.brand, row.make),
+      model: row.model,
+      fullModel: row.fullModel,
+      modelKey: row.modelKey,
+      shortModelKey: row.shortModelKey,
+    })),
+  ];
+  const matrixQuery = buildFeatureMatrixQueryFromAnchors(matrixAnchors);
   const matrixProjection = {
     make: 1,
     brand: 1,
@@ -400,8 +434,12 @@ async function lookupVehicleSpecAttribute({
     variantFull: 1,
     variantName: 1,
     variantKey: 1,
-    [`featuresByKey.${definition.key}`]: 1,
-    [`decisionSignals.featuresByKey.${definition.key}`]: 1,
+    ...Object.fromEntries(
+      matrixAttributeKeys(definition).flatMap((key) => [
+        [`featuresByKey.${key}`, 1],
+        [`decisionSignals.featuresByKey.${key}`, 1],
+      ]),
+    ),
   };
 
   const matrixRows = matrixQuery

@@ -562,6 +562,56 @@ const composeVehicleComparisonAnswer = (response = {}) => {
   ).text;
 };
 
+const uniqueTexts = (values = []) => [...new Set(values.map(cleanText).filter(Boolean))];
+
+const getSpecValueText = (item = {}) => {
+  if (!item || typeof item !== "object") return firstText(item);
+  return firstText(item.value, item.displayValue, item.text, item.label);
+};
+
+const getSpecVariantText = (item = {}) =>
+  item && typeof item === "object"
+    ? firstText(item.variant, item.variantName, item.fullVariant, item.variantKey)
+    : "";
+
+const summarizeSpecValues = (items = []) => {
+  const entries = asArray(items)
+    .map((item) => {
+      const value = getSpecValueText(item);
+      if (!value) return null;
+      return {
+        value,
+        variant: getSpecVariantText(item),
+      };
+    })
+    .filter(Boolean);
+
+  if (!entries.length) return [];
+
+  const groupsByValue = new Map();
+  for (const entry of entries) {
+    if (!groupsByValue.has(entry.value)) groupsByValue.set(entry.value, []);
+    groupsByValue.get(entry.value).push(entry.variant);
+  }
+
+  const groups = [...groupsByValue.entries()];
+  if (groups.length === 1) {
+    const [value, variants] = groups[0];
+    const variantCount = uniqueTexts(variants).length;
+    if (variantCount > 1) return [`${value} across ${variantCount} indexed variants`];
+    return [value];
+  }
+
+  const summaries = groups.slice(0, 4).map(([value, variants]) => {
+    const examples = uniqueTexts(variants).slice(0, 3);
+    return examples.length ? `${examples.join(", ")}: ${value}` : value;
+  });
+
+  const remaining = groups.length - summaries.length;
+  if (remaining > 0) summaries.push(`plus ${remaining} more indexed value groups`);
+  return summaries;
+};
+
 const composeVehicleSpecAttributeAnswer = (response = {}) => {
   const data = response.data || {};
   const modelLabel = firstText(
@@ -573,9 +623,7 @@ const composeVehicleSpecAttributeAnswer = (response = {}) => {
     "this model",
   );
   const attribute = firstText(data.attributeLabel, data.attributeKey, "requested specification");
-  const values = asArray(data.values)
-    .map((item) => firstText(item.value, item.displayValue, item.text, item.label))
-    .filter(Boolean);
+  const values = summarizeSpecValues(data.values);
 
   if (values.length && !data.missingData) {
     return renderLanguage(
