@@ -871,3 +871,39 @@ Overall `aci:safety:freeze` is still not clean because of pre-existing failures 
 Next cleanup should start with `contract-internal-private`.
 
 <!-- ACI_NO_DATA_FREEZE_GATE_WIRING_2026_06_08_END -->
+---
+
+<!-- ACI_BACKEND_FREEZE_GREEN_2026_06_08_START -->
+
+## Guardrail Update — Backend Freeze Safety Gate Green
+
+### Status
+Done for backend-only scope.
+
+### Verified backend gates
+- `aci:safety:fast`: passing
+- `aci:safety:freeze`: passing
+- Contract foundation: 7/7 passing
+- Vehicle entity index audit: 7/7 passing
+- Multi-feature query audit: 2/2 passing
+- Variant multi-feature query audit: 1/1 passing
+- Feature comparison query audit: 1/1 passing
+- Context switch audit: passing
+- Backend freeze trust audit: 7/7 passing
+- No-data baseline freeze gate: passing
+- Full buyer deep audit inside no-data freeze gate: 185/185 passing
+- No-data baseline: expected 10, actual 10, failed IDs none
+
+### Fixes included before this green state
+- Internal CDrive/private query `Loan closure 7077` now routes to `internal_passthrough` instead of public clarification.
+- Multi-feature questions now route before live bridge when they are true multi-feature checks.
+- Turbo/turbocharged budget discovery now preserves `turbo charger` as a must-have feature and uses `feature_match_builder_canvas` instead of silently returning broad budget recommendations.
+- Unsupported-city price flows remain honest and do not silently fall back to Delhi/New Delhi.
+
+### Scope note
+Frontend/UI evaluation is intentionally excluded because frontend is not ready. Current work remains backend-only until frontend work is explicitly resumed.
+
+### Next backend step
+Build core buyer journey backend evals. These should test backend response correctness, routing, context, trace, and honest degraded states only — no frontend rendering or UI assessment.
+
+<!-- ACI_BACKEND_FREEZE_GREEN_2026_06_08_END -->

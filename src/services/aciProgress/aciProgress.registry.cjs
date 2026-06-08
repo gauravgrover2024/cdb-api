@@ -455,7 +455,7 @@ const ACI_PROGRESS_MODULES = [
     owner: "Product + Backend + QA",
     status: "partial",
     summary: "Locked governing pre-mortem guardrail system to prevent wrong/stale facts, hidden unsupported-city fallback, slow core flows, generic chatbot behavior, hardcoded vehicle/scoring logic, LLM-as-truth, revenue pollution, stale progress tracking, weak SEO utility, poor mobile UX, and weak lead conversion.",
-    currentState: "Pre-mortem document is locked. No-hardcoded vehicle facts audit, factual trace metadata audit, unsupported-city honesty audit, and no-data baseline audit are implemented. Safety-fast includes no-hardcoded, trace, and unsupported-city guardrails. No-data baseline is wired into freeze/full and passing, but the overall freeze gate still has pre-existing failures: contract-internal-private, Punch multi-feature audits, and backendFreezeTrust. Remaining guardrails: core buyer journey evals and progress registry fallback/staleness prevention.",
+    currentState: "Backend trust/correctness guardrails are now green for backend-only freeze scope. No-hardcoded vehicle facts audit, factual trace metadata audit, unsupported-city honesty audit, no-data baseline freeze gate, contract foundation, multi-feature audits, context switch audit, backend freeze trust audit, and aci:safety:fast/freeze are passing. Frontend/UI evaluation is intentionally excluded until frontend work resumes. Remaining guardrails: core buyer journey backend evals and progress registry fallback/staleness prevention.",
     done: "Pre-mortem failure modes, launch gates, risk register, and priority order are locked. No-hardcoded runtime vehicle fact guardrail is implemented and safety-gated. Factual trace metadata coverage is implemented and safety-gated for price, unsupported-city pricing, features, colors, specs, and comparison outputs.",
     remaining: [
       "Wire no-hardcoded vehicle fact audit into freeze/full gates if needed; fast safety gate is active.",
@@ -484,6 +484,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "unsupported_city_honesty_guard", name: "Unsupported-city honesty guard", status: "ready" },
       { key: "answer_trace_metadata", name: "Price / feature / color / spec trace metadata", status: "ready" },
       { key: "no_data_quality_review", name: "No-data and data-quality review", status: "ready" },
+      { key: "backend_freeze_green", name: "Backend freeze safety gate green", status: "ready" },
       { key: "buyer_journey_evals", name: "Core buyer journey evals", status: "planned" },
       { key: "progress_registry_guard", name: "Progress registry fallback/staleness prevention", status: "planned" }
     ]
