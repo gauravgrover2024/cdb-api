@@ -2,6 +2,11 @@
 
 require("dotenv").config();
 
+const mongoose = require("mongoose");
+
+const TRACE_MODE = String(process.env.ACI_TRACE_AUDIT_MODE || "bridge").toLowerCase();
+const isPublicMode = () => TRACE_MODE === "public";
+
 const PUBLIC_ENDPOINT =
   process.env.ACI_TRACE_AUDIT_PUBLIC_ENDPOINT ||
   process.env.ACI_DEEP_AUDIT_PUBLIC_ENDPOINT ||
@@ -268,7 +273,7 @@ function classify(testCase, output = {}) {
   };
 }
 
-async function callCase(testCase) {
+async function callPublicCase(testCase) {
   const maxAttempts = Number(process.env.ACI_TRACE_AUDIT_FETCH_ATTEMPTS || 4);
   let lastError = null;
 
@@ -328,11 +333,63 @@ async function callCase(testCase) {
   };
 }
 
+
+async function callBridgeCase(runAciCoreLiveBridge, testCase) {
+  try {
+    const output = await runAciCoreLiveBridge({
+      message: testCase.message,
+      context: testCase.context || {},
+      user: null,
+      session: {},
+      meta: { source: "auditAciFactualTraceMetadataV1", caseId: testCase.id },
+    });
+
+    return {
+      ...classify(testCase, unwrap(output)),
+      attempts: 1,
+    };
+  } catch (error) {
+    return {
+      id: testCase.id,
+      kind: testCase.kind,
+      message: testCase.message,
+      pass: false,
+      missing: ["bridge_call_failed"],
+      observed: {
+        mode: TRACE_MODE,
+        error: error?.message || String(error || "unknown"),
+        stackPreview: String(error?.stack || "").slice(0, 600),
+      },
+    };
+  }
+}
+
 async function main() {
+  let runAciCoreLiveBridge = null;
+
+  if (!isPublicMode()) {
+    const dbMod = await import("../../config/db.js");
+    const connectDB = dbMod.default || dbMod.connectDB || dbMod;
+    if (typeof connectDB !== "function") {
+      throw new Error("connectDB export not found");
+    }
+    await connectDB();
+
+    const bridgeMod = await import("../../services/aciCore/integration/aciCoreLiveBridge.service.js");
+    runAciCoreLiveBridge = bridgeMod.runAciCoreLiveBridge || bridgeMod.default;
+    if (typeof runAciCoreLiveBridge !== "function") {
+      throw new Error("runAciCoreLiveBridge export not found");
+    }
+  }
+
   const results = [];
 
   for (const testCase of CASES) {
-    results.push(await callCase(testCase));
+    results.push(
+      isPublicMode()
+        ? await callPublicCase(testCase)
+        : await callBridgeCase(runAciCoreLiveBridge, testCase),
+    );
   }
 
   const failed = results.filter((row) => !row.pass);
@@ -341,22 +398,37 @@ async function main() {
     suite: "ACI Factual Trace Metadata Audit v1",
     ok: STRICT ? failed.length === 0 : true,
     strict: STRICT,
+    mode: TRACE_MODE,
+    endpoint: isPublicMode() ? PUBLIC_ENDPOINT : "",
     total: results.length,
     passed: results.length - failed.length,
     failed: failed.length,
     failedIds: failed.map((row) => row.id),
-    endpoint: PUBLIC_ENDPOINT,
     results,
   };
 
   console.log(JSON.stringify(summary, null, 2));
 
   if (STRICT && failed.length) {
-    process.exit(1);
+    return false;
   }
+
+  return true;
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+let finalExitCode = 0;
+
+main()
+  .then((summaryOk) => {
+    finalExitCode = summaryOk === false ? 1 : 0;
+  })
+  .catch((error) => {
+    console.error(error);
+    finalExitCode = 1;
+  })
+  .finally(async () => {
+    if (mongoose.connection?.readyState) {
+      await mongoose.disconnect();
+    }
+    process.exit(finalExitCode);
+  });
