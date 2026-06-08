@@ -940,3 +940,34 @@ Frontend/UI evaluation remains excluded. This is backend-only.
 Add answer-label hygiene audit. Current logs show non-blocking but visible label issues such as duplicated comparison titles and duplicated make/model labels. These should be caught by backend audits before frontend resumes.
 
 <!-- ACI_BACKEND_BUYER_JOURNEY_GREEN_2026_06_08_END -->
+---
+
+<!-- ACI_ANSWER_LABEL_HYGIENE_READY_2026_06_08_START -->
+
+## Guardrail Update — Answer Label Hygiene Audit Ready
+
+### Status
+Done for backend-only scope.
+
+### Verified
+- `aci:answer-label-hygiene:audit`: passing
+- Total label hygiene cases: 5
+- Failed cases: 0
+- `aci:buyer-journey:backend:audit`: passing
+- `aci:safety:fast`: passing
+- `aci:safety:freeze`: passing
+
+### Regression now covered
+- Comparison follow-ups no longer duplicate the same comparison pair.
+- `Creta vs Seltos → price difference` now remains `Kia Seltos vs Hyundai Creta` with 2 comparison rows.
+- `Creta vs Seltos → which one?` now remains `Kia Seltos vs Hyundai Creta` with 2 comparison rows.
+- Unsupported-first pricing label remains clean: `Hyundai Creta pricing unavailable in Mumbai`.
+- Spec label hygiene remains covered for `Tata Punch mileage`.
+
+### Scope note
+Frontend/UI evaluation remains excluded. This is backend-only.
+
+### Next backend guardrail
+Progress registry fallback/staleness prevention.
+
+<!-- ACI_ANSWER_LABEL_HYGIENE_READY_2026_06_08_END -->
