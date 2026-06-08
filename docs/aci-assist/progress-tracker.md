@@ -758,3 +758,49 @@ The progress registry has been corrected so completed pre-mortem guardrail items
 The overall pre-mortem guardrail module remains `partial`, because unsupported-city honesty, no-data/data-quality review, core buyer journey evals, and progress fallback/staleness prevention are still pending/planned.
 
 <!-- ACI_PROGRESS_STATUS_VALUES_FIX_2026_06_08_END -->
+---
+
+<!-- ACI_UNSUPPORTED_CITY_SAFETY_GUARDRAIL_2026_06_08_START -->
+
+## Guardrail Update — Unsupported-City Honesty Safety-Gated
+
+### Status
+Done / safety-gated.
+
+### What changed
+Unsupported-city pricing honesty is now protected by a dedicated bridge-mode audit.
+
+### Coverage verified
+The audit checks that unsupported cities do not silently fall back to New Delhi pricing.
+
+Unsupported city coverage includes:
+- Mumbai / Bombay
+- Bangalore / Bengaluru
+- Jaipur
+- Pune
+- Chennai
+- Hyderabad
+- Kolkata
+- Ahmedabad
+- Chandigarh
+- Faridabad
+- Ghaziabad
+
+Supported city coverage includes:
+- New Delhi / Delhi
+- Noida
+- Gurgaon / Gurugram
+
+### Context protection added
+Follow-up price questions now respect unsupported city context, including cases like:
+- `same in Mumbai`
+- `price in Mumbai`
+- `price there` with Mumbai in context
+
+### Latest verified baseline
+- `aci:unsupported-city:audit`: 23/23 passing
+- targeted unsupported-city deep audit: 9/9 passing
+- full buyer deep audit: 185/185 passing
+- `aci:safety:fast`: passing with unsupported-city audit wired
+
+<!-- ACI_UNSUPPORTED_CITY_SAFETY_GUARDRAIL_2026_06_08_END -->
