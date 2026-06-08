@@ -8,7 +8,10 @@ import {
   hydrateAciExplicitModelEntityFromReadModel,
   resolveAciExplicitMessageModelEntity,
 } from "./aiAgent.modelContextResolver.js";
-import { maybeRunAciEarlyFeatureGate } from "./aiAgent.earlyFeatureGate.js";
+import {
+  maybeRunAciEarlyFeatureGate,
+  maybeRunAciPreBridgeMultiFeatureAnswer,
+} from "./aiAgent.earlyFeatureGate.js";
 
 import {
   makeUnavailablePlan,
@@ -493,6 +496,16 @@ const chatWithAgentCore = async (...args) => {
         plannerFallbackUsed: true,
       },
     };
+  }
+
+  const preBridgeMultiFeatureResponse = await maybeRunAciPreBridgeMultiFeatureAnswer({
+    message,
+    context,
+    selectedEntity: __aciEarlyAgentArgs.selectedEntity,
+  });
+
+  if (preBridgeMultiFeatureResponse) {
+    return preBridgeMultiFeatureResponse;
   }
 
   if (shouldUseAciCoreLiveBridge({ message })) {

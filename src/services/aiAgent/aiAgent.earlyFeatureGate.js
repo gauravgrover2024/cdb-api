@@ -96,6 +96,39 @@ const sanitizeAciEarlyFeatureCleanUserMessage = ({
 
 
 
+export const maybeRunAciPreBridgeMultiFeatureAnswer = async ({
+  message = "",
+  context = {},
+  selectedEntity = null,
+} = {}) => {
+  if (shouldSkipAciEarlyFeatureGate(message)) {
+    return null;
+  }
+
+  const dynamicModelEntityFromText = await resolveAciExplicitMessageModelEntity(message);
+  const dynamicModelEntityFromContext = buildAciContextModelEntity({
+    context,
+    selectedEntity,
+  });
+
+  const dynamicModelEntity = chooseAciDynamicModelEntity({
+    textEntity: dynamicModelEntityFromText,
+    contextEntity: dynamicModelEntityFromContext,
+    message,
+  });
+
+  const multiFeatureAnswer = await maybeRunAciMultiFeatureAnswer({
+    message,
+    modelEntity: dynamicModelEntity,
+    context,
+    allowSingleFeature: false,
+  });
+
+  return multiFeatureAnswer?.intent === "vehicle_multi_feature_answer"
+    ? multiFeatureAnswer
+    : null;
+};
+
 export const maybeRunAciEarlyFeatureGate = async ({
   message = "",
   context = {},
