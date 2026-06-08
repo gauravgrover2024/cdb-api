@@ -455,7 +455,7 @@ const ACI_PROGRESS_MODULES = [
     owner: "Product + Backend + QA",
     status: "partial",
     summary: "Locked governing pre-mortem guardrail system to prevent wrong/stale facts, hidden unsupported-city fallback, slow core flows, generic chatbot behavior, hardcoded vehicle/scoring logic, LLM-as-truth, revenue pollution, stale progress tracking, weak SEO utility, poor mobile UX, and weak lead conversion.",
-    currentState: "Pre-mortem document is locked. No-hardcoded vehicle facts audit, factual trace metadata audit, and unsupported-city honesty audit are implemented and wired into aci:safety:fast. Remaining guardrails: no-data/data-quality review, core buyer journey evals, and progress registry fallback/staleness prevention.",
+    currentState: "Pre-mortem document is locked. No-hardcoded vehicle facts audit, factual trace metadata audit, unsupported-city honesty audit, and no-data baseline audit are implemented. Safety-fast includes no-hardcoded, trace, and unsupported-city guardrails. Remaining guardrails: core buyer journey evals and progress registry fallback/staleness prevention.",
     done: "Pre-mortem failure modes, launch gates, risk register, and priority order are locked. No-hardcoded runtime vehicle fact guardrail is implemented and safety-gated. Factual trace metadata coverage is implemented and safety-gated for price, unsupported-city pricing, features, colors, specs, and comparison outputs.",
     remaining: [
       "Wire no-hardcoded vehicle fact audit into freeze/full gates if needed; fast safety gate is active.",
@@ -483,7 +483,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "factual_trace_metadata_audit", name: "Factual trace metadata audit", status: "ready" },
       { key: "unsupported_city_honesty_guard", name: "Unsupported-city honesty guard", status: "ready" },
       { key: "answer_trace_metadata", name: "Price / feature / color / spec trace metadata", status: "ready" },
-      { key: "no_data_quality_review", name: "No-data and data-quality review", status: "in_progress" },
+      { key: "no_data_quality_review", name: "No-data and data-quality review", status: "ready" },
       { key: "buyer_journey_evals", name: "Core buyer journey evals", status: "planned" },
       { key: "progress_registry_guard", name: "Progress registry fallback/staleness prevention", status: "planned" }
     ]

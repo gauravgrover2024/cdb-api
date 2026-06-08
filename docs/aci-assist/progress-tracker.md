@@ -804,3 +804,40 @@ Follow-up price questions now respect unsupported city context, including cases 
 - `aci:safety:fast`: passing with unsupported-city audit wired
 
 <!-- ACI_UNSUPPORTED_CITY_SAFETY_GUARDRAIL_2026_06_08_END -->
+---
+
+<!-- ACI_NO_DATA_BASELINE_GUARDRAIL_2026_06_08_START -->
+
+## Guardrail Update — No-Data Baseline Audit
+
+### Status
+Done / baseline locked.
+
+### What changed
+A strict no-data baseline audit has been added.
+
+### Current accepted no-data baseline
+The full 185 buyer-answer audit currently has exactly 10 accepted no-data answers:
+
+- 4 expected unsupported-city pricing cases
+- 1 valid negative color result
+- 1 known score-data gap
+- 4 expected pending module cases
+
+### Guardrail behavior
+The audit fails if:
+- a new unexpected no-data answer appears
+- a known expected no-data case disappears without review
+- feature/spec/comparison read-model gaps reappear
+- deep audit summary is not clean
+- a no-data answer changes wording away from the expected honest/unavailable framing
+
+### Latest verified baseline
+- `aci:no-data:baseline:audit`: 10/10 expected no-data cases passing
+- full buyer deep audit: 185/185 passing
+- `aci:safety:fast`: passing
+
+### Wiring decision
+This should be wired into a freeze/full gate, not `aci:safety:fast`, because it depends on a full 185 audit log.
+
+<!-- ACI_NO_DATA_BASELINE_GUARDRAIL_2026_06_08_END -->
