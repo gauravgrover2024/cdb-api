@@ -149,6 +149,10 @@ function run() {
   const result = {
     suite: "ACI No-Hardcoded Vehicle Facts Audit",
     ok: bannedFindings.length === 0,
+    total: 1,
+    passed: bannedFindings.length === 0 ? 1 : 0,
+    failed: bannedFindings.length === 0 ? 0 : 1,
+    failedIds: [...new Set(bannedFindings.map((finding) => finding.id))],
     scannedFiles: scanFiles.length,
     bannedFindingCount: bannedFindings.length,
     watchFindingCount: watchFindings.length,
