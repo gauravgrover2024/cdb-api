@@ -107,6 +107,16 @@ const tasks = [
     args: ["src/scripts/aci-audits/auditAciBackendFreezeTrust.js"],
   },
   {
+    key: "noDataBaselineFreezeGate",
+    label: "No-data baseline freeze gate",
+    command: "node",
+    args: ["src/scripts/aci-audits/runAciNoDataBaselineFreezeGateV1.cjs"],
+    env: {
+      ACI_NO_DATA_BASELINE_STRICT: "1",
+      ACI_DEEP_AUDIT_WORKERS: "10",
+    },
+  },
+  {
     key: "answerLanguage",
     label: "Answer language registry audit",
     command: "node",
@@ -170,6 +180,7 @@ const filterTasksForSafetyMode = (allTasks = []) => {
       "contract",
       "contextSwitch",
       "backendFreezeTrust",
+      "noDataBaselineFreezeGate",
       "vehicleEntityIndex",
       "featureComparisonQueries",
       "multiFeatureQueries",
@@ -347,7 +358,8 @@ const slowThresholdsMs = {
   noHardcodedVehicleFacts: 60000,
   factualTraceMetadata: 60000,
   unsupportedCityHonesty: 60000,
-  total: 90000,
+  noDataBaselineFreezeGate: 120000,
+  total: SAFETY_MODE === "fast" ? 90000 : 180000,
 };
 
 const slowSuites = [
@@ -414,6 +426,7 @@ const summary = {
   embarrassmentQueriesExitCode: exitCodeFor("embarrassmentQueries"),
   contextSwitchExitCode: exitCodeFor("contextSwitch"),
   backendFreezeTrustExitCode: exitCodeFor("backendFreezeTrust"),
+  noDataBaselineFreezeGateExitCode: exitCodeFor("noDataBaselineFreezeGate"),
   noHardcodedVehicleFactsExitCode: exitCodeFor("noHardcodedVehicleFacts"),
   factualTraceMetadataExitCode: exitCodeFor("factualTraceMetadata"),
   unsupportedCityHonestyExitCode: exitCodeFor("unsupportedCityHonesty"),
@@ -437,6 +450,7 @@ const summary = {
     embarrassmentQueries: reportedDurationFor("embarrassmentQueries"),
     contextSwitch: reportedDurationFor("contextSwitch"),
     backendFreezeTrust: reportedDurationFor("backendFreezeTrust"),
+    noDataBaselineFreezeGate: reportedDurationFor("noDataBaselineFreezeGate"),
     noHardcodedVehicleFacts: reportedDurationFor("noHardcodedVehicleFacts"),
     factualTraceMetadata: reportedDurationFor("factualTraceMetadata"),
     unsupportedCityHonesty: reportedDurationFor("unsupportedCityHonesty"),
@@ -459,6 +473,7 @@ const summary = {
     embarrassmentQueries: durationFor("embarrassmentQueries"),
     contextSwitch: durationFor("contextSwitch"),
     backendFreezeTrust: durationFor("backendFreezeTrust"),
+    noDataBaselineFreezeGate: durationFor("noDataBaselineFreezeGate"),
     noHardcodedVehicleFacts: durationFor("noHardcodedVehicleFacts"),
     factualTraceMetadata: durationFor("factualTraceMetadata"),
     unsupportedCityHonesty: durationFor("unsupportedCityHonesty"),
@@ -482,6 +497,8 @@ const summary = {
     noHardcodedVehicleFacts: extractSuite("ACI No-Hardcoded Vehicle Facts Audit"),
     factualTraceMetadata: extractSuite("ACI Factual Trace Metadata Audit v1"),
     unsupportedCityHonesty: extractSuite("ACI Unsupported City Honesty Audit v1"),
+    noDataBaselineFreezeGate: extractSuite("ACI No-Data Baseline Freeze Gate v1"),
+    noDataBaseline: extractSuite("ACI No-Data Baseline Audit v1"),
   },
 
   slowThresholdsMs,
