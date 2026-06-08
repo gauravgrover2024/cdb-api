@@ -453,9 +453,9 @@ const ACI_PROGRESS_MODULES = [
     group: "Trust, Safety & Launch Readiness",
     priority: "P0",
     owner: "Product + Backend + QA",
-    status: "planned",
+    status: "partial",
     summary: "Locked governing pre-mortem guardrail system to prevent wrong/stale facts, hidden unsupported-city fallback, slow core flows, generic chatbot behavior, hardcoded vehicle/scoring logic, LLM-as-truth, revenue pollution, stale progress tracking, weak SEO utility, poor mobile UX, and weak lead conversion.",
-    currentState: "Pre-mortem document has been added at docs/aci-assist/ACI_ASSIST_PREMORTEM.md. No-hardcoded vehicle facts audit is now active and wired into aci:safety:fast. Factual trace metadata audit is created, passing 7/7, and wired into aci:safety:fast in strict bridge mode. This is a governing guardrail before expanding broad decision-intelligence work.",
+    currentState: "Pre-mortem document is locked. No-hardcoded vehicle facts audit and factual trace metadata audit are implemented and wired into aci:safety:fast. Remaining guardrails: unsupported-city honesty, no-data/data-quality review, core buyer journey evals, and progress registry fallback/staleness prevention.",
     done: "Pre-mortem failure modes, launch gates, risk register, and priority order are locked. No-hardcoded runtime vehicle fact guardrail is implemented and safety-gated. Factual trace metadata coverage is implemented and safety-gated for price, unsupported-city pricing, features, colors, specs, and comparison outputs.",
     remaining: [
       "Wire no-hardcoded vehicle fact audit into freeze/full gates if needed; fast safety gate is active.",
@@ -478,11 +478,11 @@ const ACI_PROGRESS_MODULES = [
       "No-hardcoded-facts audit"
     ],
     items: [
-      { key: "premortem_doc", name: "Pre-mortem plan document", status: "done" },
-      { key: "no_hardcoded_facts_audit", name: "No-hardcoded vehicle fact audit", status: "done" },
-      { key: "factual_trace_metadata_audit", name: "Factual trace metadata audit", status: "done" },
+      { key: "premortem_doc", name: "Pre-mortem plan document", status: "ready" },
+      { key: "no_hardcoded_facts_audit", name: "No-hardcoded vehicle fact audit", status: "ready" },
+      { key: "factual_trace_metadata_audit", name: "Factual trace metadata audit", status: "ready" },
       { key: "unsupported_city_honesty_guard", name: "Unsupported-city honesty guard", status: "in_progress" },
-      { key: "answer_trace_metadata", name: "Price / feature / color / spec trace metadata", status: "planned" },
+      { key: "answer_trace_metadata", name: "Price / feature / color / spec trace metadata", status: "ready" },
       { key: "no_data_quality_review", name: "No-data and data-quality review", status: "in_progress" },
       { key: "buyer_journey_evals", name: "Core buyer journey evals", status: "planned" },
       { key: "progress_registry_guard", name: "Progress registry fallback/staleness prevention", status: "planned" }

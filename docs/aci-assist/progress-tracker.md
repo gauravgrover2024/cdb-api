@@ -740,3 +740,21 @@ Comparison responses now include read-model provenance for:
 Wired into `aci:safety:fast` in strict bridge mode. The audit does not depend on a manually running localhost server.
 
 <!-- ACI_FACTUAL_TRACE_METADATA_GUARDRAIL_2026_06_08_END -->
+---
+
+<!-- ACI_PROGRESS_STATUS_VALUES_FIX_2026_06_08_START -->
+
+## Progress Tracker Status Correction — Pre-Mortem Guardrails
+
+The progress registry has been corrected so completed pre-mortem guardrail items use UI-recognized `ready` status instead of non-standard `done` status.
+
+### Marked ready
+- Pre-mortem plan document
+- No-hardcoded vehicle fact audit
+- Factual trace metadata audit
+- Price / feature / color / spec trace metadata
+
+### Module status
+The overall pre-mortem guardrail module remains `partial`, because unsupported-city honesty, no-data/data-quality review, core buyer journey evals, and progress fallback/staleness prevention are still pending/planned.
+
+<!-- ACI_PROGRESS_STATUS_VALUES_FIX_2026_06_08_END -->
