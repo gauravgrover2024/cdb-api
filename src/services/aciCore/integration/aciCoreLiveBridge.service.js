@@ -2652,12 +2652,43 @@ const getScoreVariantCandidateFromSnapshot = (candidateSnapshot = {}) => {
   return best || {};
 };
 
-const getScoreModelCandidateFromSnapshot = (candidateSnapshot = {}) => {
+const getScoreModelCandidateFromSnapshot = (candidateSnapshot = {}, message = "") => {
+  const normalizedMessage = normalizeVariantIdentityText(message);
+  const scoreExplicitModelMatch = (candidate = {}) => {
+    const fields = [
+      candidate.fullModel,
+      candidate.model,
+      candidate.modelKey,
+      candidate.shortModelKey,
+    ]
+      .map((value) => normalizeVariantIdentityText(value))
+      .filter(Boolean);
+
+    let score = Number(candidate.confidence || 0);
+
+    for (const field of fields) {
+      const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const tokenCount = field.split(/\s+/).filter(Boolean).length;
+
+      if (field && new RegExp(`(^|\\s)${escaped}(\\s|$)`).test(normalizedMessage)) {
+        score += 500 + tokenCount * 40;
+        continue;
+      }
+
+      const tokens = field.split(/\s+/).filter(Boolean);
+      if (tokens.length > 1 && tokens.every((token) => new RegExp(`(^|\\s)${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`).test(normalizedMessage))) {
+        score += 250 + tokens.length * 30;
+      }
+    }
+
+    return score;
+  };
+
   const models = asArray(candidateSnapshot?.vehicles?.models);
   const best = models
     .map((item = {}) => {
       const raw = item.metadata?.raw || {};
-      return {
+      const candidate = {
         make: item.metadata?.make || raw.make || raw.brand || "",
         model: item.metadata?.model || raw.rawModel || raw.model || item.displayName || "",
         fullModel: raw.fullModel || raw.displayName || item.displayName || [raw.make || raw.brand, raw.model || raw.rawModel].filter(Boolean).join(" "),
@@ -2665,9 +2696,14 @@ const getScoreModelCandidateFromSnapshot = (candidateSnapshot = {}) => {
         shortModelKey: raw.shortModelKey || "",
         confidence: Number(item.confidence || raw.confidence || 0),
       };
+
+      return {
+        ...candidate,
+        score: scoreExplicitModelMatch(candidate),
+      };
     })
     .filter((item) => item.model || item.fullModel)
-    .sort((left, right) => right.confidence - left.confidence)[0];
+    .sort((left, right) => right.score - left.score || right.confidence - left.confidence)[0];
 
   return best || {};
 };
@@ -2686,17 +2722,7 @@ const maybeReturnDirectScoreInsightFastPath = async ({
   if (!isDirectScoreInsightRequest(message)) return null;
 
   const variantCandidate = getScoreVariantCandidateFromSnapshot(candidateSnapshot);
-  const explicitScorpioN = /\bscorpio\s*n\b/i.test(message);
-  const modelCandidate = explicitScorpioN
-    ? {
-        make: "Mahindra",
-        model: "Scorpio N",
-        fullModel: "Mahindra Scorpio N",
-        modelKey: "mahindra-scorpio-n",
-        shortModelKey: "scorpio-n",
-        confidence: 1,
-      }
-    : getScoreModelCandidateFromSnapshot(candidateSnapshot);
+  const modelCandidate = getScoreModelCandidateFromSnapshot(candidateSnapshot, message);
   const stateVehicle =
     contextState?.selectedVehicle ||
     contextState?.anchors?.primaryVehicle ||
@@ -2705,12 +2731,10 @@ const maybeReturnDirectScoreInsightFastPath = async ({
   const rawVariantToken = normalizeVariantIdentityText(variantCandidate.variant || variantCandidate.variantName);
   const normalizedMessage = normalizeVariantIdentityText(message);
   const hasExplicitVariant =
-    !explicitScorpioN &&
     rawVariantToken &&
     rawVariantToken.length >= 2 &&
     new RegExp(`(^|\\s)${rawVariantToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`).test(normalizedMessage);
   const hasContextVariant =
-    !explicitScorpioN &&
     /\b(this|it|its|same|current|selected)\b/i.test(message) &&
     Boolean(stateVehicle.variantKey || stateVehicle.variant || stateVehicle.variantName);
   const candidateVehicle = hasExplicitVariant
@@ -2723,15 +2747,11 @@ const maybeReturnDirectScoreInsightFastPath = async ({
     ...stateVehicle,
     ...candidateVehicle,
     variant:
-      explicitScorpioN
-        ? "" :
       (hasExplicitVariant ? (variantCandidate.variant || variantCandidate.variantName) : "") ||
       stateVehicle.variant ||
       stateVehicle.variantName ||
       "",
     variantName:
-      explicitScorpioN
-        ? "" :
       (hasExplicitVariant ? (variantCandidate.variantName || variantCandidate.variant) : "") ||
       stateVehicle.variantName ||
       stateVehicle.variant ||
