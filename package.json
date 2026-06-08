@@ -118,7 +118,8 @@
     "aci:no-data:specs:audit": "node src/scripts/aci-audits/auditAciSpecNoDataSourceCoverage.cjs",
     "aci:no-hardcoded-facts:audit": "node src/scripts/aci-audits/auditAciNoHardcodedVehicleFacts.cjs",
     "aci:factual-trace:audit": "node src/scripts/aci-audits/auditAciFactualTraceMetadataV1.cjs",
-    "aci:unsupported-city:audit": "node src/scripts/aci-audits/auditAciUnsupportedCityHonestyV1.cjs"
+    "aci:unsupported-city:audit": "node src/scripts/aci-audits/auditAciUnsupportedCityHonestyV1.cjs",
+    "aci:no-data:baseline:audit": "node src/scripts/aci-audits/auditAciNoDataBaselineV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
