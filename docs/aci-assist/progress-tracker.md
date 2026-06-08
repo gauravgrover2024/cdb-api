@@ -907,3 +907,36 @@ Frontend/UI evaluation is intentionally excluded because frontend is not ready. 
 Build core buyer journey backend evals. These should test backend response correctness, routing, context, trace, and honest degraded states only — no frontend rendering or UI assessment.
 
 <!-- ACI_BACKEND_FREEZE_GREEN_2026_06_08_END -->
+---
+
+<!-- ACI_BACKEND_BUYER_JOURNEY_GREEN_2026_06_08_START -->
+
+## Guardrail Update — Core Buyer Journey Backend Audit Green
+
+### Status
+Done for backend-only scope.
+
+### Verified
+- `aci:buyer-journey:backend:audit`: passing
+- Total journeys: 6
+- Total steps: 17
+- Failed journeys: 0
+- Failed steps: 0
+- `aci:safety:fast`: passing
+- `aci:safety:freeze`: passing
+- No-data baseline freeze gate: passing
+- Full buyer deep audit inside no-data freeze gate: 185/185 passing
+
+### Regression now covered
+- `creta price in mumbai` returns honest `unsupported_city_canvas` and preserves `Hyundai Creta` in context.
+- Follow-up `delhi price` uses preserved vehicle context and returns New Delhi price rows.
+- Supported → unsupported → supported city flow remains covered.
+- Unsupported-first → supported city recovery is now covered.
+
+### Scope note
+Frontend/UI evaluation remains excluded. This is backend-only.
+
+### Next backend quality issue
+Add answer-label hygiene audit. Current logs show non-blocking but visible label issues such as duplicated comparison titles and duplicated make/model labels. These should be caught by backend audits before frontend resumes.
+
+<!-- ACI_BACKEND_BUYER_JOURNEY_GREEN_2026_06_08_END -->
