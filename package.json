@@ -123,7 +123,8 @@
     "aci:no-data:freeze-gate": "node src/scripts/aci-audits/runAciNoDataBaselineFreezeGateV1.cjs",
     "aci:buyer-journey:backend:audit": "node src/scripts/aci-audits/auditAciCoreBuyerJourneyBackendV1.cjs",
     "aci:answer-label-hygiene:audit": "node src/scripts/aci-audits/auditAciAnswerLabelHygieneV1.cjs",
-    "aci:progress-registry:guard": "node src/scripts/aci-audits/auditAciProgressRegistryGuardV1.cjs"
+    "aci:progress-registry:guard": "node src/scripts/aci-audits/auditAciProgressRegistryGuardV1.cjs",
+    "aci:exact-price-performance:audit": "node src/scripts/aci-audits/auditAciExactPricePerformanceV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
