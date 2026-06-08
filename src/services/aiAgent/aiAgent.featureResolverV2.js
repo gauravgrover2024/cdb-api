@@ -84,7 +84,6 @@ const formatCustomerModelName = (value = "") => {
   if (compact === "xuv300" || compact === "xuv3xo") return "XUV 3XO";
   if (compact === "tharroxx") return "Thar Roxx";
   if (compact === "fortunerlegender") return "Fortuner Legender";
-  if (compact === "scorpion") return "Scorpio N";
 
   return text;
 };

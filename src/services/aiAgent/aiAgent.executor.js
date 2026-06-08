@@ -4806,53 +4806,14 @@ const toFeatureV2ToolPlan = (toolPlan = {}, userMessage = "") => {
     return patched;
   };
 
-  if (originalTool === "unavailable" && /\bcreta\s+king\b/i.test(userMessage || "")) {
-    return withoutFeatureFields({
-      tool: "vehicle_model_features_explorer",
-      intent: "vehicle_model_features_explorer",
-      toolIntent: "vehicle_model_features_explorer",
-      originalTool,
-      entities: { ...baseEntities, model: "Creta", variant: "King" },
-    });
-  }
-
-  if (/\bverna\s+sx\b/i.test(userMessage || "")) {
-    return {
-      ...toolPlan,
-      tool: "vehicle_feature_answer",
-      intent: "vehicle_feature_answer",
-      toolIntent: "vehicle_feature_answer",
-      originalTool,
-      entities: {
-        ...(toolPlan.entities || {}),
-        model: "Verna",
-        variant: "SX",
-      },
-      input: {
-        ...(toolPlan.input || {}),
-        model: "Verna",
-        variant: "SX",
-      },
-      filters: {
-        ...(toolPlan.filters || {}),
-        model: "Verna",
-        variant: "SX",
-      },
-    };
-  }
-
   const explicitExplorerRequest =
     /\b(show|list|open)\b.*\bfeatures?\b/i.test(userMessage || "") &&
     !/\b(which|have|has|does|cheapest|compare|vs|versus|with|without|miss)\b/i.test(userMessage || "");
 
   if (explicitExplorerRequest) {
+    const trimmedMessage = String(userMessage || "").trim();
     const modelOnlyExplorer =
-      /^show\s+(all\s+)?features\s+of\s+(creta|verna|seltos|sonet|venue|exter|alcazar|city|elevate|nexon|harrier|safari|punch|thar|xuv700)$/i.test(
-        String(userMessage || "").trim(),
-      ) ||
-      /^(creta|verna|seltos|sonet|venue|exter|alcazar|city|elevate|nexon|harrier|safari|punch|thar|xuv700)\s+features$/i.test(
-        String(userMessage || "").trim(),
-      );
+      /^(show|list|open)\s+(all\s+)?features\s+(of|for)\s+.+$/i.test(trimmedMessage);
 
     return withoutFeatureFields({
       tool: "vehicle_model_features_explorer",
