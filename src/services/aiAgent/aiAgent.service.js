@@ -362,6 +362,88 @@ export const createPlannerPlanForMessage = async ({
 };
 
 /* -------------------------------------------------------------------------- */
+/*  Internal / CDrive Passthrough Guard                                        */
+/* -------------------------------------------------------------------------- */
+
+const isInternalCdriveOpsUser = (user = {}) => {
+  const role = String(user?.role || user?.type || user?.userType || "").toLowerCase();
+  return Boolean(user?.id || user?._id || user?.email) && /admin|internal|staff|ops|manager|owner/.test(role);
+};
+
+const isInternalCdriveOpsQuery = (message = "") =>
+  /\b(loan closure|closure\s+\d{3,}|loan id|approved but not disbursed|disbursed cases|total business|customer 360|payment pending|receivables?|delivery order|do number|insurance renewal)\b/i.test(
+    String(message || ""),
+  );
+
+const buildInternalPassthroughContractResponse = ({
+  message = "",
+  user = null,
+  startedAt = Date.now(),
+} = {}) => ({
+  intent: "internal_passthrough",
+  mode: "single_tool",
+  displayMode: "inline",
+  canvasType: "",
+  inlineType: "",
+  title: "Internal CDrive request",
+  answer: "This looks like an internal CDrive operations request. I will route it through the internal workflow instead of the public new-car assistant.",
+  data: {
+    requestType: "internal_cdrive_ops",
+    originalMessage: String(message || ""),
+    routedTo: "internal_passthrough",
+  },
+  actions: [],
+  leadingQuestions: [],
+  conversationSuggestions: [],
+  contextPatch: {
+    selectedVehicle: {
+      make: "",
+      brand: "",
+      model: "",
+      variant: "",
+      city: "new-delhi",
+    },
+    anchorMake: "",
+    anchorModel: "",
+    anchorVariant: "",
+    anchorCity: "new-delhi",
+    customerStage: "internal",
+    conversationMode: "internal_passthrough",
+  },
+  sourceTransparency: {
+    mode: "internal_passthrough",
+    collections: [],
+    recordCount: 0,
+    notes: ["Internal workflow passthrough. No public new-car factual data used."],
+  },
+  runtimeResultsMeta: [
+    {
+      tool: "internal_passthrough",
+      intent: "internal_passthrough",
+      recordCount: 0,
+      status: "routed",
+      source: "aiAgent.service.internal_guard",
+    },
+  ],
+  plannerTools: ["internal_passthrough"],
+  secondaryResponses: [],
+  service: {
+    version: ACI_ASSIST_SERVICE_VERSION,
+    executorVersion: EXECUTOR_VERSION,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    oldSystemUsed: false,
+    channel: "internal_web",
+    routedBy: "internal_cdrive_ops_guard",
+    userRole: user?.role || "",
+  },
+  oldSystemUsed: false,
+  meta: {
+    responseTool: "internal_passthrough",
+    domain: "internal",
+  },
+});
+
+/* -------------------------------------------------------------------------- */
 /*  Main V2 Chat Function                                                     */
 /* -------------------------------------------------------------------------- */
 
@@ -380,6 +462,14 @@ const chatWithAgentCore = async (...args) => {
     options,
     rawInput,
   } = normalizeChatInput(...args);
+
+  if (isInternalCdriveOpsUser(__aciEarlyAgentArgs?.user) && isInternalCdriveOpsQuery(message)) {
+    return buildInternalPassthroughContractResponse({
+      message,
+      user: __aciEarlyAgentArgs?.user,
+      startedAt,
+    });
+  }
 
   if (!message) {
     const plan = createUnavailableFallbackPlan({
