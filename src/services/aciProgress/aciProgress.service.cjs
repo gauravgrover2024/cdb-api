@@ -2,6 +2,37 @@ const fs = require("fs");
 const path = require("path");
 const { ACI_PROGRESS_MODULES } = require("./aciProgress.registry.cjs");
 
+const REPORT_DIR = path.resolve(process.cwd(), "reports/aci");
+const REGISTRY_SOURCE = "live_registry";
+
+const REQUIRED_MODULE_IDS = [
+  "intelligence-core",
+  "pricing",
+  "feature-answers",
+  "comparison",
+  "testing-evals",
+  "aci-assist-premortem-guardrails",
+  "local-gemma-language-intent-layer",
+  "backend_completion_timeline"
+];
+
+const VALID_STATUSES = new Set([
+  "ready",
+  "mostly_ready",
+  "partial",
+  "planned",
+  "deferred",
+  "pending",
+  "blocked",
+  "in_progress"
+]);
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+const normalizeText = (value = "") => String(value || "").trim();
+
 const normalizeProgressModule = (module) => {
   if (!module || typeof module !== "object" || typeof module.id !== "string") {
     return null;
@@ -22,16 +53,108 @@ const normalizeProgressModule = (module) => {
   };
 };
 
+const getRawProgressModules = () =>
+  Array.isArray(ACI_PROGRESS_MODULES) ? ACI_PROGRESS_MODULES : [];
+
 const getSafeProgressModules = () =>
-  (ACI_PROGRESS_MODULES || [])
+  getRawProgressModules()
     .map(normalizeProgressModule)
     .filter(Boolean);
 
+function validateProgressRegistry({ rawModules = [], modules = [] } = {}) {
+  const errors = [];
+  const warnings = [];
 
-const REPORT_DIR = path.resolve(process.cwd(), "reports/aci");
+  if (!Array.isArray(rawModules)) {
+    errors.push("ACI_PROGRESS_MODULES is not an array");
+  }
 
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
+  if (!modules.length) {
+    errors.push("No valid progress modules available from registry");
+  }
+
+  const invalidRawModuleCount = rawModules.length - modules.length;
+  if (invalidRawModuleCount > 0) {
+    errors.push(`${invalidRawModuleCount} registry module(s) were invalid and would have been silently filtered`);
+  }
+
+  const moduleIds = modules.map((module) => normalizeText(module.id)).filter(Boolean);
+  const duplicateModuleIds = moduleIds.filter((id, index) => moduleIds.indexOf(id) !== index);
+  const uniqueDuplicateModuleIds = [...new Set(duplicateModuleIds)];
+
+  if (uniqueDuplicateModuleIds.length) {
+    errors.push(`Duplicate module IDs: ${uniqueDuplicateModuleIds.join(", ")}`);
+  }
+
+  const missingRequiredModuleIds = REQUIRED_MODULE_IDS.filter((id) => !moduleIds.includes(id));
+  if (missingRequiredModuleIds.length) {
+    errors.push(`Missing required module IDs: ${missingRequiredModuleIds.join(", ")}`);
+  }
+
+  const moduleIssues = [];
+
+  modules.forEach((module) => {
+    const moduleLabel = module.id || module.title || "unknown_module";
+
+    if (!normalizeText(module.id)) moduleIssues.push(`${moduleLabel}: missing id`);
+    if (!normalizeText(module.title)) moduleIssues.push(`${moduleLabel}: missing title`);
+    if (!normalizeText(module.status)) moduleIssues.push(`${moduleLabel}: missing status`);
+    if (module.status && !VALID_STATUSES.has(module.status)) {
+      moduleIssues.push(`${moduleLabel}: invalid status ${module.status}`);
+    }
+
+    if (!Array.isArray(module.items) || !module.items.length) {
+      moduleIssues.push(`${moduleLabel}: missing/empty items`);
+      return;
+    }
+
+    const itemKeys = [];
+
+    module.items.forEach((item, index) => {
+      const itemLabel = item?.key || item?.name || `${moduleLabel}.items[${index}]`;
+
+      if (!item || typeof item !== "object") {
+        moduleIssues.push(`${moduleLabel}.items[${index}]: invalid item`);
+        return;
+      }
+
+      if (!normalizeText(item.key)) moduleIssues.push(`${moduleLabel}.${itemLabel}: missing key`);
+      if (!normalizeText(item.name || item.title)) moduleIssues.push(`${moduleLabel}.${itemLabel}: missing name/title`);
+      if (!normalizeText(item.status)) moduleIssues.push(`${moduleLabel}.${itemLabel}: missing status`);
+      if (item.status && !VALID_STATUSES.has(item.status)) {
+        moduleIssues.push(`${moduleLabel}.${itemLabel}: invalid status ${item.status}`);
+      }
+
+      if (normalizeText(item.key)) itemKeys.push(item.key);
+    });
+
+    const duplicateItemKeys = itemKeys.filter((key, index) => itemKeys.indexOf(key) !== index);
+    const uniqueDuplicateItemKeys = [...new Set(duplicateItemKeys)];
+
+    if (uniqueDuplicateItemKeys.length) {
+      moduleIssues.push(`${moduleLabel}: duplicate item keys ${uniqueDuplicateItemKeys.join(", ")}`);
+    }
+  });
+
+  if (moduleIssues.length) {
+    errors.push(...moduleIssues);
+  }
+
+  return {
+    ok: errors.length === 0,
+    source: REGISTRY_SOURCE,
+    fallbackUsed: false,
+    moduleCount: modules.length,
+    rawModuleCount: rawModules.length,
+    requiredModuleIds: REQUIRED_MODULE_IDS,
+    missingRequiredModuleIds,
+    duplicateModuleIds: uniqueDuplicateModuleIds,
+    invalidRawModuleCount,
+    errorCount: errors.length,
+    warningCount: warnings.length,
+    errors,
+    warnings
+  };
 }
 
 function safeReadJson(filePath) {
@@ -102,9 +225,11 @@ function recomputeModuleStatus(module) {
     ready: 100,
     mostly_ready: 80,
     partial: 50,
+    in_progress: 50,
     planned: 25,
     deferred: 10,
-    pending: 0
+    pending: 0,
+    blocked: 0
   };
 
   const avg =
@@ -176,21 +301,37 @@ function applyReportSignals(modules, reports) {
 }
 
 function getAciProgressSnapshot() {
+  const rawModules = clone(getRawProgressModules());
   const modules = clone(getSafeProgressModules());
   const reports = listReports();
 
   applyReportSignals(modules, reports);
 
+  const registryIntegrity = validateProgressRegistry({
+    rawModules,
+    modules
+  });
+
+  const generatedAt = new Date().toISOString();
+
   return {
+    ok: registryIntegrity.ok,
+    source: REGISTRY_SOURCE,
+    registrySource: REGISTRY_SOURCE,
+    fallbackUsed: false,
+    generatedAt,
     lastUpdated: new Date().toLocaleString("en-IN", {
       timeZone: "Asia/Kolkata",
       hour12: false
     }),
     modules,
     meta: {
-      source: "registry + latest reports/aci JSON reports",
+      source: "live registry + latest reports/aci JSON reports",
+      registrySource: REGISTRY_SOURCE,
+      fallbackUsed: false,
       reportDir: REPORT_DIR,
       reportsFound: reports.length,
+      registryIntegrity,
       latestReports: reports.slice(0, 8).map((report) => ({
         fileName: report.fileName,
         modifiedAt: report.modifiedAt,
@@ -202,5 +343,6 @@ function getAciProgressSnapshot() {
 }
 
 module.exports = {
-  getAciProgressSnapshot
+  getAciProgressSnapshot,
+  validateProgressRegistry
 };

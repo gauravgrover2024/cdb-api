@@ -77,7 +77,7 @@
     "aci:core-legacy-executor:smoke": "node src/scripts/aci-evals/runAciCoreLegacyExecutorSmoke.js",
     "aci:core-live-bridge:smoke": "node src/scripts/aci-evals/runAciCoreLiveBridgeSmoke.js",
     "aci:prewarm-profile": "node src/scripts/aci-evals/profileAciCorePrewarm.js",
-    "aci:safety:fast": "ACI_SAFETY_MODE=fast ACI_SAFETY_WORKERS=6 node src/scripts/aci-audits/runAciSafetyGateSummary.js",
+    "aci:safety:fast": "npm run aci:progress-registry:guard && ACI_SAFETY_MODE=fast ACI_SAFETY_WORKERS=6 node src/scripts/aci-audits/runAciSafetyGateSummary.js",
     "aci:safety:freeze": "ACI_SAFETY_MODE=freeze ACI_SAFETY_WORKERS=4 node src/scripts/aci-audits/runAciSafetyGateSummary.js",
     "aci:safety:full": "ACI_SAFETY_MODE=full ACI_SAFETY_WORKERS=4 node src/scripts/aci-audits/runAciSafetyGateSummary.js",
     "aci:decision:refresh:dry-run": "node src/scripts/aci-data/runAciPostDataRefresh.js --dry-run --decision-only",
@@ -122,7 +122,8 @@
     "aci:no-data:baseline:audit": "node src/scripts/aci-audits/auditAciNoDataBaselineV1.cjs",
     "aci:no-data:freeze-gate": "node src/scripts/aci-audits/runAciNoDataBaselineFreezeGateV1.cjs",
     "aci:buyer-journey:backend:audit": "node src/scripts/aci-audits/auditAciCoreBuyerJourneyBackendV1.cjs",
-    "aci:answer-label-hygiene:audit": "node src/scripts/aci-audits/auditAciAnswerLabelHygieneV1.cjs"
+    "aci:answer-label-hygiene:audit": "node src/scripts/aci-audits/auditAciAnswerLabelHygieneV1.cjs",
+    "aci:progress-registry:guard": "node src/scripts/aci-audits/auditAciProgressRegistryGuardV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
