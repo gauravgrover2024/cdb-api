@@ -88,6 +88,8 @@ const CASES = [
   },
 ];
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const asArray = (value) => (Array.isArray(value) ? value : []);
 const text = (value) => String(value || "");
 const unique = (values = []) => [...new Set(values.map(text).filter(Boolean))];
@@ -267,32 +269,63 @@ function classify(testCase, output = {}) {
 }
 
 async function callCase(testCase) {
-  const res = await fetch(PUBLIC_ENDPOINT, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      message: testCase.message,
-      context: testCase.context || {},
-    }),
-  });
+  const maxAttempts = Number(process.env.ACI_TRACE_AUDIT_FETCH_ATTEMPTS || 4);
+  let lastError = null;
 
-  const raw = await res.text();
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch {
-    return {
-      id: testCase.id,
-      kind: testCase.kind,
-      message: testCase.message,
-      pass: false,
-      missing: ["invalid_json_response"],
-      observed: { status: res.status, rawPreview: raw.slice(0, 400) },
-    };
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const res = await fetch(PUBLIC_ENDPOINT, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          message: testCase.message,
+          context: testCase.context || {},
+        }),
+      });
+
+      const raw = await res.text();
+      let payload;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return {
+          id: testCase.id,
+          kind: testCase.kind,
+          message: testCase.message,
+          pass: false,
+          missing: ["invalid_json_response"],
+          observed: { status: res.status, rawPreview: raw.slice(0, 400), attempt },
+        };
+      }
+
+      const output = unwrap(payload);
+      return {
+        ...classify(testCase, output),
+        attempts: attempt,
+      };
+    } catch (error) {
+      lastError = error;
+
+      if (attempt < maxAttempts) {
+        await sleep(500 * attempt);
+        continue;
+      }
+    }
   }
 
-  const output = unwrap(payload);
-  return classify(testCase, output);
+  return {
+    id: testCase.id,
+    kind: testCase.kind,
+    message: testCase.message,
+    pass: false,
+    missing: ["public_endpoint_fetch_failed"],
+    observed: {
+      endpoint: PUBLIC_ENDPOINT,
+      attempts: maxAttempts,
+      error: lastError?.message || String(lastError || "unknown"),
+      causeCode: lastError?.cause?.code || "",
+    },
+  };
 }
 
 async function main() {
