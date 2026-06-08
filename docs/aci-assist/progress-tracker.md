@@ -1002,3 +1002,43 @@ Done for backend-only scope.
 Frontend/UI evaluation remains excluded. This is backend-only.
 
 <!-- ACI_PROGRESS_REGISTRY_GUARD_READY_2026_06_08_END -->
+---
+
+<!-- ACI_EXACT_PRICE_PERFORMANCE_READY_2026_06_08_START -->
+
+## Guardrail Update — Exact Supported-City Price Performance Audit Ready
+
+### Status
+Done for backend-only scope.
+
+### Verified
+- `aci:exact-price-performance:audit`: passing
+- Total exact price cases: 8
+- Passed cases: 8
+- Failed cases: 0
+- Average duration: ~924ms
+- Max duration: ~964ms
+- `aci:safety:fast`: passing
+
+### Regression now covered
+- `Creta SX on-road price Delhi`
+- `Creta SX price New Delhi`
+- `Creta SX on road Gurgaon`
+- `Creta SX price Noida`
+- `Hyundai Creta SX on-road price Delhi`
+- `Seltos HTE on-road price Delhi`
+- `Kia Seltos HTE price Gurgaon`
+- `Tata Punch Adventure S price Delhi`
+
+### Required fast-path guarantees
+- `contextIsolation`: `supported_exact_price_fast_path`
+- `tool`: `vehicle_pricelist`
+- `planMode`: `single_tool`
+- `usedGemini`: false
+- Exact variant queries return exactly one DB-backed price row.
+- Supported pricing cities stay limited to New Delhi, Noida, and Gurgaon.
+
+### Scope note
+Frontend/UI evaluation remains excluded. This is backend-only.
+
+<!-- ACI_EXACT_PRICE_PERFORMANCE_READY_2026_06_08_END -->
