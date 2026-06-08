@@ -1543,6 +1543,7 @@ export const buildVehicleCompareResponse = ({
       differenceSummary: runtimeData.differenceSummary || {},
       featureDifferences: runtimeData.featureDifferences || [],
       commonHighlights: runtimeData.commonHighlights || [],
+      missingOrUnavailableEvidence: runtimeData.missingOrUnavailableEvidence || [],
       decisionHighlights: runtimeData.decisionHighlights || [],
       matrixCoverage: runtimeData.matrixCoverage || [],
     },
@@ -1550,6 +1551,7 @@ export const buildVehicleCompareResponse = ({
     differenceSummary: runtimeData.differenceSummary || {},
     featureDifferences: runtimeData.featureDifferences || [],
     commonHighlights: runtimeData.commonHighlights || [],
+    missingOrUnavailableEvidence: runtimeData.missingOrUnavailableEvidence || [],
     decisionHighlights: runtimeData.decisionHighlights || [],
     matrixCoverage: runtimeData.matrixCoverage || [],
     actions: [

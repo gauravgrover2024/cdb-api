@@ -513,6 +513,10 @@ const composeVehicleComparisonAnswer = (response = {}) => {
   const differenceSummary = response.data?.differenceSummary || response.differenceSummary || {};
   const featureDifferences = asArray(response.data?.featureDifferences || response.featureDifferences);
   const commonHighlights = asArray(response.data?.commonHighlights || response.commonHighlights);
+  const missingEvidence = asArray(
+    response.data?.missingOrUnavailableEvidence || response.missingOrUnavailableEvidence,
+  );
+  const hasUnavailableRows = rows.some((row) => row?.unavailable === true);
 
   const comparedVehicles = asArray(summary.comparedVehicles);
   const labels =
@@ -547,8 +551,12 @@ const composeVehicleComparisonAnswer = (response = {}) => {
       : "The price difference is available in the comparison table.";
 
   const differenceLine = differenceCount
-    ? `I also found ${differenceCount} feature/spec differences and ${commonCount} common highlights in the compared variant data.`
-    : "Feature/spec differences were not available for these exact variants yet.";
+    ? `I also found ${differenceCount} indexed feature/spec differences and ${commonCount} common highlights in the compared variant data.${
+        missingEvidence.length ? " Some indexed evidence is partial, so this is not a complete brochure-level diff." : ""
+      }`
+    : missingEvidence.length || hasUnavailableRows
+      ? "The feature/spec comparison is partial because one compared variant did not resolve to indexed rows yet."
+      : "No indexed feature/spec differences were found for these exact compared variants.";
 
   return renderLanguage(
     "comparison_summary",

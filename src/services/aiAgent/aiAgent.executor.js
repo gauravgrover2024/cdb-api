@@ -1410,6 +1410,17 @@ const getFeatureDisplayName = (key = "", entry = {}, catalog = {}) =>
       .join(" "),
   );
 
+const getComparisonFeatureEntry = (doc = {}, featureKey = "") =>
+  doc?.featuresByKey?.[featureKey] ||
+  doc?.decisionSignals?.featuresByKey?.[featureKey] ||
+  null;
+
+const getComparisonFeatureKeys = (doc = {}) =>
+  compareUnique([
+    ...Object.keys(doc?.featuresByKey || {}),
+    ...Object.keys(doc?.decisionSignals?.featuresByKey || {}),
+  ]);
+
 const fetchComparisonFeatureDoc = async ({ row = {}, target = {} } = {}) => {
   const db = mongoose.connection?.db;
   if (!db) return null;
@@ -1484,7 +1495,7 @@ const buildVehicleComparisonEnrichment = async ({ rows = [], targets = [], city 
   }
 
   const allFeatureKeys = compareUnique(
-    matrixDocs.flatMap((doc) => Object.keys(doc?.featuresByKey || {})),
+    matrixDocs.flatMap((doc) => getComparisonFeatureKeys(doc)),
   );
 
   let catalogByKey = new Map();
@@ -1521,7 +1532,7 @@ const buildVehicleComparisonEnrichment = async ({ rows = [], targets = [], city 
   }
 
   const featureComparisons = allFeatureKeys.map((featureKey) => {
-    const entries = matrixDocs.map((doc) => doc?.featuresByKey?.[featureKey] || null);
+    const entries = matrixDocs.map((doc) => getComparisonFeatureEntry(doc, featureKey));
     const catalog = catalogByKey.get(featureKey) || {};
     const values = {};
     const availability = {};
@@ -1606,7 +1617,17 @@ const buildVehicleComparisonEnrichment = async ({ rows = [], targets = [], city 
     featureDifferenceCount: featureDifferences.length,
     commonHighlightCount: commonHighlights.length,
     uniqueAvailableByVehicle: uniqueAvailableDifferences,
+    evidenceSource: allFeatureKeys.length ? "vehicle_variant_feature_matrix_v2" : "",
+    matrixEvidenceComplete: matrixDocs.every(Boolean),
+    matrixFeatureKeyCount: allFeatureKeys.length,
   };
+
+  const missingOrUnavailableEvidence = compared
+    .map((item, index) => ({
+      label: item.label,
+      reason: matrixDocs[index] ? "" : "variant_feature_matrix_missing",
+    }))
+    .filter((item) => item.reason);
 
   const decisionHighlights = [
     priceDelta !== null && cheaperIndex !== null
@@ -1659,13 +1680,14 @@ const buildVehicleComparisonEnrichment = async ({ rows = [], targets = [], city 
     differenceSummary,
     featureDifferences,
     commonHighlights,
+    missingOrUnavailableEvidence,
     decisionHighlights,
     matrixCoverage: compared.map((item, index) => ({
       label: item.label,
       modelKey: matrixDocs[index]?.modelKey || "",
       variant: matrixDocs[index]?.variant || "",
       variantKey: matrixDocs[index]?.variantKey || "",
-      featureKeyCount: Object.keys(matrixDocs[index]?.featuresByKey || {}).length,
+      featureKeyCount: getComparisonFeatureKeys(matrixDocs[index]).length,
       found: Boolean(matrixDocs[index]),
     })),
   };
@@ -1980,7 +2002,19 @@ export const runtimeVehicleCompare = async ({
     );
   }
 
-  const comparisonEnrichment = isVariantComparison
+  const unresolvedComparisonEvidence = rows
+    .map((row, index) =>
+      row.unavailable
+        ? {
+            label: getComparisonVehicleLabel(row, targets[index] || {}) || `vehicle ${index + 1}`,
+            reason: "comparison_variant_unresolved",
+          }
+        : null,
+    )
+    .filter(Boolean);
+
+  const hasComparableRows = rows.filter((row) => !row.unavailable).length >= 2;
+  const comparisonEnrichment = hasComparableRows
     ? await buildVehicleComparisonEnrichment({
         rows,
         targets,
@@ -1990,6 +2024,7 @@ export const runtimeVehicleCompare = async ({
         comparisonSummary: {},
         featureDifferences: [],
         commonHighlights: [],
+        missingOrUnavailableEvidence: unresolvedComparisonEvidence,
         decisionHighlights: [],
         matrixCoverage: [],
       };
@@ -2002,6 +2037,7 @@ export const runtimeVehicleCompare = async ({
     differenceSummary: comparisonEnrichment.differenceSummary,
     featureDifferences: comparisonEnrichment.featureDifferences,
     commonHighlights: comparisonEnrichment.commonHighlights,
+    missingOrUnavailableEvidence: comparisonEnrichment.missingOrUnavailableEvidence,
     decisionHighlights: comparisonEnrichment.decisionHighlights,
     matrixCoverage: comparisonEnrichment.matrixCoverage,
     selectedComparisonSet: {
