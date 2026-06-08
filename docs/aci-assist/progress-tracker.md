@@ -647,3 +647,47 @@ Primary plan doc:
 docs/aci-assist/ACI_DECISION_MODULE_PRODUCTION_PLAN_V1.md
 
 <!-- ACI_DECISION_MODULE_PRODUCTION_PLAN_V1_2026_06_04_END -->
+
+---
+
+<!-- ACI_NO_HARDCODED_FACTS_GUARDRAIL_2026_06_08_START -->
+
+## Guardrail Update — No-Hardcoded Vehicle Facts Audit Active
+
+### Status
+Done / safety-gated.
+
+### What changed
+The no-hardcoded vehicle facts audit has been implemented and wired into `aci:safety:fast`.
+
+### Locked protection
+The safety gate now blocks high-risk runtime patterns such as:
+
+- model-specific factual routing branches
+- hardcoded vehicle/variant candidate objects used to force buyer answers
+- hardcoded typo aliases that convert ambiguous text into factual vehicle entities
+- hardcoded feature-explorer model whitelists
+
+### Recent cleanup completed
+Removed committed runtime hardcodes including:
+
+- Creta King special feature routing
+- Verna SX special feature routing
+- `scorpion -> Scorpio N` hard alias
+- Scorpio N score-routing hardcoded candidate branch
+
+### Latest verified baseline
+- `aci:no-hardcoded-facts:audit`: passing
+- `aci:safety:fast`: passing
+- full buyer deep audit baseline remains accepted with 9 honest no-data cases
+
+### Remaining guardrail work
+Next pre-mortem guardrails:
+
+1. trace metadata coverage for price / features / colors / specs / comparisons
+2. unsupported-city honesty audit hardening
+3. progress registry stale/fallback prevention
+4. core buyer journey evals
+5. then local Gemma/TranslateGemma POC
+
+<!-- ACI_NO_HARDCODED_FACTS_GUARDRAIL_2026_06_08_END -->

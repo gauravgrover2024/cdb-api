@@ -455,10 +455,10 @@ const ACI_PROGRESS_MODULES = [
     owner: "Product + Backend + QA",
     status: "planned",
     summary: "Locked governing pre-mortem guardrail system to prevent wrong/stale facts, hidden unsupported-city fallback, slow core flows, generic chatbot behavior, hardcoded vehicle/scoring logic, LLM-as-truth, revenue pollution, stale progress tracking, weak SEO utility, poor mobile UX, and weak lead conversion.",
-    currentState: "Pre-mortem document has been added at docs/aci-assist/ACI_ASSIST_PREMORTEM.md. This is a governing guardrail and should be implemented before expanding broad decision-intelligence work.",
-    done: "Pre-mortem failure modes, launch gates, risk register, and priority order are locked.",
+    currentState: "Pre-mortem document has been added at docs/aci-assist/ACI_ASSIST_PREMORTEM.md. No-hardcoded vehicle facts audit is now active and wired into aci:safety:fast. This is a governing guardrail before expanding broad decision-intelligence work.",
+    done: "Pre-mortem failure modes, launch gates, risk register, and priority order are locked. No-hardcoded runtime vehicle fact guardrail is implemented and safety-gated.",
     remaining: [
-      "Wire no-hardcoded vehicle fact audit into safety/freeze gates.",
+      "Wire no-hardcoded vehicle fact audit into freeze/full gates if needed; fast safety gate is active.",
       "Add/verify unsupported-city honesty guard coverage.",
       "Add trace metadata requirements for price, feature, color, and spec answers.",
       "Keep no-data/data-quality review visible before public launch.",
@@ -479,7 +479,7 @@ const ACI_PROGRESS_MODULES = [
     ],
     items: [
       { key: "premortem_doc", name: "Pre-mortem plan document", status: "done" },
-      { key: "no_hardcoded_facts_audit", name: "No-hardcoded vehicle fact audit", status: "planned" },
+      { key: "no_hardcoded_facts_audit", name: "No-hardcoded vehicle fact audit", status: "done" },
       { key: "unsupported_city_honesty_guard", name: "Unsupported-city honesty guard", status: "in_progress" },
       { key: "answer_trace_metadata", name: "Price / feature / color / spec trace metadata", status: "planned" },
       { key: "no_data_quality_review", name: "No-data and data-quality review", status: "in_progress" },
