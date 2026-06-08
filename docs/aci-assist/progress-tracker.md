@@ -971,3 +971,34 @@ Frontend/UI evaluation remains excluded. This is backend-only.
 Progress registry fallback/staleness prevention.
 
 <!-- ACI_ANSWER_LABEL_HYGIENE_READY_2026_06_08_END -->
+---
+
+<!-- ACI_PROGRESS_REGISTRY_GUARD_READY_2026_06_08_START -->
+
+## Guardrail Update — Progress Registry Guard Ready
+
+### Status
+Done for backend-only scope.
+
+### Verified
+- `aci:progress-registry:guard`: passing
+- Guard runtime: ~15–16ms
+- `aci:safety:fast`: now runs progress registry guard before the main safety runner
+- `aci:safety:fast`: passing
+- Progress snapshot source: `live_registry`
+- `fallbackUsed`: false
+- `meta.registryIntegrity.ok`: true
+- Registry module count: 30
+- Duplicate module IDs: 0
+- Missing required modules: 0
+- Invalid filtered modules: 0
+
+### Regression now covered
+- Progress API cannot silently hide an invalid registry shape.
+- Empty module arrays, duplicate module IDs, missing required modules, invalid statuses, missing item keys, and fallback/stale-source states now fail audit.
+- Progress snapshot exposes `source`, `registrySource`, `fallbackUsed`, `generatedAt`, and `meta.registryIntegrity`.
+
+### Scope note
+Frontend/UI evaluation remains excluded. This is backend-only.
+
+<!-- ACI_PROGRESS_REGISTRY_GUARD_READY_2026_06_08_END -->

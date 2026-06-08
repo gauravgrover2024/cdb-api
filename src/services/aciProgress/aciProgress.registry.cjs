@@ -455,7 +455,7 @@ const ACI_PROGRESS_MODULES = [
     owner: "Product + Backend + QA",
     status: "partial",
     summary: "Locked governing pre-mortem guardrail system to prevent wrong/stale facts, hidden unsupported-city fallback, slow core flows, generic chatbot behavior, hardcoded vehicle/scoring logic, LLM-as-truth, revenue pollution, stale progress tracking, weak SEO utility, poor mobile UX, and weak lead conversion.",
-    currentState: "Backend trust/correctness guardrails are green for backend-only scope. Core buyer journey backend audit, unsupported-first price recovery, and answer-label hygiene audit are now added and passing. Comparison follow-ups now dedupe targets correctly, preventing duplicated titles/rows such as Kia Seltos vs Hyundai Creta vs Kia Seltos vs Hyundai Creta. aci:safety:fast and aci:safety:freeze are passing. Frontend/UI evaluation remains intentionally excluded until frontend work resumes. Next backend quality work: progress registry fallback/staleness prevention.",
+    currentState: "Backend trust/correctness guardrails are green for backend-only scope. Core buyer journey backend audit, unsupported-first price recovery, answer-label hygiene audit, and progress registry guard are now added and passing. Progress API now exposes live_registry source, fallbackUsed=false, generatedAt, and registryIntegrity metadata. aci:safety:fast now runs the progress registry guard before the main safety runner. aci:safety:fast and aci:safety:freeze are passing. Frontend/UI evaluation remains intentionally excluded until frontend work resumes.",
     done: "Pre-mortem failure modes, launch gates, risk register, and priority order are locked. No-hardcoded runtime vehicle fact guardrail is implemented and safety-gated. Factual trace metadata coverage is implemented and safety-gated for price, unsupported-city pricing, features, colors, specs, and comparison outputs.",
     remaining: [
       "Wire no-hardcoded vehicle fact audit into freeze/full gates if needed; fast safety gate is active.",
@@ -488,7 +488,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "buyer_journey_evals", name: "Core buyer journey evals", status: "ready" },
       { key: "unsupported_first_price_recovery", name: "Unsupported-first price recovery regression", status: "ready" },
       { key: "answer_label_hygiene_audit", name: "Answer-label hygiene audit", status: "ready" },
-      { key: "progress_registry_guard", name: "Progress registry fallback/staleness prevention", status: "planned" }
+      { key: "progress_registry_guard", name: "Progress registry fallback/staleness prevention", status: "ready" }
     ]
   },
 
