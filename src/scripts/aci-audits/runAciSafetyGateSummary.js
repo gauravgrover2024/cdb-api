@@ -213,7 +213,7 @@ const runTask = (task) =>
     const startedAt = Date.now();
     const child = spawn(task.command, task.args, {
       shell: false,
-      env: process.env,
+      env: { ...process.env, ...(task.env || {}) },
     });
 
     let stdout = "";
