@@ -144,13 +144,52 @@ const expandActiveComparisonFollowUpMessage = ({ message = "", context = {} } = 
   return `${message} ${scopeText}`;
 };
 
+const comparisonVehicleDedupeKey = (vehicle = {}) => {
+  const make = cleanText(vehicle.make || vehicle.brand || "");
+  let model = cleanText(vehicle.model || vehicle.rawModel || vehicle.fullModel || vehicle.displayName || "");
+  const variant = cleanText(vehicle.variant || vehicle.variantName || vehicle.selectedVariant || "");
+
+  if (make && model.toLowerCase().startsWith(`${make} `.toLowerCase())) {
+    model = cleanText(model.slice(make.length));
+  }
+
+  return [make, model, variant]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+};
+
+const dedupeComparisonVehicles = (vehicles = []) => {
+  const seen = new Set();
+
+  return asArray(vehicles).filter((vehicle) => {
+    if (!vehicle || typeof vehicle !== "object") return false;
+
+    const key =
+      comparisonVehicleDedupeKey(vehicle) ||
+      cleanText(vehicle.fullModel || vehicle.displayName || vehicle.model || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 const getActiveComparisonVehiclesFromContext = (context = {}) =>
-  asArray(
-    context?.activeComparison?.vehicles ||
-      context?.selectedComparisonSet?.vehicles ||
-      context?.contextState?.activeComparison?.vehicles ||
-      context?.aciContextState?.activeComparison?.vehicles ||
-      [],
+  dedupeComparisonVehicles(
+    asArray(
+      context?.activeComparison?.vehicles ||
+        context?.selectedComparisonSet?.vehicles ||
+        context?.contextState?.activeComparison?.vehicles ||
+        context?.aciContextState?.activeComparison?.vehicles ||
+        [],
+    ),
   );
 
 const getComparisonCityFromContext = (context = {}) =>
@@ -579,7 +618,7 @@ const maybeReturnActiveComparisonFollowUpFastPath = async ({
     },
     resolution: {
       comparisonLevel: "model",
-      selectedComparisonVehicles: pruneSubstringComparisonTargets({ vehicles: targets, message }),
+      selectedComparisonVehicles: dedupeComparisonVehicles(pruneSubstringComparisonTargets({ vehicles: targets, message })),
     },
     contextPatch: {
       activeComparison: {
@@ -1632,8 +1671,10 @@ const sanitizeComparisonTargetsInPlan = ({ plan = {}, message = "" } = {}) => {
       const existingVehicles = selectedSource?.targets || [];
       const targetLookup = buildComparisonTargetLookup(targetSources);
 
-      const prunedVehicles = pruneSubstringComparisonTargets({ vehicles: existingVehicles, message })
-        .map((target) => enrichComparisonTarget({ target, lookup: targetLookup }));
+      const prunedVehicles = dedupeComparisonVehicles(
+        pruneSubstringComparisonTargets({ vehicles: existingVehicles, message })
+          .map((target) => enrichComparisonTarget({ target, lookup: targetLookup })),
+      );
 
       if (!existingVehicles.length || prunedVehicles.length === existingVehicles.length) {
         return toolPlan;
@@ -1696,7 +1737,9 @@ const sanitizeComparisonContextFromPlan = ({ context = {}, plan = {} } = {}) => 
   if (targets.length < 2) return context;
 
   const targetLookup = buildComparisonTargetLookup(targetSources);
-  const prunedVehicles = targets.map((target) => enrichComparisonTarget({ target, lookup: targetLookup }));
+  const prunedVehicles = dedupeComparisonVehicles(
+    targets.map((target) => enrichComparisonTarget({ target, lookup: targetLookup })),
+  );
   const prunedModels = prunedVehicles.map(comparisonVehicleLabelFromTarget).filter(Boolean);
 
   return patchComparisonContextTargets({

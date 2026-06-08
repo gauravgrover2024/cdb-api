@@ -1890,7 +1890,33 @@ export const runtimeVehicleCompare = async ({
     .map(normalizeVehicleTarget)
     .filter(Boolean);
 
-  const uniqueTargets = dedupeVehicleTargets(explicitTargets);
+  const dedupeModelLevelTargets = (targets = []) => {
+    const byKey = new Map();
+
+    for (const target of asList(targets)) {
+      const normalized = normalizeVehicleTarget(target);
+      if (!normalized) continue;
+
+      const make = normalizeIdentityText(normalized.make || normalized.brand);
+      let model = normalizeIdentityText(normalized.model || normalized.fullModel);
+
+      if (make && model.startsWith(`${make} `)) {
+        model = model.slice(make.length + 1).trim();
+      }
+
+      const key = [make, model].filter(Boolean).join("|");
+      if (!key) continue;
+
+      byKey.set(key, byKey.has(key) ? mergeVehicleTarget(byKey.get(key), normalized) : normalized);
+    }
+
+    return [...byKey.values()];
+  };
+
+  const uniqueTargetsRaw = dedupeVehicleTargets(explicitTargets);
+  const uniqueTargets = isVariantComparison
+    ? uniqueTargetsRaw
+    : dedupeModelLevelTargets(uniqueTargetsRaw);
 
   const fallbackModels = getModels(toolPlan, context);
   const fallbackVariants = [
