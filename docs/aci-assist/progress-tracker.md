@@ -699,7 +699,7 @@ Next pre-mortem guardrails:
 ## Guardrail Update — Factual Trace Metadata Audit Active
 
 ### Status
-Done / ready to safety-gate.
+Done / safety-gated.
 
 ### What changed
 A factual trace metadata audit has been implemented for the public ACI Assist buyer-answer route.
@@ -736,7 +736,7 @@ Comparison responses now include read-model provenance for:
 - `aci:safety:fast`: passing
 - accepted no-data baseline remains 9 honest no-data cases
 
-### Next step
-Wire factual trace metadata audit into `aci:safety:fast` in strict mode.
+### Safety gate status
+Wired into `aci:safety:fast` in strict bridge mode. The audit does not depend on a manually running localhost server.
 
 <!-- ACI_FACTUAL_TRACE_METADATA_GUARDRAIL_2026_06_08_END -->

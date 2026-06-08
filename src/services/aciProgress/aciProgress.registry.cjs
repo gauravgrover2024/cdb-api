@@ -455,8 +455,8 @@ const ACI_PROGRESS_MODULES = [
     owner: "Product + Backend + QA",
     status: "planned",
     summary: "Locked governing pre-mortem guardrail system to prevent wrong/stale facts, hidden unsupported-city fallback, slow core flows, generic chatbot behavior, hardcoded vehicle/scoring logic, LLM-as-truth, revenue pollution, stale progress tracking, weak SEO utility, poor mobile UX, and weak lead conversion.",
-    currentState: "Pre-mortem document has been added at docs/aci-assist/ACI_ASSIST_PREMORTEM.md. No-hardcoded vehicle facts audit is now active and wired into aci:safety:fast. Factual trace metadata audit is created and passing 7/7. This is a governing guardrail before expanding broad decision-intelligence work.",
-    done: "Pre-mortem failure modes, launch gates, risk register, and priority order are locked. No-hardcoded runtime vehicle fact guardrail is implemented and safety-gated. Factual trace metadata coverage is implemented for price, unsupported-city pricing, features, colors, specs, and comparison outputs.",
+    currentState: "Pre-mortem document has been added at docs/aci-assist/ACI_ASSIST_PREMORTEM.md. No-hardcoded vehicle facts audit is now active and wired into aci:safety:fast. Factual trace metadata audit is created, passing 7/7, and wired into aci:safety:fast in strict bridge mode. This is a governing guardrail before expanding broad decision-intelligence work.",
+    done: "Pre-mortem failure modes, launch gates, risk register, and priority order are locked. No-hardcoded runtime vehicle fact guardrail is implemented and safety-gated. Factual trace metadata coverage is implemented and safety-gated for price, unsupported-city pricing, features, colors, specs, and comparison outputs.",
     remaining: [
       "Wire no-hardcoded vehicle fact audit into freeze/full gates if needed; fast safety gate is active.",
       "Add/verify unsupported-city honesty guard coverage.",
