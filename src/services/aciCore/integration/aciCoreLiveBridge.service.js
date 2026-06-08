@@ -661,8 +661,9 @@ const detectBatch4BroadDiscoveryRequest = (message = "") => {
   const wantsElectric = /\belectric\b|\bev\b/i.test(normalized);
   const wantsSuv = /\bsuvs?\b/i.test(normalized);
   const wantsAutomatic = /\bautomatic\b|\bauto\b|\bat\b|\bdct\b|\bcvt\b|\bamt\b/i.test(normalized);
+  const wantsTurbo = /\bturbo(?:\s*charged|charged)?\b|\bturbo\s+charger\b/i.test(normalized);
 
-  if (!hasBudget || (!hasBroadCar && !wantsFamily && !wantsElectric && !wantsSuv && !wantsAutomatic)) {
+  if (!hasBudget || (!hasBroadCar && !wantsFamily && !wantsElectric && !wantsSuv && !wantsAutomatic && !wantsTurbo)) {
     return null;
   }
 
@@ -676,9 +677,10 @@ const detectBatch4BroadDiscoveryRequest = (message = "") => {
     fuelType: wantsElectric ? "electric" : "",
     transmission: wantsAutomatic ? "automatic" : "",
     buyerUseCase: wantsFamily ? "family" : "",
+    mustHaveFeatures: wantsTurbo ? ["turbo charger"] : [],
     reason: wantsFamily
       ? "family_budget_discovery"
-      : wantsElectric || wantsSuv || wantsAutomatic
+      : wantsElectric || wantsSuv || wantsAutomatic || wantsTurbo
         ? "filtered_budget_discovery"
         : "budget_discovery",
   };
@@ -1100,6 +1102,12 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
       useCase: discovery.buyerUseCase,
       buyerIntent: discovery.buyerUseCase,
     } : {}),
+    ...(Array.isArray(discovery.mustHaveFeatures) && discovery.mustHaveFeatures.length ? {
+      mustHaveFeatures: discovery.mustHaveFeatures,
+      compareFeatures: discovery.mustHaveFeatures,
+      feature: discovery.mustHaveFeatures[0],
+      ranking: "feature_match",
+    } : {}),
   };
 
   const toolPlan = {
@@ -1124,8 +1132,12 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     },
     filters,
     output: {
-      canvasType: "recommendation_results_canvas",
-      inlineType: "recommendation_summary",
+      canvasType: filters.mustHaveFeatures?.length
+        ? "feature_match_builder_canvas"
+        : "recommendation_results_canvas",
+      inlineType: filters.mustHaveFeatures?.length
+        ? "feature_match_summary"
+        : "recommendation_summary",
     },
   };
 
@@ -1135,7 +1147,9 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     conversationMode: "direct_answer",
     tools: [toolPlan],
     output: {
-      canvasType: "recommendation_results_canvas",
+      canvasType: filters.mustHaveFeatures?.length
+        ? "feature_match_builder_canvas"
+        : "recommendation_results_canvas",
     },
   };
 
