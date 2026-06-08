@@ -1818,6 +1818,102 @@ const findUnsupportedPriceCityForFastPath = (message = "") => {
   );
 };
 
+const normalizeUnsupportedCityVehicleContext = ({
+  vehicle = {},
+  requestedCity = "",
+  source = "",
+} = {}) => {
+  const make = cleanText(vehicle.make || vehicle.brand || vehicle.metadata?.make || vehicle.metadata?.brand || "");
+  const model = cleanText(vehicle.model || vehicle.rawModel || vehicle.metadata?.model || vehicle.metadata?.rawModel || "");
+  const fullModel = cleanText(
+    vehicle.fullModel ||
+      vehicle.displayName ||
+      vehicle.metadata?.fullModel ||
+      vehicle.metadata?.displayName ||
+      [make, model].filter(Boolean).join(" "),
+  );
+  const variant = cleanText(vehicle.variant || vehicle.variantName || vehicle.selectedVariant || "");
+
+  if (!model && !fullModel) return {};
+
+  return {
+    ...vehicle,
+    make,
+    brand: make || vehicle.brand || vehicle.make || "",
+    model: model || fullModel,
+    fullModel: fullModel || [make, model].filter(Boolean).join(" "),
+    displayName: fullModel || [make, model].filter(Boolean).join(" "),
+    modelKey: vehicle.modelKey || vehicle.shortModelKey || vehicle.canonicalKey || "",
+    shortModelKey: vehicle.shortModelKey || "",
+    variant,
+    variantName: cleanText(vehicle.variantName || vehicle.variant || vehicle.selectedVariant || ""),
+    selectedVariant: cleanText(vehicle.selectedVariant || vehicle.variantName || vehicle.variant || ""),
+    city: requestedCity,
+    citySlug: normalizeFastPathSlug(requestedCity),
+    unsupportedCity: requestedCity,
+    confidence: Number(vehicle.confidence || 0.85),
+    source: source || vehicle.source || "unsupported_city_vehicle_context",
+  };
+};
+
+const resolveUnsupportedCityVehicleContext = async ({
+  message = "",
+  requestedCity = "",
+  context = {},
+} = {}) => {
+  const contextVehicle =
+    context?.selectedVehicle ||
+    context?.contextState?.selectedVehicle ||
+    context?.aciContextState?.selectedVehicle ||
+    {};
+
+  const normalizedContextVehicle = normalizeUnsupportedCityVehicleContext({
+    vehicle: contextVehicle,
+    requestedCity,
+    source: contextVehicle.source || "active_context",
+  });
+
+  if (normalizedContextVehicle.model || normalizedContextVehicle.fullModel) {
+    return normalizedContextVehicle;
+  }
+
+  const priceVehicle = await resolveSupportedExactPriceVehicleFromMessage({
+    message,
+    citySlug: "new-delhi",
+  }).catch(() => null);
+
+  if (priceVehicle?.model || priceVehicle?.vehiclePhrase) {
+    const cleanMake = cleanText(priceVehicle.make || "");
+    const cleanModel = cleanText(priceVehicle.model || priceVehicle.vehiclePhrase || "");
+    const cleanFullModel = [cleanMake, cleanModel].filter(Boolean).join(" ") || cleanModel;
+
+    return normalizeUnsupportedCityVehicleContext({
+      vehicle: {
+        make: cleanMake,
+        brand: cleanMake,
+        model: cleanModel,
+        fullModel: cleanFullModel,
+        displayName: cleanFullModel,
+        modelKey: priceVehicle.modelKey || "",
+        shortModelKey: priceVehicle.shortModelKey || "",
+        variant: priceVehicle.variant || "",
+        variantName: priceVehicle.variant || "",
+        selectedVariant: priceVehicle.variant || "",
+        confidence: priceVehicle.score ? 0.9 : 0.85,
+      },
+      requestedCity,
+      source: "unsupported_city_price_resolver",
+    });
+  }
+
+  const aliasVehicle = await resolveVehicleAlias({ message }).catch(() => null);
+  return normalizeUnsupportedCityVehicleContext({
+    vehicle: aliasVehicle || {},
+    requestedCity,
+    source: "unsupported_city_alias_resolver",
+  });
+};
+
 const buildUnsupportedCityFastPathResponse = ({
   message = "",
   effectiveMessage = "",
@@ -1891,11 +1987,18 @@ const buildUnsupportedCityFastPathResponse = ({
     },
     contextPatch: {
       anchorCity: requestedCity,
+      anchorMake: selectedVehicle.make || selectedVehicle.brand || "",
+      anchorModel: selectedVehicle.model || selectedVehicle.fullModel || "",
+      anchorVariant: selectedVehicle.variant || selectedVehicle.variantName || selectedVehicle.selectedVariant || "",
+      selectedVehicle:
+        selectedVehicle.model || selectedVehicle.fullModel
+          ? selectedVehicle
+          : {},
     },
   };
 };
 
-const maybeReturnUnsupportedCityFastPath = ({
+const maybeReturnUnsupportedCityFastPath = async ({
   message = "",
   effectiveMessage = "",
   context = {},
@@ -1919,11 +2022,33 @@ const maybeReturnUnsupportedCityFastPath = ({
 
   const [, requestedCity] = match;
 
+  const selectedVehicle = await resolveUnsupportedCityVehicleContext({
+    message: text,
+    requestedCity,
+    context,
+  });
+
+  const enrichedContext =
+    selectedVehicle?.model || selectedVehicle?.fullModel
+      ? {
+          ...context,
+          selectedVehicle,
+          contextState: {
+            ...(context?.contextState || {}),
+            selectedVehicle,
+          },
+          aciContextState: {
+            ...(context?.aciContextState || {}),
+            selectedVehicle,
+          },
+        }
+      : context;
+
   return buildUnsupportedCityFastPathResponse({
     message,
     effectiveMessage,
     requestedCity,
-    context,
+    context: enrichedContext,
     durationMs: startedAt ? Date.now() - startedAt : 0,
   });
 };
@@ -2293,9 +2418,14 @@ const maybeReturnSupportedExactPriceFastPath = async ({
       selectedVehicle?.fullModel ||
       selectedVehicle?.modelKey;
 
+    const isSupportedCityPriceFollowUp =
+      hasSupportedCityMention(text) &&
+      /\b(price|pricing|pricelist|price list|on road|on-road|onroad|breakup)\b/i.test(text);
+
     const isBareOrContextualPrice =
       /^price$/i.test(normalizeFastPathText(text)) ||
-      hasContextReference(text);
+      hasContextReference(text) ||
+      isSupportedCityPriceFollowUp;
 
     if (hasSelectedVehicle && isBareOrContextualPrice) {
       resolved = {
@@ -3130,7 +3260,7 @@ export const runAciCoreLiveBridge = async ({
     return activeComparisonFollowUpFastPath;
   }
 
-  const unsupportedCityFastPath = maybeReturnUnsupportedCityFastPath({
+  const unsupportedCityFastPath = await maybeReturnUnsupportedCityFastPath({
     message,
     effectiveMessage,
     context,

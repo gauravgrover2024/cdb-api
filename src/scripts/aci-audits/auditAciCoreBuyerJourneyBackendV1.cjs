@@ -309,6 +309,31 @@ async function main() {
     },
 
     {
+      id: "unsupported-first-price-recovery-journey",
+      title: "Unsupported-first price recovery journey",
+      steps: [
+        {
+          id: "creta-mumbai-price",
+          message: "creta price in mumbai",
+          assert: (response) => {
+            assertUnsupportedCity(response, "Mumbai", "creta-mumbai-price");
+            assertIncludes(getAnswerBlob(response), /creta/i, "creta-mumbai-price model mention");
+            assertIncludes(vehicleText(response) + JSON.stringify(response.unsupportedCity || response.data?.unsupportedCity || {}), /creta/i, "creta-mumbai-price context model");
+          },
+        },
+        {
+          id: "delhi-price-after-unsupported",
+          message: "delhi price",
+          assert: (response) => {
+            assertSupportedPrice(response, "delhi-price-after-unsupported");
+            assertIncludes(getAnswerBlob(response), /delhi|new delhi/i, "delhi-price-after-unsupported city mention");
+            assertIncludes(vehicleText(response) + getAnswerBlob(response), /creta/i, "delhi-price-after-unsupported model");
+          },
+        },
+      ],
+    },
+
+    {
       id: "compare-to-decision-journey",
       title: "Compare-to-decision journey",
       steps: [
