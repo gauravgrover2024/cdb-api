@@ -691,3 +691,52 @@ Next pre-mortem guardrails:
 5. then local Gemma/TranslateGemma POC
 
 <!-- ACI_NO_HARDCODED_FACTS_GUARDRAIL_2026_06_08_END -->
+
+---
+
+<!-- ACI_FACTUAL_TRACE_METADATA_GUARDRAIL_2026_06_08_START -->
+
+## Guardrail Update — Factual Trace Metadata Audit Active
+
+### Status
+Done / ready to safety-gate.
+
+### What changed
+A factual trace metadata audit has been implemented for the public ACI Assist buyer-answer route.
+
+### Coverage verified
+The audit verifies trace/source coverage for:
+
+- price/pricelist answers
+- unsupported-city price answers
+- feature lookup answers
+- feature explorer/context feature answers
+- color answers
+- spec/attribute answers
+- comparison answers
+
+### Contract now enforced by audit
+Factual outputs must expose:
+
+- `sourceTransparency`
+- `runtimeResultsMeta`
+- source/read-model collection signals
+- record or match count signals
+
+### Comparison metadata normalization added
+Comparison responses now include read-model provenance for:
+
+- `aci_vehicle_price_rows`
+- `vehicle_variant_feature_matrix_v2`
+
+### Latest verified baseline
+- `aci:factual-trace:audit`: 7/7 passing
+- targeted comparison audit: 12/12 passing
+- full buyer deep audit: 185/185 passing
+- `aci:safety:fast`: passing
+- accepted no-data baseline remains 9 honest no-data cases
+
+### Next step
+Wire factual trace metadata audit into `aci:safety:fast` in strict mode.
+
+<!-- ACI_FACTUAL_TRACE_METADATA_GUARDRAIL_2026_06_08_END -->
