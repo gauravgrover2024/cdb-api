@@ -129,6 +129,15 @@ const tasks = [
     },
   },
   {
+    key: "unsupportedCityHonesty",
+    label: "Unsupported city honesty audit",
+    command: "node",
+    args: ["src/scripts/aci-audits/auditAciUnsupportedCityHonestyV1.cjs"],
+    env: {
+      ACI_UNSUPPORTED_CITY_AUDIT_STRICT: "1",
+    },
+  },
+  {
     key: "buyerAnswerQuality",
     label: "Buyer answer quality audit",
     command: "node",
@@ -149,6 +158,7 @@ const filterTasksForSafetyMode = (allTasks = []) => {
       "answerLanguage",
       "noHardcodedVehicleFacts",
       "factualTraceMetadata",
+      "unsupportedCityHonesty",
       "buyerAnswerQuality",
     ]);
 
@@ -336,6 +346,7 @@ const slowThresholdsMs = {
   embarrassmentQueries: 60000,
   noHardcodedVehicleFacts: 60000,
   factualTraceMetadata: 60000,
+  unsupportedCityHonesty: 60000,
   total: 90000,
 };
 
@@ -405,6 +416,7 @@ const summary = {
   backendFreezeTrustExitCode: exitCodeFor("backendFreezeTrust"),
   noHardcodedVehicleFactsExitCode: exitCodeFor("noHardcodedVehicleFacts"),
   factualTraceMetadataExitCode: exitCodeFor("factualTraceMetadata"),
+  unsupportedCityHonestyExitCode: exitCodeFor("unsupportedCityHonesty"),
 
   passedMentions: count(/"pass"\s*:\s*true/g),
   failedMentions: count(/"pass"\s*:\s*false/g),
@@ -427,6 +439,7 @@ const summary = {
     backendFreezeTrust: reportedDurationFor("backendFreezeTrust"),
     noHardcodedVehicleFacts: reportedDurationFor("noHardcodedVehicleFacts"),
     factualTraceMetadata: reportedDurationFor("factualTraceMetadata"),
+    unsupportedCityHonesty: reportedDurationFor("unsupportedCityHonesty"),
   },
 
   durationsMs: {
@@ -448,6 +461,7 @@ const summary = {
     backendFreezeTrust: durationFor("backendFreezeTrust"),
     noHardcodedVehicleFacts: durationFor("noHardcodedVehicleFacts"),
     factualTraceMetadata: durationFor("factualTraceMetadata"),
+    unsupportedCityHonesty: durationFor("unsupportedCityHonesty"),
     total: totalDurationMs,
   },
 
@@ -467,6 +481,7 @@ const summary = {
     contextManager: extractSuite("ACI Context Manager V1 audit"),
     noHardcodedVehicleFacts: extractSuite("ACI No-Hardcoded Vehicle Facts Audit"),
     factualTraceMetadata: extractSuite("ACI Factual Trace Metadata Audit v1"),
+    unsupportedCityHonesty: extractSuite("ACI Unsupported City Honesty Audit v1"),
   },
 
   slowThresholdsMs,
