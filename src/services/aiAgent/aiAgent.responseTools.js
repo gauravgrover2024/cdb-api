@@ -2791,7 +2791,99 @@ export const buildVehicleScoreInsightResponse = ({
     runtimeData.title ||
     modelLabel ||
     "this model";
+  const isCrossModelScoreDiagnostic =
+    operation === "cross_model_score_diagnostic" ||
+    data.diagnosticType === "cross_model_score_diagnostic";
+
+  const scoreDiagnosticModelSummaries = asArray(
+    data.modelSummaries ||
+      data.models ||
+      runtimeData.modelSummaries ||
+      runtimeData.models ||
+      data.rows ||
+      runtimeData.rows,
+  );
+
+  const scoreDiagnosticTitleText = [
+    runtimeData.userMessage,
+    runtimeData.message,
+    runtimeData.query,
+    data.userMessage,
+    data.message,
+    data.query,
+    toolPlan.input?.userMessage,
+    toolPlan.input?.message,
+    toolPlan.input?.query,
+    toolPlan.args?.userMessage,
+    toolPlan.args?.message,
+    toolPlan.args?.query,
+    toolPlan.params?.userMessage,
+    toolPlan.params?.message,
+    toolPlan.params?.query,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const normalizeScoreDiagnosticTitleToken = (value = "") =>
+    String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const scoreDiagnosticModelLabels = scoreDiagnosticModelSummaries
+    .map((model = {}, index) => {
+      const rawLabel =
+        model.label ||
+        model.fullModel ||
+        model.displayName ||
+        [model.make, model.makeKey, model.model, model.modelKey].filter(Boolean).join(" ") ||
+        "";
+
+      const label = String(rawLabel || "")
+        .replace(/[_-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+
+      const aliases = [
+        model.modelKey,
+        model.model,
+        model.fullModel,
+        model.displayName,
+        model.label,
+      ]
+        .map(normalizeScoreDiagnosticTitleToken)
+        .filter(Boolean);
+
+      const positions = aliases
+        .map((alias) => scoreDiagnosticTitleText.indexOf(alias))
+        .filter((position) => position >= 0);
+
+      return {
+        label,
+        index,
+        position: positions.length ? Math.min(...positions) : Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .filter((item) => item.label)
+    .sort((left, right) => {
+      if (left.position !== right.position) return left.position - right.position;
+      return left.index - right.index;
+    })
+    .map((item) => item.label);
+
+  const crossModelScoreTitle =
+    isCrossModelScoreDiagnostic && scoreDiagnosticModelLabels.length >= 2
+      ? `${scoreDiagnosticModelLabels.slice(0, 2).join(" vs ")} score diagnostics`
+      : "";
+
   const scoreTitle =
+    crossModelScoreTitle ||
     data.variantFullName ||
     runtimeData.variantFullName ||
     runtimeData.title ||
@@ -2808,17 +2900,7 @@ export const buildVehicleScoreInsightResponse = ({
 
   const guardrailText =
     "These are diagnostic module scores, not a final recommendation.";
-  const isCrossModelScoreDiagnostic =
-    operation === "cross_model_score_diagnostic" ||
-    data.diagnosticType === "cross_model_score_diagnostic";
-  const modelSummaries = asArray(
-    data.modelSummaries ||
-      data.models ||
-      runtimeData.modelSummaries ||
-      runtimeData.models ||
-      data.rows ||
-      runtimeData.rows,
-  );
+  const modelSummaries = scoreDiagnosticModelSummaries;
   const moduleComparisons = asArray(
     data.moduleComparisons ||
       runtimeData.moduleComparisons ||

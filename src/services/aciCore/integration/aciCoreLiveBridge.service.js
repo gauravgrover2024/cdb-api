@@ -3633,12 +3633,53 @@ const detectCrossModelScoreDiagnosticRequest = ({ message = "", candidateSnapsho
       contextVehicle.fullModel ||
       "",
   );
+  const rawOrderText = String(raw || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const getScoreDiagnosticModelMentionPosition = (modelKey = "", fallbackIndex = 0) => {
+    const normalizedModelKey = normalizeFastPathSlug(modelKey);
+    const aliases = [
+      normalizedModelKey,
+      normalizedModelKey.replace(/-/g, " "),
+      normalizedModelKey.replace(/_/g, " "),
+    ]
+      .map((value) =>
+        String(value || "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+      )
+      .filter(Boolean);
+
+    const positions = aliases
+      .map((alias) => rawOrderText.indexOf(alias))
+      .filter((position) => position >= 0);
+
+    return positions.length ? Math.min(...positions) : Number.MAX_SAFE_INTEGER;
+  };
+
   const uniqueModelKeys = [
     ...new Set([
       ...(hasContextReference(raw) && contextModelKey ? [contextModelKey] : []),
       ...modelKeys,
     ]),
-  ].slice(0, 2);
+  ]
+    .map((modelKey, index) => ({
+      modelKey,
+      index,
+      position: getScoreDiagnosticModelMentionPosition(modelKey, index),
+    }))
+    .sort((left, right) => {
+      if (left.position !== right.position) return left.position - right.position;
+      return left.index - right.index;
+    })
+    .map((item) => item.modelKey)
+    .slice(0, 2);
+
   if (uniqueModelKeys.length < 2) return null;
 
   const fuelKey =
