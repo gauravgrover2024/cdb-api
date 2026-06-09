@@ -105,6 +105,10 @@ export const maybeRunAciPreBridgeMultiFeatureAnswer = async ({
     return null;
   }
 
+  if (!/\b(and|plus|also|as well as)\b|[,/]/i.test(message || "")) {
+    return null;
+  }
+
   const dynamicModelEntityFromText = await resolveAciExplicitMessageModelEntity(message);
   const dynamicModelEntityFromContext = buildAciContextModelEntity({
     context,

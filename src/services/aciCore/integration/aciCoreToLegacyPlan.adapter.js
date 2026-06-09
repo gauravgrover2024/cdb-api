@@ -110,6 +110,15 @@ const getPrimaryVariant = (meaningFrame = {}, context = {}) => {
   );
 };
 
+const getPrimaryVariantKey = (meaningFrame = {}, context = {}) => {
+  const primaryVehicle = getPrimaryVehicle(meaningFrame);
+  const contextVehicle = getContextSelectedVehicle(context);
+  return firstMeaningful(
+    primaryVehicle.variantKey,
+    contextVehicle.variantKey,
+  );
+};
+
 const getCity = (meaningFrame = {}, context = {}) =>
   firstMeaningful(
     getPrimaryVehicle(meaningFrame).city,
@@ -697,6 +706,7 @@ const buildEntities = (meaningFrame = {}, context = {}) => {
   const clearVariantAnchors = isBroadFeatureDiscoveryWithoutModel(meaningFrame);
   const primaryModel = getPrimaryModel(meaningFrame, context);
   const primaryVariant = getPrimaryVariant(meaningFrame, context);
+  const primaryVariantKey = getPrimaryVariantKey(meaningFrame, context);
 
   return {
     brand: make,
@@ -704,6 +714,7 @@ const buildEntities = (meaningFrame = {}, context = {}) => {
     model: primaryModel,
     models: models.length ? models : asArray(primaryModel),
     variant: clearVariantAnchors ? '' : primaryVariant,
+    variantKey: clearVariantAnchors ? '' : primaryVariantKey,
     variants: clearVariantAnchors ? [] : variants.length ? variants : asArray(primaryVariant),
     primaryModel,
     primaryVariant: clearVariantAnchors ? '' : primaryVariant,
@@ -737,6 +748,7 @@ const buildFilters = (meaningFrame = {}, context = {}) => {
   const clearVariantAnchors = isBroadFeatureDiscoveryWithoutModel(meaningFrame);
   const primaryModel = getPrimaryModel(meaningFrame, context);
   const primaryVariant = getPrimaryVariant(meaningFrame, context);
+  const primaryVariantKey = getPrimaryVariantKey(meaningFrame, context);
 
   return {
     brand: make,
@@ -744,6 +756,7 @@ const buildFilters = (meaningFrame = {}, context = {}) => {
     model: primaryModel,
     models: models.length ? models : asArray(primaryModel),
     variant: clearVariantAnchors ? '' : primaryVariant,
+    variantKey: clearVariantAnchors ? '' : primaryVariantKey,
     variants: clearVariantAnchors ? [] : variants.length ? variants : asArray(primaryVariant),
     city,
     budgetMin: getBudgetMin(meaningFrame),
@@ -788,10 +801,18 @@ const buildContextPatch = (meaningFrame = {}, context = {}) => {
   const make = getMake(meaningFrame, context);
   const model = getPrimaryModel(meaningFrame, context);
   const variant = getPrimaryVariant(meaningFrame, context);
+  const variantKey = getPrimaryVariantKey(meaningFrame, context);
+  const unavailableRequestedVariant =
+    meaningFrame.clarification?.reason === 'exact_variant_unavailable'
+      ? firstMeaningful(
+          meaningFrame.trace?.variantResolution?.requestedVariant,
+          meaningFrame.trace?.variantResolution?.requestedVariantText,
+        )
+      : '';
   const city = getCity(meaningFrame, context);
   const tool = inferTool(meaningFrame, '', context);
   const clearVariantAnchors = isBroadFeatureDiscoveryWithoutModel(meaningFrame);
-  const safeVariant = clearVariantAnchors ? '' : variant;
+  const safeVariant = clearVariantAnchors || unavailableRequestedVariant ? '' : variant;
   const comparisonVehicles = getComparisonVehicles(meaningFrame).map((vehicle) =>
     compactObject({
       ...vehicle,
@@ -829,7 +850,13 @@ const buildContextPatch = (meaningFrame = {}, context = {}) => {
       make,
       brand: make,
       model,
+      fullModel: [make, model].filter(Boolean).join(' '),
       variant: safeVariant,
+      variantName: safeVariant,
+      selectedVariant: safeVariant,
+      variantKey: clearVariantAnchors || unavailableRequestedVariant ? '' : variantKey,
+      variantResolutionStatus: unavailableRequestedVariant ? 'exact_unavailable' : '',
+      unresolvedVariant: unavailableRequestedVariant,
       city,
     }),
     conversationMode: inferConversationMode(tool, meaningFrame),
@@ -868,7 +895,12 @@ function buildLegacyPlanFromAciMeaningFrame({
         : (getVariants(meaningFrame).length
           ? getVariants(meaningFrame)
           : asArray(getPrimaryVariant(meaningFrame, context)))
-          .map((variant) => ({ variant })),
+          .map((variant) => compactObject({
+            variant,
+            variantName: variant,
+            selectedVariant: variant,
+            variantKey: getPrimaryVariantKey(meaningFrame, context),
+          })),
       selectedComparisonVehicles: getComparisonVehicles(meaningFrame),
       changeAllowed: true,
       note: 'Generated from ACI Core meaning frame.',

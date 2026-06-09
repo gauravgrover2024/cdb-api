@@ -684,7 +684,6 @@ const buildVariantMatchQuery = ({ modelKey, variant = "", includeArchived = fals
   query.$or = [
     { variantKey: variantNorm },
     { variant: new RegExp(`^${escapeRegExp(variant)}$`, "i") },
-    { variant: new RegExp(escapeRegExp(variant), "i") },
   ];
 
   return query;

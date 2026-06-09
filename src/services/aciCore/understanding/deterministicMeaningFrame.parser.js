@@ -84,6 +84,9 @@ const uniqueByKey = (items = [], keyFn) => {
 const validTask = (task) =>
   Object.values(ACI_TASKS).includes(task) ? task : null;
 
+const firstText = (...values) =>
+  values.find((value) => value !== undefined && value !== null && cleanText(value) !== '') || '';
+
 const createConfidence = ({
   taskConfidence = 0.5,
   entityConfidence = 0.5,
@@ -268,6 +271,98 @@ const buildPrimaryVehicle = ({ modelAnchors = [], variantNames = [], fuelTypes =
   };
 };
 
+const getExactVariantResolution = (candidateSnapshot = {}) => {
+  const resolution = candidateSnapshot?.vehicles?.variantResolution || null;
+  return resolution?.status === 'exact' && resolution.selected ? resolution : null;
+};
+
+const getUnavailableVariantResolution = (candidateSnapshot = {}) => {
+  const resolution = candidateSnapshot?.vehicles?.variantResolution || null;
+  return resolution?.status === 'exact_unavailable' ? resolution : null;
+};
+
+const applyExactVariantResolution = ({ frame = {}, candidateSnapshot = {} } = {}) => {
+  const resolution = getExactVariantResolution(candidateSnapshot);
+  if (!resolution) return frame;
+
+  const selected = resolution.selected || {};
+  const variantName = selected.variant || selected.fullVariant || selected.displayName || '';
+  if (!variantName) return frame;
+
+  frame.anchors.primaryVehicle = {
+    ...frame.anchors.primaryVehicle,
+    make: frame.anchors.primaryVehicle.make || selected.make || null,
+    model: frame.anchors.primaryVehicle.model || selected.model || null,
+    fullModel: frame.anchors.primaryVehicle.fullModel || selected.fullModel || selected.model || null,
+    variant: variantName,
+    fullVariant: variantName,
+    variantKey: selected.variantKey || null,
+    modelKey: selected.modelKey || frame.anchors.primaryVehicle.modelKey || null,
+    confidence: 0.96,
+    source: 'model_scoped_variant_resolver',
+  };
+
+  frame.filters.variants = [variantName];
+  frame.context.explicitVariantMentioned = true;
+  frame.discovery.resultGranularity = ACI_RESULT_GRANULARITY.VARIANT;
+  frame.trace.variantResolution = {
+    status: resolution.status,
+    variant: variantName,
+    variantKey: selected.variantKey || null,
+    matchedBy: selected.matchedBy || null,
+  };
+
+  return frame;
+};
+
+const applyUnavailableVariantResolution = ({ frame = {}, candidateSnapshot = {} } = {}) => {
+  const resolution = getUnavailableVariantResolution(candidateSnapshot);
+  if (!resolution) return frame;
+
+  const requestedVariant = resolution.requestedVariantText || 'that exact variant';
+  const model = frame.anchors.primaryVehicle?.fullModel || frame.anchors.primaryVehicle?.model || firstText(...frame.filters.models) || 'this model';
+  const question = `I found ${model}, but ${requestedVariant} does not match an exact current variant in the DB-backed new-car catalog. Please choose a listed variant, or ask for model-level price/features.`;
+
+  frame.primaryTask = ACI_TASKS.CLARIFICATION;
+  frame.secondaryTasks = unique([...(frame.secondaryTasks || [])]);
+  frame.filters.variants = [];
+  frame.anchors.primaryVehicle = {
+    ...frame.anchors.primaryVehicle,
+    variant: null,
+    fullVariant: null,
+    variantKey: null,
+    source: frame.anchors.primaryVehicle?.source || 'model_scoped_variant_resolver',
+  };
+  frame.context.action = ACI_CONTEXT_ACTIONS.ASK_CLARIFICATION;
+  frame.context.explicitVariantMentioned = true;
+  frame.context.ambiguity = unique([
+    ...(frame.context.ambiguity || []),
+    'exact_variant_unavailable',
+  ]);
+  frame.clarification = {
+    ...frame.clarification,
+    needed: true,
+    reason: 'exact_variant_unavailable',
+    question,
+    options: (resolution.candidates || [])
+      .map((candidate) => candidate.variant)
+      .filter(Boolean)
+      .slice(0, 6),
+  };
+  frame.confidence = createConfidence({
+    taskConfidence: 0.78,
+    entityConfidence: 0.45,
+    toolReadiness: 0.35,
+  });
+  frame.trace.variantResolution = {
+    status: resolution.status,
+    reason: resolution.reason || null,
+    requestedVariant,
+  };
+
+  return frame;
+};
+
 async function parseDeterministicMeaningFrame({
   rawMessage = '',
   normalizedMessage = '',
@@ -441,6 +536,9 @@ async function parseDeterministicMeaningFrame({
       activeContextPresent: Boolean(activeContext),
     },
   });
+
+  applyExactVariantResolution({ frame, candidateSnapshot });
+  applyUnavailableVariantResolution({ frame, candidateSnapshot });
 
   assertMeaningFrameShape(frame);
 

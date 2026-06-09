@@ -12,6 +12,7 @@ import { executeAciPlannerPlan } from "../../aiAgent/aiAgent.executor.js";
 import { normalizeAciFinalResponse } from "../../aiAgent/aiAgent.contractNormalizer.js";
 import { composeAciAnswer } from "../../aiAgent/aiAgent.answerComposer.js";
 import { runVehiclePricelistNewCarsTool } from "../../aiAgent/tools/newCars/vehiclePricelist.tool.js";
+import { runVehicleFeaturesTool } from "../../aiAgent/tools/newCars/vehicleFeatures.tool.js";
 import {
   buildVehiclePricelistResponse,
 } from "../../aiAgent/aiAgent.responseTools.js";
@@ -26,6 +27,9 @@ import {
   hydrateContextFromCandidates,
   mergeContextPatches,
 } from "../context/aciContextManager.service.js";
+import {
+  resolveModelScopedVariantFromMessage,
+} from "../variants/modelScopedVariantResolver.service.js";
 
 const truthy = (value = "") =>
   ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -2428,6 +2432,99 @@ const validateSupportedExactPriceFastPathResult = ({
   return true;
 };
 
+const hasParentheticalVariantRequest = (message = "") =>
+  /\b[A-Za-z0-9]+\s*\([^)]+\)/.test(String(message || ""));
+
+const buildExactUnavailableVariantFastPathResponse = ({
+  message = "",
+  effectiveMessage = "",
+  originalMessage = "",
+  resolved = {},
+  resolution = {},
+  citySlug = "new-delhi",
+  startedAt = 0,
+} = {}) => {
+  const requestedVariant = resolution.requestedVariantText || "that exact variant";
+  const fullModel = [resolved.make, resolved.model].filter(Boolean).join(" ") || resolved.model || "";
+  const answer = `I found ${fullModel || "this model"}, but ${requestedVariant} does not match an exact current variant in the DB-backed new-car catalog. Please choose a listed variant, or ask for model-level price/features.`;
+  const selectedVehicle = {
+    make: resolved.make || "",
+    brand: resolved.make || "",
+    model: resolved.model || "",
+    fullModel,
+    // Keep the model context, but do not store the invalid requested variant
+    // as the active selected variant. Otherwise follow-up price/features keep
+    // filtering by a non-existent trim.
+    variant: "",
+    variantName: "",
+    selectedVariant: "",
+    variantKey: "",
+    variantResolutionStatus: "exact_unavailable",
+    unresolvedVariant: requestedVariant,
+    city: citySlug,
+    citySlug,
+  };
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "deterministic",
+    usedGemini: false,
+    primaryTask: "clarification",
+    tool: "clarification",
+    planMode: "clarification",
+    contextIsolation: "exact_variant_unavailable_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: effectiveMessage || message,
+    routingReason: "exact_variant_unavailable",
+  };
+
+  return {
+    intent: "clarification",
+    tool: "clarification",
+    mode: "clarification",
+    conversationMode: "clarification",
+    displayMode: "inline",
+    canvasType: "",
+    inlineType: "clarification_card",
+    title: "Need one detail",
+    answer,
+    clarification: answer,
+    rows: [],
+    items: [],
+    matched: 0,
+    count: 0,
+    selectedVehicle,
+    contextPatch: {
+      anchorMake: selectedVehicle.make,
+      anchorModel: selectedVehicle.model,
+      anchorVariant: "",
+      anchorCity: citySlug,
+      selectedVehicle,
+      lastUnresolvedVariant: requestedVariant,
+      variantResolution: {
+        status: "exact_unavailable",
+        requestedVariant,
+      },
+    },
+    data: {
+      title: "Need one detail",
+      answer,
+      rows: [],
+      items: [],
+      selectedVehicle,
+    },
+    aciCoreBridge: bridge,
+    meta: {
+      aciCoreBridge: bridge,
+      variantResolution: {
+        status: "exact_unavailable",
+        requestedVariant,
+        candidates: resolution.candidates || [],
+      },
+    },
+  };
+};
+
 const maybeReturnSupportedExactPriceFastPath = async ({
   message = "",
   effectiveMessage = "",
@@ -2465,17 +2562,32 @@ const maybeReturnSupportedExactPriceFastPath = async ({
       hasSupportedCityMention(text) &&
       /\b(price|pricing|pricelist|price list|on road|on-road|onroad|breakup)\b/i.test(text);
 
+    const isExplicitModelLevelPriceFollowUp =
+      /\b(show|open|give|get|list)\b.*\b(model\s+)?(price|prices|pricing|price\s+list|pricelist)\b/i.test(text) ||
+      /\bmodel\s+(price|prices|pricing|price\s+list|pricelist)\b/i.test(text) ||
+      /\b(all\s+variants?|variant\s+prices?|full\s+price\s+list)\b/i.test(text);
+
     const isBareOrContextualPrice =
       /^price$/i.test(normalizeFastPathText(text)) ||
       hasContextReference(text) ||
-      isSupportedCityPriceFollowUp;
+      isSupportedCityPriceFollowUp ||
+      isExplicitModelLevelPriceFollowUp;
 
     if (hasSelectedVehicle && isBareOrContextualPrice) {
+      const contextVariantIsInvalid =
+        selectedVehicle.variantResolutionStatus === "exact_unavailable" ||
+        selectedVehicle.variantKey === selectedVehicle.unresolvedVariant;
+
+      const selectedVariant =
+        isExplicitModelLevelPriceFollowUp || contextVariantIsInvalid
+          ? ""
+          : selectedVehicle.variant || selectedVehicle.variantName || selectedVehicle.selectedVariant || "";
+
       resolved = {
         make: selectedVehicle.make || selectedVehicle.brand || "",
         model: selectedVehicle.model || selectedVehicle.fullModel || "",
         modelKey: selectedVehicle.modelKey || "",
-        variant: selectedVehicle.variant || selectedVehicle.variantName || "",
+        variant: selectedVariant,
         citySlug:
           normalizeFastPathSlug(selectedVehicle.citySlug || selectedVehicle.city || citySlug) ||
           citySlug,
@@ -2486,6 +2598,29 @@ const maybeReturnSupportedExactPriceFastPath = async ({
   }
 
   if (!resolved?.model) return null;
+
+  if (hasParentheticalVariantRequest(text)) {
+    const variantResolution = await resolveModelScopedVariantFromMessage({
+      message: text,
+      make: resolved.make,
+      model: resolved.model,
+      fullModel: [resolved.make, resolved.model].filter(Boolean).join(" "),
+      modelKey: resolved.modelKey,
+      citySlug,
+    });
+
+    if (variantResolution?.status === "exact_unavailable") {
+      return buildExactUnavailableVariantFastPathResponse({
+        message,
+        effectiveMessage: text,
+        originalMessage,
+        resolved,
+        resolution: variantResolution,
+        citySlug,
+        startedAt,
+      });
+    }
+  }
 
   const contextReference = hasContextReference(text);
   const isolation = "supported_exact_price_fast_path";
@@ -2552,6 +2687,125 @@ const maybeReturnSupportedExactPriceFastPath = async ({
     tool: "vehicle_pricelist",
     planMode: "single_tool",
     contextIsolation: isolation,
+    originalMessage: originalMessage || message,
+    effectiveMessage: text,
+  };
+
+  return composeAciAnswer({
+    ...normalized,
+    aciCoreBridge: bridge,
+    meta: {
+      ...(normalized.meta || {}),
+      aciCoreBridge: bridge,
+    },
+  });
+};
+
+const hasSingleFeatureAnswerIntent = (message = "") => {
+  const raw = String(message || "");
+  if (hasComparisonLanguage(raw)) return false;
+  if (/\b(and|plus|also|as well as)\b|[,/]/i.test(raw)) return false;
+
+  // Broad feature discovery should stay on the normal discovery path and must
+  // not become an exact single-variant answer just because a feature word exists.
+  if (
+    /\bwhich\b.*\bvariants?\b/i.test(raw) ||
+    /\bvariants?\b.*\b(have|has|get|gets|with|available)\b/i.test(raw) ||
+    /\b(cheapest|most affordable|lowest price|without|do not have|does not have|missing|miss)\b/i.test(raw)
+  ) {
+    return false;
+  }
+
+  return /\b(sunroof|adas|airbags?|six\s+airbags|6\s+airbags|camera|tpms|wireless\s+charging|cruise\s+control|ventilated\s+seats?)\b/i.test(raw);
+};
+
+const maybeReturnExactSingleFeatureFastPath = async ({
+  message = "",
+  effectiveMessage = "",
+  context = {},
+  originalMessage = "",
+  startedAt = 0,
+} = {}) => {
+  const text = effectiveMessage || message;
+  if (!hasSingleFeatureAnswerIntent(text)) return null;
+
+  const citySlug = getSupportedCitySlugFromContext(context) || "new-delhi";
+  const resolved = await resolveSupportedExactPriceVehicleFromMessage({
+    message: text,
+    citySlug,
+  });
+
+  if (!resolved?.model) return null;
+
+  const variantResolution = await resolveModelScopedVariantFromMessage({
+    message: text,
+    make: resolved.make,
+    model: resolved.model,
+    fullModel: [resolved.make, resolved.model].filter(Boolean).join(" "),
+    modelKey: resolved.modelKey,
+    citySlug,
+  });
+
+  if (variantResolution?.status !== "exact" || !variantResolution.selected?.variant) {
+    return null;
+  }
+
+  const variant = variantResolution.selected.variant;
+  const toolPlan = {
+    tool: "vehicle_feature_lookup",
+    input: {
+      message: text,
+      query: text,
+      make: resolved.make,
+      model: resolved.model,
+      variant,
+      city: citySlug,
+    },
+    entities: {
+      make: resolved.make,
+      model: resolved.model,
+      variant,
+      primaryVariant: variant,
+    },
+    filters: {
+      city: citySlug,
+      variant,
+    },
+    resolution: {
+      variantSelectionMode: "exact",
+      selectedVariants: [
+        {
+          variant,
+          variantName: variant,
+          selectedVariant: variant,
+          variantKey: variantResolution.selected.variantKey || "",
+        },
+      ],
+    },
+  };
+
+  const toolResult = await runVehicleFeaturesTool({
+    userMessage: text,
+    message: text,
+    query: text,
+    context,
+    toolPlan,
+  });
+
+  const normalized = await normalizeAciFinalResponse(toolResult, {
+    message: text,
+    context,
+  });
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "deterministic",
+    usedGemini: false,
+    primaryTask: "feature_answer",
+    tool: "vehicle_feature_lookup",
+    planMode: "single_tool",
+    contextIsolation: "exact_single_feature_fast_path",
     originalMessage: originalMessage || message,
     effectiveMessage: text,
   };
@@ -2748,6 +3002,12 @@ const isExplicitDirectPriceLookupRequest = (message = "", primaryTask = "") => {
 
 const buildDirectPriceLookupOverride = ({ message = "", meaningFrame = {}, contextState = {} } = {}) => {
   if (!isExplicitDirectPriceLookupRequest(message, meaningFrame?.primaryTask)) return null;
+  if (
+    meaningFrame?.clarification?.reason === "exact_variant_unavailable" ||
+    meaningFrame?.trace?.variantResolution?.status === "exact_unavailable"
+  ) {
+    return null;
+  }
 
   const vehicle =
     contextState?.selectedVehicle ||
@@ -3364,6 +3624,18 @@ export const runAciCoreLiveBridge = async ({
 
   if (supportedExactPriceFastPath) {
     return supportedExactPriceFastPath;
+  }
+
+  const exactSingleFeatureFastPath = await maybeReturnExactSingleFeatureFastPath({
+    message,
+    effectiveMessage,
+    context,
+    originalMessage,
+    startedAt,
+  });
+
+  if (exactSingleFeatureFastPath) {
+    return exactSingleFeatureFastPath;
   }
 
   const rawMessage = String(message || "");

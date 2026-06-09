@@ -1089,10 +1089,19 @@ const toPublicResponse = async ({
     result.intent === "vehicle_model_features_explorer" &&
     !cleanText(variant) &&
     /\bfeatures?\b/i.test(userMessage || "");
+  const broadFeatureDiscoveryResponse =
+    normalizeText(result.intent).includes("vehicle feature discovery") ||
+    normalizeText(result.intent).includes("feature discovery") ||
+    normalizeText(result.canvasType).includes("feature_discovery");
+  const shouldClearResponseVariant =
+    inactiveVariant ||
+    modelLevelExplorer ||
+    modelLevelFeatureSummary ||
+    broadFeatureDiscoveryResponse;
 
   const responseModel = firstText(data.model, result.model, model);
   const responseVariant =
-    inactiveVariant || modelLevelExplorer || modelLevelFeatureSummary
+    shouldClearResponseVariant
       ? ""
       : firstText(
           data.variant,
@@ -1141,7 +1150,7 @@ const toPublicResponse = async ({
     responseImageFrame = responseImageFrame || selectedVisual?.imageFrame || null;
   }
 
-  if (modelLevelExplorer || modelLevelFeatureSummary) {
+  if (shouldClearResponseVariant) {
     data.selectedVariant = "";
     data.selectedVariantKey = "";
     data.requestedVariant = "";
@@ -1154,6 +1163,11 @@ const toPublicResponse = async ({
     brand: data.brand || data.make || "",
     model: responseModel,
     variant: responseVariant,
+    variantName: responseVariant,
+    selectedVariant: responseVariant,
+    variantKey: shouldClearResponseVariant
+      ? ""
+      : data.selectedVariantKey || data.variantKey || firstVisualRow.variantKey || "",
     city,
     imageUrl: responseImageUrl,
     normalizedImageUrl: responseImageUrl,
@@ -1165,7 +1179,7 @@ const toPublicResponse = async ({
     result.leadingQuestions || result.conversationSuggestions || [];
 
   const leadingQuestions =
-    inactiveVariant || modelLevelExplorer
+    inactiveVariant || modelLevelExplorer || broadFeatureDiscoveryResponse
       ? buildBridgeLeadingQuestions({
           model: responseModel,
           variant: "",
@@ -1199,7 +1213,7 @@ const toPublicResponse = async ({
     model: selectedVehicle.model,
     variant: selectedVehicle.variant,
     selectedVariant:
-      inactiveVariant || modelLevelExplorer || modelLevelFeatureSummary
+      shouldClearResponseVariant
         ? null
         : data.selectedVariant || null,
     variants: data.variants || data.variantOptions || [],

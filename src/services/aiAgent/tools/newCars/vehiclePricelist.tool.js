@@ -395,8 +395,9 @@ const getRequestedVariant = ({
       filters.variant,
       toolPlan.variant,
       toolPlan.input?.variant,
-      selectedVehicle.variant,
-      selectedVehicle.selectedVariant,
+      selectedVehicle.variantResolutionStatus === "exact_unavailable" ? "" : selectedVehicle.variant,
+      selectedVehicle.variantResolutionStatus === "exact_unavailable" ? "" : selectedVehicle.variantName,
+      selectedVehicle.variantResolutionStatus === "exact_unavailable" ? "" : selectedVehicle.selectedVariant,
       context.anchorVariant,
       context.variant,
     ),
@@ -756,6 +757,7 @@ const normalizePriceRow = (row = {}, index = 0) => {
     model,
     displayName,
   });
+  const variantKey = cleanText(first(row.variantKey, row.raw?.variantKey, row.variant_key, row.raw?.variant_key));
   const fuel = normalizeFuel(row);
   const transmission = normalizeTransmission(row);
   const imageUrl = normalizeImageUrl(row);
@@ -799,6 +801,7 @@ const normalizePriceRow = (row = {}, index = 0) => {
 
     variant,
     variantName: variant,
+    variantKey,
 
     fuel,
     fuelType: fuel,
@@ -3216,7 +3219,9 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
       selectedColor: vehicle.selectedColor || selectedVisual || null,
       visualGallery,
       variant: requestedVariant || "",
+      variantName: requestedVariant || "",
       selectedVariant: requestedVariant || "",
+      variantKey: requestedVariant ? rows[0]?.variantKey || rows[0]?.raw?.variantKey || "" : "",
     },
     anchorMake: vehicle.make || requestedMake,
     anchorModel: vehicle.model || requestedModel,

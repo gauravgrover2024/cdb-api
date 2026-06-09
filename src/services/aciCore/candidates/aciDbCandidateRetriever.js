@@ -36,6 +36,9 @@ import {
 import {
   normalizeFeatureKey,
 } from '../taxonomy/aciCanonicalFeature.schema.js';
+import {
+  resolveModelScopedVariantFromMessage,
+} from '../variants/modelScopedVariantResolver.service.js';
 
 const CACHE_TTL_MS = Number(process.env.ACI_CANDIDATE_CACHE_TTL_MS || 5 * 60 * 1000);
 const PRICE_VARIANT_CATALOG_CITY_SLUG =
@@ -896,6 +899,27 @@ const mapVariantMatch = (match = {}) => createCandidateItem({
   },
 });
 
+const mapResolvedVariantMatch = (match = {}) => createCandidateItem({
+  rawText: match.variant || match.fullVariant || match.displayName || null,
+  canonicalKey: match.variantKey || normalizeFeatureKey(match.variant || match.displayName || ''),
+  displayName: match.fullVariant || match.displayName || match.variant || null,
+  type: 'variant',
+  source: CANDIDATE_SOURCE_TYPES.DB,
+  confidence: typeof match.score === 'number' ? Math.min(1, Math.max(0, match.score / 160)) : 0.96,
+  metadata: {
+    make: match.make || null,
+    model: match.model || null,
+    fullModel: match.fullModel || null,
+    variant: match.variant || null,
+    fullVariant: match.fullVariant || match.displayName || null,
+    variantKey: match.variantKey || null,
+    modelKey: match.modelKey || null,
+    matchedBy: match.matchedBy || 'model_scoped_variant_resolver',
+    resolver: 'model_scoped_variant_resolver_v1',
+    raw: match,
+  },
+});
+
 const FEATURE_ALIAS_VARIANT_BLOCKLIST = [
   'turbo',
   'turbocharged',
@@ -1012,10 +1036,29 @@ async function retrieveAciDbCandidates({
   snapshot.vehicles.models = uniqueBy(modelMatches.map(mapModelMatch), (item) => item.canonicalKey)
     .slice(0, limits.models || 8);
 
-  const explicitVariantMatches = await findModelScopedVariantCandidates({
-    message,
-    modelCandidates: snapshot.vehicles.models,
-  });
+  const modelScopedVariantResolution = snapshot.vehicles.models.length === 1
+    ? await resolveModelScopedVariantFromMessage({
+        message,
+        make: snapshot.vehicles.models[0]?.metadata?.make || '',
+        model:
+          snapshot.vehicles.models[0]?.metadata?.model ||
+          snapshot.vehicles.models[0]?.displayName ||
+          '',
+        fullModel:
+          snapshot.vehicles.models[0]?.metadata?.fullModel ||
+          snapshot.vehicles.models[0]?.displayName ||
+          '',
+        modelKey: snapshot.vehicles.models[0]?.canonicalKey || '',
+        citySlug: PRICE_VARIANT_CATALOG_CITY_SLUG,
+      })
+    : null;
+
+  const explicitVariantMatches = modelScopedVariantResolution?.status === 'exact'
+    ? [modelScopedVariantResolution.selected]
+    : await findModelScopedVariantCandidates({
+        message,
+        modelCandidates: snapshot.vehicles.models,
+      });
 
   let broadScopedVariantMatches = filterVariantMatchesByModels(
     rawVariantMatches,
@@ -1031,12 +1074,22 @@ async function retrieveAciDbCandidates({
 
   // If exact model-scoped variant mentions are found, use them and avoid dumping
   // broad variant candidates into the parser snapshot.
-  const scopedVariantMatches = explicitVariantMatches.length
+  const scopedVariantMatches = modelScopedVariantResolution?.status === 'exact_unavailable'
+    ? []
+    : explicitVariantMatches.length
     ? explicitVariantMatches
     : broadScopedVariantMatches;
 
-  snapshot.vehicles.variants = uniqueBy(scopedVariantMatches.map(mapVariantMatch), (item) => item.canonicalKey)
+  snapshot.vehicles.variants = uniqueBy(
+    scopedVariantMatches.map((match) =>
+      match?.matchedBy || match?.normalizedVariant
+        ? mapResolvedVariantMatch(match)
+        : mapVariantMatch(match),
+    ),
+    (item) => item.canonicalKey,
+  )
     .slice(0, limits.variants || 12);
+  snapshot.vehicles.variantResolution = modelScopedVariantResolution || null;
 
   snapshot.vehicles.colors = uniqueBy(colorMatches.map(mapColorMatch), (item) => item.canonicalKey)
     .slice(0, limits.colors || 8);
@@ -1086,6 +1139,7 @@ async function retrieveAciDbCandidates({
       makeCatalogAgeMs: makeCatalogCache.builtAt ? Date.now() - makeCatalogCache.builtAt : null,
       priceVariantCatalogSize: priceVariantCatalogCache.items.length,
       priceVariantCatalogAgeMs: priceVariantCatalogCache.builtAt ? Date.now() - priceVariantCatalogCache.builtAt : null,
+      modelScopedVariantResolverStatus: modelScopedVariantResolution?.status || null,
       lightBroadDiscovery: useLightBroadDiscovery,
       genericBroadBudgetQuery,
       skippedFeatureCatalog: useLightBroadDiscovery && !needsBroadFeatureLookup,

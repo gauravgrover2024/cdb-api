@@ -109,6 +109,15 @@ async function parseHybridMeaningFrame({
     candidateSnapshot,
   });
 
+  if (candidateSnapshot?.vehicles?.variantResolution?.status === 'exact_unavailable') {
+    return decorateParserResult(deterministicResult, {
+      selectedParser: 'deterministic',
+      usedGemini: false,
+      reason: 'exact_variant_unavailable_from_model_scoped_resolver',
+      latencyMs: Date.now() - startedAt,
+    });
+  }
+
   const weakness = isWeakDeterministicFrame(deterministicResult);
 
   if (!weakness.weak) {
