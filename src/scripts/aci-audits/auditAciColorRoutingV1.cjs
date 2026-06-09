@@ -6,10 +6,41 @@ const assert = require("assert");
 const CASE_TIMEOUT_MS = Number(process.env.ACI_COLOR_ROUTING_CASE_TIMEOUT_MS || 5000);
 
 const cases = [
-  ["creta-colors", "Creta colors", "creta"],
-  ["show-colors-of-creta", "Show colors of Creta", "creta"],
-  ["seltos-colors", "Which colors are available in Seltos?", "seltos"],
-  ["creta-black-color", "Creta black color", "creta"],
+  {
+    id: "creta-colors",
+    message: "Creta colors",
+    expectedModel: "creta",
+    minRows: 1,
+  },
+  {
+    id: "show-colors-of-creta",
+    message: "Show colors of Creta",
+    expectedModel: "creta",
+    minRows: 1,
+  },
+  {
+    id: "seltos-colors",
+    message: "Which colors are available in Seltos?",
+    expectedModel: "seltos",
+    minRows: 1,
+  },
+  {
+    id: "creta-black-color",
+    message: "Creta black color",
+    expectedModel: "creta",
+    minRows: 1,
+    expectedDataStatus: "available",
+    requiredAnswerPattern: /\bblack\b/i,
+  },
+  {
+    id: "seltos-dual-tone-negative",
+    message: "dual tone colors in seltos",
+    expectedModel: "seltos",
+    minRows: 0,
+    maxRows: 0,
+    expectedDataStatus: "not_available",
+    requiredAnswerPattern: /\bno\b.*\bdual[-\s]?tone\b/i,
+  },
 ];
 
 const asArray = (value) => Array.isArray(value) ? value : value ? [value] : [];
@@ -37,55 +68,66 @@ async function main() {
   const startedAt = Date.now();
   const results = [];
 
-  for (const [id, message, expectedModel] of cases) {
+  for (const testCase of cases) {
     const caseStartedAt = Date.now();
     const failures = [];
 
     try {
       const response = await withTimeout(
         chatWithAgent({
-          message,
+          message: testCase.message,
           context: {},
           user: null,
           session: {},
-          meta: { source: "auditAciColorRoutingV1", caseId: id },
+          meta: { source: "auditAciColorRoutingV1", caseId: testCase.id },
         }),
         CASE_TIMEOUT_MS,
-        id,
+        testCase.id,
       );
 
       const rows = getRows(response);
       const selectedVehicle = getSelectedVehicle(response);
       const bridge = response.aciCoreBridge || response.meta?.aciCoreBridge || {};
+      const answerText = `${response.title || ""} ${response.answer || ""}`;
 
       try { assert.strictEqual(response.intent, "vehicle_colors", `expected intent vehicle_colors, got ${response.intent || ""}`); } catch (e) { failures.push(e.message); }
       try { assert.strictEqual(response.canvasType, "color_studio_canvas", `expected color_studio_canvas, got ${response.canvasType || ""}`); } catch (e) { failures.push(e.message); }
-      try { assert(rows.length >= 1, `expected color rows, got ${rows.length}`); } catch (e) { failures.push(e.message); }
+      try { assert(rows.length >= testCase.minRows, `expected at least ${testCase.minRows} color rows, got ${rows.length}`); } catch (e) { failures.push(e.message); }
+      if (Number.isFinite(testCase.maxRows)) {
+        try { assert(rows.length <= testCase.maxRows, `expected at most ${testCase.maxRows} color rows, got ${rows.length}`); } catch (e) { failures.push(e.message); }
+      }
+      if (testCase.expectedDataStatus) {
+        try { assert.strictEqual(response.dataStatus, testCase.expectedDataStatus, `expected dataStatus ${testCase.expectedDataStatus}, got ${response.dataStatus || ""}`); } catch (e) { failures.push(e.message); }
+      }
+      if (testCase.requiredAnswerPattern) {
+        try { assert(testCase.requiredAnswerPattern.test(response.answer || ""), `answer did not match ${testCase.requiredAnswerPattern}`); } catch (e) { failures.push(e.message); }
+      }
       try {
         assert(
-          normalize(selectedVehicle.model || selectedVehicle.fullModel || response.title).includes(expectedModel),
-          `expected model ${expectedModel}`,
+          normalize(selectedVehicle.model || selectedVehicle.fullModel || response.title).includes(testCase.expectedModel),
+          `expected model ${testCase.expectedModel}`,
         );
       } catch (e) { failures.push(e.message); }
       try {
-        assert(!/\bremote climate|airbags?|sunroof|adas package\b/i.test(`${response.title || ""} ${response.answer || ""}`), "color query returned feature-answer content");
+        assert(!/\bremote climate|airbags?|sunroof|adas package\b/i.test(answerText), "color query returned feature-answer content");
       } catch (e) { failures.push(e.message); }
       try {
         assert(bridge.tool === "vehicle_colors" || response.tool === "vehicle_colors", `expected vehicle_colors bridge/tool, got bridge=${bridge.tool || ""}, response=${response.tool || ""}`);
       } catch (e) { failures.push(e.message); }
 
       results.push({
-        id,
+        id: testCase.id,
         pass: failures.length === 0,
         durationMs: Date.now() - caseStartedAt,
         failures,
         summary: {
-          message,
+          message: testCase.message,
           intent: response.intent || "",
           tool: response.tool || "",
           canvasType: response.canvasType || "",
           title: response.title || "",
           rowCount: rows.length,
+          dataStatus: response.dataStatus || "",
           selectedVehicle: {
             make: selectedVehicle.make || selectedVehicle.brand || "",
             model: selectedVehicle.model || "",
@@ -101,7 +143,7 @@ async function main() {
         },
       });
     } catch (error) {
-      results.push({ id, pass: false, durationMs: Date.now() - caseStartedAt, failures: [error?.message || String(error)] });
+      results.push({ id: testCase.id, pass: false, durationMs: Date.now() - caseStartedAt, failures: [error?.message || String(error)] });
     }
   }
 

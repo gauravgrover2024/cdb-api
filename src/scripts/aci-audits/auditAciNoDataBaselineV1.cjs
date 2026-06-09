@@ -26,10 +26,6 @@ const EXPECTED_NO_DATA = {
     bucket: "expectedUnsupportedCity",
     requiredText: [/mumbai/i, /new delhi/i, /noida/i, /gurgaon/i],
   },
-  "C64-dual-tone-colors-in-seltos": {
-    bucket: "validNegativeResult",
-    requiredText: [/could not find an exact/i, /available colors include/i],
-  },
   "G122-how-good-is-scorpio-n-overall": {
     bucket: "expectedKnownScoreDataGap",
     requiredText: [/could not find enough diagnostic score data/i, /diagnostic/i],

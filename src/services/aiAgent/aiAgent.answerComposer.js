@@ -627,6 +627,201 @@ const cleanDuplicateMakeModelLabel = (label = "") => {
   return clean.replace(/\b([A-Z][a-z]+)\s+\1\s+/g, "$1 ");
 };
 
+
+const COLOR_FAMILY_KEYWORDS = {
+  black: ["black"],
+  white: ["white"],
+  red: ["red", "rouge"],
+  blue: ["blue"],
+  grey: ["grey", "gray"],
+  gray: ["grey", "gray"],
+  silver: ["silver"],
+  green: ["green", "emerald"],
+  dual_tone: ["dual tone", "dual-tone", "two tone", "two-tone", "black roof", "with black roof"],
+};
+
+const getColorFamilyRequest = (response = {}) => {
+  const query = firstText(
+    response.aciCoreBridge?.effectiveMessage,
+    response.aciCoreBridge?.originalMessage,
+    response.meta?.aciCoreBridge?.effectiveMessage,
+    response.meta?.aciCoreBridge?.originalMessage,
+    response.userMessage,
+    response.message,
+    response.query,
+    response.meta?.queryUsed,
+    response.data?.queryUsed,
+  )
+    .toLowerCase()
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (
+    query.includes("dual tone") ||
+    query.includes("two tone") ||
+    query.includes("black roof") ||
+    query.includes("with black roof")
+  ) {
+    return "dual_tone";
+  }
+
+  for (const family of Object.keys(COLOR_FAMILY_KEYWORDS)) {
+    if (family === "dual_tone") continue;
+    if (new RegExp(`\\b${family}\\b`, "i").test(query)) {
+      return family === "gray" ? "grey" : family;
+    }
+  }
+
+  return "";
+};
+
+const getColorName = (color = {}) =>
+  firstText(color.name, color.colorName, color.displayName, color.label, color.title);
+
+const getColorRows = (response = {}) =>
+  asArray(
+    response.colors ||
+      response.rows ||
+      response.items ||
+      response.data?.colors ||
+      response.data?.rows ||
+      response.data?.items ||
+      response.widget?.colors ||
+      response.widget?.rows ||
+      response.widget?.items,
+  );
+
+const getColorVehicleLabel = (response = {}) => {
+  const vehicle =
+    response.contextPatch?.selectedVehicle ||
+    response.vehicle ||
+    response.data?.vehicle ||
+    response.widget?.vehicle ||
+    {};
+
+  return firstText(
+    vehicle.fullModel,
+    vehicle.displayName,
+    [vehicle.make || vehicle.brand, vehicle.model].filter(Boolean).join(" "),
+    response.title?.replace(/\s+colors?$/i, ""),
+    "this model",
+  );
+};
+
+
+const getRequestedColorFamilyMatches = (response = {}) => {
+  const requestedFamily = getColorFamilyRequest(response);
+  const colors = getColorRows(response);
+  if (!requestedFamily || !colors.length) {
+    return { requestedFamily, colors, matches: colors };
+  }
+
+  const keywords = COLOR_FAMILY_KEYWORDS[requestedFamily] || [requestedFamily];
+  const matches = colors.filter((color) => {
+    const name = getColorName(color).toLowerCase();
+    return keywords.some((keyword) => name.includes(keyword));
+  });
+
+  return { requestedFamily, colors, matches };
+};
+
+const applyRequestedColorFamilyRows = (response = {}) => {
+  if (getIntent(response) !== "vehicle_colors") return response;
+
+  const { requestedFamily, colors, matches } = getRequestedColorFamilyMatches(response);
+  if (!requestedFamily || !colors.length) return response;
+
+  const filteredRows = matches;
+  const nextWidget = response.widget
+    ? {
+        ...response.widget,
+        colors: filteredRows,
+        rows: filteredRows,
+        items: filteredRows,
+        requestedColorFamily: requestedFamily,
+        totalColorCount: colors.length,
+        colorMatchCount: filteredRows.length,
+        noRequestedColorMatch: filteredRows.length === 0,
+      }
+    : response.widget;
+
+  return {
+    ...response,
+    colors: filteredRows,
+    rows: filteredRows,
+    items: filteredRows,
+    count: filteredRows.length,
+    matched: filteredRows.length,
+    dataStatus: filteredRows.length ? response.dataStatus : "not_available",
+    widget: nextWidget,
+    widgets: nextWidget ? [nextWidget] : response.widgets,
+    data: {
+      ...(response.data || {}),
+      colors: filteredRows,
+      rows: filteredRows,
+      items: filteredRows,
+      requestedColorFamily: requestedFamily,
+      totalColorCount: colors.length,
+      colorMatchCount: filteredRows.length,
+      noRequestedColorMatch: filteredRows.length === 0,
+      dataStatus: filteredRows.length ? response.data?.dataStatus : "not_available",
+    },
+  };
+};
+
+
+const composeVehicleColorsAnswer = (response = {}) => {
+  const requestedFamily = getColorFamilyRequest(response);
+  if (!requestedFamily) return response.answer;
+
+  const colors = getColorRows(response);
+  const totalColorCount = Number(
+    response.data?.totalColorCount ||
+    response.widget?.totalColorCount ||
+    response.totalColorCount ||
+    colors.length ||
+    0,
+  );
+  const keywords = COLOR_FAMILY_KEYWORDS[requestedFamily] || [requestedFamily];
+  const matches = colors.filter((color) => {
+    const name = getColorName(color).toLowerCase();
+    return keywords.some((keyword) => name.includes(keyword));
+  });
+
+  const effectiveMatches =
+    Number(response.data?.colorMatchCount ?? response.widget?.colorMatchCount ?? -1) >= 0
+      ? colors
+      : matches;
+
+  const vehicleLabel = getColorVehicleLabel(response);
+  const requestedLabel =
+    requestedFamily === "grey"
+      ? "grey/gray"
+      : requestedFamily === "dual_tone"
+        ? "dual-tone"
+        : requestedFamily;
+
+  if (effectiveMatches.length) {
+    const names = effectiveMatches.map(getColorName).filter(Boolean);
+    const shownNames = names.slice(0, 4).join(", ");
+    const extra = names.length > 4 ? ` +${names.length - 4} more` : "";
+    const totalLine =
+      totalColorCount && totalColorCount !== names.length
+        ? ` I found ${names.length} matching option${names.length > 1 ? "s" : ""} from ${totalColorCount} total colors.`
+        : ` I found ${names.length} matching color option${names.length > 1 ? "s" : ""}.`;
+
+    return `Yes — ${vehicleLabel} has ${requestedLabel} option${names.length > 1 ? "s" : ""}: ${shownNames}${extra}.${totalLine}`;
+  }
+
+  if (totalColorCount || colors.length) {
+    return `No — ${vehicleLabel} does not have ${requestedLabel} color options in the current DB-backed color list.`;
+  }
+
+  return `I do not have confirmed ${requestedLabel} color data for ${vehicleLabel} yet.`;
+};
+
+
 const composeVehicleSpecAttributeAnswer = (response = {}) => {
   const data = response.data || {};
   const modelLabel = cleanDuplicateMakeModelLabel(
@@ -664,32 +859,204 @@ const composeVehicleSpecAttributeAnswer = (response = {}) => {
   ).text;
 };
 
+
+const unique = (items = []) =>
+  [...new Set(asArray(items).map((item) => cleanText(item)).filter(Boolean))];
+
+const getComposerSourceTransparency = (response = {}) =>
+  response.sourceTransparency ||
+  response.meta?.sourceTransparency ||
+  response.data?.sourceTransparency ||
+  {};
+
+const getComposerRuntimeResultsMeta = (response = {}) =>
+  asArray(response.runtimeResultsMeta || response.meta?.runtimeResultsMeta || response.data?.runtimeResultsMeta);
+
+const getComposerSelectedVehicle = (response = {}) =>
+  response.contextPatch?.selectedVehicle ||
+  response.selectedVehicle ||
+  response.vehicle ||
+  response.data?.selectedVehicle ||
+  response.data?.vehicle ||
+  response.widget?.vehicle ||
+  {};
+
+const getComposerRowCount = (response = {}) => {
+  const rows = getRows(response);
+  if (rows.length) return rows.length;
+  const source = getComposerSourceTransparency(response);
+  const count = Number(
+    source.recordCount ??
+    source.matched ??
+    source.matchedCount ??
+    response.count ??
+    response.matched ??
+    0,
+  );
+  return Number.isFinite(count) && count >= 0 ? count : 0;
+};
+
+const inferComposerDataStatus = ({ response = {}, source = {}, rowCount = 0 } = {}) => {
+  const existing = firstText(
+    response.dataStatus,
+    response.meta?.dataStatus,
+    response.data?.dataStatus,
+    source.dataStatus,
+    source.status,
+  );
+  if (existing) return existing;
+
+  const dataSource = firstText(source.dataSource, response.dataSource, response.meta?.dataSource);
+  const canvasType = firstText(response.canvasType, response.data?.canvasType, response.widget?.canvasType);
+  const intent = getIntent(response);
+
+  if (
+    dataSource === "unsupported_city_fast_path" ||
+    dataSource === "unsupported_city" ||
+    canvasType === "unsupported_city_canvas"
+  ) {
+    return "unsupported_city";
+  }
+
+  if (
+    intent === "clarification" ||
+    response.tool === "clarification" ||
+    response.mode === "clarification"
+  ) {
+    return "clarification";
+  }
+
+  if (rowCount > 0) return "available";
+  return "no_data";
+};
+
+const buildAciProvenanceEnvelope = (response = {}) => {
+  const source = getComposerSourceTransparency(response);
+  const runtimeResultsMeta = getComposerRuntimeResultsMeta(response);
+  const selectedVehicle = getComposerSelectedVehicle(response);
+  const rowCount = getComposerRowCount(response);
+  const sourceCollections = unique([
+    ...asArray(source.modulesChecked),
+    ...runtimeResultsMeta.flatMap((item) => asArray(item.modulesChecked)),
+    source.collection,
+    source.module,
+  ]).filter((item) => !["mongodb", "empty", "none"].includes(item));
+
+  const tool = firstText(
+    response.aciCoreBridge?.tool,
+    response.meta?.aciCoreBridge?.tool,
+    source.responseTool,
+    response.tool,
+    response.data?.tool,
+    response.widget?.tool,
+    getIntent(response),
+  );
+
+  const dataSource = firstText(
+    source.dataSource,
+    response.dataSource,
+    response.meta?.dataSource,
+    runtimeResultsMeta[0]?.dataSource,
+    runtimeResultsMeta[0]?.source,
+    sourceCollections[0],
+  );
+
+  const dataStatus = inferComposerDataStatus({ response, source, rowCount });
+
+  const provenance = {
+    tool,
+    intent: getIntent(response),
+    canvasType: firstText(response.canvasType, response.data?.canvasType, response.widget?.canvasType),
+    dataSource,
+    sourceCollections,
+    rowCount,
+    matched: Number(source.matched ?? response.matched ?? rowCount) || 0,
+    dataStatus,
+    selectedVehicle: {
+      make: firstText(selectedVehicle.make, selectedVehicle.brand),
+      brand: firstText(selectedVehicle.brand, selectedVehicle.make),
+      model: firstText(selectedVehicle.model),
+      fullModel: firstText(selectedVehicle.fullModel, selectedVehicle.displayName),
+      variant: firstText(selectedVehicle.variant, selectedVehicle.variantName, selectedVehicle.selectedVariant),
+      variantKey: firstText(selectedVehicle.variantKey),
+      city: firstText(selectedVehicle.city),
+      citySlug: firstText(selectedVehicle.citySlug),
+    },
+    bridge: response.aciCoreBridge || response.meta?.aciCoreBridge || null,
+  };
+
+  return {
+    sourceCollections,
+    dataStatus,
+    provenance,
+    trace: {
+      tool,
+      dataSource,
+      sourceCollections,
+      rowCount,
+      dataStatus,
+      bridgeContextIsolation: provenance.bridge?.contextIsolation || "",
+      bridgeRoutingReason: provenance.bridge?.routingReason || "",
+    },
+  };
+};
+
+
+const attachAciProvenanceEnvelope = (response = {}) => {
+  if (!response || typeof response !== "object") return response;
+
+  const envelope = buildAciProvenanceEnvelope(response);
+
+  return {
+    ...response,
+    ...envelope,
+    meta: {
+      ...(response.meta || {}),
+      sourceCollections: envelope.sourceCollections,
+      dataStatus: envelope.dataStatus,
+      provenance: envelope.provenance,
+      trace: envelope.trace,
+    },
+    data: {
+      ...(response.data || {}),
+      sourceCollections: envelope.sourceCollections,
+      dataStatus: envelope.dataStatus,
+      provenance: envelope.provenance,
+      trace: envelope.trace,
+    },
+  };
+};
+
+
 export const composeAciAnswer = (response = {}) => {
   if (!response || typeof response !== "object") return response;
 
-  const intent = getIntent(response);
+  const responseForEnvelope = applyRequestedColorFamilyRows(response);
+  const intent = getIntent(responseForEnvelope);
   let composedAnswer = "";
 
   if (intent === "vehicle_pricelist") {
-    composedAnswer = composePriceAnswer(response);
+    composedAnswer = composePriceAnswer(responseForEnvelope);
   } else if (intent === "vehicle_recommendation") {
-    composedAnswer = composeVehicleRecommendationAnswer(response);
+    composedAnswer = composeVehicleRecommendationAnswer(responseForEnvelope);
   } else if (intent === "vehicle_feature_discovery") {
-    composedAnswer = composeFeatureDiscoveryAnswer(response);
+    composedAnswer = composeFeatureDiscoveryAnswer(responseForEnvelope);
+  } else if (intent === "vehicle_colors") {
+    composedAnswer = composeVehicleColorsAnswer(responseForEnvelope);
   } else if (intent === "vehicle_feature_comparison") {
-    composedAnswer = composeFeatureComparisonAnswer(response);
+    composedAnswer = composeFeatureComparisonAnswer(responseForEnvelope);
   } else if (intent === "vehicle_comparison") {
     composedAnswer = composeVehicleComparisonAnswer(response);
   } else if (intent === "vehicle_spec_attribute_answer") {
     composedAnswer = composeVehicleSpecAttributeAnswer(response);
   }
 
-  if (!composedAnswer || composedAnswer === response.answer) {
-    return response;
+  if (!composedAnswer || composedAnswer === responseForEnvelope.answer) {
+    return attachAciProvenanceEnvelope(responseForEnvelope);
   }
 
-  return {
-    ...response,
+  return attachAciProvenanceEnvelope({
+    ...responseForEnvelope,
     answer: composedAnswer,
     answerComposer: {
       version: "aci_answer_composer_v1",
@@ -706,7 +1073,7 @@ export const composeAciAnswer = (response = {}) => {
         deterministic: true,
       },
     },
-  };
+  });
 };
 
 export default composeAciAnswer;
