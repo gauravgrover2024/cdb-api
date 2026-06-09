@@ -124,10 +124,18 @@ const normalizeComparisonSourceTransparency = (response = {}, widget = null, sou
   const featureDifferenceCount = toArray(response.featureDifferences || response.data?.featureDifferences).length;
   const commonHighlightCount = toArray(response.commonHighlights || response.data?.commonHighlights).length;
   const matrixCoverage = response.matrixCoverage || response.data?.matrixCoverage || {};
+  const comparisonResolutionMode =
+    response.comparisonResolutionMode ||
+    response.data?.comparisonResolutionMode ||
+    response.meta?.comparisonResolutionMode ||
+    source.comparisonResolutionMode ||
+    source.comparisonTrace?.comparisonResolutionMode ||
+    "";
 
   return {
     ...source,
     responseTool: source.responseTool || "vehicle_compare",
+    comparisonResolutionMode,
     modulesChecked: [...new Set(modulesChecked)],
     recordCount:
       source.recordCount ??
@@ -141,10 +149,12 @@ const normalizeComparisonSourceTransparency = (response = {}, widget = null, sou
       rows.length,
     dataSource: "vehicle_compare_read_models",
     comparisonTrace: {
+      ...(source.comparisonTrace || {}),
       rowCount: rows.length,
       featureDifferenceCount,
       commonHighlightCount,
       hasMatrixCoverage: Boolean(matrixCoverage && Object.keys(matrixCoverage).length),
+      comparisonResolutionMode,
     },
   };
 };

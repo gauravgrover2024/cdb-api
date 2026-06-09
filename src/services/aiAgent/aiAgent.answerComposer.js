@@ -962,6 +962,13 @@ const buildAciProvenanceEnvelope = (response = {}) => {
   );
 
   const dataStatus = inferComposerDataStatus({ response, source, rowCount });
+  const comparisonResolutionMode = firstText(
+    response.comparisonResolutionMode,
+    response.data?.comparisonResolutionMode,
+    response.meta?.comparisonResolutionMode,
+    source.comparisonResolutionMode,
+    source.comparisonTrace?.comparisonResolutionMode,
+  );
 
   const provenance = {
     tool,
@@ -972,6 +979,7 @@ const buildAciProvenanceEnvelope = (response = {}) => {
     rowCount,
     matched: Number(source.matched ?? response.matched ?? rowCount) || 0,
     dataStatus,
+    comparisonResolutionMode,
     selectedVehicle: {
       make: firstText(selectedVehicle.make, selectedVehicle.brand),
       brand: firstText(selectedVehicle.brand, selectedVehicle.make),
@@ -995,6 +1003,7 @@ const buildAciProvenanceEnvelope = (response = {}) => {
       sourceCollections,
       rowCount,
       dataStatus,
+      comparisonResolutionMode,
       bridgeContextIsolation: provenance.bridge?.contextIsolation || "",
       bridgeRoutingReason: provenance.bridge?.routingReason || "",
     },
@@ -1010,12 +1019,22 @@ const attachAciProvenanceEnvelope = (response = {}) => {
   return {
     ...response,
     ...envelope,
+    comparisonResolutionMode:
+      response.comparisonResolutionMode ||
+      envelope.provenance?.comparisonResolutionMode ||
+      envelope.trace?.comparisonResolutionMode ||
+      "",
     meta: {
       ...(response.meta || {}),
       sourceCollections: envelope.sourceCollections,
       dataStatus: envelope.dataStatus,
       provenance: envelope.provenance,
       trace: envelope.trace,
+      comparisonResolutionMode:
+        response.comparisonResolutionMode ||
+        envelope.provenance?.comparisonResolutionMode ||
+        envelope.trace?.comparisonResolutionMode ||
+        "",
     },
     data: {
       ...(response.data || {}),
@@ -1023,6 +1042,11 @@ const attachAciProvenanceEnvelope = (response = {}) => {
       dataStatus: envelope.dataStatus,
       provenance: envelope.provenance,
       trace: envelope.trace,
+      comparisonResolutionMode:
+        response.comparisonResolutionMode ||
+        envelope.provenance?.comparisonResolutionMode ||
+        envelope.trace?.comparisonResolutionMode ||
+        "",
     },
   };
 };

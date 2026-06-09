@@ -1421,6 +1421,270 @@ const getComparisonFeatureKeys = (doc = {}) =>
     ...Object.keys(doc?.decisionSignals?.featuresByKey || {}),
   ]);
 
+const COMPARISON_FEATURE_CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
+let comparisonFeatureCatalogCache = {
+  loadedAt: 0,
+  catalogByKey: null,
+  rowCount: 0,
+};
+
+const normalizeComparisonKeyText = (value = "") =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const getComparisonKeyForms = (...values) => {
+  const forms = [];
+
+  for (const value of values) {
+    const clean = normalizeComparisonKeyText(value);
+    if (!clean) continue;
+
+    const hyphen = clean.replace(/\s+/g, "-");
+    const underscore = clean.replace(/\s+/g, "_");
+
+    forms.push(hyphen, underscore);
+
+    if (!clean.includes(" ")) forms.push(clean);
+  }
+
+  return compareUnique(forms.filter(Boolean));
+};
+
+const normalizeComparisonCitySlug = (value = "") => {
+  const city = getComparisonKeyForms(value)[0] || "";
+  if (!city) return "new-delhi";
+  if (city === "delhi" || city === "new-delhi" || city === "new_delhi") return "new-delhi";
+  return city;
+};
+
+const isSupportedComparisonCitySlug = (citySlug = "") =>
+  ["new-delhi", "noida", "gurgaon"].includes(normalizeComparisonCitySlug(citySlug));
+
+const loadComparisonFeatureCatalogByKey = async () => {
+  const db = mongoose.connection?.db;
+  if (!db) return new Map();
+
+  const now = Date.now();
+  if (
+    comparisonFeatureCatalogCache.catalogByKey instanceof Map &&
+    now - comparisonFeatureCatalogCache.loadedAt < COMPARISON_FEATURE_CATALOG_CACHE_TTL_MS
+  ) {
+    return comparisonFeatureCatalogCache.catalogByKey;
+  }
+
+  const catalogRows = await db
+    .collection("vehicle_feature_catalog_v2")
+    .find({})
+    .project({
+      canonicalKey: 1,
+      key: 1,
+      featureKey: 1,
+      displayName: 1,
+      name: 1,
+      label: 1,
+      category: 1,
+      group: 1,
+      priority: 1,
+    })
+    .toArray();
+
+  const catalogByKey = new Map(
+    catalogRows.flatMap((row) =>
+      [row.canonicalKey, row.key, row.featureKey]
+        .filter(Boolean)
+        .map((key) => [key, row]),
+    ),
+  );
+
+  comparisonFeatureCatalogCache = {
+    loadedAt: now,
+    catalogByKey,
+    rowCount: catalogRows.length,
+  };
+
+  return catalogByKey;
+};
+
+const getComparisonTargetModelKeyForms = (target = {}) =>
+  getComparisonKeyForms(
+    target.modelKey,
+    target.shortModelKey,
+    target.canonicalKey,
+    target.model,
+    target.fullModel,
+  );
+
+const getComparisonTargetVariantKeyForms = (target = {}) =>
+  getComparisonKeyForms(
+    target.variantKey,
+    target.variant,
+    target.variantName,
+    target.fullVariant,
+    target.selectedVariant,
+  );
+
+const formatComparisonPriceLabel = (value) =>
+  Number.isFinite(Number(value)) ? formatInrShort(Number(value)) : "";
+
+const normalizeDirectComparisonRow = ({ row = {}, target = {} } = {}) => {
+  const model = compareFirstText(row.model, target.model);
+  const make = compareFirstText(row.make, target.make, target.brand);
+  const variant = compareFirstText(row.variant, target.variant, target.variantName);
+
+  return {
+    ...row,
+    make,
+    brand: compareFirstText(row.brand, make),
+    model,
+    fullModel: compareFirstText(row.fullModel, [make, model].filter(Boolean).join(" "), model),
+    displayName: compareFirstText(row.displayName, [make, model].filter(Boolean).join(" "), model),
+    variant,
+    variantName: compareFirstText(row.variantName, variant),
+    fuelType: compareFirstText(row.fuelType, row.fuel),
+    transmission: compareFirstText(row.transmission),
+    exShowroomPriceLabel: compareFirstText(row.exShowroomPriceLabel, formatComparisonPriceLabel(row.exShowroomPrice)),
+    onRoadPriceLabel: compareFirstText(row.onRoadPriceLabel, formatComparisonPriceLabel(row.onRoadPrice)),
+    dataSource: compareFirstText(row.dataSource, "aci_vehicle_price_rows"),
+  };
+};
+
+const findMatrixDocForComparisonRow = ({ row = {}, matrixDocs = [] } = {}) => {
+  const modelForms = getComparisonKeyForms(row.modelKey, row.model, row.fullModel);
+  const variantForms = getComparisonKeyForms(row.variantKey, row.variant, row.variantName);
+
+  return (
+    matrixDocs.find((doc = {}) =>
+      modelForms.includes(doc.modelKey) && variantForms.includes(doc.variantKey),
+    ) || null
+  );
+};
+
+const resolveDirectComparisonRows = async ({
+  targets = [],
+  citySlug = "new-delhi",
+  isVariantComparison = false,
+} = {}) => {
+  const db = mongoose.connection?.db;
+  const normalizedCitySlug = normalizeComparisonCitySlug(citySlug);
+
+  if (!db || !isSupportedComparisonCitySlug(normalizedCitySlug)) return null;
+  if (!Array.isArray(targets) || targets.length < 2) return null;
+
+  const priceProjection = {
+    make: 1,
+    makeKey: 1,
+    brand: 1,
+    model: 1,
+    modelKey: 1,
+    fullModel: 1,
+    displayName: 1,
+    variant: 1,
+    variantName: 1,
+    variantKey: 1,
+    citySlug: 1,
+    fuelType: 1,
+    fuel: 1,
+    transmission: 1,
+    exShowroomPrice: 1,
+    onRoadPrice: 1,
+    exShowroomPriceLabel: 1,
+    onRoadPriceLabel: 1,
+    sortOrder: 1,
+    bodyType: 1,
+    bodyTypeKey: 1,
+  };
+
+  const directTargets = targets.slice(0, 2);
+  const hasExplicitVariantTarget = directTargets.some((target = {}) =>
+    getComparisonTargetVariantKeyForms(target).length,
+  );
+
+  const priceRows = await Promise.all(
+    directTargets.map((target = {}) => {
+      const modelKeyForms = getComparisonTargetModelKeyForms(target);
+      const variantKeyForms = getComparisonTargetVariantKeyForms(target);
+
+      if (!modelKeyForms.length) return Promise.resolve(null);
+
+      const query = {
+        citySlug: normalizedCitySlug,
+        modelKey: { $in: modelKeyForms },
+      };
+
+      if (isVariantComparison && hasExplicitVariantTarget) {
+        if (!variantKeyForms.length) return Promise.resolve(null);
+        query.variantKey = { $in: variantKeyForms };
+      }
+
+      return db
+        .collection("aci_vehicle_price_rows")
+        .find(query)
+        .project(priceProjection)
+        .sort({ sortOrder: 1, exShowroomPrice: 1, variantKey: 1 })
+        .hint("aci_price_rows_model_city_sort")
+        .limit(1)
+        .next();
+    }),
+  );
+
+  if (priceRows.some((row) => !row)) return null;
+
+  const allModelForms = compareUnique(
+    priceRows.flatMap((row = {}) =>
+      getComparisonKeyForms(row.modelKey, row.model, row.fullModel),
+    ),
+  );
+  const allVariantForms = compareUnique(
+    priceRows.flatMap((row = {}) =>
+      getComparisonKeyForms(row.variantKey, row.variant, row.variantName),
+    ),
+  );
+
+  if (!allModelForms.length || !allVariantForms.length) return null;
+
+  const matrixDocs = await db
+    .collection("vehicle_variant_feature_matrix_v2")
+    .find({
+      activePricelistMatched: true,
+      modelKey: { $in: allModelForms },
+      variantKey: { $in: allVariantForms },
+    })
+    .project({
+      brandKey: 1,
+      makeKey: 1,
+      modelKey: 1,
+      variant: 1,
+      variantKey: 1,
+      priceMin: 1,
+      activePricelistMatched: 1,
+      featuresByKey: 1,
+      decisionSignals: 1,
+    })
+    .toArray();
+
+  const orderedMatrixDocs = priceRows.map((row) =>
+    findMatrixDocForComparisonRow({ row, matrixDocs }),
+  );
+
+  if (orderedMatrixDocs.some((doc) => !doc)) return null;
+
+  const catalogByKey = await loadComparisonFeatureCatalogByKey();
+
+  return {
+    rows: priceRows.map((row, index) =>
+      normalizeDirectComparisonRow({ row, target: targets[index] || {} }),
+    ),
+    matrixDocs: orderedMatrixDocs,
+    catalogByKey,
+    citySlug: normalizedCitySlug,
+    resolutionMode: "direct_comparison_read_model",
+  };
+};
+
 const fetchComparisonFeatureDoc = async ({ row = {}, target = {} } = {}) => {
   const db = mongoose.connection?.db;
   if (!db) return null;
@@ -1470,7 +1734,13 @@ const fetchComparisonFeatureDoc = async ({ row = {}, target = {} } = {}) => {
     .next();
 };
 
-const buildVehicleComparisonEnrichment = async ({ rows = [], targets = [], city = "new-delhi" } = {}) => {
+const buildVehicleComparisonEnrichment = async ({
+  rows = [],
+  targets = [],
+  city = "new-delhi",
+  matrixDocs: matrixDocsOverride = null,
+  catalogByKey: catalogByKeyOverride = null,
+} = {}) => {
   if (!Array.isArray(rows) || rows.length < 2) {
     return {
       comparisonSummary: {},
@@ -1488,47 +1758,21 @@ const buildVehicleComparisonEnrichment = async ({ rows = [], targets = [], city 
     priceValue: getComparablePriceValue(row),
   }));
 
-  const matrixDocs = [];
-  for (const item of compared) {
-    const doc = await fetchComparisonFeatureDoc({ row: item.row, target: item.target });
-    matrixDocs.push(doc);
-  }
+  const matrixDocs = Array.isArray(matrixDocsOverride)
+    ? matrixDocsOverride
+    : await Promise.all(
+        compared.map((item) =>
+          fetchComparisonFeatureDoc({ row: item.row, target: item.target }),
+        ),
+      );
 
   const allFeatureKeys = compareUnique(
     matrixDocs.flatMap((doc) => getComparisonFeatureKeys(doc)),
   );
 
-  let catalogByKey = new Map();
-  if (allFeatureKeys.length && mongoose.connection?.db) {
-    const catalogRows = await mongoose.connection.db
-      .collection("vehicle_feature_catalog_v2")
-      .find({
-        $or: [
-          { canonicalKey: { $in: allFeatureKeys } },
-          { key: { $in: allFeatureKeys } },
-          { featureKey: { $in: allFeatureKeys } },
-        ],
-      })
-      .project({
-        canonicalKey: 1,
-        key: 1,
-        featureKey: 1,
-        displayName: 1,
-        name: 1,
-        label: 1,
-        category: 1,
-        group: 1,
-        priority: 1,
-      })
-      .toArray();
-
-    catalogByKey = new Map(
-      catalogRows.flatMap((row) =>
-        [row.canonicalKey, row.key, row.featureKey]
-          .filter(Boolean)
-          .map((key) => [key, row]),
-      ),
-    );
+  let catalogByKey = catalogByKeyOverride instanceof Map ? catalogByKeyOverride : new Map();
+  if (!catalogByKey.size && allFeatureKeys.length && mongoose.connection?.db) {
+    catalogByKey = await loadComparisonFeatureCatalogByKey();
   }
 
   const featureComparisons = allFeatureKeys.map((featureKey) => {
@@ -1969,62 +2213,76 @@ export const runtimeVehicleCompare = async ({
     };
   }
 
-  const rows = [];
+  const comparisonCitySlug = normalizeComparisonCitySlug(
+    text(toolPlan.filters?.city, context?.anchorCity, context?.selectedVehicle?.city, "new-delhi"),
+  );
 
-  for (const target of targets) {
-    const model = text(target.fullModel, target.model);
-    const variant = text(target.variantName, target.variant);
+  const directComparisonRows = await resolveDirectComparisonRows({
+    targets,
+    citySlug: comparisonCitySlug,
+    isVariantComparison,
+  });
 
-    const modelTool = {
-      ...toolPlan,
-      entities: {
-        ...(toolPlan.entities || {}),
-        model,
-        primaryModel: model,
-      },
-      filters: {
-        ...(toolPlan.filters || {}),
-        model,
-      },
-    };
+  let rows = directComparisonRows?.rows || [];
+  let comparisonMatrixDocs = directComparisonRows?.matrixDocs || null;
+  let comparisonCatalogByKey = directComparisonRows?.catalogByKey || null;
 
-    if (isVariantComparison && variant) {
-      modelTool.entities.variant = variant;
-      modelTool.entities.primaryVariant = variant;
-      modelTool.filters.variant = variant;
-    } else if (!isVariantComparison) {
-      delete modelTool.entities.variant;
-      delete modelTool.entities.primaryVariant;
-      delete modelTool.filters.variant;
-    }
+  if (!rows.length) {
+    rows = await Promise.all(
+      targets.map(async (target) => {
+        const model = text(target.fullModel, target.model);
+        const variant = text(target.variantName, target.variant);
 
-    const comparisonContext = {
-      ...(context || {}),
-      anchorModel: model,
-      anchorVariant: isVariantComparison ? variant : "",
-      variant: isVariantComparison ? variant : "",
-      selectedVehicle: {
-        ...((context || {}).selectedVehicle || {}),
-        model,
-        variant: isVariantComparison ? variant : "",
-        selectedVariant: isVariantComparison ? variant : "",
-        city: target.city || context?.anchorCity || context?.selectedVehicle?.city || "new-delhi",
-      },
-    };
+        const modelTool = {
+          ...toolPlan,
+          entities: {
+            ...(toolPlan.entities || {}),
+            model,
+            primaryModel: model,
+          },
+          filters: {
+            ...(toolPlan.filters || {}),
+            model,
+          },
+        };
 
-    const data = await runtimeVehiclePricelist({
-      toolPlan: modelTool,
-      context: comparisonContext,
-    });
+        if (isVariantComparison && variant) {
+          modelTool.entities.variant = variant;
+          modelTool.entities.primaryVariant = variant;
+          modelTool.filters.variant = variant;
+        } else if (!isVariantComparison) {
+          delete modelTool.entities.variant;
+          delete modelTool.entities.primaryVariant;
+          delete modelTool.filters.variant;
+        }
 
-    rows.push(
-      data.rows[0] || {
-        model,
-        variant,
-        unavailable: true,
-        variantResolution: data.variantResolution || null,
-        candidateVariants: data.candidateVariants || [],
-      },
+        const comparisonContext = {
+          ...(context || {}),
+          anchorModel: model,
+          anchorVariant: isVariantComparison ? variant : "",
+          variant: isVariantComparison ? variant : "",
+          selectedVehicle: {
+            ...((context || {}).selectedVehicle || {}),
+            model,
+            variant: isVariantComparison ? variant : "",
+            selectedVariant: isVariantComparison ? variant : "",
+            city: target.city || context?.anchorCity || context?.selectedVehicle?.city || "new-delhi",
+          },
+        };
+
+        const data = await runtimeVehiclePricelist({
+          toolPlan: modelTool,
+          context: comparisonContext,
+        });
+
+        return data.rows[0] || {
+          model,
+          variant,
+          unavailable: true,
+          variantResolution: data.variantResolution || null,
+          candidateVariants: data.candidateVariants || [],
+        };
+      }),
     );
   }
 
@@ -2044,7 +2302,9 @@ export const runtimeVehicleCompare = async ({
     ? await buildVehicleComparisonEnrichment({
         rows,
         targets,
-        city: text(toolPlan.filters?.city, context?.anchorCity, "new-delhi"),
+        city: comparisonCitySlug,
+        matrixDocs: comparisonMatrixDocs,
+        catalogByKey: comparisonCatalogByKey,
       })
     : {
         comparisonSummary: {},
@@ -2085,6 +2345,7 @@ export const runtimeVehicleCompare = async ({
       anchorCity: text(toolPlan.filters?.city, context?.anchorCity, "new-delhi"),
     },
     modulesChecked: ["vehicle_compare", "vehicle_pricelist"],
+    comparisonResolutionMode: directComparisonRows?.resolutionMode || "pricelist_runtime_fallback",
     dataSource: "executor_composed",
   };
 };
@@ -5296,6 +5557,15 @@ const applyTypedScoreOperationToResponse = ({ response = {}, runtimeResults = []
 /*  Main Executor                                                             */
 /* -------------------------------------------------------------------------- */
 
+const getRuntimeComparisonResolutionMode = (item = {}) =>
+  compareFirstText(
+    item.comparisonResolutionMode,
+    item.data?.comparisonResolutionMode,
+    item.meta?.comparisonResolutionMode,
+    item.sourceTransparency?.comparisonResolutionMode,
+    item.sourceTransparency?.comparisonTrace?.comparisonResolutionMode,
+  );
+
 export const executeAciPlannerPlan = async ({
   plan,
   userMessage = "",
@@ -5388,6 +5658,33 @@ export const executeAciPlannerPlan = async ({
     runtimeResults,
   });
 
+  const comparisonResolutionMode = compareFirstText(
+    ...runtimeResults.map(getRuntimeComparisonResolutionMode),
+  );
+
+  if (comparisonResolutionMode) {
+    response = {
+      ...response,
+      comparisonResolutionMode,
+      sourceTransparency: {
+        ...(response.sourceTransparency || {}),
+        comparisonResolutionMode,
+        comparisonTrace: {
+          ...(response.sourceTransparency?.comparisonTrace || {}),
+          comparisonResolutionMode,
+        },
+      },
+      meta: {
+        ...(response.meta || {}),
+        comparisonResolutionMode,
+      },
+      data: {
+        ...(response.data || {}),
+        comparisonResolutionMode,
+      },
+    };
+  }
+
   const contractValidation = validate
     ? validateAciAssistResponseContract(response)
     : { valid: true, errors: [] };
@@ -5415,6 +5712,7 @@ export const executeAciPlannerPlan = async ({
         matched: item.matched || 0,
         source: item.source || item.dataSource || "",
         modulesChecked: item.modulesChecked || [],
+        comparisonResolutionMode: getRuntimeComparisonResolutionMode(item),
         error: item.error || "",
       })),
       contractValidation,
