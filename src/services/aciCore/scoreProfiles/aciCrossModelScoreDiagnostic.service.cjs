@@ -92,17 +92,18 @@ const getTargetProfiles = async ({ db, target = {}, limit = 80 } = {}) => {
         transmissionKey: 1,
         fuelTransmissionFamilyKey: 1,
         referenceExShowroomPrice: 1,
-        safetyScore: 1,
-        featureScore: 1,
-        performanceScore: 1,
-        mileageRunningCostScore: 1,
-        practicalityScore: 1,
-        cityUseScore: 1,
-        highwayUseScore: 1,
-        premiumComfortScore: 1,
-        valueScore: 1,
-        regretRisk: 1,
-        scoreReadiness: 1,
+        'safetyScore.score': 1,
+        'featureScore.score': 1,
+        'performanceScore.score': 1,
+        'mileageRunningCostScore.score': 1,
+        'practicalityScore.score': 1,
+        'cityUseScore.score': 1,
+        'highwayUseScore.score': 1,
+        'premiumComfortScore.score': 1,
+        'valueScore.score': 1,
+        'regretRisk.riskScore': 1,
+        'scoreReadiness.finalOverallScoreReady': 1,
+        'scoreReadiness.finalOverallScoreReason': 1,
         buildVersion: 1,
         formulaVersion: 1,
         builtAt: 1,
@@ -278,11 +279,12 @@ const buildCrossModelScoreDiagnostic = async ({
     };
   }
 
-  const targetProfiles = [];
-  for (const target of uniqueTargets) {
-    const profiles = await getTargetProfiles({ db, target, limit: limitPerModel });
-    targetProfiles.push({ target, profiles });
-  }
+  const targetProfiles = await Promise.all(
+    uniqueTargets.map(async (target) => ({
+      target,
+      profiles: await getTargetProfiles({ db, target, limit: limitPerModel }),
+    }))
+  );
 
   const summaries = targetProfiles.map(({ target, profiles }) =>
     summarizeTarget({ target, profiles })
