@@ -1042,3 +1042,109 @@ Done for backend-only scope.
 Frontend/UI evaluation remains excluded. This is backend-only.
 
 <!-- ACI_EXACT_PRICE_PERFORMANCE_READY_2026_06_08_END -->
+
+---
+
+## 2026-06-09 — Plain Comparison Fast Path Stabilized
+
+Status: **Completed and pushed**
+
+Commits:
+- `8277084` — Optimize plain vehicle comparison read path
+- `099dd8c` — Add explicit comparison fast path in live bridge
+
+### What was fixed
+
+Plain two-car comparison queries now bypass the heavy live bridge candidate/planner route when the query is a clean explicit comparison.
+
+Examples verified:
+- `Creta vs Seltos`
+- `Grand Vitara vs Hyryder`
+- `Hyryder vs Grand Vitara price difference`
+- `compare Creta and Seltos`
+
+The live bridge now routes these through:
+
+- `contextIsolation: explicit_comparison_fast_path`
+- `comparisonResolutionMode: direct_comparison_read_model`
+- `tool: vehicle_compare`
+- `canvasType: comparison_canvas`
+
+### Performance impact
+
+Before:
+- Cold/noisy `Creta vs Seltos` path could take around 10–13s.
+- Plain comparisons were paying heavy candidate/context/planner cost.
+- Some runs still fell through slower fallback-style comparison shaping.
+
+After:
+- Explicit plain comparison smoke showed approximately 0.8–3.8s.
+- `compare Creta and Seltos` verified at under 1s in post-commit smoke.
+- `Grand Vitara vs Hyryder` and `Hyryder vs Grand Vitara price difference` now use the same direct read-model path.
+
+### Correctness / non-hijack checks
+
+Verified that the explicit comparison fast path does **not** hijack:
+
+- Feature comparison:
+  - `Creta vs Seltos sunroof`
+  - remains `feature_comparison_canvas`
+  - remains `standalone_model_feature_comparison_fast_path`
+
+- Unsupported city pricing:
+  - `Seltos price Mumbai`
+  - remains `unsupported_city_canvas`
+  - remains `unsupported_city_fast_path`
+
+- Cross-model score diagnostic:
+  - `Creta vs Seltos diagnostic score comparison`
+  - remains `vehicle_score_insight`
+  - remains `cross_model_score_diagnostic_fast_path`
+
+### Verified gates
+
+Before commit:
+- Provenance envelope audit: `7/7 passed`
+- No-data freeze gate: `185/185 passed`
+- Safety fast gate: passed
+- No-hardcoded vehicle facts audit: passed
+- Unsupported city honesty audit: `23/23 passed`
+- Progress registry guard: live registry, fallback not used
+
+### Data-backed price delta verification
+
+The direct comparison path was verified against `aci_vehicle_price_rows`:
+
+- Kia Seltos HTE New Delhi on-road: ₹13,33,591
+- Hyundai Creta E New Delhi on-road: ₹12,79,355
+- Delta: ₹54,236
+- Cheaper: Hyundai Creta E
+
+- Toyota Hyryder E New Delhi on-road: ₹13,34,691
+- Maruti Grand Vitara Sigma New Delhi on-road: ₹12,47,209
+- Delta: ₹87,482
+- Cheaper: Maruti Grand Vitara Sigma
+
+### Remaining backend latency items
+
+This does not close all comparison-adjacent latency. Remaining separate tasks:
+
+1. Feature comparison latency
+   - Example: `Creta vs Seltos sunroof`
+   - Post-commit smoke: around 5.4s
+
+2. Cross-model score diagnostic latency
+   - Example: `Creta vs Seltos diagnostic score comparison`
+   - Post-commit smoke: around 7.1s
+
+3. Broader post-commit backend freeze
+   - Run a heavier backend freeze only after the next small consolidation pass, not during every micro-patch.
+
+### Guardrail
+
+Do not broaden `explicit_comparison_fast_path` without re-running:
+- feature-comparison non-hijack check
+- unsupported-city non-hijack check
+- score-diagnostic non-hijack check
+- no-data freeze gate
+
