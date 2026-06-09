@@ -328,6 +328,365 @@ const detectBatch2SpecLookup = (message = "") => {
   return null;
 };
 
+const MODEL_FEATURE_FAST_PATH_CACHE_TTL_MS = 5 * 60 * 1000;
+let modelFeatureSummaryCache = {
+  loadedAt: 0,
+  rows: [],
+};
+
+const normalizeModelFeatureText = (value = "") =>
+  cleanText(value)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const compactModelFeatureText = (value = "") =>
+  normalizeModelFeatureText(value).replace(/\s+/g, "");
+
+const getModelFeatureSummaryRows = async () => {
+  const now = Date.now();
+  if (
+    modelFeatureSummaryCache.rows.length &&
+    now - modelFeatureSummaryCache.loadedAt < MODEL_FEATURE_FAST_PATH_CACHE_TTL_MS
+  ) {
+    return modelFeatureSummaryCache.rows;
+  }
+
+  const collection = mongoose.connection?.db?.collection("aci_vehicle_model_summary");
+  if (!collection) return [];
+
+  const rows = await collection
+    .find(
+      {},
+      {
+        projection: {
+          make: 1,
+          brand: 1,
+          model: 1,
+          fullModel: 1,
+          displayName: 1,
+          modelKey: 1,
+          brandKey: 1,
+          makeKey: 1,
+          brandModelKey: 1,
+          lifecycleStatus: 1,
+          active: 1,
+          isActive: 1,
+        },
+      },
+    )
+    .toArray()
+    .catch(() => []);
+
+  modelFeatureSummaryCache = {
+    loadedAt: now,
+    rows: rows.filter((row = {}) => row.model || row.fullModel || row.displayName || row.modelKey),
+  };
+
+  return modelFeatureSummaryCache.rows;
+};
+
+const getModelFeatureAliases = (row = {}) =>
+  uniqueKeys([
+    row.fullModel,
+    row.displayName,
+    [row.make || row.brand, row.model].filter(Boolean).join(" "),
+    [row.brand, row.model].filter(Boolean).join(" "),
+    [row.make, row.model].filter(Boolean).join(" "),
+    row.model,
+    row.brandModelKey,
+    row.modelKey,
+  ]).filter((alias) => normalizeModelFeatureText(alias).length >= 3);
+
+const containsModelAlias = (normalizedMessage = "", alias = "") => {
+  const normalizedAlias = normalizeModelFeatureText(alias);
+  if (!normalizedAlias) return false;
+
+  const paddedMessage = ` ${normalizedMessage} `;
+  const paddedAlias = ` ${normalizedAlias} `;
+  if (paddedMessage.includes(paddedAlias)) return true;
+
+  const compactMessage = compactModelFeatureText(normalizedMessage);
+  const compactAlias = compactModelFeatureText(normalizedAlias);
+  return compactAlias.length >= 4 && compactMessage.includes(compactAlias);
+};
+
+const resolveStandaloneModelMentionFromSummary = async (message = "") => {
+  const normalizedMessage = normalizeModelFeatureText(message);
+  if (!normalizedMessage) return null;
+
+  const rows = await getModelFeatureSummaryRows();
+  const matches = [];
+
+  for (const row of rows) {
+    const aliases = getModelFeatureAliases(row);
+
+    for (const alias of aliases) {
+      if (!containsModelAlias(normalizedMessage, alias)) continue;
+
+      matches.push({
+        row,
+        alias,
+        aliasLength: normalizeModelFeatureText(alias).length,
+      });
+    }
+  }
+
+  matches.sort((a, b) => b.aliasLength - a.aliasLength);
+  const best = matches[0];
+  if (!best?.row) return null;
+
+  const row = best.row;
+  return {
+    make: row.make || row.brand || "",
+    brand: row.brand || row.make || "",
+    model: row.model || row.displayName || row.fullModel || row.modelKey || "",
+    fullModel:
+      row.fullModel ||
+      row.displayName ||
+      [row.make || row.brand, row.model].filter(Boolean).join(" ") ||
+      row.model ||
+      "",
+    modelKey: row.modelKey || "",
+    brandKey: row.brandKey || row.makeKey || "",
+    matchedAlias: best.alias,
+  };
+};
+
+const stripModelFeatureIntentWords = (value = "") =>
+  normalizeModelFeatureText(value)
+    .replace(
+      /\b(which|what|show|tell|list|all|current|new|car|cars|model|models|variant|variants|option|options|available|availability|have|has|get|gets|offer|offers|come|comes|with|having|does|do|is|are|in|the|a|an)\b/g,
+      " ",
+    )
+    .replace(
+      /\b(me|mein|mai|main|ke|ka|ki|kaunse|konse|kaunsi|konsi|kis|wale|waale|wali|hai|hain|kya|milta|milti|milte|batao|dikhao)\b/g,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+const hasLikelyVariantResidueForModelFeatureFastPath = ({
+  message = "",
+  modelAlias = "",
+  feature = "",
+} = {}) => {
+  let residue = normalizeModelFeatureText(message);
+
+  for (const value of [
+    modelAlias,
+    feature,
+    feature.replace(/^6\s+/, "six "),
+    feature.replace(/^six\s+/, "6 "),
+    "sunroof",
+    "airbags",
+    "6 airbags",
+    "six airbags",
+    "adas",
+    "rear camera",
+    "ventilated seats",
+  ]) {
+    const normalized = normalizeModelFeatureText(value);
+    if (!normalized) continue;
+    residue = (` ${residue} `).replace(new RegExp(` ${normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} `, "g"), " ");
+  }
+
+  residue = stripModelFeatureIntentWords(residue);
+
+  if (!residue) return false;
+
+  // Short trim-like leftovers usually mean user asked for a specific variant:
+  // "Creta SX sunroof", "Seltos HTX sunroof", "Punch Adventure S sunroof".
+  return /(^| )(sx|sxo|sx o|htx|hte|htk|gtx|x line|zxi|vxi|lxi|alpha|delta|zeta|sigma|adventure|accomplished|pure|creative|fearless|smart|savvy)( |$)/i.test(residue) ||
+    residue.split(" ").filter(Boolean).length <= 3;
+};
+
+const maybeReturnStandaloneModelFeatureFastPath = async ({
+  message = "",
+  context = {},
+  user = null,
+  session = null,
+  meta = {},
+  originalMessage = "",
+  startedAt = 0,
+} = {}) => {
+  if (hasComparisonLanguage(message)) return null;
+  if (hasContextReference(message) && !/\b(mein|mai|main|me|ke|ka|ki|hai|kya|milta|milti|milte)\b/i.test(message)) return null;
+
+  const featureLookup = detectBatch2FeatureLookup(message);
+  if (!featureLookup?.feature) return null;
+  if (featureLookup.summary || featureLookup.category) return null;
+
+  const resolvedVehicle = await resolveStandaloneModelMentionFromSummary(message);
+  if (!resolvedVehicle?.model) return null;
+
+  if (
+    hasLikelyVariantResidueForModelFeatureFastPath({
+      message,
+      modelAlias: resolvedVehicle.matchedAlias || resolvedVehicle.fullModel || resolvedVehicle.model,
+      feature: featureLookup.feature,
+    })
+  ) {
+    return null;
+  }
+
+  const asksForVariants =
+    /\bvariants?\b/i.test(message) ||
+    /\b(which|show|list)\b.*\bvariants?\b/i.test(message) ||
+    /\b(kaunse|konse|kaunsi|konsi|kis)\b.*\b(variants?|wale|waale|wali)\b/i.test(message) ||
+    /\b(variants?|wale|waale|wali)\b.*\b(kaunse|konse|kaunsi|konsi|kis)\b/i.test(message);
+
+  const city =
+    context?.selectedVehicle?.citySlug ||
+    context?.selectedVehicle?.city ||
+    context?.anchorCity ||
+    "new-delhi";
+
+  const toolContext = {
+    ...context,
+    anchorMake: resolvedVehicle.make,
+    anchorModel: resolvedVehicle.model,
+    anchorFullModel: resolvedVehicle.fullModel,
+    anchorCity: city,
+    selectedVehicle: {
+      ...(context?.selectedVehicle || {}),
+      make: resolvedVehicle.make,
+      brand: resolvedVehicle.brand,
+      model: resolvedVehicle.model,
+      fullModel: resolvedVehicle.fullModel,
+      modelKey: resolvedVehicle.modelKey,
+      city,
+      citySlug: city,
+    },
+  };
+
+  const toolMessage = asksForVariants
+    ? `which ${resolvedVehicle.model} variants have ${featureLookup.feature}`
+    : message;
+
+  const toolPlan = {
+    tool: "vehicle_feature_lookup",
+    intent: asksForVariants ? "vehicle_feature_discovery" : "vehicle_feature_answer",
+    toolIntent: asksForVariants ? "vehicle_feature_discovery" : "vehicle_feature_answer",
+    input: {
+      message: toolMessage,
+      query: toolMessage,
+      originalMessage: message,
+      model: resolvedVehicle.model,
+      fullModel: resolvedVehicle.fullModel,
+      make: resolvedVehicle.make,
+      feature: featureLookup.feature,
+      features: [featureLookup.feature],
+      topic: featureLookup.feature,
+      intent: asksForVariants ? "vehicle_feature_discovery" : "vehicle_feature_answer",
+    },
+    args: {
+      message: toolMessage,
+      query: toolMessage,
+      originalMessage: message,
+      model: resolvedVehicle.model,
+      fullModel: resolvedVehicle.fullModel,
+      make: resolvedVehicle.make,
+      feature: featureLookup.feature,
+      features: [featureLookup.feature],
+      topic: featureLookup.feature,
+      intent: asksForVariants ? "vehicle_feature_discovery" : "vehicle_feature_answer",
+    },
+    params: {
+      message: toolMessage,
+      query: toolMessage,
+      originalMessage: message,
+      model: resolvedVehicle.model,
+      fullModel: resolvedVehicle.fullModel,
+      make: resolvedVehicle.make,
+      feature: featureLookup.feature,
+      features: [featureLookup.feature],
+      topic: featureLookup.feature,
+      intent: asksForVariants ? "vehicle_feature_discovery" : "vehicle_feature_answer",
+    },
+    entities: {
+      model: resolvedVehicle.model,
+      fullModel: resolvedVehicle.fullModel,
+      primaryModel: resolvedVehicle.model,
+      primaryMake: resolvedVehicle.make,
+      feature: featureLookup.feature,
+      features: [featureLookup.feature],
+      topic: featureLookup.feature,
+    },
+    filters: {
+      model: resolvedVehicle.model,
+      city,
+      feature: featureLookup.feature,
+      mustHaveFeatures: [featureLookup.feature],
+    },
+    output: {
+      canvasType: asksForVariants ? "feature_match_builder_canvas" : null,
+      inlineType: asksForVariants ? "feature_match_summary" : "feature_answer_card",
+    },
+  };
+
+  const plan = {
+    intent: asksForVariants ? "vehicle_feature_discovery" : "vehicle_feature_answer",
+    mode: "single_tool",
+    conversationMode: "direct_answer",
+    tools: [toolPlan],
+    output: {
+      canvasType: asksForVariants ? "feature_match_builder_canvas" : null,
+    },
+  };
+
+  const executed = await executeAciPlannerPlan({
+    plan,
+    userMessage: toolMessage,
+    context: {
+      ...toolContext,
+      originalUserMessage: message,
+    },
+    user,
+    session,
+    meta: {
+      ...meta,
+      originalUserMessage: message,
+    },
+  });
+
+  const normalized = await normalizeAciFinalResponse(executed, {
+    message: toolMessage,
+    context: {
+      ...toolContext,
+      originalUserMessage: message,
+    },
+  });
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "",
+    usedGemini: false,
+    primaryTask: asksForVariants ? "feature_discovery" : "feature_lookup",
+    tool: "vehicle_feature_lookup",
+    planMode: "single_tool",
+    contextIsolation: "standalone_model_feature_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: message,
+    routingReason: asksForVariants
+      ? "standalone_model_feature_discovery"
+      : "standalone_model_feature_lookup",
+  };
+
+  return composeAciAnswer({
+    ...normalized,
+    aciCoreBridge: bridge,
+    meta: {
+      ...(normalized.meta || {}),
+      aciCoreBridge: bridge,
+    },
+  });
+};
+
+
 const getBatch2VehicleFromContextOrCandidates = async ({ contextState = {}, context = {}, candidateSnapshot = {} } = {}) => {
   const stateVehicle =
     contextState?.selectedVehicle ||
@@ -3763,6 +4122,20 @@ export const runAciCoreLiveBridge = async ({
 
   if (exactSingleFeatureFastPath) {
     return exactSingleFeatureFastPath;
+  }
+
+  const standaloneModelFeatureFastPath = await maybeReturnStandaloneModelFeatureFastPath({
+    message,
+    context,
+    user,
+    session,
+    meta,
+    originalMessage,
+    startedAt,
+  });
+
+  if (standaloneModelFeatureFastPath) {
+    return standaloneModelFeatureFastPath;
   }
 
   const rawMessage = String(message || "");
