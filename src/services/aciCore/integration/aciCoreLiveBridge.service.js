@@ -13,6 +13,7 @@ import { normalizeAciFinalResponse } from "../../aiAgent/aiAgent.contractNormali
 import { composeAciAnswer } from "../../aiAgent/aiAgent.answerComposer.js";
 import { runVehiclePricelistNewCarsTool } from "../../aiAgent/tools/newCars/vehiclePricelist.tool.js";
 import { runVehicleFeaturesTool } from "../../aiAgent/tools/newCars/vehicleFeatures.tool.js";
+import { runVehicleColorsTool } from "../../aiAgent/tools/newCars/vehicleColors.tool.js";
 import {
   buildVehiclePricelistResponse,
 } from "../../aiAgent/aiAgent.responseTools.js";
@@ -2701,6 +2702,120 @@ const maybeReturnSupportedExactPriceFastPath = async ({
   });
 };
 
+
+const hasVehicleColorLookupIntent = (message = "") => {
+  const raw = String(message || "");
+  if (!raw.trim()) return false;
+  if (hasComparisonLanguage(raw)) return false;
+
+  const hasColorWord =
+    /\b(colou?rs?|paint|shade|shades|colour\s+options?|color\s+options?)\b/i.test(raw) ||
+    /\b(black|white|red|blue|grey|gray|silver|pearl|matte|dual\s*tone|dual-tone)\b/i.test(raw);
+
+  if (!hasColorWord) return false;
+
+  if (/\b(price|pricing|on[-\s]?road|ex[-\s]?showroom|emi|loan|finance|quote|quotation|offer|discount|under\s+\d+|budget)\b/i.test(raw)) {
+    return false;
+  }
+
+  return true;
+};
+
+const maybeReturnVehicleColorsFastPath = async ({
+  message = "",
+  effectiveMessage = "",
+  context = {},
+  originalMessage = "",
+  startedAt = 0,
+} = {}) => {
+  const text = effectiveMessage || message;
+  if (!hasVehicleColorLookupIntent(text)) return null;
+
+  const citySlug = getSupportedCitySlugFromContext(context) || "new-delhi";
+  let resolved = await resolveSupportedExactPriceVehicleFromMessage({
+    message: text,
+    citySlug,
+  });
+
+  if (!resolved?.model) {
+    const contextVehicle =
+      context?.selectedVehicle ||
+      context?.contextState?.selectedVehicle ||
+      context?.aciContextState?.selectedVehicle ||
+      {};
+
+    if (contextVehicle.model || contextVehicle.fullModel || contextVehicle.modelKey) {
+      resolved = {
+        make: contextVehicle.make || contextVehicle.brand || "",
+        model: contextVehicle.model || contextVehicle.fullModel || "",
+        modelKey: contextVehicle.modelKey || "",
+        citySlug: normalizeFastPathSlug(contextVehicle.citySlug || contextVehicle.city || citySlug) || citySlug,
+      };
+    }
+  }
+
+  if (!resolved?.model) return null;
+
+  const toolPlan = {
+    tool: "vehicle_colors",
+    input: {
+      message: text,
+      query: text,
+      make: resolved.make,
+      model: resolved.model,
+      city: citySlug,
+    },
+    entities: {
+      make: resolved.make,
+      model: resolved.model,
+    },
+    filters: {
+      city: citySlug,
+    },
+  };
+
+  const toolResult = await runVehicleColorsTool({
+    userMessage: text,
+    message: text,
+    query: text,
+    make: resolved.make,
+    model: resolved.model,
+    city: citySlug,
+    context,
+    toolPlan,
+  });
+
+  if (!toolResult || toolResult.intent !== "vehicle_colors") return null;
+
+  const normalized = await normalizeAciFinalResponse(toolResult, {
+    message: text,
+    context,
+  });
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "deterministic",
+    usedGemini: false,
+    primaryTask: "color_lookup",
+    tool: "vehicle_colors",
+    planMode: "single_tool",
+    contextIsolation: "vehicle_colors_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: text,
+    routingReason: "explicit_color_lookup",
+  };
+
+  return composeAciAnswer({
+    ...normalized,
+    aciCoreBridge: bridge,
+    meta: {
+      ...(normalized.meta || {}),
+      aciCoreBridge: bridge,
+    },
+  });
+};
+
 const hasSingleFeatureAnswerIntent = (message = "") => {
   const raw = String(message || "");
   if (hasComparisonLanguage(raw)) return false;
@@ -3596,6 +3711,18 @@ export const runAciCoreLiveBridge = async ({
 
   if (batch4ExplainerFastPath) {
     return batch4ExplainerFastPath;
+  }
+
+  const vehicleColorsFastPath = await maybeReturnVehicleColorsFastPath({
+    message,
+    effectiveMessage,
+    context,
+    originalMessage,
+    startedAt,
+  });
+
+  if (vehicleColorsFastPath) {
+    return vehicleColorsFastPath;
   }
 
   const batch4BroadDiscoveryFastPath = await maybeReturnBatch4BroadDiscoveryFastPath({

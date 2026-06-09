@@ -125,7 +125,8 @@
     "aci:answer-label-hygiene:audit": "node src/scripts/aci-audits/auditAciAnswerLabelHygieneV1.cjs",
     "aci:progress-registry:guard": "node src/scripts/aci-audits/auditAciProgressRegistryGuardV1.cjs",
     "aci:exact-price-performance:audit": "node src/scripts/aci-audits/auditAciExactPricePerformanceV1.cjs",
-    "aci:variant-resolver-accuracy:audit": "node src/scripts/aci-audits/auditAciVariantResolverAccuracyV1.cjs"
+    "aci:variant-resolver-accuracy:audit": "node src/scripts/aci-audits/auditAciVariantResolverAccuracyV1.cjs",
+    "aci:color-routing:audit": "node src/scripts/aci-audits/auditAciColorRoutingV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
