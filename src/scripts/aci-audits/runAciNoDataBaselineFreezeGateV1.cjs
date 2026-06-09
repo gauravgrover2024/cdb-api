@@ -127,7 +127,7 @@ async function main() {
     command: "npm",
     args: ["run", "aci:buyer-answer:deep-audit"],
     env: {
-      ACI_DEEP_AUDIT_WORKERS: process.env.ACI_DEEP_AUDIT_WORKERS || "10",
+      ACI_DEEP_AUDIT_WORKERS: process.env.ACI_DEEP_AUDIT_WORKERS || "4",
     },
     outputFile: logPath,
   });

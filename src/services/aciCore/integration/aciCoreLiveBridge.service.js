@@ -11,6 +11,7 @@ import { buildLegacyPlanFromAciMeaningFrame } from "./aciCoreToLegacyPlan.adapte
 import { executeAciPlannerPlan } from "../../aiAgent/aiAgent.executor.js";
 import { normalizeAciFinalResponse } from "../../aiAgent/aiAgent.contractNormalizer.js";
 import { composeAciAnswer } from "../../aiAgent/aiAgent.answerComposer.js";
+import { maybeRunAciFeatureComparisonAnswer } from "../../aiAgent/aiAgent.featureComparisonAnswer.js";
 import { runVehiclePricelistNewCarsTool } from "../../aiAgent/tools/newCars/vehiclePricelist.tool.js";
 import { runVehicleFeaturesTool } from "../../aiAgent/tools/newCars/vehicleFeatures.tool.js";
 import { runVehicleColorsTool } from "../../aiAgent/tools/newCars/vehicleColors.tool.js";
@@ -931,6 +932,91 @@ const maybeReturnContextDirectFactFastPath = async ({
     aciCoreBridge: bridge,
     meta: {
       ...(normalized.meta || {}),
+      aciCoreBridge: bridge,
+    },
+  });
+};
+
+
+const hasStandaloneModelFeatureComparisonIntent = (message = "") => {
+  const text = cleanText(message).toLowerCase();
+  if (!text) return false;
+
+  const hasExplicitComparison =
+    /\bvs\b|\bv\/s\b|\bversus\b|\bcompare\b|\bcomparison\b|\bdifference\b|\bdifferent\b/i.test(text);
+
+  if (!hasExplicitComparison) return false;
+
+  const featureLookup = detectBatch2FeatureLookup(message);
+  if (!featureLookup || !featureLookup.feature || featureLookup.summary) return false;
+
+  return true;
+};
+
+const maybeReturnStandaloneModelFeatureComparisonFastPath = async ({
+  message = "",
+  context = {},
+  originalMessage = "",
+  startedAt = 0,
+} = {}) => {
+  if (!hasStandaloneModelFeatureComparisonIntent(message)) return null;
+
+  const featureLookup = detectBatch2FeatureLookup(message);
+  if (!featureLookup?.feature) return null;
+
+  const result = await maybeRunAciFeatureComparisonAnswer({
+    message,
+    toolPlan: {
+      tool: "vehicle_feature_comparison",
+      intent: "vehicle_feature_comparison",
+      toolIntent: "vehicle_feature_comparison",
+      input: {
+        message,
+        query: message,
+        feature: featureLookup.feature,
+        features: [featureLookup.feature],
+      },
+      entities: {
+        feature: featureLookup.feature,
+        features: [featureLookup.feature],
+      },
+      filters: {
+        mustHaveFeatures: [featureLookup.feature],
+      },
+      output: {
+        canvasType: "feature_comparison_canvas",
+        inlineType: "feature_comparison_summary",
+      },
+    },
+    context,
+  });
+
+  if (!result) return null;
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "",
+    usedGemini: false,
+    primaryTask: "vehicle_feature_comparison",
+    tool: "vehicle_feature_comparison",
+    planMode: "single_tool",
+    contextIsolation: "standalone_model_feature_comparison_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: message,
+    routingReason: "standalone_model_feature_comparison",
+  };
+
+  return composeAciAnswer({
+    ...result,
+    dataStatus: result.dataStatus || "available",
+    sourceCollections: result.sourceCollections || [
+      "vehicle_feature_catalog_v2",
+      "vehicle_variant_feature_matrix_v2",
+    ],
+    aciCoreBridge: bridge,
+    meta: {
+      ...(result.meta || {}),
       aciCoreBridge: bridge,
     },
   });
@@ -4035,6 +4121,17 @@ export const runAciCoreLiveBridge = async ({
 
   if (activeComparisonFollowUpFastPath) {
     return activeComparisonFollowUpFastPath;
+  }
+
+  const standaloneModelFeatureComparisonFastPath = await maybeReturnStandaloneModelFeatureComparisonFastPath({
+    message,
+    context,
+    originalMessage,
+    startedAt,
+  });
+
+  if (standaloneModelFeatureComparisonFastPath) {
+    return standaloneModelFeatureComparisonFastPath;
   }
 
   const unsupportedCityFastPath = await maybeReturnUnsupportedCityFastPath({

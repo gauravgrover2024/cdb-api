@@ -57,11 +57,12 @@ const cases = [
     expectedRows: 1,
   },
   {
-    id: "creta-vs-seltos-sunroof-stays-comparison",
+    id: "creta-vs-seltos-sunroof-stays-feature-comparison",
     message: "Creta vs Seltos sunroof",
     expectedIntent: "vehicle_feature_comparison",
     expectedCanvasType: "feature_comparison_canvas",
-    expectedContextIsolation: "explicit_comparison_targets",
+    expectedContextIsolation: "standalone_model_feature_comparison_fast_path",
+    expectedRoutingReason: "standalone_model_feature_comparison",
     minRows: 1,
   },
 ];

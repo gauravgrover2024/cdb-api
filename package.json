@@ -128,7 +128,8 @@
     "aci:variant-resolver-accuracy:audit": "node src/scripts/aci-audits/auditAciVariantResolverAccuracyV1.cjs",
     "aci:color-routing:audit": "node src/scripts/aci-audits/auditAciColorRoutingV1.cjs",
     "aci:provenance-envelope:audit": "node src/scripts/aci-audits/auditAciProvenanceEnvelopeV1.cjs",
-    "aci:standalone-model-feature-fast-path:audit": "node src/scripts/aci-audits/auditAciStandaloneModelFeatureFastPathV1.cjs"
+    "aci:standalone-model-feature-fast-path:audit": "node src/scripts/aci-audits/auditAciStandaloneModelFeatureFastPathV1.cjs",
+    "aci:standalone-feature-comparison-fast-path:audit": "node src/scripts/aci-audits/auditAciStandaloneFeatureComparisonFastPathV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
