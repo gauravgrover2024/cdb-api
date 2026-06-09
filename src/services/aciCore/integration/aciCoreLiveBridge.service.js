@@ -1128,6 +1128,205 @@ const maybeReturnActiveComparisonFollowUpFastPath = async ({
   });
 };
 
+const normalizeExplicitComparisonText = (value = "") =>
+  cleanText(value)
+    .replace(/[?!.]+$/g, "")
+    .replace(/\b(price\s+difference|show\s+price\s+difference|difference|comparison|compare|which\s+is\s+cheaper|cheaper|costlier|more\s+expensive)\b/gi, " ")
+    .replace(/\b(on\s*road|on-road|ex\s*showroom|ex-showroom|price|prices)\b/gi, " ")
+    .replace(/\b(in|for|at)\s+(new\s+delhi|delhi|noida|gurgaon|gurugram)\b.*$/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const detectExplicitComparisonCity = (message = "", context = {}) => {
+  const text = cleanText(message).toLowerCase();
+
+  if (/\bnoida\b/i.test(text)) return "noida";
+  if (/\b(gurgaon|gurugram)\b/i.test(text)) return "gurgaon";
+  if (/\b(new\s+delhi|delhi)\b/i.test(text)) return "new-delhi";
+
+  return getComparisonCityFromContext(context);
+};
+
+const hasExplicitUnsupportedComparisonCity = (message = "") => {
+  const text = cleanText(message).toLowerCase();
+
+  if (/\b(new\s+delhi|delhi|noida|gurgaon|gurugram)\b/i.test(text)) return false;
+
+  return /\b(mumbai|bombay|bangalore|bengaluru|jaipur|pune|chennai|hyderabad|kolkata|ahmedabad|lucknow|faridabad|ghaziabad|chandigarh|surat|indore|bhopal|patna|kochi|cochin)\b/i.test(text);
+};
+
+const hasScoreDiagnosticComparisonLanguage = (message = "") =>
+  hasComparisonLanguage(message) &&
+  /\b(diagnostic\s+score|score\s+diagnostic|scores?|scoring|value\s+scores?|value\s+score|safety\s+scores?|overall\s+scores?)\b/i.test(message);
+
+const parseExplicitComparisonTargetsFromMessage = (message = "") => {
+  const raw = cleanText(message);
+  if (!raw) return [];
+
+  const featureLookup = detectBatch2FeatureLookup(message);
+  if (featureLookup?.feature) return [];
+
+  const patterns = [
+    /^(.+?)\s+(?:vs|v\/s|versus)\s+(.+?)$/i,
+    /^compare\s+(.+?)\s+(?:and|with|to|against)\s+(.+?)$/i,
+    /^(?:show\s+)?(?:price\s+)?difference\s+between\s+(.+?)\s+and\s+(.+?)$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (!match) continue;
+
+    const left = normalizeExplicitComparisonText(match[1]);
+    const right = normalizeExplicitComparisonText(match[2]);
+
+    if (!left || !right) continue;
+    if (left.toLowerCase() === right.toLowerCase()) continue;
+
+    return [left, right];
+  }
+
+  return [];
+};
+
+const maybeReturnExplicitComparisonFastPath = async ({
+  message = "",
+  context = {},
+  user = null,
+  session = null,
+  meta = {},
+  originalMessage = "",
+  startedAt = 0,
+} = {}) => {
+  if (!hasComparisonLanguage(message)) return null;
+  if (isDirectNonComparisonTask(message)) return null;
+  if (hasScoreDiagnosticComparisonLanguage(message)) return null;
+  if (hasExplicitUnsupportedComparisonCity(message)) return null;
+
+  const parsedTargets = parseExplicitComparisonTargetsFromMessage(message);
+  if (parsedTargets.length < 2) return null;
+
+  const city = detectExplicitComparisonCity(message, context);
+  const targets = parsedTargets.slice(0, 2).map((label) => ({
+    model: label,
+    fullModel: label,
+    city,
+  }));
+
+  const comparisonVehicles = dedupeComparisonVehicles(
+    pruneSubstringComparisonTargets({ vehicles: targets, message }),
+  );
+
+  if (comparisonVehicles.length < 2) return null;
+
+  const toolPlan = {
+    tool: "vehicle_compare",
+    input: {
+      message,
+      query: message,
+    },
+    entities: {
+      comparisonVehicles,
+      models: comparisonVehicles.map((target) => target.fullModel || target.model).filter(Boolean),
+      comparisonModels: comparisonVehicles.map((target) => target.fullModel || target.model).filter(Boolean),
+    },
+    filters: {
+      city,
+      models: comparisonVehicles.map((target) => target.fullModel || target.model).filter(Boolean),
+    },
+    output: {
+      canvasType: "comparison_canvas",
+      inlineType: "",
+    },
+    resolution: {
+      comparisonLevel: "model",
+      variantSelectionMode: "not_required",
+      selectedVariants: [],
+      selectedModels: comparisonVehicles.map((target) => ({
+        model: target.model || target.fullModel,
+      })),
+      selectedComparisonVehicles: comparisonVehicles,
+    },
+    contextPatch: {
+      activeComparison: {
+        vehicles: comparisonVehicles,
+        city,
+        citySlug: city,
+      },
+      selectedComparisonSet: {
+        vehicles: comparisonVehicles,
+      },
+    },
+  };
+
+  const plan = {
+    intent: "vehicle_comparison",
+    mode: "single_tool",
+    conversationMode: "comparison",
+    tools: [toolPlan],
+    output: {
+      canvasType: "comparison_canvas",
+    },
+    contextPatch: toolPlan.contextPatch,
+  };
+
+  const executionContext = {
+    ...(context || {}),
+    anchorCity: city,
+    selectedVehicle: {
+      ...((context || {}).selectedVehicle || {}),
+      city,
+      citySlug: city,
+    },
+    activeComparison: {
+      vehicles: comparisonVehicles,
+      city,
+      citySlug: city,
+    },
+    selectedComparisonSet: {
+      vehicles: comparisonVehicles,
+    },
+  };
+
+  const executed = await executeAciPlannerPlan({
+    plan,
+    userMessage: message,
+    context: executionContext,
+    user,
+    session,
+    meta,
+  });
+
+  const normalized = await normalizeAciFinalResponse(executed, {
+    message,
+    context: executionContext,
+  });
+
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "",
+    usedGemini: false,
+    primaryTask: "vehicle_comparison",
+    tool: "vehicle_compare",
+    planMode: "single_tool",
+    contextIsolation: "explicit_comparison_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: message,
+    routingReason: "explicit_comparison_fast_path",
+  };
+
+  return composeAciAnswer({
+    ...normalized,
+    aciCoreBridge: bridge,
+    meta: {
+      ...(normalized.meta || {}),
+      aciCoreBridge: bridge,
+    },
+  });
+};
+
+
+
 
 const parseBudgetRupeesFromBuyerMessage = (message = "") => {
   const source = String(message || "").toLowerCase();
@@ -4143,6 +4342,20 @@ export const runAciCoreLiveBridge = async ({
 
   if (unsupportedCityFastPath) {
     return unsupportedCityFastPath;
+  }
+
+  const explicitComparisonFastPath = await maybeReturnExplicitComparisonFastPath({
+    message,
+    context,
+    user,
+    session,
+    meta,
+    originalMessage,
+    startedAt,
+  });
+
+  if (explicitComparisonFastPath) {
+    return explicitComparisonFastPath;
   }
 
   const batch4BareClarificationFastPath = maybeReturnBatch4BareClarificationFastPath({
