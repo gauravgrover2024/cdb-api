@@ -19,12 +19,20 @@ import {
   triggerBudgetDiscoveryCacheWarm,
 } from '../aiAgent/aiAgent.executor.js';
 
+import {
+  runVehicleScoreInsightTool,
+} from '../aiAgent/tools/newCars/vehicleScoreInsight.tool.js';
+
 const DEFAULT_PREWARM_TTL_MS = Number(
   process.env.ACI_CORE_PREWARM_TTL_MS || 10 * 60 * 1000,
 );
 
 const ACI_CORE_PREWARM_WARN_MS = Number(
   process.env.ACI_CORE_PREWARM_WARN_MS || 10000,
+);
+
+const ACI_CORE_SCORE_DIAGNOSTIC_PREWARM_TIMEOUT_MS = Number(
+  process.env.ACI_CORE_SCORE_DIAGNOSTIC_PREWARM_TIMEOUT_MS || 3500,
 );
 
 let prewarmState = {
@@ -82,6 +90,95 @@ const skippedResult = (label, reason, mode) => ({
   error: '',
 });
 
+const withPrewarmTimeout = async (promise, timeoutMs, label) => {
+  let timer = null;
+
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label}_timeout_${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
+const prewarmScoreDiagnosticReadPath = async ({ force = false } = {}) => {
+  if (process.env.ACI_CORE_SCORE_DIAGNOSTIC_PREWARM === 'false') {
+    return skippedResult(
+      'score_diagnostic_read_path',
+      'disabled_by_ACI_CORE_SCORE_DIAGNOSTIC_PREWARM',
+      normalizePrewarmMode(),
+    );
+  }
+
+  const db = mongoose.connection?.db;
+  if (!db) {
+    return {
+      ok: false,
+      status: 'skipped',
+      reason: 'mongodb_unavailable',
+      cache: {
+        rows: 0,
+        cacheHit: false,
+      },
+    };
+  }
+
+  const startedAt = Date.now();
+  const input = {
+    operation: 'cross_model_score_diagnostic',
+    models: ['creta', 'seltos'],
+    comparisonModels: ['creta', 'seltos'],
+    targets: [{ modelKey: 'creta' }, { modelKey: 'seltos' }],
+  };
+
+  const result = await withPrewarmTimeout(
+    runVehicleScoreInsightTool({
+      db,
+      userMessage: 'Creta vs Seltos diagnostic score comparison',
+      message: 'Creta vs Seltos diagnostic score comparison',
+      query: 'Creta vs Seltos diagnostic score comparison',
+      toolPlan: {
+        tool: 'vehicle_score_insight',
+        operation: 'cross_model_score_diagnostic',
+        input,
+        args: input,
+        params: input,
+        entities: input,
+        output: {
+          canvasType: 'score_insight_canvas',
+          inlineType: 'score_insight_summary',
+        },
+      },
+    }),
+    ACI_CORE_SCORE_DIAGNOSTIC_PREWARM_TIMEOUT_MS,
+    'score_diagnostic_read_path',
+  );
+
+  const rowCount = Array.isArray(result?.data?.rows) ? result.data.rows.length : 0;
+
+  return {
+    ok:
+      result?.status !== 'error' &&
+      result?.operation === 'cross_model_score_diagnostic' &&
+      rowCount >= 2,
+    status: result?.status || 'ready',
+    durationMs: Date.now() - startedAt,
+    cache: {
+      force,
+      operation: result?.operation || '',
+      canvasType: result?.canvasType || '',
+      rows: rowCount,
+      cacheHit: false,
+    },
+    error: result?.error?.message || result?.message || '',
+  };
+};
+
 const triggerHeavyBackgroundWarm = ({ force = false } = {}) => {
   prewarmAciDbCandidateRetrieverCaches({ force })
     .catch((error) => {
@@ -132,14 +229,28 @@ async function prewarmAciCoreRuntime({ force = false, mode = null, background = 
           'budget_discovery_cache',
           prewarmBudgetDiscoveryCache({ force }),
         ],
+        [
+          'score_diagnostic_read_path',
+          prewarmScoreDiagnosticReadPath({ force }),
+        ],
       ];
 
       const settled = await Promise.allSettled(tasks.map(([, promise]) => promise));
       results = settled.map((item, index) => normalizeSettled(item, tasks[index][0]));
     } else {
+      const lightTasks = [
+        [
+          'score_diagnostic_read_path',
+          prewarmScoreDiagnosticReadPath({ force }),
+        ],
+      ];
+
+      const lightSettled = await Promise.allSettled(lightTasks.map(([, promise]) => promise));
+
       results = [
         skippedResult('candidate_retriever_catalogs', 'light_prewarm_skips_heavy_candidate_catalogs', prewarmMode),
         skippedResult('budget_discovery_cache', 'light_prewarm_skips_heavy_budget_cache', prewarmMode),
+        ...lightSettled.map((item, index) => normalizeSettled(item, lightTasks[index][0])),
       ];
 
       if (backgroundWarm) {
