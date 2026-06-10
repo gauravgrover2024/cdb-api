@@ -28,6 +28,13 @@ const PROFILE_COLLECTION = process.env.ACI_VARIANT_DECISION_PROFILE_COLLECTION |
 const TARGET_COLLECTION = process.env.ACI_VARIANT_CITY_PRICE_PROFILE_COLLECTION || 'aci_vehicle_variant_city_price_profile';
 const VEHICLE_COLLECTION = process.env.ACI_SOURCE_VEHICLE_COLLECTION || 'vehicles';
 
+const SOURCE_VERSION = 'aci_variant_city_price_profile_fast_v2_2026_05_31';
+
+const SOURCE_COLLECTIONS = Object.freeze([
+  PRICE_COLLECTION,
+  PROFILE_COLLECTION,
+]);
+
 const args = process.argv.slice(2);
 const write = args.includes('--write');
 const reset = args.includes('--reset');
@@ -390,8 +397,11 @@ const buildCityPriceDoc = ({ row, profile, cityInfo, matchType }) => {
     priceUpdatedAt,
     sourcePriceRowId: row._id ? String(row._id) : null,
     sourceCollection: PRICE_COLLECTION,
+    sourceCollections: [...SOURCE_COLLECTIONS],
     matchType,
-    sourceVersion: 'aci_variant_city_price_profile_fast_v2_2026_05_31',
+    sourceVersion: SOURCE_VERSION,
+    buildVersion: SOURCE_VERSION,
+    builtAt: now.toISOString(),
     createdAt: now,
     updatedAt: now,
   };
