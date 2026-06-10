@@ -327,7 +327,6 @@ if (!skipDecision) {
     );
 
   }
-}
 
   steps.push(
     command("J. Build similar model graph", "node", [
@@ -358,6 +357,7 @@ if (!skipDecision) {
     );
   }
 
+}
 
 if (!decisionOnly) {
   steps.push(
