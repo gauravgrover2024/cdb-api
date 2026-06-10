@@ -46,6 +46,7 @@ const DERIVED_COLLECTIONS = [
   "aci_variant_data_gap_queue",
   "aci_vehicle_crash_safety_profile",
   "aci_variant_external_evidence",
+  "aci_vehicle_similar_model_graph_v1",
 ];
 
 const DUPLICATE_CHECKS = [
@@ -92,6 +93,10 @@ const DUPLICATE_CHECKS = [
   {
     collection: "aci_variant_external_evidence",
     keys: ["evidenceKey"],
+  },
+  {
+    collection: "aci_vehicle_similar_model_graph_v1",
+    keys: ["graphVersion", "anchor.modelKey"],
   },
 ];
 
@@ -324,6 +329,36 @@ if (!skipDecision) {
   }
 }
 
+  steps.push(
+    command("J. Build similar model graph", "node", [
+      "src/scripts/aci-decision/buildSimilarModelGraphV1.cjs",
+      ...writeArg(),
+      ...resetArg(),
+    ]),
+  );
+
+  if (write) {
+    steps.push(
+      command("J1. Repair similar model graph buyer quality", "node", [
+        "src/scripts/aci-decision/repairSimilarModelGraphBuyerQualityV1.cjs",
+        "--write",
+      ]),
+    );
+
+    steps.push(
+      command("J2. Audit similar model graph buyer quality", "node", [
+        "src/scripts/aci-decision/auditSimilarModelGraphBuyerQualityV1.cjs",
+      ]),
+    );
+
+    steps.push(
+      command("J3. Smoke similar model graph", "node", [
+        "src/scripts/aci-decision/smokeSimilarModelGraphV1.cjs",
+      ]),
+    );
+  }
+
+
 if (!decisionOnly) {
   steps.push(
     command("Verify core read models and indexes", "node", [
@@ -426,7 +461,9 @@ const countDuplicates = async (db, { collection, keys }) => {
     return { collection, keys, exists: false, duplicateGroups: 0, samples: [] };
   }
 
-  const id = Object.fromEntries(keys.map((key) => [key, `$${key}`]));
+  const id = Object.fromEntries(
+    keys.map((key) => [String(key).replace(/[^a-zA-Z0-9_]/g, "_"), `$${key}`]),
+  );
   const rows = await db
     .collection(collection)
     .aggregate([
