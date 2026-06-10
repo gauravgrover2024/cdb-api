@@ -311,7 +311,7 @@ async function main() {
     const result = demoteLifestyleDirect(
       doc,
       targetKey,
-      'Lifestyle/off-road model should not be labelled as a default direct rival without explicit lifestyle intent.',
+      'Lifestyle/off-road model should not be labelled as a default close alternative without explicit lifestyle intent.',
     );
     markTouched(doc, { target: targetKey, replacementRelationType: 'lifestyle_alternative', ...result });
   }

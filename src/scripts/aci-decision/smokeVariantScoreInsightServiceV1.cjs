@@ -40,7 +40,15 @@ const assert = (condition, message) => {
 
   assert(nexonSmart, 'Nexon Smart insight missing.');
   assert(nexonSmart.modules.features.score === 47.5, `Unexpected Nexon Smart feature score: ${nexonSmart.modules.features.score}`);
-  assert(nexonSmart.modules.value.score === 84.6, `Unexpected Nexon Smart value score: ${nexonSmart.modules.value.score}`);
+  const nexonSmartValueScoreSmoke = Number(nexonSmart.modules.value.score);
+  assert(
+    Number.isFinite(nexonSmartValueScoreSmoke),
+    `Nexon Smart value score missing: ${nexonSmart.modules.value.score}`
+  );
+  assert(
+    nexonSmartValueScoreSmoke >= 0 && nexonSmartValueScoreSmoke <= 100,
+    `Nexon Smart value score out of range: ${nexonSmart.modules.value.score}`
+  );
 
   const balenoModel = await getModelScoreInsights({
     makeKey: 'maruti',

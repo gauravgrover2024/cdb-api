@@ -3958,6 +3958,13 @@ const getScoreVariantCandidateFromSnapshot = (candidateSnapshot = {}) => {
 
 const getScoreModelCandidateFromSnapshot = (candidateSnapshot = {}, message = "") => {
   const normalizedMessage = normalizeVariantIdentityText(message);
+  const isUseCaseOnlyModelToken = (field = "") => {
+    // Prevent "city" use-case phrases from resolving to Honda City when another
+    // model is explicitly mentioned, e.g. "Best Baleno for city driving?".
+    if (field !== "city") return false;
+    return /(^|\s)city\s+(driving|drive|use|usage|commute|commuting|traffic)($|\s)/.test(normalizedMessage);
+  };
+
   const scoreExplicitModelMatch = (candidate = {}) => {
     const fields = [
       candidate.fullModel,
@@ -3969,27 +3976,38 @@ const getScoreModelCandidateFromSnapshot = (candidateSnapshot = {}, message = ""
       .filter(Boolean);
 
     let score = Number(candidate.confidence || 0);
+    let explicitMention = false;
 
     for (const field of fields) {
       const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const tokenCount = field.split(/\s+/).filter(Boolean).length;
 
       if (field && new RegExp(`(^|\\s)${escaped}(\\s|$)`).test(normalizedMessage)) {
-        score += 500 + tokenCount * 40;
+        if (tokenCount === 1 && isUseCaseOnlyModelToken(field)) {
+          continue;
+        }
+
+        explicitMention = true;
+        score += 5000 + tokenCount * 100;
         continue;
       }
 
       const tokens = field.split(/\s+/).filter(Boolean);
-      if (tokens.length > 1 && tokens.every((token) => new RegExp(`(^|\\s)${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`).test(normalizedMessage))) {
-        score += 250 + tokens.length * 30;
+      if (
+        tokens.length > 1 &&
+        tokens.every((token) =>
+          new RegExp(`(^|\\s)${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`).test(normalizedMessage)
+        )
+      ) {
+        explicitMention = true;
+        score += 2500 + tokens.length * 80;
       }
     }
 
-    return score;
+    return { score, explicitMention };
   };
 
-  const models = asArray(candidateSnapshot?.vehicles?.models);
-  const best = models
+  const models = asArray(candidateSnapshot?.vehicles?.models)
     .map((item = {}) => {
       const raw = item.metadata?.raw || {};
       const candidate = {
@@ -4000,13 +4018,21 @@ const getScoreModelCandidateFromSnapshot = (candidateSnapshot = {}, message = ""
         shortModelKey: raw.shortModelKey || "",
         confidence: Number(item.confidence || raw.confidence || 0),
       };
+      const scored = scoreExplicitModelMatch(candidate);
 
       return {
         ...candidate,
-        score: scoreExplicitModelMatch(candidate),
+        score: scored.score,
+        explicitMention: scored.explicitMention,
       };
     })
-    .filter((item) => item.model || item.fullModel)
+    .filter((item) => item.model || item.fullModel);
+
+  const eligibleModels = models.some((item) => item.explicitMention)
+    ? models.filter((item) => item.explicitMention)
+    : models;
+
+  const best = eligibleModels
     .sort((left, right) => right.score - left.score || right.confidence - left.confidence)[0];
 
   return best || {};
@@ -4070,12 +4096,28 @@ const maybeReturnDirectScoreInsightFastPath = async ({
     "";
   if (!modelKey) return null;
 
+  const hasSelectedVehicleContext = Boolean(
+    stateVehicle.modelKey ||
+    stateVehicle.model ||
+    stateVehicle.fullModel ||
+    stateVehicle.shortModelKey
+  );
+
+  if (!modelCandidate.explicitMention && !hasSelectedVehicleContext) {
+    return null;
+  }
+
   const asksValue = /\b(value|worth|value for money|good value)\b/i.test(message);
-  const operation = hasExplicitVariant || hasContextVariant
-    ? "variant_score_insight"
-    : asksValue
-      ? "same_family_value_insights"
-      : "model_score_insights";
+  const asksUpgrade =
+    /\b(worth over|worth upgrading|upgrade|gain from|what do i gain|pay extra|extra over|over|vs|versus)\b/i.test(message);
+
+  const operation = asksUpgrade && (hasExplicitVariant || hasContextVariant)
+    ? "variant_upgrade_insight"
+    : hasExplicitVariant || hasContextVariant
+      ? "variant_score_insight"
+      : asksValue
+        ? "same_family_value_insights"
+        : "model_score_insights";
 
   const payload = {
     operation,
@@ -4310,6 +4352,124 @@ const applyScoreValueLookupOverride = ({ plan = {}, override = null } = {}) => {
       ...(plan.meta || {}),
       scoreValueLookupOverride: true,
       scoreValueLookupRoutingReason: override.routingReason,
+    },
+  };
+};
+
+const buildExplicitScoreModelPlanOverride = ({
+  message = "",
+  plan = {},
+  candidateSnapshot = {},
+} = {}) => {
+  const firstTool = plan.tools?.[0] || {};
+  const plannedTool = firstTool.tool || "";
+  const plannedOperation = firstTool.operation || firstTool.input?.operation || firstTool.args?.operation || "";
+
+  if (plannedTool !== "vehicle_score_insight" && plan.intent !== "vehicle_score_insight") {
+    return null;
+  }
+
+  // Keep genuine variant-upgrade answers intact.
+  if (plannedOperation === "variant_upgrade_insight") {
+    return null;
+  }
+
+  const modelCandidate = getScoreModelCandidateFromSnapshot(candidateSnapshot, message);
+  if (!modelCandidate?.explicitMention) return null;
+
+  const variantCandidate = getScoreVariantCandidateFromSnapshot(candidateSnapshot);
+  const rawVariantToken = normalizeVariantIdentityText(
+    variantCandidate.variant || variantCandidate.variantName
+  );
+  const normalizedMessage = normalizeVariantIdentityText(message);
+  const hasExplicitVariant =
+    rawVariantToken &&
+    rawVariantToken.length >= 2 &&
+    new RegExp(`(^|\\s)${rawVariantToken.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}(\\s|$)`).test(normalizedMessage);
+
+  // If the user explicitly names a variant, let variant score logic handle it.
+  if (hasExplicitVariant) return null;
+
+  const modelKey =
+    modelCandidate.shortModelKey ||
+    modelCandidate.modelKey ||
+    modelCandidate.model ||
+    modelCandidate.fullModel ||
+    "";
+  if (!modelKey) return null;
+
+  return {
+    tool: "vehicle_score_insight",
+    intent: "vehicle_score_insight",
+    operation: "model_score_insights",
+    routingReason: "explicit_score_model_plan_override",
+    modelKey,
+    makeKey: modelCandidate.makeKey || modelCandidate.make || modelCandidate.brand || "",
+    fullModel: modelCandidate.fullModel || modelCandidate.model || modelKey,
+  };
+};
+
+const applyExplicitScoreModelPlanOverride = ({ plan = {}, override = null, message = "" } = {}) => {
+  if (!override) return plan;
+
+  const baseTool = plan.tools?.[0] || {};
+  const payload = {
+    operation: override.operation,
+    modelKey: override.modelKey,
+    makeKey: override.makeKey,
+    fullModel: override.fullModel,
+  };
+
+  return {
+    ...plan,
+    intent: "vehicle_score_insight",
+    conversationMode: "diagnostic",
+    mode: plan.mode || "single_tool",
+    tools: [
+      {
+        ...baseTool,
+        tool: "vehicle_score_insight",
+        operation: override.operation,
+        input: {
+          ...(baseTool.input || {}),
+          ...payload,
+          message,
+          query: message,
+        },
+        args: {
+          ...(baseTool.args || {}),
+          ...payload,
+        },
+        params: {
+          ...(baseTool.params || {}),
+          ...payload,
+        },
+        entities: {
+          ...(baseTool.entities || {}),
+          ...payload,
+          primaryModel: override.modelKey,
+          primaryMake: override.makeKey,
+          primaryVariant: "",
+        },
+        filters: {
+          ...(baseTool.filters || {}),
+        },
+        output: {
+          ...(baseTool.output || {}),
+          canvasType: "score_insight_canvas",
+          inlineType: "score_insight_summary",
+        },
+      },
+    ],
+    output: {
+      ...(plan.output || {}),
+      canvasType: "score_insight_canvas",
+      inlineType: "score_insight_summary",
+    },
+    meta: {
+      ...(plan.meta || {}),
+      explicitScoreModelPlanOverride: true,
+      explicitScoreModelRoutingReason: override.routingReason,
     },
   };
 };
@@ -4657,13 +4817,23 @@ export const runAciCoreLiveBridge = async ({
         })
       : null;
 
+  const scoreExplicitModelPlanOverride = buildExplicitScoreModelPlanOverride({
+    message,
+    plan: basePlan,
+    candidateSnapshot: managedCandidateSnapshot,
+  });
+
   const rawPlan = applyDirectPriceLookupOverride({
-    plan: applyScoreValueLookupOverride({
-      plan: applyCrossModelScoreDiagnosticPlanOverride({
-        plan: basePlan,
-        override: crossModelScoreDiagnosticOverride,
+    plan: applyExplicitScoreModelPlanOverride({
+      plan: applyScoreValueLookupOverride({
+        plan: applyCrossModelScoreDiagnosticPlanOverride({
+          plan: basePlan,
+          override: crossModelScoreDiagnosticOverride,
+        }),
+        override: scoreValueLookupOverride,
       }),
-      override: scoreValueLookupOverride,
+      override: scoreExplicitModelPlanOverride,
+      message,
     }),
     override: directPriceLookupOverride,
   });
