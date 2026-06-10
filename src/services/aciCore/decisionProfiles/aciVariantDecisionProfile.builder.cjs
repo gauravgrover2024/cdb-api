@@ -12,6 +12,13 @@ const {
 
 const SOURCE_VERSION = 'variant_decision_profile_v1_2026_05_30';
 
+const SOURCE_COLLECTIONS = Object.freeze([
+  process.env.ACI_PRICE_ROWS_COLLECTION || 'aci_vehicle_price_rows',
+  process.env.ACI_FEATURE_MATRIX_COLLECTION || 'vehicle_variant_feature_matrix_v2',
+  process.env.ACI_MODEL_SUMMARY_COLLECTION || 'aci_vehicle_model_summary',
+  process.env.ACI_SOURCE_VEHICLE_COLLECTION || 'vehicles',
+]);
+
 const FEATURE_RULES = {
   sunroof: ['sunroof'],
   panoramicSunroof: ['panoramic_sunroof', 'panorama_sunroof'],
@@ -465,6 +472,9 @@ const buildVariantDecisionProfileFromSources = ({ priceRow = {}, featureDoc = nu
     lifecycleStatus: getFirst(priceRow, ['lifecycleStatus', 'status']) || 'active_new_car',
     dataStatus: confidenceTier === 'low' ? 'needs_review' : 'partial',
     sourceVersion: SOURCE_VERSION,
+    buildVersion: SOURCE_VERSION,
+    builtAt: new Date().toISOString(),
+    sourceCollections: [...SOURCE_COLLECTIONS],
     createdAt: now,
     updatedAt: now,
 
@@ -703,6 +713,7 @@ const buildVariantDecisionProfileFromSources = ({ priceRow = {}, featureDoc = nu
 
 module.exports = {
   SOURCE_VERSION,
+  SOURCE_COLLECTIONS,
   buildVariantDecisionProfileFromSources,
   makeVariantLookupKey,
   makeVariantLooseLookupKey,
