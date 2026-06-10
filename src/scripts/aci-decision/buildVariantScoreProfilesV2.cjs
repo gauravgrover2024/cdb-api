@@ -22,6 +22,12 @@ const LIMIT = limitArgIndex >= 0 ? Number(args[limitArgIndex + 1]) : 0;
 const BUILD_VERSION = 'variant_score_profile_v2_2_2026_06_03';
 const FORMULA_VERSION = 'trust_first_module_scores_v2_2_taxonomy_driven_feature_score';
 
+const SOURCE_COLLECTIONS = Object.freeze([
+  PROFILE_COLLECTION,
+  FEATURE_MATRIX_COLLECTION,
+  FEATURE_SCORE_MATRIX_PROJECTION_COLLECTION,
+]);
+
 const FEATURE_SCORE_TAXONOMY = loadFeatureScoreTaxonomy();
 const FEATURE_DEFS = FEATURE_SCORE_TAXONOMY.features;
 const FEATURE_LAYER_WEIGHTS = FEATURE_SCORE_TAXONOMY.layerWeights;
@@ -1085,6 +1091,7 @@ const buildScoreDoc = ({ profile, matrixDoc, modules, valueScore, regretRisk }) 
 
     buildVersion: BUILD_VERSION,
     formulaVersion: FORMULA_VERSION,
+    sourceCollections: [...SOURCE_COLLECTIONS],
     featureScoreTaxonomyVersion: FEATURE_SCORE_TAXONOMY.taxonomyVersion,
     featureScoreTaxonomySourcePath: FEATURE_SCORE_TAXONOMY.sourcePath,
     builtAt: new Date(),

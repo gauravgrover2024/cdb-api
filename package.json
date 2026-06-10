@@ -133,7 +133,8 @@
     "aci:decision:profile-contract:audit": "node src/scripts/aci-decision/auditVariantDecisionProfileContractV1.cjs",
     "aci:decision:city-price-contract:audit": "node src/scripts/aci-decision/auditVariantCityPriceProfileContractV1.cjs",
     "aci:decision:upgrade-ladder-contract:audit": "node src/scripts/aci-decision/auditVariantUpgradeLadderContractV1.cjs",
-    "aci:decision:personal-data-isolation:audit": "node src/scripts/aci-decision/auditDecisionPersonalDataIsolationV1.cjs"
+    "aci:decision:personal-data-isolation:audit": "node src/scripts/aci-decision/auditDecisionPersonalDataIsolationV1.cjs",
+    "aci:decision:score-profile-contract:audit": "node src/scripts/aci-decision/auditVariantScoreProfileDiagnosticContractV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
