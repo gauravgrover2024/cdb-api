@@ -131,7 +131,8 @@
     "aci:standalone-model-feature-fast-path:audit": "node src/scripts/aci-audits/auditAciStandaloneModelFeatureFastPathV1.cjs",
     "aci:standalone-feature-comparison-fast-path:audit": "node src/scripts/aci-audits/auditAciStandaloneFeatureComparisonFastPathV1.cjs",
     "aci:decision:profile-contract:audit": "node src/scripts/aci-decision/auditVariantDecisionProfileContractV1.cjs",
-    "aci:decision:city-price-contract:audit": "node src/scripts/aci-decision/auditVariantCityPriceProfileContractV1.cjs"
+    "aci:decision:city-price-contract:audit": "node src/scripts/aci-decision/auditVariantCityPriceProfileContractV1.cjs",
+    "aci:decision:upgrade-ladder-contract:audit": "node src/scripts/aci-decision/auditVariantUpgradeLadderContractV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

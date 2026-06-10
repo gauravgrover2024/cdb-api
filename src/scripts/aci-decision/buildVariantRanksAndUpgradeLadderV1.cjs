@@ -14,6 +14,13 @@ const PROFILE_COLLECTION = process.env.ACI_VARIANT_DECISION_PROFILE_COLLECTION |
 const CITY_PRICE_COLLECTION = process.env.ACI_VARIANT_CITY_PRICE_PROFILE_COLLECTION || 'aci_vehicle_variant_city_price_profile';
 const LADDER_COLLECTION = process.env.ACI_VARIANT_UPGRADE_LADDER_COLLECTION || 'aci_vehicle_variant_upgrade_ladder';
 
+const SOURCE_VERSION = 'aci_variant_upgrade_ladder_v1_2026_05_31';
+
+const SOURCE_COLLECTIONS = Object.freeze([
+  PROFILE_COLLECTION,
+  CITY_PRICE_COLLECTION,
+]);
+
 const args = process.argv.slice(2);
 const write = args.includes('--write');
 const reset = args.includes('--reset');
@@ -284,6 +291,8 @@ const groupProfiles = (profiles) => {
 };
 
 const buildGroup = ({ groupKey, groupProfiles, cityPrices }) => {
+  const now = new Date();
+
   const sortedByPrice = [...groupProfiles].sort((a, b) => {
     const priceA = toNumber(a.referenceExShowroomPrice) ?? Number.MAX_SAFE_INTEGER;
     const priceB = toNumber(b.referenceExShowroomPrice) ?? Number.MAX_SAFE_INTEGER;
@@ -452,7 +461,10 @@ const buildGroup = ({ groupKey, groupProfiles, cityPrices }) => {
         upgradeTargetRule: 'same model + same fuel + same transmission group; excludes dual-tone/cosmetic/special-edition targets by default',
       },
 
-      sourceVersion: 'aci_variant_upgrade_ladder_v1_2026_05_31',
+      sourceVersion: SOURCE_VERSION,
+      buildVersion: SOURCE_VERSION,
+      builtAt: now.toISOString(),
+      sourceCollections: [...SOURCE_COLLECTIONS],
       updatedAt: new Date(),
       createdAt: new Date(),
     };
