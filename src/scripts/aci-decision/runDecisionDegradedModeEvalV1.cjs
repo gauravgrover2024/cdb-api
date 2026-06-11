@@ -55,6 +55,28 @@ const cases = [
     expected: DEGRADED_MODES.CONFLICTING_EVIDENCE_BLOCKED,
   },
   {
+    id: 'stale-evidence-status-needs-rebuild',
+    input: {
+      module: DECISION_MODULES.COMPARISON,
+      provenance: freshProvenance,
+      evidence: { evidenceStatus: EVIDENCE_STATUS.STALE, confidence: CONFIDENCE_LEVELS.MEDIUM, usableEvidenceCount: 2, requiredEvidenceCount: 3 },
+      rows: [{ entityKey: 'variant_a' }],
+      trace: { matchedRows: 1, candidateCount: 1 },
+    },
+    expected: DEGRADED_MODES.STALE_ARTIFACT_NEEDS_REBUILD,
+  },
+  {
+    id: 'unverified-evidence-review-required',
+    input: {
+      module: DECISION_MODULES.COMPARISON,
+      provenance: freshProvenance,
+      evidence: { evidenceStatus: EVIDENCE_STATUS.UNVERIFIED, confidence: CONFIDENCE_LEVELS.MEDIUM, usableEvidenceCount: 2, requiredEvidenceCount: 3 },
+      rows: [{ entityKey: 'variant_a' }],
+      trace: { matchedRows: 1, candidateCount: 1 },
+    },
+    expected: DEGRADED_MODES.UNVERIFIED_EVIDENCE_REVIEW_REQUIRED,
+  },
+  {
     id: 'stale-provenance-needs-rebuild',
     input: {
       module: DECISION_MODULES.SIMILAR_CARS,

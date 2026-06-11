@@ -46,6 +46,7 @@ const DEGRADED_MODES = Object.freeze({
   CANDIDATES_FOUND_NO_SCORE_PROFILES: 'candidates_found_no_score_profiles',
   SCORE_PROFILES_FOUND_NO_CONTEXT_SCORE: 'score_profiles_found_no_context_score',
   EVIDENCE_CONFIDENCE_TOO_LOW: 'evidence_confidence_too_low',
+  UNVERIFIED_EVIDENCE_REVIEW_REQUIRED: 'unverified_evidence_review_required',
   STALE_ARTIFACT_NEEDS_REBUILD: 'stale_artifact_needs_rebuild',
   CONFLICTING_EVIDENCE_BLOCKED: 'conflicting_evidence_blocked',
   BUYER_CONTEXT_INCOMPLETE: 'buyer_context_incomplete',

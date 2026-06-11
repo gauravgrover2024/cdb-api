@@ -88,6 +88,7 @@
     "aci:decision:policy:eval": "node src/scripts/aci-decision/runDecisionPolicyEvalV1.cjs",
     "aci:decision:provenance:eval": "node src/scripts/aci-decision/runDecisionProvenanceEvalV1.cjs",
     "aci:decision:degraded-mode:eval": "node src/scripts/aci-decision/runDecisionDegradedModeEvalV1.cjs",
+    "aci:decision:evidence-freshness:audit": "node src/scripts/aci-decision/auditDecisionEvidenceFreshnessContractV1.cjs",
     "aci:decision:module-policy:eval": "node src/scripts/aci-decision/runDecisionModulePolicyProfilesEvalV1.cjs",
     "aci:decision:score-output-fixture:eval": "node src/scripts/aci-decision/runScoreInsightPolicyFixtureEvalV1.cjs",
     "aci:decision:similar-output-fixture:eval": "node src/scripts/aci-decision/runSimilarCarsPolicyFixtureEvalV1.cjs",

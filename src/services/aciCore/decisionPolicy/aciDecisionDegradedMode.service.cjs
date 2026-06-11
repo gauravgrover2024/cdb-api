@@ -28,6 +28,14 @@ function inferDecisionDegradedMode(input = {}, options = {}) {
     return DEGRADED_MODES.CONFLICTING_EVIDENCE_BLOCKED;
   }
 
+  if (evidence.evidenceStatus === EVIDENCE_STATUS.STALE) {
+    return DEGRADED_MODES.STALE_ARTIFACT_NEEDS_REBUILD;
+  }
+
+  if (evidence.evidenceStatus === EVIDENCE_STATUS.UNVERIFIED) {
+    return DEGRADED_MODES.UNVERIFIED_EVIDENCE_REVIEW_REQUIRED;
+  }
+
   const provenanceStatus = evaluateDecisionProvenance(provenance, options.provenance || {});
   if (provenanceStatus.status === 'stale_or_rebuild_required') {
     return DEGRADED_MODES.STALE_ARTIFACT_NEEDS_REBUILD;
