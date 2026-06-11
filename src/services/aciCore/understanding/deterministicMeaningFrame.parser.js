@@ -517,7 +517,7 @@ async function parseDeterministicMeaningFrame({
       needed: primaryTask === ACI_TASKS.CLARIFICATION,
       reason: primaryTask === ACI_TASKS.CLARIFICATION ? 'insufficient_grounded_candidates' : null,
       question: primaryTask === ACI_TASKS.CLARIFICATION
-        ? 'What would you like to check about the car?'
+        ? 'I can help, but I need the topic first: price, features, on-road price, EMI, colours, offers, service cost, or comparison.'
         : null,
       options: [],
     },

@@ -51,7 +51,7 @@ function createFallbackParserResult({ rawMessage = '', normalizedMessage = '', a
     clarification: {
       needed: true,
       reason: 'parser_not_configured',
-      question: 'What would you like to check about the car?',
+      question: 'I can help, but I need the topic first: price, features, on-road price, EMI, colours, offers, service cost, or comparison.',
       options: [],
     },
     confidence: {

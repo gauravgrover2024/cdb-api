@@ -218,7 +218,11 @@ const assertLiveSimilarCase = async ({
   );
   if (premiumLive.rows.length === 0) {
     assert(
-      /did not find a clean premium step-up/i.test(premiumLive.live.answer || ''),
+      /I understood/i.test(premiumLive.live.answer || '') &&
+        /current graph does not have a clean premium step-up bucket/i.test(premiumLive.live.answer || '') &&
+        /close rivals/i.test(premiumLive.live.answer || '') &&
+        /cheaper step-downs/i.test(premiumLive.live.answer || '') &&
+        /EV\/powertrain alternatives/i.test(premiumLive.live.answer || ''),
       `Premium empty answer should use safe no-clean-step-up wording: ${premiumLive.live.answer}`,
     );
     assert(

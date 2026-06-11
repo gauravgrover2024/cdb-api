@@ -47,6 +47,7 @@ const GATES = {
     { id: 'decision-runtime-envelope-smoke', cmd: 'npm run -s aci:decision:runtime-envelope:smoke' },
     { id: 'decision-final-eligibility-smoke', cmd: 'npm run -s aci:decision:final-eligibility:smoke' },
     { id: 'decision-language-composer-smoke', cmd: 'npm run -s aci:decision:language-composer:smoke' },
+    { id: 'decision-recovery-no-data-smoke', cmd: 'npm run -s aci:decision:recovery-no-data:smoke' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },

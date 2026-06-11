@@ -1101,7 +1101,7 @@ export const buildVehiclePricelistResponse = ({
       canvasType: "",
       inlineType: "variant_ambiguity_card",
       title: `Choose exact ${model} variant`,
-      answer: `I found ${model}, but I could not find exact variant ${variantResolution.requestedVariant || variant} in DB price records. Please choose the closest available DB variant first.`,
+      answer: `I found ${model}, but ${variantResolution.requestedVariant || variant} does not match an exact current DB-backed variant. I can continue with listed variants, model-level price/features, or you can choose the closest available DB variant.`,
       data: {
         model,
         requestedVariant: variantResolution.requestedVariant || variant,
@@ -1977,7 +1977,7 @@ export const buildVehicleEmiResponse = ({
       canvasType: "",
       inlineType: "variant_ambiguity_card",
       title: `Choose exact ${model} variant for EMI`,
-      answer: `I found ${model}, but I could not find exact variant ${variantResolution.requestedVariant || variant} in DB price records. I should not calculate EMI using a random model-level price, so please choose the closest available DB variant first.`,
+      answer: `I found ${model}, but ${variantResolution.requestedVariant || variant} does not match an exact current DB-backed variant. I should not calculate EMI using a random model-level price; choose a listed DB variant first, or ask for model-level price/features.`,
       data: {
         model,
         requestedVariant: variantResolution.requestedVariant || variant,

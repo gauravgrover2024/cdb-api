@@ -3134,7 +3134,7 @@ const buildExactUnavailableVariantFastPathResponse = ({
 } = {}) => {
   const requestedVariant = resolution.requestedVariantText || "that exact variant";
   const fullModel = [resolved.make, resolved.model].filter(Boolean).join(" ") || resolved.model || "";
-  const answer = `I found ${fullModel || "this model"}, but ${requestedVariant} does not match an exact current variant in the DB-backed new-car catalog. Please choose a listed variant, or ask for model-level price/features.`;
+  const answer = renderAciLanguageText("decision_exact_variant_unavailable_recovery", { modelLabel: fullModel || "this model", requestedVariant }, { seed: buildAciLanguageSeed("decision_exact_variant_unavailable_recovery", fullModel, requestedVariant, message) }) || `I found ${fullModel || "this model"}, but ${requestedVariant} does not match an exact current variant in the DB-backed catalog. I can continue with listed variants, model-level price, and features.`;
   const selectedVehicle = {
     make: resolved.make || "",
     brand: resolved.make || "",
@@ -3174,7 +3174,7 @@ const buildExactUnavailableVariantFastPathResponse = ({
     displayMode: "inline",
     canvasType: "",
     inlineType: "clarification_card",
-    title: "Need one detail",
+    title: "Choose a listed variant",
     answer,
     clarification: answer,
     rows: [],

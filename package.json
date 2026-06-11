@@ -149,7 +149,8 @@
     "aci:decision:similar-filter:audit:full": "ACI_SIMILAR_AUDIT_SAMPLE_LIMIT=80 node src/scripts/aci-decision/auditSimilarCarsToolFilteringV1.cjs",
     "aci:decision:similar-relation-mode:eval:fast": "ACI_SIMILAR_RELATION_SAMPLE_LIMIT=12 node src/scripts/aci-decision/runSimilarCarsRelationModeRegressionEvalV1.cjs",
     "aci:decision:similar-relation-mode:eval:full": "ACI_SIMILAR_RELATION_SAMPLE_LIMIT=80 node src/scripts/aci-decision/runSimilarCarsRelationModeRegressionEvalV1.cjs",
-    "aci:decision:gate:similar:full": "node src/scripts/aci-decision/runDecisionGateParallelV1.cjs similarFull"
+    "aci:decision:gate:similar:full": "node src/scripts/aci-decision/runDecisionGateParallelV1.cjs similarFull",
+    "aci:decision:recovery-no-data:smoke": "node src/scripts/aci-decision/smokeDecisionRecoveryNoDataV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

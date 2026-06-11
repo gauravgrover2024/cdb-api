@@ -269,9 +269,9 @@ const withMatchLabels = (rows = []) =>
 const buildAnswer = ({ anchor = {}, rows = [], mode = "default" } = {}) => {
   if (!rows.length) {
     if (mode === "premium") {
-      return `I did not find a clean premium step-up from ${anchor.displayName || "this model"} in the current graph. I can show close rivals, cheaper step-downs, or EV alternatives instead.`;
+      return `I understood ${anchor.displayName || "this model"}, but the current graph does not have a clean premium step-up bucket for it. I can still show close rivals, cheaper step-downs, or EV/powertrain alternatives instead.`;
     }
-    return `I did not find clean close alternatives for ${anchor.displayName || "this model"} in the current graph. I can show cheaper step-downs, premium step-ups, or EV/powertrain alternatives instead.`;
+    return `I understood ${anchor.displayName || "this model"}, but the current graph does not have clean close alternatives for the default view. I can still show cheaper step-downs, premium step-ups, or EV/powertrain alternatives instead.`;
   }
 
   const relationLabel =
