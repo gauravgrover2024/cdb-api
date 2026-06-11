@@ -1,3 +1,6 @@
+import {
+  renderAciLanguageText,
+} from "../../../aciCore/language/aciAnswerLanguageComposer.js";
 import mongoose from "mongoose";
 import scoreInsightService from "../../../aciCore/scoreProfiles/aciVariantScoreInsight.service.cjs";
 import crossModelScoreDiagnosticService from "../../../aciCore/scoreProfiles/aciCrossModelScoreDiagnostic.service.cjs";
@@ -13,6 +16,11 @@ const {
 const {
   buildCrossModelScoreDiagnostic,
 } = crossModelScoreDiagnosticService;
+
+const decisionLanguageText = (templateKey = "", input = {}) =>
+  renderAciLanguageText(templateKey, input, {
+    seed: [TOOL_NAME, templateKey, input.operation, input.modelText, input.scope].filter(Boolean).join("|"),
+  });
 
 const TOOL_NAME = "vehicle_score_insight";
 
@@ -348,13 +356,20 @@ const buildCrossModelScoreDiagnosticLine = (result = {}) => {
     ? ` Module signals: ${moduleLeaders.join("; ")}.`
     : "";
 
-  return `Diagnostic score comparison for ${modelText}${scopeText}.${leaderText} This is diagnostic-only, not a final recommendation.`;
+  const note = decisionLanguageText("decision_diagnostic_only_note", {
+    operation: "cross_model_score_diagnostic",
+    modelText,
+    scope,
+  });
+
+  return `Diagnostic score comparison for ${modelText}${scopeText}.${leaderText} ${note}`.trim();
 };
 
 const createGuardrail = () => ({
   canUseForFinalRecommendation: false,
-  reason:
-    "These are diagnostic module scores only. Final recommendation needs buyer-context weighting, similar-cars graph, upgrade ladder, service/resale evidence and recommendation policy.",
+  reason: decisionLanguageText("decision_score_guardrail_reason", {
+    operation: "score_guardrail",
+  }),
 });
 
 const createSuccess = ({ operation, data, answer = null, meta = {} }) => ({
@@ -1200,7 +1215,10 @@ const buildModelScoreSummaryLine = (result = {}, params = {}) => {
     summaryParts.push(`Watchouts: ${watchouts.join("; ")}.`);
   }
 
-  summaryParts.push("This is diagnostic-only module scoring, not a final recommendation.");
+  summaryParts.push(decisionLanguageText("decision_score_module_summary_note", {
+    operation: "model_score_summary",
+    modelText: result?.modelLabel || result?.model || "",
+  }));
 
   return summaryParts.join(" ");
 };

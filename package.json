@@ -143,7 +143,8 @@
     "aci:decision:external-evidence-contract:audit": "node src/scripts/aci-decision/auditVariantExternalEvidenceContractV1.cjs",
     "aci:decision:similar-buyer-quality:audit": "node src/scripts/aci-decision/auditSimilarModelGraphBuyerQualityV1.cjs",
     "aci:decision:similar-buyer-quality:repair": "node src/scripts/aci-decision/repairSimilarModelGraphBuyerQualityV1.cjs --write",
-    "aci:decision:similar-buyer-quality:repair:dry-run": "node src/scripts/aci-decision/repairSimilarModelGraphBuyerQualityV1.cjs"
+    "aci:decision:similar-buyer-quality:repair:dry-run": "node src/scripts/aci-decision/repairSimilarModelGraphBuyerQualityV1.cjs",
+    "aci:decision:language-composer:smoke": "node src/scripts/aci-decision/smokeDecisionLanguageComposerV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

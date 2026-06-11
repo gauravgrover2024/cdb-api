@@ -1,3 +1,6 @@
+import {
+  renderAciLanguageText,
+} from "../../../aciCore/language/aciAnswerLanguageComposer.js";
 import mongoose from "mongoose";
 import { createNewCarsToolStub } from "./_toolStub.js";
 import { NEW_CAR_CANVAS_TYPES } from "./shared/canvasContracts.js";
@@ -96,10 +99,16 @@ const getRequestedMode = (request = {}) => {
   return "default";
 };
 
+const similarDecisionLanguageText = (templateKey = "", input = {}) =>
+  renderAciLanguageText(templateKey, input, {
+    seed: ["vehicle_similar", templateKey, input.mode, input.anchorName].filter(Boolean).join("|"),
+  });
+
 const createGuardrail = () => ({
   canUseForFinalRecommendation: false,
-  reason:
-    "Similar cars graph v1 is a deterministic discovery aid, not a purchase verdict.",
+  reason: similarDecisionLanguageText("decision_similar_graph_guardrail_reason", {
+    mode: "guardrail",
+  }),
 });
 
 const getModelTextCandidates = ({ toolPlan = {}, context = {}, userMessage = "" } = {}) => {
@@ -278,7 +287,12 @@ const buildAnswer = ({ anchor = {}, rows = [], mode = "default" } = {}) => {
     .slice(0, 5)
     .map((row) => `${row.displayName} (${row.matchLabel})`)
     .join(", ");
-  return `Similar Cars Graph v1 found ${rows.length} ${relationLabel} for ${anchor.displayName}: ${names}. This is a deterministic alternatives graph, not a purchase verdict.`;
+  const note = similarDecisionLanguageText("decision_similar_graph_note", {
+    mode,
+    anchorName: anchor.displayName || "",
+  });
+
+  return `Similar Cars Graph v1 found ${rows.length} ${relationLabel} for ${anchor.displayName}: ${names}. ${note}`.trim();
 };
 
 export const runVehicleSimilarTool = async ({

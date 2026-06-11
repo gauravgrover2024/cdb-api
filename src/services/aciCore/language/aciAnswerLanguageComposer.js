@@ -126,7 +126,9 @@ const buildInputWithDerivedValues = (input = {}) => {
   };
 };
 
-export const renderAciTemplate = (templateKey = '', input = {}, options = {}) => {
+export const renderAciTemplate = (templateKey = '', input = {}
+
+, options = {}) => {
   const template = getAciLanguageTemplate(templateKey);
   const variants = asArray(template?.variants);
   const selected = selectAciLanguageVariant({
@@ -158,6 +160,11 @@ export const renderAciTemplate = (templateKey = '', input = {}, options = {}) =>
     variantId: selected.id || '',
     tone: template.tone || '',
   };
+};
+
+export const renderAciLanguageText = (templateKey = '', input = {}, options = {}, fallback = '') => {
+  const rendered = renderAciTemplate(templateKey, input, options);
+  return cleanText(rendered.text || fallback);
 };
 
 const interpolateAction = (value = '', input = {}) =>

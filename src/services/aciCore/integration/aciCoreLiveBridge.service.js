@@ -12,6 +12,9 @@ import { buildLegacyPlanFromAciMeaningFrame } from "./aciCoreToLegacyPlan.adapte
 import { executeAciPlannerPlan } from "../../aiAgent/aiAgent.executor.js";
 import { normalizeAciFinalResponse } from "../../aiAgent/aiAgent.contractNormalizer.js";
 import { composeAciAnswer } from "../../aiAgent/aiAgent.answerComposer.js";
+import {
+  renderAciLanguageText,
+} from "../language/aciAnswerLanguageComposer.js";
 import { maybeRunAciFeatureComparisonAnswer } from "../../aiAgent/aiAgent.featureComparisonAnswer.js";
 import { runVehiclePricelistNewCarsTool } from "../../aiAgent/tools/newCars/vehiclePricelist.tool.js";
 import { runVehicleFeaturesTool } from "../../aiAgent/tools/newCars/vehicleFeatures.tool.js";
@@ -3623,11 +3626,16 @@ const maybeReturnExactSingleFeatureFastPath = async ({
 
 
 
+const getDecisionDiagnosticOnlyNote = (seed = "") =>
+  renderAciLanguageText("decision_diagnostic_only_note", {}, { seed }) ||
+  "Diagnostic-only output.";
+
 const ensureDiagnosticOnlyAnswerNote = (answer = "") => {
   const text = cleanText(answer);
-  if (!text) return "This is diagnostic-only, not a final recommendation.";
+  const note = getDecisionDiagnosticOnlyNote(text);
+  if (!text) return note;
   if (/\bdiagnostic-only\b/i.test(text)) return text;
-  return `${text} This is diagnostic-only, not a final recommendation.`;
+  return `${text} ${note}`;
 };
 
 const detectCrossModelScoreDiagnosticRequest = ({ message = "", candidateSnapshot = {} } = {}) => {
