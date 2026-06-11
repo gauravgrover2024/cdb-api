@@ -7,6 +7,7 @@ import {
   isAciContextState,
 } from './aciContextState.contract.js';
 import { resolveVehicleAlias } from './aciVehicleAliasRegistry.service.js';
+import { applyBuyerContextToContextState } from './aciBuyerContextExtractor.service.js';
 
 const CONTEXT_MANAGER_VERSION = 'aci-context-manager-v1.0.0';
 
@@ -166,6 +167,7 @@ function compactAciContextState(contextState = {}) {
 
   return createEmptyAciContextState({
     selectedVehicle,
+    buyerContext: state.buyerContext || state.buyerIntent || {},
     activeComparison,
     requested: compactRequestedContext(state.requested || {}),
     anchors: {
@@ -783,7 +785,7 @@ async function hydrateContextFromCandidates({
     },
   });
 
-  const merged = mergeAciContext({
+  let merged = mergeAciContext({
     previousContext: activeContext,
     resolvedContext: resolvedState,
     message,
@@ -793,6 +795,8 @@ async function hydrateContextFromCandidates({
     candidateSnapshot,
     anchor: aliasAnchor?.model ? aliasAnchor : null,
   });
+
+  merged = applyBuyerContextToContextState({ message, contextState: merged });
 
   assertAciContextStateShape(merged);
 
@@ -919,6 +923,7 @@ function buildContextPatchFromState(contextState = {}) {
   if (comparisonVehicles.length >= 2) {
     return compactObject({
       contextState: state,
+    buyerContext: state.buyerContext || {},
       aciContextState: state,
       anchorCity: vehicle.citySlug || vehicle.city,
       activeComparison: compactObject({

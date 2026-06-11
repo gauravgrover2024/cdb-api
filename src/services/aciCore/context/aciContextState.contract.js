@@ -44,12 +44,34 @@ const createEmptyRequestedState = (overrides = {}) => ({
   ...overrides,
 });
 
+const createEmptyBuyerContextState = (overrides = {}) => ({
+  city: '',
+  citySlug: '',
+  budgetOrPriceCeiling: '',
+  maxBudget: 0,
+  bodyPreferenceOrPrimaryUseCase: '',
+  primaryUseCase: '',
+  familySizeOrOccupancyUse: '',
+  fuelPreferenceOrMonthlyRunning: '',
+  fuelPreference: '',
+  monthlyRunning: '',
+  transmissionPreference: '',
+  safetyPriority: '',
+  featurePriority: [],
+  shortlistedModelsOrDiscoveryScope: '',
+  source: '',
+  confidence: 0,
+  extractedAt: '',
+  ...overrides,
+});
+
 function createEmptyAciContextState(overrides = {}) {
   return {
     schemaVersion: ACI_CONTEXT_STATE_SCHEMA_VERSION,
     selectedVehicle: createEmptySelectedVehicleState(overrides.selectedVehicle || {}),
     activeComparison: createEmptyActiveComparisonState(overrides.activeComparison || {}),
     requested: createEmptyRequestedState(overrides.requested || {}),
+    buyerContext: createEmptyBuyerContextState(overrides.buyerContext || overrides.buyerIntent || {}),
     anchors: {
       primaryVehicle: {},
       comparisonTargets: [],
@@ -97,6 +119,10 @@ function assertAciContextStateShape(state = {}) {
     throw new Error('ACI context state missing requested object');
   }
 
+  if (!state.buyerContext || typeof state.buyerContext !== 'object') {
+    throw new Error('ACI context state missing buyerContext object');
+  }
+
   if (!state.provenance || typeof state.provenance !== 'object') {
     throw new Error('ACI context state missing provenance object');
   }
@@ -108,6 +134,7 @@ export {
   ACI_CONTEXT_STATE_SCHEMA_VERSION,
   assertAciContextStateShape,
   createEmptyAciContextState,
+  createEmptyBuyerContextState,
   createEmptyActiveComparisonState,
   createEmptyRequestedState,
   createEmptySelectedVehicleState,
