@@ -164,7 +164,8 @@
     "aci:decision:runtime-envelope:smoke:full": "node src/scripts/aci-decision/smokeDecisionRuntimeEnvelopeV1.cjs",
     "aci:decision:buyer-context:smoke": "node src/scripts/aci-decision/smokeBuyerContextExtractionV1.cjs",
     "aci:decision:buyer-clarification:smoke": "node src/scripts/aci-decision/smokeBuyerInputClarificationPayloadV1.cjs",
-    "aci:decision:context-reuse-readiness:smoke": "node src/scripts/aci-decision/smokeBuyerContextReuseAndReadinessV1.cjs"
+    "aci:decision:context-reuse-readiness:smoke": "node src/scripts/aci-decision/smokeBuyerContextReuseAndReadinessV1.cjs",
+    "aci:decision:phase5-closure:smoke": "node src/scripts/aci-decision/smokeDecisionPhase5ClosureGateV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
