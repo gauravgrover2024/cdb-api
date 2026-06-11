@@ -36,6 +36,7 @@ const GATES = {
     { id: 'degraded-mode-eval', cmd: 'npm run -s aci:decision:degraded-mode:eval' },
     { id: 'evidence-freshness-audit', cmd: 'npm run -s aci:decision:evidence-freshness:audit' },
     { id: 'decision-runtime-envelope-smoke', cmd: 'npm run -s aci:decision:runtime-envelope:smoke' },
+    { id: 'decision-final-eligibility-smoke', cmd: 'npm run -s aci:decision:final-eligibility:smoke' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },

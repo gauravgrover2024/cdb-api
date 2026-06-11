@@ -65,6 +65,10 @@ const {
   evaluateDecisionProvenance,
 } = require("../decisionPolicy/aciDecisionProvenance.service.cjs");
 
+const {
+  buildFinalRecommendationEligibilityRuntime,
+} = require("../decisionPolicy/aciFinalRecommendationEligibility.service.cjs");
+
 const truthy = (value = "") =>
   ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 
@@ -709,7 +713,7 @@ const maybeReturnStandaloneModelFeatureFastPath = async ({
       : "standalone_model_feature_lookup",
   };
 
-  return composeAciAnswer({
+  const composed = composeAciAnswer({
     ...normalized,
     aciCoreBridge: bridge,
     meta: {
@@ -717,6 +721,8 @@ const maybeReturnStandaloneModelFeatureFastPath = async ({
       aciCoreBridge: bridge,
     },
   });
+
+  return attachDecisionRuntimeEnvelope(composed, { bridge, context });
 };
 
 
@@ -1150,7 +1156,7 @@ const maybeReturnActiveComparisonFollowUpFastPath = async ({
     routingReason: "active_comparison_follow_up",
   };
 
-  return composeAciAnswer({
+  const composed = composeAciAnswer({
     ...normalized,
     aciCoreBridge: bridge,
     meta: {
@@ -1158,6 +1164,8 @@ const maybeReturnActiveComparisonFollowUpFastPath = async ({
       aciCoreBridge: bridge,
     },
   });
+
+  return attachDecisionRuntimeEnvelope(composed, { bridge, context });
 };
 
 const normalizeExplicitComparisonText = (value = "") =>
@@ -1968,7 +1976,7 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     }
   }
 
-  return composed;
+  return attachDecisionRuntimeEnvelope(composed, { bridge, context: getContextForToolPlan(contextState || {}) });
 };
 
 const maybeReturnBatch4ExplainerFastPath = async ({
@@ -3368,7 +3376,7 @@ const maybeReturnSupportedExactPriceFastPath = async ({
     effectiveMessage: text,
   };
 
-  return composeAciAnswer({
+  const composed = composeAciAnswer({
     ...normalized,
     aciCoreBridge: bridge,
     meta: {
@@ -3376,6 +3384,8 @@ const maybeReturnSupportedExactPriceFastPath = async ({
       aciCoreBridge: bridge,
     },
   });
+
+  return attachDecisionRuntimeEnvelope(composed, { bridge, context });
 };
 
 
@@ -4241,7 +4251,7 @@ const maybeReturnDirectScoreInsightFastPath = async ({
     },
   });
 
-  return attachDecisionRuntimeEnvelope(composed, { bridge });
+  return attachDecisionRuntimeEnvelope(composed, { bridge, context: getContextForToolPlan(contextState) });
 };
 
 const listFrom = (value) => (Array.isArray(value) ? value : []);
@@ -4453,9 +4463,35 @@ const buildDecisionRuntimeEnvelope = ({ response = {}, bridge = {} } = {}) => {
   };
 };
 
-const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {} } = {}) => {
+const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {}, context = {} } = {}) => {
   const envelope = buildDecisionRuntimeEnvelope({ response, bridge });
-  if (!envelope) return response;
+  const finalRecommendationEligibility = buildFinalRecommendationEligibilityRuntime({
+    message: bridge.effectiveMessage || bridge.originalMessage || "",
+    bridge,
+    response,
+    context,
+    decisionPolicy: envelope?.decisionPolicy || response.decisionPolicy || response.data?.decisionPolicy || response.meta?.decisionPolicy || {},
+    evidence: envelope?.evidence || response.evidence || response.data?.evidence || {},
+  });
+  const shouldAttachFinalRecommendationEligibility =
+    finalRecommendationEligibility.requestedFinalRecommendation === true;
+
+  if (!envelope) {
+    if (!shouldAttachFinalRecommendationEligibility) return response;
+
+    return {
+      ...response,
+      finalRecommendationEligibility,
+      data: {
+        ...(response.data || {}),
+        finalRecommendationEligibility,
+      },
+      meta: {
+        ...(response.meta || {}),
+        finalRecommendationEligibility,
+      },
+    };
+  }
 
   const decisionPolicy = envelope.decisionPolicy;
   const data = {
@@ -4465,6 +4501,7 @@ const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {} } = {}) => {
     provenance: envelope.provenance,
     degradedMode: envelope.degradedMode,
     canUseForFinalRecommendation: false,
+    ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
   };
 
   return {
@@ -4474,6 +4511,7 @@ const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {} } = {}) => {
     evidence: envelope.evidence,
     provenance: envelope.provenance,
     degradedMode: envelope.degradedMode,
+    ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
     sourceCollections: envelope.sourceCollections.length
       ? envelope.sourceCollections
       : response.sourceCollections,
@@ -4489,6 +4527,7 @@ const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {} } = {}) => {
       evidenceConfidence: envelope.evidence.confidence,
       provenance: envelope.provenance,
       degradedMode: envelope.degradedMode,
+      ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
     },
   };
 };
@@ -5048,7 +5087,7 @@ export const runAciCoreLiveBridge = async ({
       },
     });
 
-    return attachDecisionRuntimeEnvelope(composed, { bridge });
+    return attachDecisionRuntimeEnvelope(composed, { bridge, context: isolatedContext });
   }
 
   const directScoreInsightFastPath = await maybeReturnDirectScoreInsightFastPath({
@@ -5235,7 +5274,7 @@ export const runAciCoreLiveBridge = async ({
     },
   });
 
-  return attachDecisionRuntimeEnvelope(composed, { bridge });
+  return attachDecisionRuntimeEnvelope(composed, { bridge, context: executionContext });
 };
 
 export {
