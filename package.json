@@ -150,7 +150,12 @@
     "aci:decision:similar-relation-mode:eval:fast": "ACI_SIMILAR_RELATION_SAMPLE_LIMIT=12 node src/scripts/aci-decision/runSimilarCarsRelationModeRegressionEvalV1.cjs",
     "aci:decision:similar-relation-mode:eval:full": "ACI_SIMILAR_RELATION_SAMPLE_LIMIT=80 node src/scripts/aci-decision/runSimilarCarsRelationModeRegressionEvalV1.cjs",
     "aci:decision:gate:similar:full": "node src/scripts/aci-decision/runDecisionGateParallelV1.cjs similarFull",
-    "aci:decision:recovery-no-data:smoke": "node src/scripts/aci-decision/smokeDecisionRecoveryNoDataV1.cjs"
+    "aci:decision:recovery-no-data:smoke": "node src/scripts/aci-decision/smokeDecisionRecoveryNoDataV1.cjs",
+    "aci:decision:final-blocked-readiness:smoke": "node src/scripts/aci-decision/smokeDecisionFinalBlockedReadinessUxV1.cjs",
+    "aci:decision:similar-output-fixture:eval:fast": "node src/scripts/aci-decision/smokeSimilarCarsOutputFixtureFastV1.cjs",
+    "aci:decision:similar-output-fixture:eval:full": "node src/scripts/aci-decision/runSimilarCarsPolicyFixtureEvalV1.cjs",
+    "aci:decision:similar-graph:smoke:fast": "ACI_SIMILAR_GRAPH_SMOKE_FAST=1 node src/scripts/aci-decision/smokeSimilarModelGraphV1.cjs",
+    "aci:decision:similar-graph:smoke:full": "node src/scripts/aci-decision/smokeSimilarModelGraphV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

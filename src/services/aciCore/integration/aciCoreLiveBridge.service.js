@@ -3689,20 +3689,58 @@ const buildFinalRecommendationBlockedAnswer = ({ eligibility = {}, response = {}
 
 const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}, bridge = {} } = {}) => {
   if (eligibility?.requestedFinalRecommendation !== true) return response;
-  if (!isWeakGenericClarificationAnswer(response)) return response;
 
-  const answer = buildFinalRecommendationBlockedAnswer({ eligibility, response, bridge });
-  if (!answer) return response;
+  const blockedAnswer = buildFinalRecommendationBlockedAnswer({ eligibility, bridge });
+  const existingAnswer = String(
+    response.answer ||
+    response.clarification ||
+    response.data?.answer ||
+    response.data?.clarification ||
+    ""
+  ).trim();
+
+  const shouldPreserveExisting =
+    existingAnswer &&
+    existingAnswer !== blockedAnswer &&
+    !isWeakGenericClarificationAnswer(response) &&
+    !existingAnswer.toLowerCase().includes(blockedAnswer.toLowerCase());
+
+  const answer = shouldPreserveExisting
+    ? `${blockedAnswer}\n\n${existingAnswer}`
+    : blockedAnswer;
+
+  const finalBlockedUx = {
+    status: "final_recommendation_blocked",
+    requestedFinalRecommendation: true,
+    finalRecommendationEnabled: false,
+    canUseForFinalRecommendation: false,
+    allowedAnswerType: eligibility.allowedAnswerType || "",
+    blockedReasons: Array.isArray(eligibility.blockedReasons) ? eligibility.blockedReasons : [],
+    missingMandatoryInputs: Array.isArray(eligibility.missingMandatoryInputs) ? eligibility.missingMandatoryInputs : [],
+    safeAnswerTypesNow: [
+      "diagnostic_only",
+      "clarification_required",
+      "recovery_required",
+      "fact_only",
+    ],
+  };
 
   return {
     ...response,
     title: response.title === "Need one detail" ? "Need buyer context" : response.title,
     answer,
     clarification: response.clarification || answer,
+    finalBlockedUx,
     data: {
       ...(response.data || {}),
       title: response.data?.title === "Need one detail" ? "Need buyer context" : response.data?.title,
       answer,
+      clarification: response.data?.clarification || answer,
+      finalBlockedUx,
+    },
+    meta: {
+      ...(response.meta || {}),
+      finalBlockedUx,
     },
   };
 };

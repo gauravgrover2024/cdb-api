@@ -25,8 +25,8 @@ const GATES = {
   similar: [
     { id: 'similar-relation-mode-eval-fast', cmd: 'npm run -s aci:decision:similar-relation-mode:eval:fast' },
     { id: 'similar-filter-audit-fast', cmd: 'npm run -s aci:decision:similar-filter:audit:fast' },
-    { id: 'similar-output-fixture', cmd: 'npm run -s aci:decision:similar-output-fixture:eval' },
-    { id: 'similar-graph-smoke', cmd: 'node src/scripts/aci-decision/smokeSimilarModelGraphV1.cjs' },
+    { id: 'similar-output-fixture-fast', cmd: 'npm run -s aci:decision:similar-output-fixture:eval:fast' },
+    { id: 'similar-graph-smoke-fast', cmd: 'npm run -s aci:decision:similar-graph:smoke:fast' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
   ],
@@ -48,13 +48,14 @@ const GATES = {
     { id: 'decision-final-eligibility-smoke', cmd: 'npm run -s aci:decision:final-eligibility:smoke' },
     { id: 'decision-language-composer-smoke', cmd: 'npm run -s aci:decision:language-composer:smoke' },
     { id: 'decision-recovery-no-data-smoke', cmd: 'npm run -s aci:decision:recovery-no-data:smoke' },
+    { id: 'decision-final-blocked-readiness-smoke', cmd: 'npm run -s aci:decision:final-blocked-readiness:smoke' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },
-    { id: 'similar-output-fixture', cmd: 'npm run -s aci:decision:similar-output-fixture:eval' },
+    { id: 'similar-output-fixture-fast', cmd: 'npm run -s aci:decision:similar-output-fixture:eval:fast' },
     { id: 'similar-filter-audit-fast', cmd: 'npm run -s aci:decision:similar-filter:audit:fast' },
     { id: 'similar-relation-mode-eval-fast', cmd: 'npm run -s aci:decision:similar-relation-mode:eval:fast' },
-    { id: 'similar-graph-smoke', cmd: 'node src/scripts/aci-decision/smokeSimilarModelGraphV1.cjs' },
+    { id: 'similar-graph-smoke-fast', cmd: 'npm run -s aci:decision:similar-graph:smoke:fast' },
   ],
 };
 

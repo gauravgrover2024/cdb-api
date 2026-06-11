@@ -104,6 +104,39 @@ const CASES = [
     assert(!/"finalRecommendationEnabled"\s*:\s*true/.test(blob), `${testCase.id}: finalRecommendationEnabled true leaked`);
     assert(!/"allowedAnswerType"\s*:\s*"final_recommendation_allowed"/.test(blob), `${testCase.id}: final recommendation allowed leaked`);
 
+    if (eligibility?.requestedFinalRecommendation === true) {
+      const answerText = String(
+        response.answer ||
+        response.clarification ||
+        response.data?.answer ||
+        response.data?.clarification ||
+        ''
+      );
+
+      assert(
+        /final recommendation remains disabled|cannot make a final recommendation yet|cannot give a buy-this verdict yet|cannot turn them into a final recommendation yet|not a final recommendation/i.test(answerText),
+        `${testCase.id}: final-blocked readiness wording missing: ${answerText.slice(0, 260)}`
+      );
+
+      assert(
+        /Safe now|Missing buyer|Missing:|buyer context|diagnostic|discovery|compare/i.test(answerText),
+        `${testCase.id}: final-blocked answer missing safe next-step or missing-context wording: ${answerText.slice(0, 260)}`
+      );
+
+      assert(
+        !/\byou should buy\b|\bbest final choice\b|\bmy final recommendation\b/i.test(answerText),
+        `${testCase.id}: unsafe final recommendation wording leaked: ${answerText.slice(0, 260)}`
+      );
+
+      assert(
+        response.finalBlockedUx ||
+          response.data?.finalBlockedUx ||
+          response.meta?.finalBlockedUx,
+        `${testCase.id}: finalBlockedUx readiness object missing`
+      );
+    }
+
+
     results.push({
       id: testCase.id,
       message: testCase.message,

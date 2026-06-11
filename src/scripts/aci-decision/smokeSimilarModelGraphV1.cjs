@@ -6,6 +6,9 @@ const mongoose = require('mongoose');
 const GRAPH_COLLECTION =
   process.env.ACI_SIMILAR_MODEL_GRAPH_COLLECTION || 'aci_vehicle_similar_model_graph_v1';
 const GRAPH_VERSION = 'similar_model_graph_v1';
+const FAST_MODE =
+  process.env.ACI_SIMILAR_GRAPH_SMOKE_FAST === '1' ||
+  String(process.env.ACI_SIMILAR_GRAPH_SMOKE_MODE || '').toLowerCase() === 'fast';
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -199,6 +202,29 @@ const assertLiveSimilarCase = async ({
     allowedRelations: [...allowedDefaultRelations],
     runAciCoreLiveBridge,
   });
+
+  if (FAST_MODE) {
+    console.log(JSON.stringify({
+      status: 'ok',
+      mode: 'fast',
+      graphCollection: GRAPH_COLLECTION,
+      graphVersion: GRAPH_VERSION,
+      balenoSimilarCount: balenoGraph.similarModels.length,
+      directTool: {
+        count: directRows.length,
+        top: rowNames(directRows).slice(0, 5),
+      },
+      liveBridge: {
+        tool: bridge?.tool,
+        primaryTask: bridge?.primaryTask,
+        count: liveRows.length,
+        top: rowNames(liveRows).slice(0, 5),
+      },
+    }, null, 2));
+    await mongoose.disconnect();
+    return;
+  }
+
   const cheaperLive = await assertLiveSimilarCase({
     message: 'Cheaper alternatives to Baleno',
     allowedRelations: ['cheaper_step_down', 'direct_rival', 'nearby_alternative', 'platform_twin', 'adjacent_crossover'],

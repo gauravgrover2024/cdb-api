@@ -203,8 +203,8 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Do not recommend a car.', 'Explain the missing context clearly.', 'Offer safe diagnostic help.'],
     forbiddenWording: ['you should buy', 'buy this', 'best final choice', 'winner is'],
     variants: [
-      { id: 'final_blocked_context_a', text: 'I can help narrow this, but I cannot make a final recommendation yet because I still need {{missingInputs}}. I can compare {{nextCapabilities}} now.' },
-      { id: 'final_blocked_context_b', text: 'This is a final-choice question, so I need more buyer context before giving a responsible recommendation. Missing: {{missingInputs}}. I can still compare {{nextCapabilities}}.' },
+      { id: 'final_blocked_context_a', text: 'I understood this as a final-choice question. Final recommendation remains disabled for now because I still need {{missingInputs}}. Safe now: I can compare {{nextCapabilities}} and show diagnostic trade-offs.' },
+      { id: 'final_blocked_context_b', text: 'This is a final-choice question, so I cannot give a buy-this verdict yet. Missing buyer inputs: {{missingInputs}}. Safe now: I can compare {{nextCapabilities}}, explain trade-offs, and show DB-backed discovery results.' },
       { id: 'final_blocked_context_c', text: 'I should not make the final call yet because {{missingInputs}} are still missing. I can help with diagnostic comparison on {{nextCapabilities}} first.' },
       { id: 'final_blocked_context_d', text: 'Before I recommend one, I need {{missingInputs}}. Until then, I can safely compare {{nextCapabilities}} using current data.' },
     ],
@@ -217,9 +217,9 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Do not replace useful result answers.', 'Do not recommend a final car.', 'Clarify why final choice is still blocked.'],
     forbiddenWording: ['you should buy', 'buy this', 'best final choice', 'winner is'],
     variants: [
-      { id: 'final_blocked_partial_a', text: 'I can show these results, but I cannot turn them into a final recommendation yet. Missing buyer context: {{missingInputs}}.' },
-      { id: 'final_blocked_partial_b', text: 'These results are useful starting points, not a final recommendation. I still need {{missingInputs}} before making a responsible final call.' },
-      { id: 'final_blocked_partial_c', text: 'Use this as discovery for now. A final recommendation is still blocked until {{missingInputs}} are clear.' },
+      { id: 'final_blocked_partial_a', text: 'I can show these results as discovery, but final recommendation remains disabled. Missing buyer context: {{missingInputs}}. Safe now: use this as diagnostic input, not a purchase verdict.' },
+      { id: 'final_blocked_partial_b', text: 'These results are useful starting points, not a final recommendation. I still need {{missingInputs}} before a responsible final call. Safe now: I can compare the options and explain trade-offs.' },
+      { id: 'final_blocked_partial_c', text: 'Use this as discovery for now. Final recommendation remains disabled until {{missingInputs}} are clear. Safe now: diagnostics, comparisons, price/features, and alternatives.' },
       { id: 'final_blocked_partial_d', text: 'This narrows the field, but I should not recommend one yet because {{missingInputs}} are still missing.' },
     ],
   },
