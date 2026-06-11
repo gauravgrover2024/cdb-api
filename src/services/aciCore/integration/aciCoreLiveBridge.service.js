@@ -1,3 +1,4 @@
+import { createRequire } from "module";
 import {
   retrieveAciDbCandidates,
 } from "../candidates/aciDbCandidateRetriever.js";
@@ -32,6 +33,37 @@ import {
 import {
   resolveModelScopedVariantFromMessage,
 } from "../variants/modelScopedVariantResolver.service.js";
+
+
+const require = createRequire(import.meta.url);
+
+const {
+  EVIDENCE_STATUS,
+  CONFIDENCE_LEVELS,
+  SOURCE_CLASSES,
+  DECISION_MODULES,
+  ALLOWED_ANSWER_TYPES,
+  CLAIM_TYPES,
+} = require("../decisionPolicy/aciDecisionPolicy.constants.cjs");
+
+const {
+  createBaseDecisionPolicy,
+  createBaseEvidence,
+  createBaseProvenance,
+  createBaseTrace,
+} = require("../decisionPolicy/aciDecisionOutput.contract.cjs");
+
+const {
+  applyDecisionPolicyWithModuleProfile,
+} = require("../decisionPolicy/aciDecisionModulePolicyProfiles.service.cjs");
+
+const {
+  applyDecisionDegradedMode,
+} = require("../decisionPolicy/aciDecisionDegradedMode.service.cjs");
+
+const {
+  evaluateDecisionProvenance,
+} = require("../decisionPolicy/aciDecisionProvenance.service.cjs");
 
 const truthy = (value = "") =>
   ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -4194,7 +4226,7 @@ const maybeReturnDirectScoreInsightFastPath = async ({
     routingReason: "direct_score_insight_fast_path",
   };
 
-  return composeAciAnswer({
+  const composed = composeAciAnswer({
     ...normalized,
     answer: ensureDiagnosticOnlyAnswerNote(normalized.answer),
     operation,
@@ -4208,6 +4240,257 @@ const maybeReturnDirectScoreInsightFastPath = async ({
       aciCoreBridge: bridge,
     },
   });
+
+  return attachDecisionRuntimeEnvelope(composed, { bridge });
+};
+
+const listFrom = (value) => (Array.isArray(value) ? value : []);
+
+const getDecisionRuntimeModule = ({ bridge = {}, response = {} } = {}) => {
+  const tool = bridge.tool || response.tool || response.executorTool || "";
+  const primaryTask = bridge.primaryTask || "";
+
+  if (tool === "vehicle_score_insight" || primaryTask === "score_insight") {
+    return DECISION_MODULES.SCORE_INSIGHT;
+  }
+
+  if (tool === "vehicle_similar" || primaryTask === "similar_cars") {
+    return DECISION_MODULES.SIMILAR_CARS;
+  }
+
+  return "";
+};
+
+const getDecisionRuntimeSourceClass = (moduleName = "") => {
+  if (moduleName === DECISION_MODULES.SCORE_INSIGHT) {
+    return SOURCE_CLASSES.INTERNAL_SCORE_PROFILE;
+  }
+
+  if (moduleName === DECISION_MODULES.SIMILAR_CARS) {
+    return SOURCE_CLASSES.SIMILAR_GRAPH_INFERENCE;
+  }
+
+  return SOURCE_CLASSES.MIXED;
+};
+
+const getDecisionRuntimeRows = (response = {}) => {
+  const candidates = [
+    response.rows,
+    response.variants,
+    response.items,
+    response.similarModels,
+    response.models,
+    response.modelSummaries,
+    response.moduleComparisons,
+    response.data?.rows,
+    response.data?.variants,
+    response.data?.items,
+    response.data?.similarModels,
+    response.data?.models,
+    response.data?.modelSummaries,
+    response.data?.moduleComparisons,
+  ];
+
+  return candidates.find((value) => Array.isArray(value) && value.length > 0) || [];
+};
+
+const getDecisionRuntimeSourceCollections = (response = {}) => {
+  const collections = [
+    ...listFrom(response.sourceCollections),
+    ...listFrom(response.data?.sourceCollections),
+    ...listFrom(response.trace?.sourceCollections),
+    ...listFrom(response.trace?.collectionsUsed),
+    ...listFrom(response.sourceTransparency?.modulesChecked),
+    ...listFrom(response.data?.sourceTransparency?.modulesChecked),
+  ].filter(Boolean);
+
+  return [...new Set(collections)];
+};
+
+const buildDecisionRuntimeEnvelope = ({ response = {}, bridge = {} } = {}) => {
+  const moduleName = getDecisionRuntimeModule({ bridge, response });
+  if (!moduleName) return null;
+
+  const rows = getDecisionRuntimeRows(response);
+  const sourceCollections = getDecisionRuntimeSourceCollections(response);
+  const dataStatus = response.dataStatus || response.data?.dataStatus || response.meta?.dataStatus || "";
+  const hasUsefulRows =
+    rows.length > 0 ||
+    Number(response.count || response.matched || response.modelCount || response.rowsCount || 0) > 0;
+
+  const sourceClass = getDecisionRuntimeSourceClass(moduleName);
+  const buildVersion =
+    response.meta?.buildVersion ||
+    response.meta?.graphVersion ||
+    response.meta?.source ||
+    response.data?.buildVersion ||
+    response.data?.graphVersion ||
+    "aci_decision_runtime_envelope_v1";
+
+  const evidenceStatus =
+    response.evidence?.evidenceStatus ||
+    response.data?.evidence?.evidenceStatus ||
+    (dataStatus === "available" || hasUsefulRows ? EVIDENCE_STATUS.PARTIAL : EVIDENCE_STATUS.MISSING);
+
+  const evidenceConfidence =
+    response.evidence?.confidence ||
+    response.data?.evidence?.confidence ||
+    CONFIDENCE_LEVELS.MEDIUM;
+
+  const evidence = createBaseEvidence({
+    ...(response.evidence || {}),
+    ...(response.data?.evidence || {}),
+    evidenceStatus,
+    confidence: evidenceConfidence,
+    usableEvidenceCount: Number(
+      response.evidence?.usableEvidenceCount ??
+      response.data?.evidence?.usableEvidenceCount ??
+      (hasUsefulRows ? 1 : 0)
+    ),
+    requiredEvidenceCount: Number(
+      response.evidence?.requiredEvidenceCount ??
+      response.data?.evidence?.requiredEvidenceCount ??
+      1
+    ),
+    sourceTransparency: response.sourceTransparency || response.data?.sourceTransparency || [],
+  });
+
+  const provenanceBase = createBaseProvenance({
+    ...(response.provenance || {}),
+    ...(response.data?.provenance || {}),
+    buildVersion,
+    builtAt: response.provenance?.builtAt || response.data?.provenance?.builtAt || new Date().toISOString(),
+    sourceClass,
+    needsRebuild: Boolean(response.provenance?.needsRebuild || response.data?.provenance?.needsRebuild),
+  });
+
+  const provenanceStatus = evaluateDecisionProvenance(provenanceBase, {
+    maxStalenessDays: 30,
+  });
+
+  const provenance = {
+    ...provenanceBase,
+    status: provenanceStatus.status,
+    ok: provenanceStatus.ok,
+    sourceClassValid: provenanceStatus.sourceClassValid,
+    stalenessDays: provenanceStatus.stalenessDays,
+    staleByThreshold: provenanceStatus.staleByThreshold,
+    issues: provenanceStatus.issues,
+  };
+
+  const trace = createBaseTrace({
+    ...(response.trace || {}),
+    toolRoute: bridge.tool || response.tool || "",
+    collectionsUsed: sourceCollections,
+    matchedRows: Number(
+      response.trace?.matchedRows ??
+      response.trace?.rowCount ??
+      response.matched ??
+      response.count ??
+      rows.length ??
+      0
+    ),
+    candidateCount: Number(
+      response.trace?.candidateCount ??
+      response.trace?.rowCount ??
+      response.matched ??
+      response.count ??
+      rows.length ??
+      0
+    ),
+  });
+
+  const baseDecisionPolicy = createBaseDecisionPolicy({
+    ...(response.decisionPolicy || {}),
+    evidenceStatus,
+    confidence: evidenceConfidence,
+    canUseForFinalRecommendation: false,
+    allowedAnswerType: hasUsefulRows
+      ? ALLOWED_ANSWER_TYPES.DIAGNOSTIC_ONLY
+      : ALLOWED_ANSWER_TYPES.RECOVERY_REQUIRED,
+    claimType: CLAIM_TYPES.DIAGNOSTIC,
+  });
+
+  const profiled = applyDecisionPolicyWithModuleProfile({
+    module: moduleName,
+    intent: response.intent || "",
+    decisionPolicy: baseDecisionPolicy,
+    evidence,
+    provenance,
+    rows,
+    trace,
+    requestedFinalRecommendation: false,
+  });
+
+  const degraded = applyDecisionDegradedMode({
+    ...profiled,
+    module: moduleName,
+    intent: response.intent || "",
+    evidence,
+    provenance,
+    rows,
+    trace,
+    diagnostics: hasUsefulRows ? [{ module: moduleName, status: "diagnostic_runtime_output" }] : [],
+  }, {
+    provenance: {
+      maxStalenessDays: 30,
+    },
+  });
+
+  return {
+    module: moduleName,
+    decisionPolicy: {
+      ...profiled.decisionPolicy,
+      degradedMode: degraded.degradedMode || profiled.decisionPolicy.degradedMode || null,
+      evidenceStatus,
+      confidence: evidenceConfidence,
+    },
+    evidence,
+    provenance,
+    trace,
+    degradedMode: degraded.degradedMode || null,
+    sourceCollections,
+  };
+};
+
+const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {} } = {}) => {
+  const envelope = buildDecisionRuntimeEnvelope({ response, bridge });
+  if (!envelope) return response;
+
+  const decisionPolicy = envelope.decisionPolicy;
+  const data = {
+    ...(response.data || {}),
+    decisionPolicy,
+    evidence: envelope.evidence,
+    provenance: envelope.provenance,
+    degradedMode: envelope.degradedMode,
+    canUseForFinalRecommendation: false,
+  };
+
+  return {
+    ...response,
+    module: response.module || envelope.module,
+    decisionPolicy,
+    evidence: envelope.evidence,
+    provenance: envelope.provenance,
+    degradedMode: envelope.degradedMode,
+    sourceCollections: envelope.sourceCollections.length
+      ? envelope.sourceCollections
+      : response.sourceCollections,
+    trace: {
+      ...(response.trace || {}),
+      ...envelope.trace,
+    },
+    data,
+    meta: {
+      ...(response.meta || {}),
+      decisionPolicy,
+      evidenceStatus: envelope.evidence.evidenceStatus,
+      evidenceConfidence: envelope.evidence.confidence,
+      provenance: envelope.provenance,
+      degradedMode: envelope.degradedMode,
+    },
+  };
 };
 
 const buildScoreValueLookupOverride = ({
@@ -4750,7 +5033,7 @@ export const runAciCoreLiveBridge = async ({
       crossModelScoreDiagnosticTargets: crossModelScoreDiagnosticFastPath.targets,
     };
 
-    return composeAciAnswer({
+    const composed = composeAciAnswer({
       ...normalized,
       answer: ensureDiagnosticOnlyAnswerNote(normalized.answer),
       operation: "cross_model_score_diagnostic",
@@ -4764,6 +5047,8 @@ export const runAciCoreLiveBridge = async ({
         aciCoreBridge: bridge,
       },
     });
+
+    return attachDecisionRuntimeEnvelope(composed, { bridge });
   }
 
   const directScoreInsightFastPath = await maybeReturnDirectScoreInsightFastPath({
@@ -4933,7 +5218,7 @@ export const runAciCoreLiveBridge = async ({
         }
       : null;
 
-  return composeAciAnswer({
+  const composed = composeAciAnswer({
     ...responseForCompose,
     contextPatch: mergeContextPatches({
       previousPatch: context,
@@ -4949,6 +5234,8 @@ export const runAciCoreLiveBridge = async ({
       ...(languageNormalization.changed ? { languageNormalization } : {}),
     },
   });
+
+  return attachDecisionRuntimeEnvelope(composed, { bridge });
 };
 
 export {

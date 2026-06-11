@@ -210,7 +210,7 @@ const ACI_PROGRESS_MODULES = [
     summary: "DB-backed variant intelligence foundation for instant buyer advice, variant regret prevention, upgrade decisions, city pricing, and later scoring.",
     whatWillWork: "Full variant universe, city-specific price overlay, same-model/fuel/transmission upgrade ladder, gain/loss evidence, data-quality gaps, and controlled external evidence workflow.",
     currentState: "Full supported-city global variant profile universe is built with 2,114 profiles. City price overlay is written with 6,002 rows across New Delhi, Gurgaon and Noida with zero unmatched rows, zero missing prices and zero duplicate variant-city pairs. Upgrade ladder is written for 2,114 variants with priceRank, equipmentRank and variantRole. Dual-tone/cosmetic variants remain ranked and searchable but are not selected as default upgrade targets. Data gap queue is written with 2,773 open evidence gaps and zero duplicate gap keys after importing crash-rating evidence and applying 15 exact internal feature-matrix evidence patches.",
-    pending: "Complete feature explainer, final recommendation eligibility, buyer-context score weighting, crash safety confidence hardening, central decision composer, and long-tail similar-cars expert audit. Score profile read model, diagnostic score modules, score bridge routing, public-chat score smoke and cross-model score diagnostics are now built and gated, but remain diagnostic-only and cannot be used for final recommendations.",
+    pending: "Complete feature explainer, final recommendation eligibility, buyer-context score weighting, crash safety confidence hardening, central decision composer, and long-tail similar-cars expert audit. Score profile read model, diagnostic score modules, score bridge routing, public-chat score smoke, cross-model score diagnostics, and live-bridge decision runtime envelope are now built and gated, but remain diagnostic-only and cannot be used for final recommendations.",
     items: [
       { key: "variant_profile_universe", name: "Full variant decision profile universe: 2,114 profiles", status: "ready" },
       { key: "variant_profile_quality", name: "Profile quality: 1,404 high, 710 medium, 0 low, 0 duplicate keys", status: "ready" },
@@ -239,7 +239,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "feature_explainer_integration", name: "Feature explainer integration with scoring and recommendations", status: "planned" },
       { key: "similar_cars_graph", name: "Similar cars graph/read model + buyer-quality refresh gate", status: "mostly_ready" },
       { key: "similar_cars_buyer_quality_gate", name: "Similar cars buyer-quality repair/audit wired into decision refresh", status: "ready" },
-      { key: "aci_assist_score_mapping", name: "ACI Assist mapping to decision profiles and score profiles", status: "partial" },
+      { key: "aci_assist_score_mapping", name: "ACI Assist mapping to decision profiles and score profiles", status: "mostly_ready" },
       { key: "score_computation", name: "Score computation", status: "mostly_ready" }
     ]
   },
@@ -620,15 +620,16 @@ const ACI_PROGRESS_MODULES = [
     status: "planned",
     summary: "Production governance layer for ACI decision intelligence: final recommendation eligibility, strict decision output contracts, provenance/freshness controls, degraded modes, eval gates and market-judgment isolation.",
     whatWillWork: "Block final buy-this recommendations until buyer context and evidence thresholds are met; allow fact-only or diagnostic-only answers when data is partial; ensure every decision claim carries evidence, freshness, provenance and degraded-mode status.",
-    currentState: "Phase 0 gates are implemented and green for the current backend scope. Standalone Decision Policy / Eligibility constants, decision output contract, policy evaluator, market-judgment isolation audit, provenance/freshness helper eval, degraded-mode inference helper, module-specific policy profile eval, score-insight and similar-cars real-output policy fixtures, score diagnostic language/tool/user-query gates, cross-model score diagnostic eval/tool/bridge smokes, public-chat score smoke, and similar-cars filtering/relation/buyer-quality gates now exist. Score and similar runtime tools remain diagnostic/policy-gated; final recommendation runtime policy wiring and central composer are still pending.",
-    pending: "Wire final recommendation eligibility into runtime, complete evidence/freshness/degraded-mode hardening, add central decision composer/language layer, expand long-tail score/similar audit coverage, and keep score/similar outputs diagnostic-only until buyer-context recommendation policy is production-ready.",
+    currentState: "Phase 0 gates are implemented and green for the current backend scope. Standalone Decision Policy / Eligibility constants, decision output contract, policy evaluator, market-judgment isolation audit, provenance/freshness helper eval, degraded-mode inference helper, module-specific policy profile eval, score-insight and similar-cars real-output policy fixtures, score diagnostic language/tool/user-query gates, cross-model score diagnostic eval/tool/bridge smokes, public-chat score smoke, similar-cars filtering/relation/buyer-quality gates, evidence/freshness contract audit, and live-bridge decision runtime envelope smoke now exist. Score and similar runtime answers now expose decisionPolicy, evidence, provenance, degradedMode, sourceCollections and canUseForFinalRecommendation=false in the live bridge path; final recommendation runtime policy wiring and central composer are still pending.",
+    pending: "Wire final recommendation eligibility into runtime, add central decision composer/language layer, expand long-tail score/similar audit coverage, strengthen no-data recovery wording, and keep score/similar outputs diagnostic-only until buyer-context recommendation policy is production-ready.",
     items: [
       { key: "phase0_closure_report_v1", name: "Phase 0 closure report and gate bundle", status: "ready" },
 
       { key: "production_plan_v1", name: "ACI Decision Module Production Plan v1", status: "ready" },
       { key: "decision_policy_contract", name: "Decision Policy / Eligibility contract", status: "ready" },
       { key: "decision_output_schema", name: "Strict decision output schema", status: "ready" },
-      { key: "evidence_freshness_provenance", name: "Evidence/freshness/provenance fields", status: "partial" },
+      { key: "evidence_freshness_provenance", name: "Evidence/freshness/provenance fields", status: "ready" },
+      { key: "decision_runtime_envelope", name: "Live bridge decision runtime envelope for score/similar outputs", status: "ready" },
       { key: "degraded_mode_taxonomy", name: "Degraded-mode taxonomy", status: "ready" },
       { key: "final_recommendation_eligibility", name: "Final recommendation eligibility rules", status: "partial" },
       { key: "module_specific_policy_profiles", name: "Module-specific policy profiles", status: "partial" },
@@ -643,8 +644,8 @@ const ACI_PROGRESS_MODULES = [
       { key: "similar_cars_filtering_audit", name: "Similar cars tool filtering audit", status: "ready" },
       { key: "similar_cars_relation_mode_regression_eval", name: "Similar cars relation-mode regression eval", status: "ready" },
       { key: "similar_cars_buyer_quality_refresh_gate", name: "Similar cars buyer-quality repair + refresh gate", status: "ready" },
-      { key: "decision_eval_suites", name: "Decision eval suites and pass/fail gates", status: "partial" },
-      { key: "parallel_decision_gate_runner", name: "Parallel decision gate runner", status: "partial" },
+      { key: "decision_eval_suites", name: "Decision eval suites and pass/fail gates", status: "mostly_ready" },
+      { key: "parallel_decision_gate_runner", name: "Parallel decision gate runner", status: "mostly_ready" },
       { key: "fast_parallel_score_gate", name: "Fast parallel score decision gate", status: "ready" },
       { key: "market_judgement_isolation", name: "Market-judgment isolation tests", status: "partial" },
       { key: "empty_result_not_success", name: "Empty result must not pass as success", status: "ready" },
