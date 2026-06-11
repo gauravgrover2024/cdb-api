@@ -16,6 +16,10 @@ const SAFE_ALLOWED_TYPES = new Set([
   ALLOWED_ANSWER_TYPES.BLOCKED,
 ]);
 
+const FAST_MODE =
+  process.env.ACI_FINAL_ELIGIBILITY_SMOKE_FAST === '1' ||
+  String(process.env.ACI_FINAL_ELIGIBILITY_SMOKE_MODE || '').toLowerCase() === 'fast';
+
 const CASES = [
   {
     id: 'final-score-baleno',
@@ -49,7 +53,13 @@ const CASES = [
 
   const results = [];
 
-  for (const testCase of CASES) {
+  const runnableTestCases = FAST_MODE
+    ? CASES.filter((testCase) =>
+        ['final-decide-family-budget', 'diagnostic-score-not-final'].includes(testCase.id)
+      )
+    : CASES;
+
+  for (const testCase of runnableTestCases) {
     const response = await runAciCoreLiveBridge({
       message: testCase.message,
       context: {},
@@ -153,6 +163,7 @@ const CASES = [
 
   console.log(JSON.stringify({
     suite: 'ACI Final Recommendation Eligibility Runtime Smoke v1',
+    mode: FAST_MODE ? "fast" : "full",
     ok: true,
     total: results.length,
     passed: results.length,

@@ -2,7 +2,19 @@
 
 const { spawn } = require('child_process');
 
-const MAX_WORKERS = Math.max(1, Number(process.env.ACI_DECISION_GATE_WORKERS || 4));
+const DEFAULT_GATE_WORKERS = Object.freeze({
+  phase0: 2,
+  score: 4,
+  scoreFull: 3,
+  similar: 3,
+  similarFull: 2,
+});
+
+function getGateWorkers(gateName) {
+  const override = Number(process.env.ACI_DECISION_GATE_WORKERS || 0);
+  if (Number.isFinite(override) && override > 0) return Math.max(1, override);
+  return Math.max(1, DEFAULT_GATE_WORKERS[gateName] || 4);
+}
 const SLOW_TASK_WARN_MS = Math.max(1, Number(process.env.ACI_DECISION_GATE_SLOW_TASK_WARN_MS || 30000));
 
 const GATES = {
@@ -31,10 +43,10 @@ const GATES = {
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
   ],
   similarFull: [
-    { id: 'similar-relation-mode-eval', cmd: 'npm run -s aci:decision:similar-relation-mode:eval' },
-    { id: 'similar-filter-audit', cmd: 'npm run -s aci:decision:similar-filter:audit' },
-    { id: 'similar-output-fixture', cmd: 'npm run -s aci:decision:similar-output-fixture:eval' },
-    { id: 'similar-graph-smoke', cmd: 'node src/scripts/aci-decision/smokeSimilarModelGraphV1.cjs' },
+    { id: 'similar-relation-mode-eval-full', cmd: 'npm run -s aci:decision:similar-relation-mode:eval:full' },
+    { id: 'similar-filter-audit-full', cmd: 'npm run -s aci:decision:similar-filter:audit:full' },
+    { id: 'similar-output-fixture-full', cmd: 'npm run -s aci:decision:similar-output-fixture:eval:full' },
+    { id: 'similar-graph-smoke-full', cmd: 'npm run -s aci:decision:similar-graph:smoke:full' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
   ],
@@ -45,10 +57,11 @@ const GATES = {
     { id: 'degraded-mode-eval', cmd: 'npm run -s aci:decision:degraded-mode:eval' },
     { id: 'evidence-freshness-audit', cmd: 'npm run -s aci:decision:evidence-freshness:audit' },
     { id: 'decision-runtime-envelope-smoke', cmd: 'npm run -s aci:decision:runtime-envelope:smoke' },
-    { id: 'decision-final-eligibility-smoke', cmd: 'npm run -s aci:decision:final-eligibility:smoke' },
+    { id: 'decision-final-eligibility-smoke-fast', cmd: 'npm run -s aci:decision:final-eligibility:smoke:fast' },
     { id: 'decision-language-composer-smoke', cmd: 'npm run -s aci:decision:language-composer:smoke' },
     { id: 'decision-recovery-no-data-smoke', cmd: 'npm run -s aci:decision:recovery-no-data:smoke' },
     { id: 'decision-final-blocked-readiness-smoke', cmd: 'npm run -s aci:decision:final-blocked-readiness:smoke' },
+    { id: 'decision-phase4-closure-smoke', cmd: 'npm run -s aci:decision:closure:smoke' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },
@@ -108,17 +121,19 @@ async function runGate(gateName) {
   const results = [];
   let active = 0;
 
+  const maxWorkers = getGateWorkers(gateName);
+
   console.log(JSON.stringify({
     suite: 'ACI Decision Parallel Gate v1',
     gate: gateName,
-    workers: MAX_WORKERS,
+    workers: maxWorkers,
     taskCount: tasks.length,
     taskIds: tasks.map((task) => task.id),
   }, null, 2));
 
   await new Promise((resolve) => {
     const pump = () => {
-      while (active < MAX_WORKERS && queue.length > 0) {
+      while (active < maxWorkers && queue.length > 0) {
         const task = queue.shift();
         active += 1;
         console.log(`▶ ${task.id}`);
@@ -142,7 +157,7 @@ async function runGate(gateName) {
     suite: 'ACI Decision Parallel Gate v1',
     gate: gateName,
     ok: failed.length === 0,
-    workers: MAX_WORKERS,
+    workers: maxWorkers,
     total: results.length,
     passed: results.length - failed.length,
     failed: failed.length,
