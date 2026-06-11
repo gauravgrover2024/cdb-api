@@ -42,6 +42,16 @@ const ASK_POLICY = Object.freeze({
   suppressRepeatedRecommendationPrompts: true,
 });
 
+const BUYER_FACING_RENDERING_CONTRACT = Object.freeze({
+  version: 'aci_buyer_facing_question_rendering_contract_v1',
+  renderOnly: ['buyerFacingQuestions[0]', 'nextBestQuestion'],
+  preferredPath: 'buyerFacingQuestions[0]',
+  fallbackPath: 'nextBestQuestion',
+  maxVisibleQuestions: 1,
+  doNotRenderToBuyer: ['internalMissingInputMap', 'questions', 'missingInputs'],
+  internalOnlyPurpose: 'policy_debug_composer_only',
+});
+
 const asArray = (value) => (Array.isArray(value) ? value.filter(Boolean) : []);
 const asObject = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const cleanText = (value = '') => String(value || '').trim();
@@ -80,6 +90,7 @@ function buildBuyerInputClarificationPayload({
     buyerFacingQuestions: visibleQuestions,
     visibleQuestions,
     askPolicy: ASK_POLICY,
+    buyerFacingRenderingContract: BUYER_FACING_RENDERING_CONTRACT,
     questionStrategy: ASK_POLICY.mode,
     shouldAskBuyerNow: Boolean(nextBestQuestion),
     internalMissingInputMap: questions,

@@ -7,6 +7,7 @@ const {
 } = require('./aciDecisionPolicy.constants.cjs');
 const { buildBuyerDecisionInputContract } = require('./aciBuyerDecisionInput.contract.cjs');
 const { buildBuyerInputClarificationPayload } = require('./aciBuyerInputClarification.service.cjs');
+const { buildFinalRecommendationPolicyReadiness } = require('./aciFinalRecommendationReadiness.service.cjs');
 
 const asObject = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
 const asArray = (value) => (Array.isArray(value) ? value : []);
@@ -282,6 +283,14 @@ function buildFinalRecommendationEligibilityRuntime({
   }
 
   const uniqueBlockedReasons = [...new Set(blockedReasons.filter(Boolean))];
+  const finalPolicyReadiness = buildFinalRecommendationPolicyReadiness({
+    requestedFinalRecommendation,
+    buyerDecisionInput,
+    buyerInputClarification,
+    evidenceGate,
+    blockedReasons: uniqueBlockedReasons,
+  });
+
 
   return {
     version: 'aci_final_recommendation_eligibility_runtime_v1',
@@ -299,6 +308,7 @@ function buildFinalRecommendationEligibilityRuntime({
     missingMandatoryInputs: requestedFinalRecommendation ? missingMandatoryInputs : [],
     buyerDecisionInput: requestedFinalRecommendation ? buyerDecisionInput : null,
     buyerInputClarification: requestedFinalRecommendation ? buyerInputClarification : null,
+    finalPolicyReadiness: requestedFinalRecommendation ? finalPolicyReadiness : null,
     presentInputs,
     evidenceStatus: evidenceGate.evidenceStatus,
     evidenceConfidence: evidenceGate.confidence,

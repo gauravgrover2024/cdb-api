@@ -44,6 +44,10 @@ assert.strictEqual(partialPayload.askPolicy.learnFromSearchAndContext, true);
 assert.strictEqual(partialPayload.askPolicy.askOnlyWhenNotInferable, true);
 assert.strictEqual(partialPayload.askPolicy.suppressRepeatedRecommendationPrompts, true);
 assert.strictEqual(partialPayload.buyerFacingQuestions.length, 1);
+assert.strictEqual(partialPayload.buyerFacingRenderingContract.maxVisibleQuestions, 1);
+assert(partialPayload.buyerFacingRenderingContract.doNotRenderToBuyer.includes('internalMissingInputMap'));
+assert(partialPayload.buyerFacingRenderingContract.doNotRenderToBuyer.includes('questions'));
+assert(partialPayload.buyerFacingRenderingContract.doNotRenderToBuyer.includes('missingInputs'));
 assert.strictEqual(partialPayload.visibleQuestions.length, 1);
 assert(partialPayload.internalMissingInputMap.length >= partialPayload.buyerFacingQuestions.length);
 
