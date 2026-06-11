@@ -3,6 +3,7 @@
 const { spawn } = require('child_process');
 
 const MAX_WORKERS = Math.max(1, Number(process.env.ACI_DECISION_GATE_WORKERS || 4));
+const SLOW_TASK_WARN_MS = Math.max(1, Number(process.env.ACI_DECISION_GATE_SLOW_TASK_WARN_MS || 30000));
 
 const GATES = {
   score: [
@@ -22,6 +23,14 @@ const GATES = {
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
   ],
   similar: [
+    { id: 'similar-relation-mode-eval-fast', cmd: 'npm run -s aci:decision:similar-relation-mode:eval:fast' },
+    { id: 'similar-filter-audit-fast', cmd: 'npm run -s aci:decision:similar-filter:audit:fast' },
+    { id: 'similar-output-fixture', cmd: 'npm run -s aci:decision:similar-output-fixture:eval' },
+    { id: 'similar-graph-smoke', cmd: 'node src/scripts/aci-decision/smokeSimilarModelGraphV1.cjs' },
+    { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
+    { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
+  ],
+  similarFull: [
     { id: 'similar-relation-mode-eval', cmd: 'npm run -s aci:decision:similar-relation-mode:eval' },
     { id: 'similar-filter-audit', cmd: 'npm run -s aci:decision:similar-filter:audit' },
     { id: 'similar-output-fixture', cmd: 'npm run -s aci:decision:similar-output-fixture:eval' },
@@ -42,8 +51,8 @@ const GATES = {
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },
     { id: 'similar-output-fixture', cmd: 'npm run -s aci:decision:similar-output-fixture:eval' },
-    { id: 'similar-filter-audit', cmd: 'npm run -s aci:decision:similar-filter:audit' },
-    { id: 'similar-relation-mode-eval', cmd: 'npm run -s aci:decision:similar-relation-mode:eval' },
+    { id: 'similar-filter-audit-fast', cmd: 'npm run -s aci:decision:similar-filter:audit:fast' },
+    { id: 'similar-relation-mode-eval-fast', cmd: 'npm run -s aci:decision:similar-relation-mode:eval:fast' },
     { id: 'similar-graph-smoke', cmd: 'node src/scripts/aci-decision/smokeSimilarModelGraphV1.cjs' },
   ],
 };
@@ -137,10 +146,20 @@ async function runGate(gateName) {
     failed: failed.length,
     failedIds: failed.map((result) => result.id),
     durationsMs: Object.fromEntries(results.map((result) => [result.id, result.durationMs])),
+    slowTasks: results
+      .filter((result) => result.durationMs >= SLOW_TASK_WARN_MS)
+      .map((result) => ({ id: result.id, durationMs: result.durationMs, warnAtMs: SLOW_TASK_WARN_MS })),
   };
 
   console.log('\n===== PARALLEL GATE SUMMARY =====');
   console.log(JSON.stringify(summary, null, 2));
+
+  if (summary.slowTasks.length > 0) {
+    console.log('\n===== SLOW TASK WARNINGS =====');
+    for (const slowTask of summary.slowTasks) {
+      console.log(`⚠️ ${slowTask.id} took ${slowTask.durationMs}ms (warnAt ${slowTask.warnAtMs}ms)`);
+    }
+  }
 
   if (failed.length > 0) {
     console.log('\n===== FAILURE OUTPUT TAILS =====');

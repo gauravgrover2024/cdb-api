@@ -12,6 +12,38 @@ const FORBIDDEN_ALWAYS = [
 
 const TEMPLATE_CASES = [
   {
+    key: 'decision_final_blocked_missing_context',
+    input: {
+      missingInputs: ['city', 'budget ceiling', 'safety priority'],
+      nextCapabilities: ['price', 'safety', 'running cost'],
+    },
+    mustMatch: /\b(cannot|need|missing|recommendation|compare)\b/i,
+  },
+  {
+    key: 'decision_final_blocked_partial_results',
+    input: {
+      missingInputs: ['city', 'budget ceiling', 'safety priority'],
+    },
+    mustMatch: /\b(results|starting points|discovery|recommendation|missing|blocked)\b/i,
+  },
+  {
+    key: 'decision_no_useful_evidence_recovery',
+    input: {
+      topic: 'final recommendation',
+      nextCapabilities: ['price', 'features', 'comparison'],
+    },
+    mustMatch: /\b(evidence|data|guess|recover|help)\b/i,
+  },
+  {
+    key: 'decision_exact_variant_unavailable_recovery',
+    input: {
+      model: 'Baleno',
+      variant: 'Alpha Plus',
+      nextCapabilities: ['listed variants', 'model-level price', 'features'],
+    },
+    mustMatch: /\b(exact|variant|catalog|listed|model)\b/i,
+  },
+  {
     key: 'decision_diagnostic_only_note',
     mustMatch: /\bdiagnostic-only\b/i,
   },
@@ -44,8 +76,8 @@ const TEMPLATE_CASES = [
   const results = [];
 
   for (const item of TEMPLATE_CASES) {
-    const rendered = renderAciTemplate(item.key, {}, { seed: `decision-language-smoke|${item.key}` });
-    const text = renderAciLanguageText(item.key, {}, { seed: `decision-language-smoke|${item.key}` });
+    const rendered = renderAciTemplate(item.key, item.input || {}, { seed: `decision-language-smoke|${item.key}` });
+    const text = renderAciLanguageText(item.key, item.input || {}, { seed: `decision-language-smoke|${item.key}` });
 
     assert(rendered && !rendered.missingTemplate, `${item.key}: template missing`);
     assert(text, `${item.key}: rendered text missing`);

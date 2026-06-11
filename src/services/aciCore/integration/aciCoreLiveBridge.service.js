@@ -3626,6 +3626,87 @@ const maybeReturnExactSingleFeatureFastPath = async ({
 
 
 
+const DECISION_BUYER_CONTEXT_LABELS = Object.freeze({
+  city: "city",
+  budgetOrPriceCeiling: "budget ceiling",
+  bodyPreferenceOrPrimaryUseCase: "body type or primary use case",
+  familySizeOrOccupancyUse: "family size or occupancy use",
+  fuelPreferenceOrMonthlyRunning: "fuel preference or monthly running",
+  transmissionPreference: "transmission preference",
+  safetyPriority: "safety priority",
+  featurePriority: "feature priorities",
+  shortlistedModelsOrDiscoveryScope: "shortlisted cars or discovery scope",
+});
+
+const getDecisionMissingInputLabels = (items = []) =>
+  (Array.isArray(items) ? items : [])
+    .map((item) => DECISION_BUYER_CONTEXT_LABELS[item] || String(item || "").replace(/([A-Z])/g, " $1").toLowerCase().trim())
+    .filter(Boolean);
+
+const DECISION_SAFE_NEXT_CAPABILITIES = Object.freeze([
+  "price",
+  "features",
+  "safety",
+  "running cost",
+  "variant value",
+  "similar alternatives",
+]);
+
+const isWeakGenericClarificationAnswer = (response = {}) => {
+  const answer = cleanText(response.answer || response.data?.answer || "");
+  return (
+    response.intent === "clarification" ||
+    response.tool === "clarification" ||
+    /what would you like to check about the car\??/i.test(answer) ||
+    /which car should i check this for\??/i.test(answer)
+  );
+};
+
+const buildFinalRecommendationBlockedAnswer = ({ eligibility = {}, response = {}, bridge = {} } = {}) => {
+  const missingInputs = getDecisionMissingInputLabels(eligibility.missingMandatoryInputs);
+  const templateKey = isWeakGenericClarificationAnswer(response)
+    ? "decision_final_blocked_missing_context"
+    : "decision_final_blocked_partial_results";
+
+  return renderAciLanguageText(
+    templateKey,
+    {
+      missingInputs,
+      nextCapabilities: DECISION_SAFE_NEXT_CAPABILITIES,
+    },
+    {
+      seed: [
+        templateKey,
+        bridge.effectiveMessage,
+        bridge.originalMessage,
+        response.intent,
+        response.tool,
+        missingInputs.join("|"),
+      ].filter(Boolean).join("|"),
+    },
+  );
+};
+
+const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}, bridge = {} } = {}) => {
+  if (eligibility?.requestedFinalRecommendation !== true) return response;
+  if (!isWeakGenericClarificationAnswer(response)) return response;
+
+  const answer = buildFinalRecommendationBlockedAnswer({ eligibility, response, bridge });
+  if (!answer) return response;
+
+  return {
+    ...response,
+    title: response.title === "Need one detail" ? "Need buyer context" : response.title,
+    answer,
+    clarification: response.clarification || answer,
+    data: {
+      ...(response.data || {}),
+      title: response.data?.title === "Need one detail" ? "Need buyer context" : response.data?.title,
+      answer,
+    },
+  };
+};
+
 const getDecisionDiagnosticOnlyNote = (seed = "") =>
   renderAciLanguageText("decision_diagnostic_only_note", {}, { seed }) ||
   "Diagnostic-only output.";
@@ -4487,15 +4568,20 @@ const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {}, context = {
   if (!envelope) {
     if (!shouldAttachFinalRecommendationEligibility) return response;
 
+    const responseWithFinalBlockedAnswer = applyFinalRecommendationBlockedAnswer(response, {
+      eligibility: finalRecommendationEligibility,
+      bridge,
+    });
+
     return {
-      ...response,
+      ...responseWithFinalBlockedAnswer,
       finalRecommendationEligibility,
       data: {
-        ...(response.data || {}),
+        ...(responseWithFinalBlockedAnswer.data || {}),
         finalRecommendationEligibility,
       },
       meta: {
-        ...(response.meta || {}),
+        ...(responseWithFinalBlockedAnswer.meta || {}),
         finalRecommendationEligibility,
       },
     };
@@ -5261,7 +5347,9 @@ export const runAciCoreLiveBridge = async ({
           canUseForFinalRecommendation: false,
           finalRecommendationEnabled: false,
           reason:
-            "These are diagnostic module scores only. Final recommendation needs buyer-context weighting, similar-cars graph, upgrade ladder, service/resale evidence and recommendation policy.",
+            renderAciLanguageText("decision_score_guardrail_reason", {}, {
+              seed: "live_bridge_score_guardrail",
+            }),
         }
       : null;
 

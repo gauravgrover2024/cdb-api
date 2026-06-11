@@ -102,6 +102,14 @@ const buildInputWithDerivedValues = (input = {}) => {
   );
   const firstSupportedCity = asArray(normalized.supportedCities).map(cleanText).filter(Boolean)[0] || '';
   const missingCount = Number(normalized.missingCount ?? normalized.unavailableCount ?? 0);
+  const missingInputs = formatList(
+    normalized.missingInputs || normalized.missingMandatoryInputs,
+    cleanText(normalized.missingInput || 'the missing buyer details'),
+  );
+  const nextCapabilities = formatList(
+    normalized.nextCapabilities || normalized.safeNextCapabilities || normalized.capabilities,
+    cleanText(normalized.nextCapability || 'price, features, safety, running cost and comparison checks'),
+  );
 
   return {
     ...normalized,
@@ -119,6 +127,10 @@ const buildInputWithDerivedValues = (input = {}) => {
     availableCount: cleanText(normalized.availableCount ?? 0),
     totalCount: cleanText(normalized.totalCount ?? 0),
     missingCount: cleanText(missingCount),
+    missingInputs,
+    missingMandatoryInputs: missingInputs,
+    nextCapabilities,
+    safeNextCapabilities: nextCapabilities,
     missingVariantWord: missingCount === 1 ? 'variant' : 'variants',
     variantCount: cleanText(normalized.variantCount ?? normalized.totalVariants ?? 0),
     priceLine: cleanText(normalized.priceLine || 'price data is available.'),

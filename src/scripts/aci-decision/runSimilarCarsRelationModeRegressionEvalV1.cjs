@@ -17,6 +17,7 @@ const {
 } = require('../../services/aciCore/decisionPolicy/aciDecisionModulePolicyProfiles.service.cjs');
 
 const GRAPH_COLLECTION = process.env.ACI_SIMILAR_MODEL_GRAPH_COLLECTION || 'aci_vehicle_similar_model_graph_v1';
+const DEFAULT_GRAPH_SAMPLE_LIMIT = Math.max(1, Number(process.env.ACI_SIMILAR_RELATION_SAMPLE_LIMIT || 80));
 const GRAPH_VERSION = 'similar_model_graph_v1';
 
 const DEFAULT_RELATIONS = new Set([
@@ -107,7 +108,7 @@ function buildPolicyWrappedOutput({ rows, mode, traceWarnings = [] }) {
   });
 }
 
-async function getCandidateGraphs(db, limit = 80) {
+async function getCandidateGraphs(db, limit = DEFAULT_GRAPH_SAMPLE_LIMIT) {
   return db.collection(GRAPH_COLLECTION)
     .find(
       {
@@ -297,6 +298,7 @@ async function main() {
     ok: failures.length === 0,
     graphCollection: GRAPH_COLLECTION,
     graphVersion: GRAPH_VERSION,
+    sampleLimit: DEFAULT_GRAPH_SAMPLE_LIMIT,
     inspectedGraphCount: inspected.length,
     failed: failures.length,
     failureIds: [...new Set(failures.map((failure) => failure.id))],

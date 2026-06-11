@@ -233,6 +233,13 @@ export const safeJsonText = (value = {}) => {
 /*  Optional Mongo Access                                                     */
 /* -------------------------------------------------------------------------- */
 
+const executorDecisionLanguageText = (templateKey = "", input = {}) => {
+  if (templateKey === "decision_score_module_summary_note") {
+    return "This is diagnostic-only module scoring, not a final recommendation.";
+  }
+  return "";
+};
+
 const ACI_EXECUTOR_COLLECTION_CACHE_TTL_MS =
   Number(process.env.ACI_COLLECTION_DISCOVERY_CACHE_TTL_MS || 10 * 60 * 1000);
 
@@ -4878,7 +4885,10 @@ export const runtimeVehicleScoreInsight = async ({
         intent: "vehicle_score_insight",
         canvasType: "score_insight_canvas",
         inlineType: "score_insight_summary",
-        answer: `I found ${modelLabel}. To judge value properly, I need the fuel/transmission or variant, because value is scored within the same model family. These are diagnostic module scores, not a final recommendation.`,
+        answer: `I found ${modelLabel}. To judge value properly, I need the fuel/transmission or variant, because value is scored within the same model family. ${executorDecisionLanguageText("decision_score_module_summary_note", {
+          operation: "same_family_value_insights",
+          modelLabel,
+        })}`,
         data: {
           modelKey: runtimeArgs.modelKey,
           operation: "same_family_value_insights",

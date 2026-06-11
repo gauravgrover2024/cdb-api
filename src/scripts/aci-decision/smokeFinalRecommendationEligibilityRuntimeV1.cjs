@@ -89,6 +89,12 @@ const CASES = [
         eligibility.blockedReasons.includes(BLOCKED_REASONS.EVIDENCE_THRESHOLD_NOT_MET),
         `${testCase.id}: specific runtime block reason missing`
       );
+
+      if ((response.intent === 'clarification' || response.tool === 'clarification') && eligibility.requestedFinalRecommendation === true) {
+        const answerText = String(response.answer || '');
+        assert(!/What would you like to check about the car\?/i.test(answerText), `${testCase.id}: weak generic final-intent clarification leaked`);
+        assert(/final|recommend|buyer context|missing|city|budget|compare|diagnostic/i.test(answerText), `${testCase.id}: intelligent final-blocked wording missing`);
+      }
     } else {
       assert(!eligibility, `${testCase.id}: finalRecommendationEligibility should not attach for non-final diagnostic request`);
     }

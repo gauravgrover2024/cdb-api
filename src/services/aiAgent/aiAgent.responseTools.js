@@ -282,6 +282,19 @@ export const getRuntimeRows = (runtimeData = {}) =>
       runtimeData.results,
   );
 
+const responseToolDecisionLanguageText = (templateKey = "", input = {}) => {
+  if (templateKey === "decision_score_module_summary_note") {
+    return "This is diagnostic-only module scoring, not a final recommendation.";
+  }
+  if (templateKey === "decision_similar_graph_guardrail_reason") {
+    return "Similar cars graph v1 is a deterministic discovery aid, not a purchase verdict.";
+  }
+  if (templateKey === "decision_similar_graph_note") {
+    return "This is a deterministic alternatives graph, not a purchase verdict.";
+  }
+  return "";
+};
+
 const priceLabelFromRow = (row = {}, labelKeys = [], valueKeys = []) => {
   for (const key of labelKeys) {
     const label = cleanText(row?.[key]);
@@ -1770,7 +1783,9 @@ export const buildVehicleSimilarResponse = ({
             .slice(0, 5)
             .map((row) => row.displayName)
             .filter(Boolean)
-            .join(", ")}. This is a deterministic alternatives graph, not a purchase verdict.`
+            .join(", ")}. ${responseToolDecisionLanguageText("decision_similar_graph_note", {
+              mode: "similar_graph_answer",
+            })}`
         : `I could not find enough similar-car graph data for ${anchorLabel} yet.`
     );
 
@@ -1792,7 +1807,9 @@ export const buildVehicleSimilarResponse = ({
       usageGuardrail: runtimeData.usageGuardrail || {
         canUseForFinalRecommendation: false,
         reason:
-          "Similar cars graph v1 is a deterministic discovery aid, not a purchase verdict.",
+          responseToolDecisionLanguageText("decision_similar_graph_guardrail_reason", {
+            mode: "similar_graph_guardrail",
+          }),
       },
     },
     actions: runtimeData.actions || [],
@@ -2898,8 +2915,9 @@ export const buildVehicleScoreInsightResponse = ({
         : `${variantName}: diagnostic value data is available.`
     );
 
-  const guardrailText =
-    "These are diagnostic module scores, not a final recommendation.";
+  const guardrailText = responseToolDecisionLanguageText("decision_score_module_summary_note", {
+    operation,
+  });
   const modelSummaries = scoreDiagnosticModelSummaries;
   const moduleComparisons = asArray(
     data.moduleComparisons ||
