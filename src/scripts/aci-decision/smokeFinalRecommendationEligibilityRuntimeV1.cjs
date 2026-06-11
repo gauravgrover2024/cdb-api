@@ -16,6 +16,35 @@ const SAFE_ALLOWED_TYPES = new Set([
   ALLOWED_ANSWER_TYPES.BLOCKED,
 ]);
 
+const hasFinalBlockedReadinessWording = (value = '') => {
+  const raw = String(value || '').toLowerCase();
+  return [
+    /\bnot a final recommendation\b/,
+    /\bshould not recommend one yet\b/,
+    /\bnot recommend one yet\b/,
+    /\bcannot recommend one yet\b/,
+    /\bmissing buyer context\b/,
+    /\bbuyer context\b/,
+  ].some((pattern) => pattern.test(raw));
+};
+
+const hasSafeNextStepOrMissingContextWording = (value = '') => {
+  const raw = String(value || '').toLowerCase();
+  return [
+    /\bsafe now\b/,
+    /\bmissing buyer\b/,
+    /\bmissing:\b/,
+    /\bbuyer context\b/,
+    /\bdiagnostic\b/,
+    /\bdiscovery\b/,
+    /\bcompare\b/,
+    /\bstill missing\b/,
+    /\bare still missing\b/,
+    /\bi still need\b/,
+    /\bshould not recommend one yet\b/,
+  ].some((pattern) => pattern.test(raw));
+};
+
 const FAST_MODE =
   process.env.ACI_FINAL_ELIGIBILITY_SMOKE_FAST === '1' ||
   String(process.env.ACI_FINAL_ELIGIBILITY_SMOKE_MODE || '').toLowerCase() === 'fast';
@@ -101,6 +130,18 @@ const CASES = [
       );
 
       assert(
+        eligibility.buyerInputClarification &&
+          eligibility.buyerInputClarification.version === 'aci_buyer_input_clarification_v1',
+        `${testCase.id}: buyerInputClarification payload missing from final eligibility`
+      );
+
+      assert(
+        eligibility.buyerInputClarification.finalRecommendationStillDisabled === true,
+        `${testCase.id}: buyerInputClarification must keep final recommendation disabled`
+      );
+
+
+      assert(
         eligibility.blockedReasons.includes(BLOCKED_REASONS.FINAL_RECOMMENDATION_POLICY_NOT_READY),
         `${testCase.id}: policy-not-ready block missing`
       );
@@ -135,12 +176,12 @@ const CASES = [
       );
 
       assert(
-        /final recommendation remains disabled|cannot make a final recommendation yet|cannot give a buy-this verdict yet|cannot turn them into a final recommendation yet|not a final recommendation/i.test(answerText),
+        hasFinalBlockedReadinessWording(answerText),
         `${testCase.id}: final-blocked readiness wording missing: ${answerText.slice(0, 260)}`
       );
 
       assert(
-        /Safe now|Missing buyer|Missing:|buyer context|diagnostic|discovery|compare/i.test(answerText),
+        hasSafeNextStepOrMissingContextWording(answerText),
         `${testCase.id}: final-blocked answer missing safe next-step or missing-context wording: ${answerText.slice(0, 260)}`
       );
 

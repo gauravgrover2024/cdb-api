@@ -64,6 +64,7 @@ const GATES = {
     { id: 'decision-phase4-closure-smoke', cmd: 'npm run -s aci:decision:closure:smoke' },
     { id: 'buyer-decision-input-contract-smoke', cmd: 'npm run -s aci:decision:buyer-input:smoke' },
     { id: 'buyer-context-extraction-smoke', cmd: 'npm run -s aci:decision:buyer-context:smoke' },
+    { id: 'buyer-input-clarification-smoke', cmd: 'npm run -s aci:decision:buyer-clarification:smoke' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },

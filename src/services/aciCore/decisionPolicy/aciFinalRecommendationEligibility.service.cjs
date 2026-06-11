@@ -6,6 +6,7 @@ const {
   MANDATORY_FINAL_RECOMMENDATION_INPUTS,
 } = require('./aciDecisionPolicy.constants.cjs');
 const { buildBuyerDecisionInputContract } = require('./aciBuyerDecisionInput.contract.cjs');
+const { buildBuyerInputClarificationPayload } = require('./aciBuyerInputClarification.service.cjs');
 
 const asObject = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
 const asArray = (value) => (Array.isArray(value) ? value : []);
@@ -248,6 +249,12 @@ function buildFinalRecommendationEligibilityRuntime({
   const moduleName = getRuntimeModule({ bridge, response });
   const buyerDecisionInput = buildBuyerDecisionInputContract({ context, response });
   const { presentInputs, missingMandatoryInputs } = buyerDecisionInput;
+  const buyerInputClarification = buildBuyerInputClarificationPayload({
+    missingMandatoryInputs: requestedFinalRecommendation ? missingMandatoryInputs : [],
+    buyerDecisionInput,
+    requestedFinalRecommendation,
+  });
+
   const evidenceGate = getEvidenceGate({
     response: {
       ...response,
@@ -291,6 +298,7 @@ function buildFinalRecommendationEligibilityRuntime({
     blockedReasons: uniqueBlockedReasons,
     missingMandatoryInputs: requestedFinalRecommendation ? missingMandatoryInputs : [],
     buyerDecisionInput: requestedFinalRecommendation ? buyerDecisionInput : null,
+    buyerInputClarification: requestedFinalRecommendation ? buyerInputClarification : null,
     presentInputs,
     evidenceStatus: evidenceGate.evidenceStatus,
     evidenceConfidence: evidenceGate.confidence,
