@@ -12,6 +12,10 @@ const {
   SOURCE_CLASSES,
 } = require('../../services/aciCore/decisionPolicy/aciDecisionPolicy.constants.cjs');
 
+const FAST_MODE =
+  process.env.ACI_RUNTIME_ENVELOPE_SMOKE_FAST === '1' ||
+  String(process.env.ACI_RUNTIME_ENVELOPE_SMOKE_MODE || '').toLowerCase() === 'fast';
+
 const CASES = [
   {
     id: 'score-baleno-overall',
@@ -67,7 +71,13 @@ const okNonFinalAnswerTypes = new Set([
 
   const results = [];
 
-  for (const testCase of CASES) {
+  const runnableTestCases = FAST_MODE
+    ? CASES.filter((testCase) =>
+        ['score-baleno-overall', 'similar-creta'].includes(testCase.id)
+      )
+    : CASES;
+
+  for (const testCase of runnableTestCases) {
     const response = await runAciCoreLiveBridge({
       message: testCase.message,
       context: {},
@@ -118,6 +128,7 @@ const okNonFinalAnswerTypes = new Set([
 
   const summary = {
     suite: 'ACI Decision Runtime Envelope Smoke v1',
+    mode: FAST_MODE ? "fast" : "full",
     ok: true,
     total: results.length,
     passed: results.length,

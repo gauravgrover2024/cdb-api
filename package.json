@@ -158,7 +158,10 @@
     "aci:decision:similar-graph:smoke:full": "node src/scripts/aci-decision/smokeSimilarModelGraphV1.cjs",
     "aci:decision:closure:smoke": "node src/scripts/aci-decision/smokeDecisionPhase4ClosureGateV1.cjs",
     "aci:decision:final-eligibility:smoke:fast": "ACI_FINAL_ELIGIBILITY_SMOKE_FAST=1 node src/scripts/aci-decision/smokeFinalRecommendationEligibilityRuntimeV1.cjs",
-    "aci:decision:final-eligibility:smoke:full": "node src/scripts/aci-decision/smokeFinalRecommendationEligibilityRuntimeV1.cjs"
+    "aci:decision:final-eligibility:smoke:full": "node src/scripts/aci-decision/smokeFinalRecommendationEligibilityRuntimeV1.cjs",
+    "aci:decision:buyer-input:smoke": "node src/scripts/aci-decision/smokeBuyerDecisionInputContractV1.cjs",
+    "aci:decision:runtime-envelope:smoke:fast": "ACI_RUNTIME_ENVELOPE_SMOKE_FAST=1 node src/scripts/aci-decision/smokeDecisionRuntimeEnvelopeV1.cjs",
+    "aci:decision:runtime-envelope:smoke:full": "node src/scripts/aci-decision/smokeDecisionRuntimeEnvelopeV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

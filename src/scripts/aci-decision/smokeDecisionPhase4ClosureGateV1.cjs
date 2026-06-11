@@ -34,6 +34,12 @@ add('closure-script-wired', scripts['aci:decision:closure:smoke'] === 'node src/
 add('phase0-has-closure-smoke', phase0Block.includes('decision-phase4-closure-smoke'));
 
 add(
+  'phase0-uses-fast-runtime-envelope',
+  phase0Block.includes('decision-runtime-envelope-smoke-fast') &&
+    phase0Block.includes('runtime-envelope:smoke:fast')
+);
+
+add(
   'phase0-uses-fast-final-eligibility',
   phase0Block.includes('decision-final-eligibility-smoke-fast') &&
     phase0Block.includes('final-eligibility:smoke:fast')
@@ -46,7 +52,7 @@ add(
 
 add(
   'phase0-has-safe-default-worker-count',
-  /phase0:\s*2/.test(gateRunner) &&
+  /phase0:\s*1/.test(gateRunner) &&
     /function getGateWorkers/.test(gateRunner) &&
     /ACI_DECISION_GATE_WORKERS/.test(gateRunner)
 );

@@ -90,6 +90,17 @@ const CASES = [
       assert(SAFE_ALLOWED_TYPES.has(eligibility.allowedAnswerType), `${testCase.id}: unsafe allowedAnswerType ${eligibility.allowedAnswerType}`);
 
       assert(
+        eligibility.buyerDecisionInput &&
+          eligibility.buyerDecisionInput.version === 'aci_buyer_decision_input_contract_v1',
+        `${testCase.id}: buyerDecisionInput contract missing from final eligibility`
+      );
+
+      assert(
+        Array.isArray(eligibility.buyerDecisionInput.missingMandatoryInputs),
+        `${testCase.id}: buyerDecisionInput missingMandatoryInputs missing`
+      );
+
+      assert(
         eligibility.blockedReasons.includes(BLOCKED_REASONS.FINAL_RECOMMENDATION_POLICY_NOT_READY),
         `${testCase.id}: policy-not-ready block missing`
       );
