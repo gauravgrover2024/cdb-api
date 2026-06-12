@@ -3816,29 +3816,31 @@ const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, respons
   );
 };
 
-const formatScoreSignalLine = (scoreSignals = {}) => {
-  const labels = {
-    safety: "safety",
-    features: "features",
-    value: "value",
-    runningCost: "running cost",
-    familyPracticality: "family practicality",
-    comfort: "comfort",
-    regretRisk: "regret risk",
-  };
-  const entries = Object.entries(scoreSignals || {})
-    .map(([key, value]) => {
-      if (value && typeof value === "object") {
-        const band = cleanText(value.band || value.status || value.label);
-        const score = value.score !== undefined && value.score !== null && value.score !== "" ? ` ${value.score}` : "";
-        return band || score ? `${labels[key] || key}${score ? ` score${score}` : ""}${band ? ` (${band})` : ""}` : "";
-      }
-      return cleanText(value) ? `${labels[key] || key}: ${value}` : "";
-    })
-    .filter(Boolean);
+const buyerSafeScoreSignalText = (key = "", value = {}) => {
+  const band = cleanText(value?.band || value?.status || value?.label || "").toLowerCase().replace(/_/g, " ");
+  const strong = /\b(strong|good|high)\b/.test(band);
+  const weak = /\b(weak|very weak|poor|low)\b/.test(band);
+  const average = /\b(average|moderate|ok)\b/.test(band);
 
-  return formatGuidanceList(entries);
+  if (key === "features") return strong ? "feature evidence looks positive" : weak ? "feature evidence needs comparison" : average ? "feature evidence looks adequate" : "";
+  if (key === "value") return strong ? "value evidence looks positive versus nearby variants" : weak ? "value evidence needs nearby-variant comparison" : average ? "value evidence needs nearby-variant comparison" : "";
+  if (key === "runningCost") return strong ? "running-cost evidence looks positive" : weak ? "running-cost evidence is not the main reason to choose it" : average ? "running-cost evidence looks acceptable" : "";
+  if (key === "safety") return strong ? "safety evidence looks positive, but verify source applicability" : "safety evidence needs verified-source review";
+  if (key === "familyPracticality") return strong ? "family-practicality evidence looks positive" : weak ? "family-practicality evidence needs use-case review" : average ? "family-practicality evidence looks acceptable" : "";
+  if (key === "comfort") return strong ? "comfort evidence looks positive" : weak ? "comfort evidence needs comparison" : average ? "comfort evidence looks acceptable" : "";
+  if (key === "regretRisk") return strong || weak || average ? "regret-risk evidence needs use-case review" : "";
+
+  return "";
 };
+
+const formatScoreSignalLine = (scoreSignals = {}) => {
+  return formatGuidanceList(
+    Object.entries(scoreSignals || {})
+      .map(([key, value]) => buyerSafeScoreSignalText(key, value))
+      .filter(Boolean)
+  );
+};
+
 
 const buildBuyerGuidanceEvidenceValues = (evidencePack = {}) => {
   const scoreLine = formatScoreSignalLine(evidencePack.scoreSignals || {});
@@ -3960,25 +3962,35 @@ const isUnsafeBuyerGuidanceEvidenceLine = (line = "") =>
 
 const buyerSafeEvidenceLine = (line = "") => {
   const text = cleanText(line);
-  if (!text || isUnsafeBuyerGuidanceEvidenceLine(text)) return "";
+  if (!text) return "";
 
-  if (/Feature-rich for its scoring context/i.test(text)) return "feature equipment looks strong";
-  if (/Strong city-use suitability/i.test(text)) return "city-use suitability looks strong";
-  if (/Strong mileage\/running-cost signal/i.test(text)) return "running-cost signal looks strong";
-  if (/Strong same-model value signal/i.test(text)) return "value looks promising versus nearby variants";
-  if (/Same-model value score is weak/i.test(text)) return "value may be a concern versus nearby variants";
-  if (/Premium comfort score is limited/i.test(text)) return "comfort may not be the strongest reason to choose it";
-  if (/Safety\/crash applicability needs verified-source caution/i.test(text)) return "safety evidence needs verified-source caution";
-  if (/features score\s+\d+(?:\.\d+)?\s*$begin:math:text$strong\$end:math:text$/i.test(text)) return "feature equipment looks strong";
-  if (/value score\s+\d+(?:\.\d+)?\s*$begin:math:text$(?:very_weak|weak)\$end:math:text$/i.test(text)) return "value may be a concern versus nearby variants";
-  if (/running cost score\s+\d+(?:\.\d+)?\s*$begin:math:text$strong\$end:math:text$/i.test(text)) return "running-cost signal looks strong";
-  if (/safety score\s+\d+(?:\.\d+)?/i.test(text)) return "safety evidence needs a careful check before a family or highway decision";
-  if (/comfort score\s+\d+(?:\.\d+)?\s*$begin:math:text$(?:very_weak|weak)\$end:math:text$/i.test(text)) return "comfort may not be the strongest reason to choose it";
-  if (/regret risk score\s+\d+(?:\.\d+)?/i.test(text)) return "regret risk does not look high, but depends on use case";
+  const numericScore = "\\d+(?:\\.\\d+)?\\s*[(][^)]+[)]";
+  const replacements = [
+    [new RegExp("\\bfeatures?\\s+score\\s+" + numericScore, "i"), "feature evidence looks positive"],
+    [new RegExp("\\bvalue\\s+score\\s+" + numericScore, "i"), "value evidence needs nearby-variant comparison"],
+    [new RegExp("\\brunning\\s*cost\\s+score\\s+" + numericScore, "i"), "running-cost evidence looks positive"],
+    [new RegExp("\\bmileage\\s+score\\s+(?:is\\s+)?(?:not\\s+available|not\\s+fully\\s+scored|unavailable)", "i"), "mileage evidence is incomplete"],
+    [new RegExp("\\bsafety\\s+score\\s+" + numericScore, "i"), "safety evidence needs verified-source review"],
+    [new RegExp("\\bfamily\\s*practicality\\s+score\\s+" + numericScore, "i"), "family-practicality evidence needs use-case review"],
+    [new RegExp("\\bcomfort\\s+score\\s+" + numericScore, "i"), "comfort evidence needs comparison"],
+    [new RegExp("\\bregret\\s*risk\\s+score\\s+" + numericScore, "i"), "regret-risk evidence needs use-case review"],
+  ];
 
-  if (/\bscore\s+\d+(?:\.\d+)?\b/i.test(text)) return "";
+  for (const [pattern, safeText] of replacements) {
+    if (pattern.test(text)) return safeText;
+  }
+
+  if (/Feature-rich for its scoring context/i.test(text)) return "feature evidence looks positive";
+  if (/Strong city-use suitability/i.test(text)) return "city-use evidence looks positive";
+  if (/Strong mileage\/running-cost signal/i.test(text)) return "running-cost evidence looks positive";
+  if (/Same-model value score is weak/i.test(text)) return "value evidence needs nearby-variant comparison";
+  if (/Premium comfort score is limited/i.test(text)) return "comfort evidence needs comparison";
+  if (/Safety\/crash applicability needs verified-source caution/i.test(text)) return "safety evidence needs verified-source review";
+
+  if (isUnsafeBuyerGuidanceEvidenceLine(text)) return "";
   return text;
 };
+
 
 const uniqueBuyerSafeGuidanceList = (items = [], limit = 3) => {
   const seen = new Set();
@@ -4016,9 +4028,9 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     [/Feature-rich for its scoring context/gi, "feature equipment looks strong"],
     [/Strong city-use suitability/gi, "city-use suitability looks strong"],
     [/Strong mileage\/running-cost signal/gi, "running-cost signal looks strong"],
-    [/Strong same-model value signal/gi, "value looks promising versus nearby variants"],
-    [/Same-model value score is weak/gi, "value may be a concern versus nearby variants"],
-    [/Premium comfort score is limited/gi, "comfort may not be the strongest reason to choose it"],
+    [/Strong same-model value signal/gi, "value evidence looks positive versus nearby variants"],
+    [/Same-model value score is weak/gi, "value evidence needs comparison with nearby variants"],
+    [/Premium comfort score is limited/gi, "comfort evidence is not the strongest reason to choose it"],
     [/Safety\/crash applicability needs verified-source caution/gi, "safety evidence needs verified-source caution"],
     [/Feature score is taxonomy-driven and layered\.?\s*Safety-critical equipment is handled mainly by safetyScore\.?/gi, ""],
     [/Performance score v2 is global-percentile based; segment-relative performance will be added later\.?/gi, ""],
@@ -4026,6 +4038,7 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     [/Power-to-weight unavailable; performance score uses power\/torque only\.?/gi, ""],
     [/Highway score v2 uses performance, safety, mileage and highway-assist features; ride comfort, NVH, tyre quality and braking feel are not yet scored\.?/gi, ""],
     [/Boot space data missing or reduced due to CNG tank placement; score excludes boot normalization\.?/gi, ""],
+    [/Mileage score is not available or not fully scored\.?/gi, ""],
     [/\bscore snapshot\b[^.]*\.?/gi, ""],
     [/\bThis score view is diagnostic-only and should not be treated as a final recommendation\.?/gi, ""],
     [/\bThis is diagnostic-only module scoring, not a final recommendation\.?/gi, ""],
@@ -4033,21 +4046,33 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     [/\bTreat this as diagnostic-only guidance, not a final recommendation\.?/gi, ""],
   ];
 
-  for (const [pattern, replacement] of replacements) {
-    text = text.replace(pattern, replacement);
+  for (const [pattern, safeText] of replacements) {
+    text = text.replace(pattern, safeText);
   }
 
-  // Remove raw score dumps, while keeping buyer-safe summary words.
-  text = text.replace(/\b(?:safety|features|value|running cost|family practicality|comfort|regret risk) score\s+\d+(?:\.\d+)?\s*$begin:math:text$[^)]+\$end:math:text$,?\s*/gi, "");
-  text = text.replace(/\b(taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|ground-clearance normalization|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable)\b[^.]*\.?/gi, "");
+  // Remove raw module-score dumps from buyer-facing guidance.
+  text = text.replace(
+    /\s*(?:,\s*)?(?:and\s+)?(?:safety|features?|value|running\s*cost|mileage|family\s*practicality|comfort|regret\s*risk)\s+score\s+(?:is\s+)?(?:not\s+available|not\s+fully\s+scored|unavailable|\d+(?:\.\d+)?\s*[(][^)]+[)])\.?/gi,
+    ""
+  );
 
-  // Clean punctuation after removals.
+  // Remove remaining technical terms if any clause survived.
+  text = text.replace(
+    /\b(taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|ground-clearance normalization|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable)\b[^.]*\.?/gi,
+    ""
+  );
+
+  // Clean punctuation and empty clause leftovers.
   text = text
-    .replace(/\s+,\s+and\s+/g, " and ")
-    .replace(/,\s*,+/g, ",")
     .replace(/:\s*,\s*/g, ": ")
-    .replace(/:\s*\.\s*/g, ": ")
+    .replace(/,\s*,+/g, ", ")
+    .replace(/,\s*(?:and\s*)?(?=\.|$)/g, "")
+    .replace(/,\s*(?:and\s*)?(?=\s*(?:Assumption:|One useful next question:|For the upgrade:))/g, ". ")
+    .replace(/\bWatch out for:\s*(?:\.|,|and\s*)*(?=\s*(?:Assumption:|One useful next question:|For the upgrade:|$))/gi, "")
+    .replace(/\bEvidence-backed positives:\s*(?:\.|,|and\s*)*(?=\s*(?:Watch out for:|Assumption:|One useful next question:|For the upgrade:|$))/gi, "")
+    .replace(/\band\s*\./gi, ".")
     .replace(/\s+\.\s*/g, ". ")
+    .replace(/\.{2,}/g, ".")
     .replace(/\s{2,}/g, " ")
     .trim();
 

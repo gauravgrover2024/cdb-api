@@ -600,10 +600,49 @@ function buildScoreSignals(evidenceInput = {}) {
   return signals;
 }
 
+
+function sanitizeBuyerGuidanceEvidenceText(value = '') {
+  let raw = textOf(value);
+  if (!raw) return '';
+
+  const scoreBand = '(?:strong|good|average|moderate|weak|very_weak|very weak|poor|low|high)';
+  const numericScore = '\\d+(?:\\.\\d+)?\\s*[(][^)]+[)]';
+
+  const replacements = [
+    [new RegExp('\\bfeatures?\\s+score\\s+' + numericScore, 'gi'), 'feature evidence looks positive'],
+    [new RegExp('\\bvalue\\s+score\\s+' + numericScore, 'gi'), 'value evidence needs nearby-variant comparison'],
+    [new RegExp('\\brunning\\s*cost\\s+score\\s+' + numericScore, 'gi'), 'running-cost evidence looks positive'],
+    [new RegExp('\\bmileage\\s+score\\s+(?:is\\s+)?(?:not\\s+available|not\\s+fully\\s+scored|unavailable)\\.?', 'gi'), 'mileage evidence is incomplete'],
+    [new RegExp('\\bsafety\\s+score\\s+' + numericScore, 'gi'), 'safety evidence needs verified-source review'],
+    [new RegExp('\\bfamily\\s*practicality\\s+score\\s+' + numericScore, 'gi'), 'family-practicality evidence needs use-case review'],
+    [new RegExp('\\bcomfort\\s+score\\s+' + numericScore, 'gi'), 'comfort evidence needs comparison'],
+    [new RegExp('\\bregret\\s*risk\\s+score\\s+' + numericScore, 'gi'), 'regret-risk evidence needs use-case review'],
+    [new RegExp('\\bscore\\s+' + numericScore, 'gi'), 'score evidence needs review'],
+    [new RegExp(scoreBand, 'gi'), (match) => match],
+  ];
+
+  for (const [pattern, safeText] of replacements) {
+    raw = raw.replace(pattern, safeText);
+  }
+
+  raw = raw
+    .replace(/\b(taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|ground-clearance normalization|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable)\b[^.]*\.?/gi, '')
+    .replace(/,\s*,+/g, ', ')
+    .replace(/,\s*(?:and\s*)?(?=\.|$)/g, '')
+    .replace(/\band\s*\./gi, '.')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return raw;
+}
+
+const sanitizeBuyerGuidanceEvidenceList = (items = []) =>
+  unique(normalizeList(items).map(sanitizeBuyerGuidanceEvidenceText).filter(Boolean));
+
 const normalizeEvidenceList = (...values) => {
   for (const value of values) {
-    const list = normalizeList(value);
-    if (list.length) return unique(list);
+    const list = sanitizeBuyerGuidanceEvidenceList(value);
+    if (list.length) return list;
   }
   return [];
 };

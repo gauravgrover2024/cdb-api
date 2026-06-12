@@ -155,26 +155,31 @@ const usefulViewLineForGuidance = ({ factsLine = '', buyerContextLine = '', scop
   return 'I would keep this provisional until the exact use case, budget, and priority are clearer.';
 };
 
-const formatScoreSignals = (scoreSignals = {}) => {
-  const labels = {
-    safety: 'safety',
-    features: 'features',
-    value: 'value',
-    runningCost: 'running cost',
-    familyPracticality: 'family practicality',
-    comfort: 'comfort',
-    regretRisk: 'regret risk',
-  };
+const buyerSafeScoreSignalText = (key = '', value = {}) => {
+  const band = String(value?.band || '').toLowerCase().replace(/_/g, ' ');
+  const strong = /\b(strong|good|high)\b/.test(band);
+  const weak = /\b(weak|very weak|poor|low)\b/.test(band);
+  const average = /\b(average|moderate|ok)\b/.test(band);
 
-  return join(Object.entries(scoreSignals).map(([key, value]) => {
-    if (value && typeof value === 'object') {
-      const score = value.score !== undefined && value.score !== null && value.score !== '' ? ` score ${value.score}` : '';
-      const band = value.band || value.status || value.label || '';
-      return `${labels[key] || key}${score}${band ? ` (${band})` : ''}`.trim();
-    }
-    return value ? `${labels[key] || key}: ${value}` : '';
-  }).filter(Boolean));
+  if (key === 'features') return strong ? 'feature evidence looks positive' : weak ? 'feature evidence needs comparison' : average ? 'feature evidence looks adequate' : '';
+  if (key === 'value') return strong ? 'value evidence looks positive versus nearby variants' : weak ? 'value evidence needs nearby-variant comparison' : average ? 'value evidence needs nearby-variant comparison' : '';
+  if (key === 'runningCost') return strong ? 'running-cost evidence looks positive' : weak ? 'running-cost evidence is not the main reason to choose it' : average ? 'running-cost evidence looks acceptable' : '';
+  if (key === 'safety') return strong ? 'safety evidence looks positive, but verify source applicability' : 'safety evidence needs verified-source review';
+  if (key === 'familyPracticality') return strong ? 'family-practicality evidence looks positive' : weak ? 'family-practicality evidence needs use-case review' : average ? 'family-practicality evidence looks acceptable' : '';
+  if (key === 'comfort') return strong ? 'comfort evidence looks positive' : weak ? 'comfort evidence needs comparison' : average ? 'comfort evidence looks acceptable' : '';
+  if (key === 'regretRisk') return strong || weak || average ? 'regret-risk evidence needs use-case review' : '';
+
+  return '';
 };
+
+const formatScoreSignals = (scoreSignals = {}) => {
+  return join(
+    Object.entries(scoreSignals || {})
+      .map(([key, value]) => buyerSafeScoreSignalText(key, value))
+      .filter(Boolean)
+  );
+};
+
 
 const composerInputForGuidance = ({ id = '', guidance = {} } = {}) => {
   const facts = guidance.selectedVehicleFacts || {};
@@ -765,6 +770,14 @@ const runLiveBridgeCautionSmoke = async () => {
     if (testCase.id === 'live-maruti-make') {
       assert(!/\b(Tata Altroz|Baleno Sigma|I compared)\b/i.test(result.text), 'Maruti make query leaked stale comparison context.');
     }
+    assert(
+      !/\b(?:safety|features?|value|running\s*cost|mileage|family\s*practicality|comfort|regret\s*risk)\s+score\s+(?:is\s+)?(?:not\s+available|not\s+fully\s+scored|unavailable|\d)/i.test(result.text),
+      `${testCase.id}: raw score dump leaked in live buyer guidance: ${result.text}`
+    );
+    assert(
+      !/,\s*,|,\s*and\.|\band\s*\./i.test(result.text),
+      `${testCase.id}: broken punctuation leaked in live buyer guidance: ${result.text}`
+    );
     if (testCase.assertText) testCase.assertText(result.text, result.eligibility.buyerGuidanceContext);
 
     results.push({
