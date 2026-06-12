@@ -67,12 +67,12 @@ const GATES = {
     { id: 'buyer-input-clarification-smoke', cmd: 'npm run -s aci:decision:buyer-clarification:smoke' },
     { id: 'buyer-context-reuse-readiness-smoke', cmd: 'npm run -s aci:decision:context-reuse-readiness:smoke' },
     { id: 'decision-phase5-closure-smoke', cmd: 'npm run -s aci:decision:phase5-closure:smoke' },
+    { id: 'final-composer-readiness-audit', cmd: 'npm run -s aci:decision:final-composer-readiness:audit' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },
     { id: 'similar-output-fixture-fast', cmd: 'npm run -s aci:decision:similar-output-fixture:eval:fast' },
     { id: 'similar-filter-audit-fast', cmd: 'npm run -s aci:decision:similar-filter:audit:fast' },
-    { id: 'similar-relation-mode-eval-fast', cmd: 'npm run -s aci:decision:similar-relation-mode:eval:fast' },
     { id: 'similar-graph-smoke-fast', cmd: 'npm run -s aci:decision:similar-graph:smoke:fast' },
   ],
 };

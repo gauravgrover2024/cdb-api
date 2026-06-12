@@ -89,6 +89,21 @@ add('phase0-has-buyer-input-contract-smoke', gateRunner.includes('buyer-decision
 add('phase0-has-buyer-context-extraction-smoke', gateRunner.includes('buyer-context-extraction-smoke'));
 add('phase0-has-buyer-clarification-smoke', gateRunner.includes('buyer-input-clarification-smoke'));
 add('phase0-has-context-reuse-readiness-smoke', gateRunner.includes('buyer-context-reuse-readiness-smoke'));
+const extractGateBlock = (name) => {
+  const match = gateRunner.match(new RegExp(`${name}:\\s*\\[[\\s\\S]*?\\n\\s*\\],`));
+  return match ? match[0] : '';
+};
+
+const similarGateBlock = extractGateBlock('similar');
+const phase0GateBlock = extractGateBlock('phase0');
+
+add(
+  'similar-relation-mode-regression-remains-wired-outside-phase0',
+  similarGateBlock.includes('similar-relation-mode-eval-fast') &&
+    similarGateBlock.includes('aci:decision:similar-relation-mode:eval:fast') &&
+    !phase0GateBlock.includes('similar-relation-mode-eval-fast')
+);
+
 
 add('package-has-phase5-smoke-scripts',
   scripts['aci:decision:buyer-input:smoke'] &&

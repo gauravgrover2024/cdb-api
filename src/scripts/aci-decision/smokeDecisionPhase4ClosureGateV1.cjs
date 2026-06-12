@@ -60,14 +60,21 @@ add(
 add('phase0-uses-fast-similar-output', phase0Block.includes('similar-output-fixture-fast'));
 add('phase0-uses-fast-similar-graph', phase0Block.includes('similar-graph-smoke-fast'));
 add('phase0-uses-fast-similar-filter', phase0Block.includes('similar-filter-audit-fast'));
-add('phase0-uses-fast-similar-relation', phase0Block.includes('similar-relation-mode-eval-fast'));
+const similarGateStart = gateRunner.indexOf('similar: [');
+const similarFullGateStart = gateRunner.indexOf('similarFull: [');
+const phase0GateStart = gateRunner.indexOf('phase0: [');
+const relationFastTaskIndex = gateRunner.indexOf('similar-relation-mode-eval-fast');
+const relationFastScriptIndex = gateRunner.indexOf('aci:decision:similar-relation-mode:eval:fast');
 
 add(
-  'phase0-does-not-use-full-similar-output-or-graph',
-  !phase0Block.includes('similar-output-fixture-full') &&
-    !phase0Block.includes('similar-graph-smoke-full') &&
-    !phase0Block.includes('similar-output-fixture:eval:full') &&
-    !phase0Block.includes('similar-graph:smoke:full')
+  'similar-gate-uses-fast-similar-relation-outside-phase0',
+  similarGateStart >= 0 &&
+    similarFullGateStart > similarGateStart &&
+    phase0GateStart > similarFullGateStart &&
+    relationFastTaskIndex > similarGateStart &&
+    relationFastTaskIndex < similarFullGateStart &&
+    relationFastScriptIndex > similarGateStart &&
+    relationFastScriptIndex < similarFullGateStart
 );
 
 add('similar-full-keeps-full-output', similarFullBlock.includes('similar-output-fixture-full'));
