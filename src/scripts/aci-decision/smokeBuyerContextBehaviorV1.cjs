@@ -15,6 +15,17 @@ const {
 } = require('../../services/aciCore/decisionPolicy/aciFinalRecommendationEligibility.service.cjs');
 
 const INTERNAL_BLOCKER_PATTERNS = [
+  /\bscore profile\b/i,
+  /\bground-clearance normalization\b/i,
+  /\bdiagnostic-only module scoring\b/i,
+  /\bperformance score v2\b/i,
+  /\bsafetyScore\b/i,
+  /\bnormalization\b/i,
+  /\bglobal-percentile\b/i,
+  /\btaxonomy-driven\b/i,
+  /\bscore snapshot\b/i,
+  /\bMaruti Baleno Zeta looks feature-rich\b/i,
+  /\bTata Altroz looks strongest\b/i,
   /\bscore profile coverage includes\b/i,
   /\bfinal recommendation disabled\b/i,
   /\bfinal recommendation remains disabled\b/i,
@@ -128,7 +139,7 @@ const buyerContextLineForGuidance = (guidance = {}) =>
 
 const openingLineForGuidance = ({ scope = '', model = '' } = {}) => {
   if (scope === 'make_scope') return `For ${model}, I would keep this at brand level first: the exact model, budget, use case, and any ownership or resale evidence matter more than the badge alone.`;
-  if (scope === 'variant_scope') return `For ${model}, I would judge the variant by the confirmed feature gains, price gap, score profile, and regret-risk evidence.`;
+  if (scope === 'variant_scope') return `For ${model}, I would judge the variant by the confirmed feature gains, price gap, and regret-risk evidence.`;
   if (scope === 'comparison_scope') return `For ${model}, the useful view is a trade-off comparison, not a single winner yet.`;
   if (scope === 'upgrade_scope') return `For ${model}, the decision is whether the upgrade evidence justifies the extra spend for your use case.`;
   if (scope === 'discovery_scope') return `For ${model}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
@@ -751,6 +762,9 @@ const runLiveBridgeCautionSmoke = async () => {
   for (const testCase of CASES) {
     const result = await renderGuidance(testCase);
     assertBuyerSafe({ id: testCase.id, result, expectedScope: testCase.expectedScope });
+    if (testCase.id === 'live-maruti-make') {
+      assert(!/\b(Tata Altroz|Baleno Sigma|I compared)\b/i.test(result.text), 'Maruti make query leaked stale comparison context.');
+    }
     if (testCase.assertText) testCase.assertText(result.text, result.eligibility.buyerGuidanceContext);
 
     results.push({

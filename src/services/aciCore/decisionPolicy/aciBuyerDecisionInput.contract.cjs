@@ -331,6 +331,20 @@ const inferUpgradeSubjectFromMessage = ({ message = '', selectedVehicleFacts = {
   };
 };
 
+
+function isExplicitMakeOnlyFinalChoiceMessage(message = '', { subject = {}, selectedVehicleFacts = {} } = {}) {
+  const raw = textOf(message).toLowerCase();
+  if (!/\bshould\s+i\s+(buy|choose|pick|go\s+for|purchase)\b|\bworth\s+buying\b/.test(raw)) return false;
+  if (/\b\w+\s+(?:vs|versus|or)\s+\w+\b/.test(raw)) return false;
+  if (/\bstretch\b|\bupgrade\b|\bfrom\b.+\bto\b/.test(raw)) return false;
+
+  const resolvedMake = textOf(firstValue(subject.make, selectedVehicleFacts.make, selectedVehicleFacts.brand));
+  const resolvedModel = textOf(firstValue(subject.model, selectedVehicleFacts.model, selectedVehicleFacts.fullModel));
+  const resolvedVariant = textOf(firstValue(subject.variant, selectedVehicleFacts.variant));
+
+  return Boolean(resolvedMake && !resolvedModel && !resolvedVariant);
+}
+
 function buildSelectedVehicleFacts({
   selectedVehicle = {},
   selectedVehicleContext = {},
@@ -480,7 +494,9 @@ function detectBuyerGuidanceScope({
   inputStatus = {},
   decisionEvidencePackInput = {},
   response = {},
-} = {}) {
+} = {
+}) {
+  if (isExplicitMakeOnlyFinalChoiceMessage(message, { subject, selectedVehicleFacts })) return 'make_scope';
   const explicitScope = textOf(decisionEvidencePackInput.scope || decisionEvidencePackInput.decisionScope);
 
   const raw = textOf(message).toLowerCase();
@@ -598,7 +614,7 @@ function buildDecisionEvidencePack({
   decisionEvidencePackInput = {},
   selectedVehicleFacts = {},
 } = {}) {
-  const input = asObject(decisionEvidencePackInput);
+const input = asObject(decisionEvidencePackInput);
   const pack = compactObject({
     scope,
     subject,

@@ -3725,6 +3725,29 @@ const buildBuyerGuidanceContextLine = (buyerContext = {}) => {
   return entries.join("; ");
 };
 
+
+const extractMakeLabelFromBuyerMessage = (message = "") => {
+  const raw = cleanText(message).toLowerCase();
+  const makes = [
+    ["maruti suzuki", "Maruti Suzuki"],
+    ["maruti", "Maruti"],
+    ["tata", "Tata"],
+    ["hyundai", "Hyundai"],
+    ["mahindra", "Mahindra"],
+    ["honda", "Honda"],
+    ["toyota", "Toyota"],
+    ["kia", "Kia"],
+    ["skoda", "Skoda"],
+    ["volkswagen", "Volkswagen"],
+    ["mg", "MG"],
+    ["renault", "Renault"],
+    ["nissan", "Nissan"],
+    ["citroen", "Citroen"],
+  ];
+  const hit = makes.find(([key]) => new RegExp(`\\b${key.replace(/\\s+/g, "\\s+")}\\b`, "i").test(raw));
+  return hit ? hit[1] : "";
+};
+
 const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, response = {}, bridge = {} } = {}) => {
   const subject = evidencePack.subject || {};
   const scope = cleanText(evidencePack.scope || "");
@@ -3776,7 +3799,7 @@ const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, respons
     if (base && target) return `${base} to ${target}`;
   }
 
-  if (scope === "make_scope") return cleanText(subject.make || facts.make || facts.brand || "this make");
+  if (scope === "make_scope") return cleanText(subject.make || extractMakeLabelFromBuyerMessage(bridge.effectiveMessage || bridge.originalMessage || "") || facts.make || facts.brand || "this make");
   if (scope === "discovery_scope") return cleanText(subject.discoveryLabel || response.title || "your car search");
   if (scope === "variant_scope" && (facts.variant || subject.variant)) {
     return cleanText(
@@ -3836,7 +3859,7 @@ const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
     return `For ${model}, I would keep this at brand level first: the exact model, budget, use case, and any ownership or resale evidence matter more than the badge alone.`;
   }
   if (scope === "variant_scope") {
-    return `For ${model}, I would judge the variant by the confirmed feature gains, price gap, score profile, and regret-risk evidence.`;
+    return `For ${model}, I would judge the variant by the confirmed feature gains, price gap, and regret-risk evidence.`;
   }
   if (scope === "comparison_scope") {
     return `For ${model}, the useful view is a trade-off comparison, not a single winner yet.`;
@@ -3895,6 +3918,142 @@ const buildBuyerGuidanceLineInput = ({ model = "", facts = {}, guidance = {}, ev
   };
 };
 
+
+
+const scoreSignalToBuyerLine = (key = "", signal = {}) => {
+  const band = cleanText(signal?.band || signal?.status || signal?.label || "").toLowerCase().replace(/_/g, " ");
+  const strong = /\b(strong|good|high)\b/.test(band);
+  const weak = /\b(weak|very weak|poor|low)\b/.test(band);
+  const average = /\b(average|moderate|ok)\b/.test(band);
+
+  if (key === "features") return strong ? "feature equipment looks strong" : weak ? "feature equipment may be limited" : average ? "feature equipment looks adequate" : "";
+  if (key === "value") return strong ? "value looks promising versus nearby variants" : weak ? "value may be a concern versus nearby variants" : average ? "value looks acceptable, but compare nearby variants" : "";
+  if (key === "runningCost") return strong ? "running-cost signal looks strong" : weak ? "running-cost signal may not be the main reason to choose it" : average ? "running-cost signal looks acceptable" : "";
+  if (key === "safety") return strong ? "safety evidence looks positive, but verify crash/source applicability" : "safety evidence needs a careful check before a family or highway decision";
+  if (key === "familyPracticality") return strong ? "family practicality signal looks strong" : weak ? "family practicality may not be its strongest area" : average ? "family practicality looks acceptable for normal use" : "";
+  if (key === "comfort") return strong ? "comfort signal looks positive" : weak ? "comfort may not be the strongest reason to choose it" : average ? "comfort looks acceptable" : "";
+  if (key === "regretRisk") return weak || /\blow\b/.test(band) ? "regret risk does not look high, but depends on use case" : average ? "regret risk looks moderate, so compare nearby variants" : "";
+
+  return "";
+};
+
+const buildBuyerGuidanceEvidenceLines = (evidencePack = {}) => {
+  const scoreSignals = evidencePack.scoreSignals || {};
+  const scoreLines = Object.entries(scoreSignals)
+    .map(([key, signal]) => scoreSignalToBuyerLine(key, signal))
+    .filter(Boolean);
+
+  return {
+    strengthsLine: formatGuidanceList([
+      ...(Array.isArray(evidencePack.strengths) ? evidencePack.strengths : []),
+      ...scoreLines,
+    ]),
+    watchoutsLine: formatGuidanceList(Array.isArray(evidencePack.watchouts) ? evidencePack.watchouts : []),
+    fitLine: formatGuidanceList(Array.isArray(evidencePack.fitSignals) ? evidencePack.fitSignals : []),
+    alternativeLine: formatGuidanceList(Array.isArray(evidencePack.alternativeSignals) ? evidencePack.alternativeSignals : []),
+    upgradeLine: formatGuidanceList(Array.isArray(evidencePack.upgradeSignals) ? evidencePack.upgradeSignals : []),
+  };
+};
+
+const isUnsafeBuyerGuidanceEvidenceLine = (line = "") =>
+  /\b(taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|score snapshot|score profile|same-model value score|ground-clearance normalization|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable|data missing|unavailable)\b/i.test(cleanText(line));
+
+const buyerSafeEvidenceLine = (line = "") => {
+  const text = cleanText(line);
+  if (!text || isUnsafeBuyerGuidanceEvidenceLine(text)) return "";
+
+  if (/Feature-rich for its scoring context/i.test(text)) return "feature equipment looks strong";
+  if (/Strong city-use suitability/i.test(text)) return "city-use suitability looks strong";
+  if (/Strong mileage\/running-cost signal/i.test(text)) return "running-cost signal looks strong";
+  if (/Strong same-model value signal/i.test(text)) return "value looks promising versus nearby variants";
+  if (/Same-model value score is weak/i.test(text)) return "value may be a concern versus nearby variants";
+  if (/Premium comfort score is limited/i.test(text)) return "comfort may not be the strongest reason to choose it";
+  if (/Safety\/crash applicability needs verified-source caution/i.test(text)) return "safety evidence needs verified-source caution";
+  if (/features score\s+\d+(?:\.\d+)?\s*$begin:math:text$strong\$end:math:text$/i.test(text)) return "feature equipment looks strong";
+  if (/value score\s+\d+(?:\.\d+)?\s*$begin:math:text$(?:very_weak|weak)\$end:math:text$/i.test(text)) return "value may be a concern versus nearby variants";
+  if (/running cost score\s+\d+(?:\.\d+)?\s*$begin:math:text$strong\$end:math:text$/i.test(text)) return "running-cost signal looks strong";
+  if (/safety score\s+\d+(?:\.\d+)?/i.test(text)) return "safety evidence needs a careful check before a family or highway decision";
+  if (/comfort score\s+\d+(?:\.\d+)?\s*$begin:math:text$(?:very_weak|weak)\$end:math:text$/i.test(text)) return "comfort may not be the strongest reason to choose it";
+  if (/regret risk score\s+\d+(?:\.\d+)?/i.test(text)) return "regret risk does not look high, but depends on use case";
+
+  if (/\bscore\s+\d+(?:\.\d+)?\b/i.test(text)) return "";
+  return text;
+};
+
+const uniqueBuyerSafeGuidanceList = (items = [], limit = 3) => {
+  const seen = new Set();
+  const out = [];
+  for (const item of Array.isArray(items) ? items : [items]) {
+    const safe = buyerSafeEvidenceLine(item);
+    if (!safe) continue;
+    const key = safe.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(safe);
+    if (out.length >= limit) break;
+  }
+  return out;
+};
+
+const sanitizeBuyerGuidanceEvidenceLines = (lines = {}) => {
+  const sanitizeField = (value = "", limit = 3) =>
+    formatGuidanceList(uniqueBuyerSafeGuidanceList(String(value || "").split(/\s*,\s*|\s+and\s+|;\s*/i), limit));
+
+  return {
+    strengthsLine: sanitizeField(lines.strengthsLine, 3),
+    watchoutsLine: sanitizeField(lines.watchoutsLine, 2),
+    fitLine: sanitizeField(lines.fitLine, 1),
+    alternativeLine: sanitizeField(lines.alternativeLine, 1),
+    upgradeLine: sanitizeField(lines.upgradeLine, 1),
+  };
+};
+
+
+const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
+  let text = cleanText(answer);
+
+  const replacements = [
+    [/Feature-rich for its scoring context/gi, "feature equipment looks strong"],
+    [/Strong city-use suitability/gi, "city-use suitability looks strong"],
+    [/Strong mileage\/running-cost signal/gi, "running-cost signal looks strong"],
+    [/Strong same-model value signal/gi, "value looks promising versus nearby variants"],
+    [/Same-model value score is weak/gi, "value may be a concern versus nearby variants"],
+    [/Premium comfort score is limited/gi, "comfort may not be the strongest reason to choose it"],
+    [/Safety\/crash applicability needs verified-source caution/gi, "safety evidence needs verified-source caution"],
+    [/Feature score is taxonomy-driven and layered\.?\s*Safety-critical equipment is handled mainly by safetyScore\.?/gi, ""],
+    [/Performance score v2 is global-percentile based; segment-relative performance will be added later\.?/gi, ""],
+    [/Ground-clearance value unavailable; practicality score excludes ground-clearance normalization\.?/gi, ""],
+    [/Power-to-weight unavailable; performance score uses power\/torque only\.?/gi, ""],
+    [/Highway score v2 uses performance, safety, mileage and highway-assist features; ride comfort, NVH, tyre quality and braking feel are not yet scored\.?/gi, ""],
+    [/Boot space data missing or reduced due to CNG tank placement; score excludes boot normalization\.?/gi, ""],
+    [/\bscore snapshot\b[^.]*\.?/gi, ""],
+    [/\bThis score view is diagnostic-only and should not be treated as a final recommendation\.?/gi, ""],
+    [/\bThis is diagnostic-only module scoring, not a final recommendation\.?/gi, ""],
+    [/\bThis is diagnostic-only, not a final recommendation\.?/gi, ""],
+    [/\bTreat this as diagnostic-only guidance, not a final recommendation\.?/gi, ""],
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    text = text.replace(pattern, replacement);
+  }
+
+  // Remove raw score dumps, while keeping buyer-safe summary words.
+  text = text.replace(/\b(?:safety|features|value|running cost|family practicality|comfort|regret risk) score\s+\d+(?:\.\d+)?\s*$begin:math:text$[^)]+\$end:math:text$,?\s*/gi, "");
+  text = text.replace(/\b(taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|ground-clearance normalization|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable)\b[^.]*\.?/gi, "");
+
+  // Clean punctuation after removals.
+  text = text
+    .replace(/\s+,\s+and\s+/g, " and ")
+    .replace(/,\s*,+/g, ",")
+    .replace(/:\s*,\s*/g, ": ")
+    .replace(/:\s*\.\s*/g, ": ")
+    .replace(/\s+\.\s*/g, ". ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return text;
+};
+
 const buildBuyerGuidanceAnswer = ({ eligibility = {}, bridge = {}, response = {} } = {}) => {
   const guidance = eligibility.buyerGuidanceContext || eligibility.buyerDecisionInput?.buyerGuidanceContext || {};
   const mode = cleanText(guidance.guidanceMode);
@@ -3902,10 +4061,11 @@ const buildBuyerGuidanceAnswer = ({ eligibility = {}, bridge = {}, response = {}
   const facts = guidance.selectedVehicleFacts || {};
   const evidencePack = guidance.decisionEvidencePack || {};
   const model = buildBuyerGuidanceSubjectLabel({ facts, evidencePack, response, bridge });
+  const buyerSafeEvidenceLines = sanitizeBuyerGuidanceEvidenceLines(buildBuyerGuidanceEvidenceLines(evidencePack));
 
   if (!templateKey || !model || model === "this choice") return "";
 
-  return renderAciLanguageText(
+  return sanitizeRenderedBuyerGuidanceAnswer(renderAciLanguageText(
     templateKey,
     buildBuyerGuidanceLineInput({ model, facts, guidance, evidencePack }),
     {
@@ -3918,7 +4078,7 @@ const buildBuyerGuidanceAnswer = ({ eligibility = {}, bridge = {}, response = {}
         JSON.stringify(facts),
       ].filter(Boolean).join("|"),
     },
-  );
+  ));
 };
 
 const isWeakGenericClarificationAnswer = (response = {}) => {
@@ -3990,10 +4150,11 @@ const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}
     !isWeakGenericClarificationAnswer(response) &&
     !existingAnswer.toLowerCase().includes(blockedAnswer.toLowerCase());
 
-  const answer = shouldPreserveExisting
+  const guidanceMode = eligibility.provisionalGuidanceMode || eligibility.buyerGuidanceContext?.guidanceMode || "";
+  const effectiveShouldPreserveExisting = guidanceMode ? false : shouldPreserveExisting;
+  const answer = effectiveShouldPreserveExisting
     ? `${blockedAnswer}\n\n${existingAnswer}`
     : blockedAnswer;
-  const guidanceMode = eligibility.provisionalGuidanceMode || eligibility.buyerGuidanceContext?.guidanceMode || "";
   const decisionScope = eligibility.buyerGuidanceContext?.decisionEvidencePack?.scope || "";
   const guidanceTitle = guidanceMode ? "Practical guidance" : "Need one detail";
 
