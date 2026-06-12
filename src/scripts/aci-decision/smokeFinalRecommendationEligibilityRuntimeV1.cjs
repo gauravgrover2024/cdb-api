@@ -23,8 +23,14 @@ const hasFinalBlockedReadinessWording = (value = '') => {
     /\bshould not recommend one yet\b/,
     /\bnot recommend one yet\b/,
     /\bcannot recommend one yet\b/,
-    /\bmissing buyer context\b/,
-    /\bbuyer context\b/,
+    /\bpractical guidance\b/,
+    /\bpractical purchase guidance\b/,
+    /\bpractical first view\b/,
+    /\bconditional guidance\b/,
+    /\bprovisional view\b/,
+    /\bknown facts\b/,
+    /\bbuyer-specific call\b/,
+    /\bstarting points\b/,
   ].some((pattern) => pattern.test(raw));
 };
 
@@ -32,9 +38,9 @@ const hasSafeNextStepOrMissingContextWording = (value = '') => {
   const raw = String(value || '').toLowerCase();
   return [
     /\bsafe now\b/,
-    /\bmissing buyer\b/,
-    /\bmissing:\b/,
-    /\bbuyer context\b/,
+    /\bassumptions\b/,
+    /\bknown facts\b/,
+    /\bprovisional\b/,
     /\bdiagnostic\b/,
     /\bdiscovery\b/,
     /\bcompare\b/,
@@ -155,7 +161,7 @@ const CASES = [
       if ((response.intent === 'clarification' || response.tool === 'clarification') && eligibility.requestedFinalRecommendation === true) {
         const answerText = String(response.answer || '');
         assert(!/What would you like to check about the car\?/i.test(answerText), `${testCase.id}: weak generic final-intent clarification leaked`);
-        assert(/final|recommend|buyer context|missing|city|budget|compare|diagnostic/i.test(answerText), `${testCase.id}: intelligent final-blocked wording missing`);
+        assert(/practical|guidance|known facts|assumptions|city|budget|compare|diagnostic/i.test(answerText), `${testCase.id}: intelligent final-choice guidance wording missing`);
       }
     } else {
       assert(!eligibility, `${testCase.id}: finalRecommendationEligibility should not attach for non-final diagnostic request`);

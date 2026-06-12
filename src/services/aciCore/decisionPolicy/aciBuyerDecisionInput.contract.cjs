@@ -1,6 +1,9 @@
 const {
   MANDATORY_FINAL_RECOMMENDATION_INPUTS,
 } = require('./aciDecisionPolicy.constants.cjs');
+const {
+  inferBuyerSignalsFromMessage,
+} = require('../context/aciBuyerContextSignals.service.cjs');
 
 const CONTRACT_VERSION = 'aci_buyer_decision_input_contract_v1';
 
@@ -34,6 +37,64 @@ const firstPresent = (...candidates) => {
   }
   return { value: '', source: '' };
 };
+
+const unique = (items = []) => {
+  const seen = new Set();
+  const out = [];
+  for (const item of items.map(textOf).filter(Boolean)) {
+    const key = item.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(item);
+    }
+  }
+  return out;
+};
+
+const firstValue = (...values) => {
+  for (const value of values) {
+    if (valuePresent(value)) return value;
+  }
+  return '';
+};
+
+const normalizeFactList = (...values) => {
+  for (const value of values) {
+    const items = normalizeList(value);
+    if (items.length) return unique(items);
+  }
+  return [];
+};
+
+const normalizeAlternativeList = (...values) => {
+  for (const value of values) {
+    const source = Array.isArray(value) ? value : valuePresent(value) ? [value] : [];
+    const items = source
+      .map((item) => {
+        if (item && typeof item === 'object') {
+          return textOf(item.model || item.fullModel || item.label || item.name || item.title);
+        }
+        return textOf(item);
+      })
+      .filter(Boolean);
+    if (items.length) return unique(items);
+  }
+  return [];
+};
+
+const hasInput = (inputStatus = {}, key = '') => Boolean(inputStatus[key]?.present);
+
+const getInputValue = (inputStatus = {}, key = '') =>
+  hasInput(inputStatus, key) ? inputStatus[key].value : '';
+
+const compactObject = (object = {}) =>
+  Object.fromEntries(
+    Object.entries(object || {}).filter(([, value]) => {
+      if (Array.isArray(value)) return value.length > 0;
+      if (value && typeof value === 'object') return Object.keys(value).length > 0;
+      return value !== undefined && value !== null && value !== '';
+    })
+  );
 
 const getNestedDecisionContext = ({ context = {}, response = {} } = {}) => {
   const ctx = asObject(context);
@@ -69,6 +130,20 @@ const getNestedDecisionContext = ({ context = {}, response = {} } = {}) => {
       response.selectedVehicle
   );
 
+  const selectedVehicleContext = asObject(
+    ctx.selectedVehicleContext ||
+      ctx.selectedVehicleFacts ||
+      ctx.vehicleFacts ||
+      contextState.selectedVehicleContext ||
+      contextState.selectedVehicleFacts ||
+      contextState.buyerGuidanceContext?.selectedVehicleFacts ||
+      data.selectedVehicleContext ||
+      data.selectedVehicleFacts ||
+      data.vehicleFacts ||
+      response.selectedVehicleContext ||
+      response.selectedVehicleFacts
+  );
+
   const filters = asObject(ctx.filters || contextState.filters || data.filters || response.filters);
   const entities = asObject(ctx.entities || data.entities || response.entities);
   const priorities = asObject(buyerContext.priorities || ctx.priorities || data.priorities || response.priorities);
@@ -89,8 +164,45 @@ const getNestedDecisionContext = ({ context = {}, response = {} } = {}) => {
     contextState.activeComparison?.vehicles ||
       contextState.anchors?.comparisonTargets ||
       contextState.comparison?.targets ||
+      ctx.comparisonTargets ||
+      ctx.comparisonTargetsEvidence ||
+      ctx.decisionEvidencePack?.subject?.comparisonTargets ||
       data.comparisonTargets ||
+      data.decisionEvidencePack?.subject?.comparisonTargets ||
       response.comparisonTargets
+  );
+
+  const upgradeBase = asObject(
+    ctx.upgradeBase ||
+      ctx.upgradeLadder?.base ||
+      ctx.decisionEvidencePack?.subject?.upgradeBase ||
+      data.upgradeBase ||
+      data.upgradeLadder?.base ||
+      data.decisionEvidencePack?.subject?.upgradeBase ||
+      response.upgradeBase
+  );
+
+  const upgradeTarget = asObject(
+    ctx.upgradeTarget ||
+      ctx.upgradeLadder?.target ||
+      ctx.decisionEvidencePack?.subject?.upgradeTarget ||
+      data.upgradeTarget ||
+      data.upgradeLadder?.target ||
+      data.decisionEvidencePack?.subject?.upgradeTarget ||
+      response.upgradeTarget
+  );
+
+  const decisionEvidencePackInput = asObject(
+    ctx.decisionEvidencePack ||
+      ctx.buyerGuidanceEvidence ||
+      ctx.decisionEvidence ||
+      contextState.buyerGuidanceContext?.decisionEvidencePack ||
+      data.decisionEvidencePack ||
+      data.buyerGuidanceEvidence ||
+      data.decisionEvidence ||
+      response.decisionEvidencePack ||
+      response.buyerGuidanceEvidence ||
+      response.decisionEvidence
   );
 
   return {
@@ -100,13 +212,360 @@ const getNestedDecisionContext = ({ context = {}, response = {} } = {}) => {
     contextState,
     buyerContext,
     selectedVehicle,
+    selectedVehicleContext,
     filters,
     entities,
     priorities,
     shortlistedModels,
     comparisonTargets,
+    upgradeBase,
+    upgradeTarget,
+    decisionEvidencePackInput,
   };
 };
+
+function buildSelectedVehicleFacts({
+  selectedVehicle = {},
+  selectedVehicleContext = {},
+  data = {},
+} = {}) {
+  const vehicle = asObject(selectedVehicle);
+  const facts = asObject(selectedVehicleContext);
+
+  return compactObject({
+    brand: textOf(firstValue(facts.brand, facts.make, vehicle.brand, vehicle.make)),
+    make: textOf(firstValue(facts.make, facts.brand, vehicle.make, vehicle.brand)),
+    model: textOf(firstValue(facts.model, vehicle.model)),
+    variant: textOf(firstValue(facts.variant, facts.variantName, vehicle.variant, vehicle.variantName)),
+    fullModel: textOf(firstValue(facts.fullModel, vehicle.fullModel, [facts.brand || facts.make || vehicle.brand || vehicle.make, facts.model || vehicle.model].filter(Boolean).join(' '))),
+    bodyType: textOf(firstValue(facts.bodyType, facts.bodyStyle, vehicle.bodyType, vehicle.bodyStyle, data.bodyType)),
+    seatingCapacity: firstValue(facts.seatingCapacity, facts.seats, vehicle.seatingCapacity, vehicle.seats),
+    fuelTypes: normalizeFactList(facts.fuelTypes, facts.availableFuels, vehicle.fuelTypes, vehicle.availableFuels, vehicle.fuelType, data.fuelTypes),
+    transmissions: normalizeFactList(facts.transmissions, facts.availableTransmissions, vehicle.transmissions, vehicle.availableTransmissions, vehicle.transmission, data.transmissions),
+    priceBand: textOf(firstValue(facts.priceBand, facts.priceRange, facts.price, vehicle.priceBand, data.priceBand)),
+    safetyFeatures: normalizeFactList(facts.safetyFeatures, facts.knownSafetyFeatures, vehicle.safetyFeatures, data.safetyFeatures),
+    featureHighlights: normalizeFactList(facts.featureHighlights, facts.knownFeatureHighlights, vehicle.featureHighlights, data.featureHighlights),
+    ownershipSignals: normalizeFactList(facts.ownershipSignals, facts.serviceResaleOwnershipSignals, facts.ownershipHighlights, vehicle.ownershipSignals, data.ownershipSignals),
+    similarAlternatives: normalizeAlternativeList(facts.similarAlternatives, facts.alternatives, vehicle.similarAlternatives, data.similarAlternatives),
+    source: textOf(firstValue(facts.source, vehicle.source, data.source)),
+  });
+}
+
+function buildExplicitBuyerContext(inputStatus = {}) {
+  return compactObject({
+    city: getInputValue(inputStatus, 'city'),
+    budgetOrPriceCeiling: getInputValue(inputStatus, 'budgetOrPriceCeiling'),
+    bodyPreferenceOrPrimaryUseCase: getInputValue(inputStatus, 'bodyPreferenceOrPrimaryUseCase'),
+    familySizeOrOccupancyUse: getInputValue(inputStatus, 'familySizeOrOccupancyUse'),
+    fuelPreferenceOrMonthlyRunning: getInputValue(inputStatus, 'fuelPreferenceOrMonthlyRunning'),
+    transmissionPreference: getInputValue(inputStatus, 'transmissionPreference'),
+    safetyPriority: getInputValue(inputStatus, 'safetyPriority'),
+    featurePriority: getInputValue(inputStatus, 'featurePriority'),
+    shortlistedModelsOrDiscoveryScope: getInputValue(inputStatus, 'shortlistedModelsOrDiscoveryScope'),
+  });
+}
+
+function buildSoftAssumptions({ selectedVehicleFacts = {}, inputStatus = {} } = {}) {
+  const assumptions = [];
+  const seating = Number(selectedVehicleFacts.seatingCapacity || 0);
+
+  if (!hasInput(inputStatus, 'familySizeOrOccupancyUse') && Number.isFinite(seating) && seating > 0) {
+    const lower = seating >= 5 ? Math.max(2, seating - 1) : seating;
+    assumptions.push(`assuming normal ${lower}-${seating} person use`);
+  }
+
+  if (!hasInput(inputStatus, 'fuelPreferenceOrMonthlyRunning')) {
+    assumptions.push('assuming monthly running is not very high');
+  }
+
+  return unique(assumptions);
+}
+
+function selectGuidanceMode({ selectedVehicleFacts = {}, inputStatus = {}, scope = '' } = {}) {
+  const hasSelectedVehicle = Boolean(selectedVehicleFacts.model || selectedVehicleFacts.fullModel);
+  const hasDecisionScope = scope && scope !== 'unknown_scope';
+  if (!hasSelectedVehicle && !hasDecisionScope) return '';
+
+  const hasCityOrBasicContext =
+    hasInput(inputStatus, 'city') ||
+    hasInput(inputStatus, 'bodyPreferenceOrPrimaryUseCase') ||
+    hasInput(inputStatus, 'familySizeOrOccupancyUse');
+  const hasUseCase = hasInput(inputStatus, 'bodyPreferenceOrPrimaryUseCase');
+  const hasRunning = hasInput(inputStatus, 'fuelPreferenceOrMonthlyRunning');
+  const hasPriority = hasInput(inputStatus, 'safetyPriority') || hasInput(inputStatus, 'featurePriority');
+
+  if (hasUseCase && (hasRunning || hasPriority)) return 'sharpened_recommendation';
+  if (hasCityOrBasicContext) return 'practical_first_view';
+  return 'conditional_guidance';
+}
+
+const normalizeSubjectVehicle = (value = {}) => {
+  const vehicle = asObject(value);
+  if (!Object.keys(vehicle).length) return {};
+  return compactObject({
+    make: textOf(firstValue(vehicle.make, vehicle.brand)),
+    model: textOf(vehicle.model),
+    variant: textOf(firstValue(vehicle.variant, vehicle.variantName, vehicle.selectedVariant)),
+    fullModel: textOf(vehicle.fullModel),
+  });
+};
+
+const normalizeSubjectTargets = (items = []) =>
+  asArray(items)
+    .map((item) => {
+      if (item && typeof item === 'object') {
+        return compactObject({
+          make: textOf(firstValue(item.make, item.brand)),
+          model: textOf(item.model),
+          variant: textOf(firstValue(item.variant, item.variantName, item.selectedVariant)),
+          fullModel: textOf(item.fullModel),
+          label: textOf(firstValue(item.label, item.name, item.fullModel, [item.make || item.brand, item.model, item.variant || item.variantName].filter(Boolean).join(' '))),
+        });
+      }
+      return compactObject({ label: textOf(item) });
+    })
+    .filter((item) => Object.keys(item).length);
+
+function buildDecisionSubject({
+  selectedVehicleFacts = {},
+  selectedVehicle = {},
+  decisionEvidencePackInput = {},
+  comparisonTargets = [],
+  upgradeBase = {},
+  upgradeTarget = {},
+} = {}) {
+  const inputSubject = asObject(decisionEvidencePackInput.subject);
+  const baseSubject = compactObject({
+    make: textOf(firstValue(inputSubject.make, selectedVehicleFacts.make, selectedVehicleFacts.brand, selectedVehicle.make, selectedVehicle.brand)),
+    model: textOf(firstValue(inputSubject.model, selectedVehicleFacts.model, selectedVehicle.model)),
+    variant: textOf(firstValue(inputSubject.variant, selectedVehicleFacts.variant, selectedVehicle.variant)),
+    discoveryLabel: textOf(inputSubject.discoveryLabel),
+    comparisonTargets: normalizeSubjectTargets(firstValue(inputSubject.comparisonTargets, comparisonTargets)),
+    upgradeBase: normalizeSubjectVehicle(firstValue(inputSubject.upgradeBase, upgradeBase)),
+    upgradeTarget: normalizeSubjectVehicle(firstValue(inputSubject.upgradeTarget, upgradeTarget)),
+  });
+
+  return baseSubject;
+}
+
+function detectBuyerGuidanceScope({
+  message = '',
+  subject = {},
+  selectedVehicleFacts = {},
+  inputStatus = {},
+  decisionEvidencePackInput = {},
+  response = {},
+} = {}) {
+  const explicitScope = textOf(decisionEvidencePackInput.scope || decisionEvidencePackInput.decisionScope);
+  if (explicitScope) return explicitScope;
+
+  const raw = textOf(message).toLowerCase();
+  const comparisonTargets = asArray(subject.comparisonTargets);
+  const hasUpgradeSubject = Object.keys(asObject(subject.upgradeBase)).length || Object.keys(asObject(subject.upgradeTarget)).length;
+
+  if (hasUpgradeSubject || /\b(stretch|upgrade|worth\s+(?:the\s+)?extra|extra\s+(?:money|cost|price))\b/.test(raw)) {
+    return 'upgrade_scope';
+  }
+  if (comparisonTargets.length >= 2 || /\b(vs|v\/s|versus)\b/.test(raw) || /\bshould\s+i\s+buy\b.+\bor\b.+\?/i.test(message)) {
+    return 'comparison_scope';
+  }
+  if (subject.variant || selectedVehicleFacts.variant) return 'variant_scope';
+  if (subject.model || selectedVehicleFacts.model) return 'model_scope';
+  if ((subject.make || selectedVehicleFacts.make || selectedVehicleFacts.brand) && !subject.model && !selectedVehicleFacts.model) {
+    return 'make_scope';
+  }
+  if (
+    hasInput(inputStatus, 'budgetOrPriceCeiling') ||
+    hasInput(inputStatus, 'bodyPreferenceOrPrimaryUseCase') ||
+    response.module === 'recommendation' ||
+    /\b(best|recommend|cars?|options?)\b.+\b(under|within|budget|family|city|highway|suv|sedan|hatchback)\b/i.test(message)
+  ) {
+    return 'discovery_scope';
+  }
+  return 'unknown_scope';
+}
+
+const SCORE_SIGNAL_KEYS = Object.freeze({
+  safety: ['safety', 'safetyScore'],
+  features: ['features', 'featureScore'],
+  value: ['value', 'valueScore'],
+  runningCost: ['runningCost', 'mileageRunningCost', 'mileageRunningCostScore', 'runningCostScore', 'mileageScore'],
+  familyPracticality: ['familyPracticality', 'practicality', 'practicalityScore', 'familyScore'],
+  comfort: ['comfort', 'premiumComfort', 'premiumComfortScore', 'comfortScore'],
+  regretRisk: ['regretRisk', 'regretRiskScore'],
+});
+
+const normalizeSignalValue = (value) => {
+  if (!valuePresent(value)) return null;
+  if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') return value;
+  const object = asObject(value);
+  if (!Object.keys(object).length) return null;
+  return compactObject({
+    score: firstValue(object.score, object.riskScore, object.value),
+    band: textOf(firstValue(object.band, object.tier, object.level, object.status)),
+    confidence: textOf(object.confidence),
+    label: textOf(object.label),
+    reasons: normalizeList(object.reasons),
+    caveats: normalizeList(object.caveats),
+    source: textOf(object.source),
+  });
+};
+
+const readFirstPath = (source = {}, paths = []) => {
+  for (const path of paths) {
+    const parts = String(path).split('.');
+    let current = source;
+    for (const part of parts) {
+      if (!current || typeof current !== 'object' || !Object.prototype.hasOwnProperty.call(current, part)) {
+        current = undefined;
+        break;
+      }
+      current = current[part];
+    }
+    if (valuePresent(current)) return current;
+  }
+  return '';
+};
+
+function buildScoreSignals(evidenceInput = {}) {
+  const input = asObject(evidenceInput);
+  const direct = asObject(input.scoreSignals);
+  const scoreProfile = asObject(input.variantScoreProfile || input.scoreProfile || input.scoreInsight);
+  const modules = asObject(scoreProfile.modules);
+  const signals = {};
+
+  for (const [key, aliases] of Object.entries(SCORE_SIGNAL_KEYS)) {
+    const candidates = [
+      readFirstPath(direct, aliases),
+      ...aliases.map((alias) => modules[alias]).filter(valuePresent),
+      ...aliases.map((alias) => scoreProfile[alias]).filter(valuePresent),
+      ...aliases.map((alias) => input[alias]).filter(valuePresent),
+    ];
+    const normalized = normalizeSignalValue(firstValue(...candidates));
+    if (normalized !== null) signals[key] = normalized;
+  }
+
+  return signals;
+}
+
+const normalizeEvidenceList = (...values) => {
+  for (const value of values) {
+    const list = normalizeList(value);
+    if (list.length) return unique(list);
+  }
+  return [];
+};
+
+function buildDecisionEvidencePack({
+  scope = '',
+  subject = {},
+  decisionEvidencePackInput = {},
+  selectedVehicleFacts = {},
+} = {}) {
+  const input = asObject(decisionEvidencePackInput);
+  const pack = compactObject({
+    scope,
+    subject,
+    scoreSignals: buildScoreSignals(input),
+    strengths: normalizeEvidenceList(input.strengths, input.scoreInsight?.strengths, input.variantScoreProfile?.strengths),
+    watchouts: normalizeEvidenceList(input.watchouts, input.scoreInsight?.watchouts, input.variantScoreProfile?.watchouts),
+    fitSignals: normalizeEvidenceList(input.fitSignals, input.buyerFitSignals, input.fit),
+    alternativeSignals: normalizeEvidenceList(input.alternativeSignals, input.similarModelGraph?.signals, input.similarAlternatives, selectedVehicleFacts.similarAlternatives),
+    upgradeSignals: normalizeEvidenceList(input.upgradeSignals, input.upgradeLadder?.signals, input.upgradeLadder?.reasons),
+    missingEvidence: normalizeEvidenceList(input.missingEvidence, input.dataQuality?.missingEvidence),
+    evidenceSources: normalizeEvidenceList(input.evidenceSources, input.sources, input.variantScoreProfile?.buildVersion, input.scoreInsight?.buildVersion),
+  });
+
+  return {
+    scope,
+    subject,
+    scoreSignals: asObject(pack.scoreSignals),
+    strengths: asArray(pack.strengths),
+    watchouts: asArray(pack.watchouts),
+    fitSignals: asArray(pack.fitSignals),
+    alternativeSignals: asArray(pack.alternativeSignals),
+    upgradeSignals: asArray(pack.upgradeSignals),
+    missingEvidence: asArray(pack.missingEvidence),
+    evidenceSources: asArray(pack.evidenceSources),
+  };
+}
+
+function buildBuyerGuidanceContext({
+  inputStatus = {},
+  selectedVehicle = {},
+  selectedVehicleContext = {},
+  buyerContext = {},
+  contextState = {},
+  data = {},
+  message = '',
+  comparisonTargets = [],
+  upgradeBase = {},
+  upgradeTarget = {},
+  decisionEvidencePackInput = {},
+  response = {},
+} = {}) {
+  const selectedVehicleFacts = buildSelectedVehicleFacts({
+    selectedVehicle,
+    selectedVehicleContext,
+    data,
+  });
+  const subject = buildDecisionSubject({
+    selectedVehicleFacts,
+    selectedVehicle,
+    decisionEvidencePackInput,
+    comparisonTargets,
+    upgradeBase,
+    upgradeTarget,
+  });
+  const scope = detectBuyerGuidanceScope({
+    message,
+    subject,
+    selectedVehicleFacts,
+    inputStatus,
+    decisionEvidencePackInput,
+    response,
+  });
+  const decisionEvidencePack = buildDecisionEvidencePack({
+    scope,
+    subject,
+    decisionEvidencePackInput,
+    selectedVehicleFacts,
+  });
+  const guidanceMode = selectGuidanceMode({ selectedVehicleFacts, inputStatus, scope });
+  const existingGuidance = asObject(contextState.buyerGuidanceContext);
+  const inferredContext = compactObject({
+    ...asObject(existingGuidance.inferredContext),
+    ...asObject(buyerContext.inferredBuyerContext),
+    ...inferBuyerSignalsFromMessage(message),
+  });
+  const softAssumptions = buildSoftAssumptions({ selectedVehicleFacts, inputStatus });
+  const needsUseCase = !hasInput(inputStatus, 'bodyPreferenceOrPrimaryUseCase');
+
+  return compactObject({
+    version: 'aci_buyer_guidance_context_v1',
+    guidanceMode,
+    allowedGuidanceModes: [
+      'practical_first_view',
+      'conditional_guidance',
+      'sharpened_recommendation',
+    ],
+    finalPurchaseVerdictEnabled: false,
+    scope,
+    selectedVehicleFacts,
+    decisionEvidencePack,
+    explicitBuyerContext: buildExplicitBuyerContext(inputStatus),
+    inferredContext,
+    softAssumptions,
+    softQuestion: needsUseCase ? 'Is your use mostly city, highway, or mixed?' : '',
+    knownCapabilities: compactObject({
+      hasCng: asArray(selectedVehicleFacts.fuelTypes).some((fuel) => /\bcng\b/i.test(fuel)),
+      hasPetrol: asArray(selectedVehicleFacts.fuelTypes).some((fuel) => /\bpetrol\b/i.test(fuel)),
+      hasAutomatic: asArray(selectedVehicleFacts.transmissions).some((transmission) => /\bautomatic|auto|amt|cvt|dct|ivt|at\b/i.test(transmission)),
+      hasManual: asArray(selectedVehicleFacts.transmissions).some((transmission) => /\bmanual|mt\b/i.test(transmission)),
+      hasNamedAlternatives: asArray(selectedVehicleFacts.similarAlternatives).length > 0,
+    }),
+  });
+}
 
 function buildInputStatus(key, candidate, { required = true } = {}) {
   const present = valuePresent(candidate.value);
@@ -119,18 +578,22 @@ function buildInputStatus(key, candidate, { required = true } = {}) {
   };
 }
 
-function buildBuyerDecisionInputContract({ context = {}, response = {} } = {}) {
+function buildBuyerDecisionInputContract({ context = {}, response = {}, message = '' } = {}) {
   const {
     ctx,
     data,
     contextState,
     buyerContext,
     selectedVehicle,
+    selectedVehicleContext,
     filters,
     entities,
     priorities,
     shortlistedModels,
     comparisonTargets,
+    upgradeBase,
+    upgradeTarget,
+    decisionEvidencePackInput,
   } = getNestedDecisionContext({ context, response });
 
   const candidates = {
@@ -261,6 +724,20 @@ function buildBuyerDecisionInputContract({ context = {}, response = {} } = {}) {
     MANDATORY_FINAL_RECOMMENDATION_INPUTS.length > 0
       ? Number((presentInputs.length / MANDATORY_FINAL_RECOMMENDATION_INPUTS.length).toFixed(2))
       : 1;
+  const buyerGuidanceContext = buildBuyerGuidanceContext({
+    inputStatus,
+    selectedVehicle,
+    selectedVehicleContext,
+    buyerContext,
+    contextState,
+    data,
+    message,
+    comparisonTargets,
+    upgradeBase,
+    upgradeTarget,
+    decisionEvidencePackInput,
+    response,
+  });
 
   return {
     version: CONTRACT_VERSION,
@@ -276,11 +753,13 @@ function buildBuyerDecisionInputContract({ context = {}, response = {} } = {}) {
     normalizedBuyerInputs: Object.fromEntries(
       Object.entries(inputStatus).map(([key, status]) => [key, status.value])
     ),
+    buyerGuidanceContext,
     shortlist: normalizeList(shortlistedModels.length ? shortlistedModels : comparisonTargets),
   };
 }
 
 module.exports = {
   CONTRACT_VERSION,
+  buildBuyerGuidanceContext,
   buildBuyerDecisionInputContract,
 };

@@ -1,3 +1,7 @@
+import buyerContextSignals from './aciBuyerContextSignals.service.cjs';
+
+const { inferBuyerSignalsFromMessage } = buyerContextSignals;
+
 const cleanText = (value = '') => String(value || '').trim();
 
 const asObject = (value) =>
@@ -177,6 +181,7 @@ function extractBuyerContextFromMessage({ message = '', previousBuyerContext = {
   const safety = extractSafetyPriority(text);
   const features = extractFeaturePriority(text);
   const scope = extractDiscoveryScope({ text, useCase, fuel, transmission, budget });
+  const inferredBuyerContext = inferBuyerSignalsFromMessage(text);
 
   const patch = {
     ...(city ? { city, citySlug: normalizeCitySlug(city) } : {}),
@@ -192,6 +197,7 @@ function extractBuyerContextFromMessage({ message = '', previousBuyerContext = {
     ...(safety ? { safetyPriority: safety } : {}),
     ...(features.length ? { featurePriority: features } : {}),
     ...(scope ? { shortlistedModelsOrDiscoveryScope: scope } : {}),
+    ...(asArray(inferredBuyerContext.signals).length ? { inferredBuyerContext } : {}),
   };
 
   const detectedInputs = Object.keys(patch).filter((key) => !['citySlug', 'maxBudget', 'primaryUseCase', 'fuelPreference', 'monthlyRunning'].includes(key));
@@ -246,6 +252,13 @@ function applyBuyerContextToContextState({ message = '', contextState = {} } = {
   return {
     ...state,
     buyerContext,
+    buyerGuidanceContext: {
+      ...(state.buyerGuidanceContext || {}),
+      inferredContext: {
+        ...(state.buyerGuidanceContext?.inferredContext || {}),
+        ...(buyerContext.inferredBuyerContext || {}),
+      },
+    },
     provenance: {
       ...(state.provenance || {}),
       sources: unique([...(state.provenance?.sources || []), 'buyer_context_extractor_v1']),
@@ -257,6 +270,7 @@ function applyBuyerContextToContextState({ message = '', contextState = {} } = {
 export {
   applyBuyerContextToContextState,
   extractBuyerContextFromMessage,
+  inferBuyerSignalsFromMessage,
   mergeBuyerContext,
   normalizeCitySlug,
 };

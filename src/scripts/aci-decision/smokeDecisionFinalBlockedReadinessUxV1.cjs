@@ -17,19 +17,18 @@ const liveBridge = read('src/services/aciCore/integration/aciCoreLiveBridge.serv
 const finalSmoke = read('src/scripts/aci-decision/smokeFinalRecommendationEligibilityRuntimeV1.cjs');
 
 addCheck(
-  'final-blocked-language-says-disabled',
-  /Final recommendation remains disabled|cannot give a buy-this verdict/i.test(registry)
+  'final-choice-language-avoids-disabled-wording',
+  !/Final recommendation remains disabled|final recommendation disabled|cannot give a buy-this verdict|Missing buyer inputs|Missing buyer context/i.test(registry)
 );
 
 addCheck(
-  'final-blocked-language-has-safe-now',
-  /Safe now:/i.test(registry)
+  'final-choice-language-has-practical-guidance',
+  /practical first view|conditional guidance|sharpened guidance/i.test(registry)
 );
 
 addCheck(
-  'final-blocked-language-preserves-discovery-only',
-  /discovery, but final recommendation remains disabled/i.test(registry) ||
-    /Use this as discovery for now/i.test(registry)
+  'final-choice-language-labels-assumptions',
+  /Assumption:/i.test(registry)
 );
 
 addCheck(
@@ -42,6 +41,7 @@ addCheck(
   'live-bridge-attaches-final-blocked-ux-object',
   liveBridge.includes('finalBlockedUx') &&
     liveBridge.includes('safeAnswerTypesNow') &&
+    liveBridge.includes('provisional_buyer_guidance') &&
     liveBridge.includes('final_recommendation_blocked')
 );
 

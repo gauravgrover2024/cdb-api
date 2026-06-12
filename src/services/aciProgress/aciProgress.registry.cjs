@@ -240,6 +240,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "similar_cars_graph", name: "Similar cars graph/read model + buyer-quality refresh gate", status: "mostly_ready" },
       { key: "similar_cars_buyer_quality_gate", name: "Similar cars buyer-quality repair/audit wired into decision refresh", status: "ready" },
       { key: "aci_assist_score_mapping", name: "ACI Assist mapping to decision profiles and score profiles", status: "mostly_ready" },
+      { key: "buyer_context_behavior_guidance", name: "Buyer-context provisional guidance contract for final-choice questions", status: "ready" },
       { key: "score_computation", name: "Score computation", status: "mostly_ready" }
     ]
   },

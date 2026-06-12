@@ -3652,6 +3652,166 @@ const DECISION_SAFE_NEXT_CAPABILITIES = Object.freeze([
   "similar alternatives",
 ]);
 
+const BUYER_GUIDANCE_TEMPLATE_BY_MODE = Object.freeze({
+  practical_first_view: "decision_buyer_guidance_practical_first_view",
+  conditional_guidance: "decision_buyer_guidance_conditional",
+  sharpened_recommendation: "decision_buyer_guidance_sharpened_recommendation",
+});
+
+const formatGuidanceList = (items = []) => {
+  const list = (Array.isArray(items) ? items : [items])
+    .map((item) => cleanText(item))
+    .filter(Boolean);
+  if (!list.length) return "";
+  if (list.length === 1) return list[0];
+  if (list.length === 2) return `${list[0]} and ${list[1]}`;
+  return `${list.slice(0, -1).join(", ")}, and ${list[list.length - 1]}`;
+};
+
+const buildBuyerGuidanceVehicleFactsLine = (facts = {}) => {
+  const clauses = [];
+  const bodyType = cleanText(facts.bodyType);
+  const seatingCapacity = cleanText(facts.seatingCapacity);
+  const fuelTypes = formatGuidanceList(facts.fuelTypes || []);
+  const transmissions = formatGuidanceList(facts.transmissions || []);
+  const priceBand = cleanText(facts.priceBand);
+  const safetyFeatures = formatGuidanceList(facts.safetyFeatures || []);
+  const featureHighlights = formatGuidanceList(facts.featureHighlights || []);
+  const ownershipSignals = formatGuidanceList(facts.ownershipSignals || []);
+  const similarAlternatives = formatGuidanceList(facts.similarAlternatives || []);
+
+  if (bodyType) clauses.push(`body type ${bodyType}`);
+  if (seatingCapacity) clauses.push(`${seatingCapacity}-seater`);
+  if (fuelTypes) clauses.push(`available fuels ${fuelTypes}`);
+  if (transmissions) clauses.push(`available transmissions ${transmissions}`);
+  if (priceBand) clauses.push(`price band ${priceBand}`);
+  if (safetyFeatures) clauses.push(`known safety features ${safetyFeatures}`);
+  if (featureHighlights) clauses.push(`known feature highlights ${featureHighlights}`);
+  if (ownershipSignals) clauses.push(`ownership signals ${ownershipSignals}`);
+  if (similarAlternatives) clauses.push(`similar alternatives ${similarAlternatives}`);
+
+  return clauses.length ? clauses.join("; ") : "selected model facts are available";
+};
+
+const buildBuyerGuidanceContextLine = (buyerContext = {}) => {
+  const entries = [
+    ["city", buyerContext.city],
+    ["budget", buyerContext.budgetOrPriceCeiling],
+    ["use case", buyerContext.bodyPreferenceOrPrimaryUseCase],
+    ["occupancy", buyerContext.familySizeOrOccupancyUse],
+    ["running/fuel", buyerContext.fuelPreferenceOrMonthlyRunning],
+    ["transmission", buyerContext.transmissionPreference],
+    ["safety priority", buyerContext.safetyPriority],
+    ["feature priority", formatGuidanceList(buyerContext.featurePriority || [])],
+    ["shortlist/scope", buyerContext.shortlistedModelsOrDiscoveryScope],
+  ]
+    .map(([label, value]) => [label, cleanText(value)])
+    .filter(([, value]) => value)
+    .map(([label, value]) => `${label}: ${value}`);
+
+  return entries.length ? entries.join("; ") : "not enough buyer preferences yet";
+};
+
+const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, response = {} } = {}) => {
+  const subject = evidencePack.subject || {};
+  const scope = cleanText(evidencePack.scope || "");
+  const comparisonTargets = Array.isArray(subject.comparisonTargets) ? subject.comparisonTargets : [];
+  const labelOf = (vehicle = {}) =>
+    cleanText(vehicle.label || vehicle.fullModel || [vehicle.make, vehicle.model, vehicle.variant].filter(Boolean).join(" "));
+
+  if (scope === "comparison_scope" && comparisonTargets.length >= 2) {
+    return comparisonTargets.map(labelOf).filter(Boolean).join(" vs ");
+  }
+
+  if (scope === "upgrade_scope") {
+    const base = labelOf(subject.upgradeBase || {});
+    const target = labelOf(subject.upgradeTarget || {});
+    if (base && target) return `${base} to ${target}`;
+  }
+
+  if (scope === "make_scope") return cleanText(subject.make || facts.make || facts.brand || "this make");
+  if (scope === "discovery_scope") return cleanText(subject.discoveryLabel || response.title || "this search");
+
+  return cleanText(
+    facts.fullModel ||
+      [facts.make || facts.brand || subject.make, facts.model || subject.model, facts.variant || subject.variant].filter(Boolean).join(" ") ||
+      response.anchorFullModel ||
+      response.anchorModel ||
+      "this choice",
+  );
+};
+
+const formatScoreSignalLine = (scoreSignals = {}) => {
+  const labels = {
+    safety: "safety",
+    features: "features",
+    value: "value",
+    runningCost: "running cost",
+    familyPracticality: "family practicality",
+    comfort: "comfort",
+    regretRisk: "regret risk",
+  };
+  const entries = Object.entries(scoreSignals || {})
+    .map(([key, value]) => {
+      if (value && typeof value === "object") {
+        const band = cleanText(value.band || value.status || value.label);
+        const score = value.score !== undefined && value.score !== null && value.score !== "" ? ` ${value.score}` : "";
+        return band || score ? `${labels[key] || key}${score ? ` score${score}` : ""}${band ? ` (${band})` : ""}` : "";
+      }
+      return cleanText(value) ? `${labels[key] || key}: ${value}` : "";
+    })
+    .filter(Boolean);
+
+  return formatGuidanceList(entries);
+};
+
+const buildBuyerGuidanceEvidenceLines = (evidencePack = {}) => {
+  const scoreLine = formatScoreSignalLine(evidencePack.scoreSignals || {});
+  return {
+    strengthsLine: formatGuidanceList([
+      ...(Array.isArray(evidencePack.strengths) ? evidencePack.strengths : []),
+      scoreLine,
+    ].filter(Boolean)) || "not enough scored strength evidence yet",
+    watchoutsLine: formatGuidanceList(evidencePack.watchouts || []) || "nothing specific in the supplied evidence",
+    fitLine: formatGuidanceList(evidencePack.fitSignals || []) || "your use case matches the available facts and trade-offs",
+    alternativeLine: formatGuidanceList(evidencePack.alternativeSignals || []) || "your top priority is not covered by the available evidence",
+    upgradeLine: formatGuidanceList(evidencePack.upgradeSignals || []) || "no upgrade-ladder evidence supplied for this question",
+  };
+};
+
+const buildBuyerGuidanceAnswer = ({ eligibility = {}, bridge = {}, response = {} } = {}) => {
+  const guidance = eligibility.buyerGuidanceContext || eligibility.buyerDecisionInput?.buyerGuidanceContext || {};
+  const mode = cleanText(guidance.guidanceMode);
+  const templateKey = BUYER_GUIDANCE_TEMPLATE_BY_MODE[mode];
+  const facts = guidance.selectedVehicleFacts || {};
+  const evidencePack = guidance.decisionEvidencePack || {};
+  const model = buildBuyerGuidanceSubjectLabel({ facts, evidencePack, response });
+
+  if (!templateKey || !model || model === "this choice") return "";
+
+  return renderAciLanguageText(
+    templateKey,
+    {
+      model,
+      vehicleFactsLine: buildBuyerGuidanceVehicleFactsLine(facts),
+      ...buildBuyerGuidanceEvidenceLines(evidencePack),
+      buyerContextLine: buildBuyerGuidanceContextLine(guidance.explicitBuyerContext || {}),
+      assumptionsLine: formatGuidanceList(guidance.softAssumptions || []) || "none beyond the buyer context already shared",
+      softQuestion: cleanText(guidance.softQuestion) || "Share the one priority you want me to weigh most.",
+    },
+    {
+      seed: [
+        templateKey,
+        bridge.effectiveMessage,
+        bridge.originalMessage,
+        model,
+        mode,
+        JSON.stringify(facts),
+      ].filter(Boolean).join("|"),
+    },
+  );
+};
+
 const isWeakGenericClarificationAnswer = (response = {}) => {
   const answer = cleanText(response.answer || response.data?.answer || "");
   return (
@@ -3663,6 +3823,9 @@ const isWeakGenericClarificationAnswer = (response = {}) => {
 };
 
 const buildFinalRecommendationBlockedAnswer = ({ eligibility = {}, response = {}, bridge = {} } = {}) => {
+  const buyerGuidanceAnswer = buildBuyerGuidanceAnswer({ eligibility, response, bridge });
+  if (buyerGuidanceAnswer) return buyerGuidanceAnswer;
+
   const missingInputs = getDecisionMissingInputLabels(eligibility.missingMandatoryInputs);
   const templateKey = isWeakGenericClarificationAnswer(response)
     ? "decision_final_blocked_missing_context"
@@ -3708,15 +3871,18 @@ const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}
   const answer = shouldPreserveExisting
     ? `${blockedAnswer}\n\n${existingAnswer}`
     : blockedAnswer;
+  const guidanceMode = eligibility.provisionalGuidanceMode || eligibility.buyerGuidanceContext?.guidanceMode || "";
+  const decisionScope = eligibility.buyerGuidanceContext?.decisionEvidencePack?.scope || "";
+  const guidanceTitle = guidanceMode ? "Practical guidance" : "Need one detail";
 
   const finalBlockedUx = {
-    status: "final_recommendation_blocked",
+    status: guidanceMode ? "provisional_buyer_guidance" : "final_recommendation_blocked",
     requestedFinalRecommendation: true,
     finalRecommendationEnabled: false,
     canUseForFinalRecommendation: false,
+    provisionalGuidanceMode: guidanceMode,
+    decisionScope,
     allowedAnswerType: eligibility.allowedAnswerType || "",
-    blockedReasons: Array.isArray(eligibility.blockedReasons) ? eligibility.blockedReasons : [],
-    missingMandatoryInputs: Array.isArray(eligibility.missingMandatoryInputs) ? eligibility.missingMandatoryInputs : [],
     safeAnswerTypesNow: [
       "diagnostic_only",
       "clarification_required",
@@ -3727,13 +3893,13 @@ const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}
 
   return {
     ...response,
-    title: response.title === "Need one detail" ? "Need buyer context" : response.title,
+    title: response.title === "Need one detail" || guidanceMode ? guidanceTitle : response.title,
     answer,
     clarification: response.clarification || answer,
     finalBlockedUx,
     data: {
       ...(response.data || {}),
-      title: response.data?.title === "Need one detail" ? "Need buyer context" : response.data?.title,
+      title: response.data?.title === "Need one detail" || guidanceMode ? guidanceTitle : response.data?.title,
       answer,
       clarification: response.data?.clarification || answer,
       finalBlockedUx,

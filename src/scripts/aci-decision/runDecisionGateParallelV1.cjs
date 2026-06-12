@@ -68,6 +68,7 @@ const GATES = {
     { id: 'buyer-context-reuse-readiness-smoke', cmd: 'npm run -s aci:decision:context-reuse-readiness:smoke' },
     { id: 'decision-phase5-closure-smoke', cmd: 'npm run -s aci:decision:phase5-closure:smoke' },
     { id: 'final-composer-readiness-audit', cmd: 'npm run -s aci:decision:final-composer-readiness:audit' },
+    { id: 'buyer-context-behavior-smoke', cmd: 'npm run -s aci:decision:buyer-context-behavior:smoke' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },

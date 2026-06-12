@@ -1427,7 +1427,7 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
       return createSuccess({
         operation,
         data: coverage,
-        answer: `Score profile coverage: ${coverage.totalScoreProfiles} variants, final recommendation disabled.`,
+        answer: `Score profile coverage: ${coverage.totalScoreProfiles} variants. Use this as diagnostic coverage only, not as a purchase verdict.`,
       });
     }
 

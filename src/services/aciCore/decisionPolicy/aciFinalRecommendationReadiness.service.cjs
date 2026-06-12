@@ -18,6 +18,8 @@ function buildFinalRecommendationPolicyReadiness({
   const clarification = asObject(buyerInputClarification);
   const evidence = asObject(evidenceGate);
   const missingInputs = asArray(input.missingMandatoryInputs || clarification.missingInputs);
+  const buyerGuidanceContext = asObject(input.buyerGuidanceContext || clarification.buyerGuidanceContext);
+  const guidanceMode = buyerGuidanceContext.guidanceMode || '';
   const buyerContextComplete = missingInputs.length === 0;
   const evidenceThresholdMet = Boolean(evidence.hasUsefulEvidence);
 
@@ -28,6 +30,11 @@ function buildFinalRecommendationPolicyReadiness({
     finalRecommendationPolicyReady: false,
     finalComposerReady: false,
     recommendationActivationEnabled: false,
+    provisionalBuyerGuidanceReady: [
+      'practical_first_view',
+      'conditional_guidance',
+      'sharpened_recommendation',
+    ].includes(guidanceMode),
     noFloodClarificationReady:
       clarification?.askPolicy?.mode === 'progressive_single_question' &&
       Number(clarification?.askPolicy?.maxBuyerFacingQuestions || 0) === 1 &&
@@ -54,6 +61,8 @@ function buildFinalRecommendationPolicyReadiness({
     gates,
     blockedReasons: unique([...asArray(blockedReasons), ...readinessBlockers]),
     missingInputs,
+    buyerGuidanceContext,
+    provisionalGuidanceMode: guidanceMode,
     buyerFacingQuestionCount: asArray(clarification.buyerFacingQuestions).length,
     internalMissingInputCount: asArray(clarification.internalMissingInputMap).length,
     nextAllowedStep: buyerContextComplete

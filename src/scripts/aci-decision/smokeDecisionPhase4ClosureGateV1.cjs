@@ -92,7 +92,7 @@ add('final-eligibility-dry-run-present', /dryRun:\s*true/.test(finalEligibility)
 add('final-eligibility-policy-not-ready-block-present', /FINAL_RECOMMENDATION_POLICY_NOT_READY/.test(finalEligibility));
 
 add('live-bridge-attaches-final-blocked-ux', liveBridge.includes('finalBlockedUx') && liveBridge.includes('final_recommendation_blocked'));
-add('language-registry-has-final-blocked-readiness', /Final recommendation remains disabled/i.test(languageRegistry) && /Safe now:/i.test(languageRegistry));
+add('language-registry-has-final-choice-guidance', /practical first view|conditional guidance|sharpened guidance/i.test(languageRegistry) && /Assumption:/i.test(languageRegistry));
 add('progress-tracker-has-phase4e', /Phase 4E adds final-blocked readiness UX/i.test(progress));
 add('progress-tracker-points-to-phase4f-or-phase5', /Phase 4F closure gate|Phase 5|Buyer Context/i.test(progress));
 

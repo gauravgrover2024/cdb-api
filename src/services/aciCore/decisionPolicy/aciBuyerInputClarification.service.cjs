@@ -64,6 +64,7 @@ function buildBuyerInputClarificationPayload({
   const missing = asArray(missingMandatoryInputs).filter(Boolean);
   const inputStatus = asObject(buyerDecisionInput?.inputStatus);
   const presentInputs = asArray(buyerDecisionInput?.presentInputs);
+  const buyerGuidanceContext = asObject(buyerDecisionInput?.buyerGuidanceContext);
 
   const questions = missing.map((key) => ({
     key,
@@ -94,6 +95,8 @@ function buildBuyerInputClarificationPayload({
     questionStrategy: ASK_POLICY.mode,
     shouldAskBuyerNow: Boolean(nextBestQuestion),
     internalMissingInputMap: questions,
+    buyerGuidanceContext,
+    provisionalGuidanceMode: cleanText(buyerGuidanceContext.guidanceMode || ''),
     canProceedToFinalRecommendationPolicyEval: missing.length === 0,
     finalRecommendationStillDisabled: true,
   };

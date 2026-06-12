@@ -15,6 +15,15 @@ const createEmptySelectedVehicleState = (overrides = {}) => ({
   fuelKey: '',
   transmission: '',
   transmissionKey: '',
+  bodyType: '',
+  seatingCapacity: '',
+  fuelTypes: [],
+  transmissions: [],
+  priceBand: '',
+  safetyFeatures: [],
+  featureHighlights: [],
+  ownershipSignals: [],
+  similarAlternatives: [],
   city: '',
   citySlug: '',
   confidence: 0,
@@ -72,6 +81,16 @@ function createEmptyAciContextState(overrides = {}) {
     activeComparison: createEmptyActiveComparisonState(overrides.activeComparison || {}),
     requested: createEmptyRequestedState(overrides.requested || {}),
     buyerContext: createEmptyBuyerContextState(overrides.buyerContext || overrides.buyerIntent || {}),
+    buyerGuidanceContext: {
+      guidanceMode: '',
+      finalPurchaseVerdictEnabled: false,
+      selectedVehicleFacts: {},
+      explicitBuyerContext: {},
+      inferredContext: {},
+      softAssumptions: [],
+      softQuestion: '',
+      ...(overrides.buyerGuidanceContext || {}),
+    },
     anchors: {
       primaryVehicle: {},
       comparisonTargets: [],
@@ -121,6 +140,10 @@ function assertAciContextStateShape(state = {}) {
 
   if (!state.buyerContext || typeof state.buyerContext !== 'object') {
     throw new Error('ACI context state missing buyerContext object');
+  }
+
+  if (!state.buyerGuidanceContext || typeof state.buyerGuidanceContext !== 'object') {
+    throw new Error('ACI context state missing buyerGuidanceContext object');
   }
 
   if (!state.provenance || typeof state.provenance !== 'object') {

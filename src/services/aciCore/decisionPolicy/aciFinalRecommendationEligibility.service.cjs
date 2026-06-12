@@ -26,6 +26,10 @@ const FINAL_RECOMMENDATION_REQUEST_PATTERNS = Object.freeze([
   /\brecommend\s+(me|one|a\s+car|the\s+best)\b/i,
   /\bworth\s+buying\b/i,
   /\bgo\s+ahead\s+with\b/i,
+  /\bshould\s+i\s+stretch\b/i,
+  /\bshould\s+i\s+upgrade\b/i,
+  /\bworth\s+(?:the\s+)?extra\b/i,
+  /\bworth\s+upgrading\b/i,
 ]);
 
 const valuePresent = (value) => {
@@ -248,8 +252,10 @@ function buildFinalRecommendationEligibilityRuntime({
 } = {}) {
   const requestedFinalRecommendation = detectFinalRecommendationRequest({ message, bridge, response });
   const moduleName = getRuntimeModule({ bridge, response });
-  const buyerDecisionInput = buildBuyerDecisionInputContract({ context, response });
+  const buyerDecisionInput = buildBuyerDecisionInputContract({ context, response, message });
   const { presentInputs, missingMandatoryInputs } = buyerDecisionInput;
+  const buyerGuidanceContext = asObject(buyerDecisionInput.buyerGuidanceContext);
+  const provisionalGuidanceMode = textOf(buyerGuidanceContext.guidanceMode);
   const buyerInputClarification = buildBuyerInputClarificationPayload({
     missingMandatoryInputs: requestedFinalRecommendation ? missingMandatoryInputs : [],
     buyerDecisionInput,
@@ -302,12 +308,14 @@ function buildFinalRecommendationEligibilityRuntime({
     module: moduleName,
     evaluatedTool: bridge.tool || response.tool || '',
     allowedAnswerType: requestedFinalRecommendation
-      ? (missingMandatoryInputs.length > 0 ? ALLOWED_ANSWER_TYPES.CLARIFICATION_REQUIRED : ALLOWED_ANSWER_TYPES.DIAGNOSTIC_ONLY)
+      ? (provisionalGuidanceMode ? ALLOWED_ANSWER_TYPES.DIAGNOSTIC_ONLY : (missingMandatoryInputs.length > 0 ? ALLOWED_ANSWER_TYPES.CLARIFICATION_REQUIRED : ALLOWED_ANSWER_TYPES.DIAGNOSTIC_ONLY))
       : (response.decisionPolicy?.allowedAnswerType || response.data?.decisionPolicy?.allowedAnswerType || ALLOWED_ANSWER_TYPES.DIAGNOSTIC_ONLY),
     blockedReasons: uniqueBlockedReasons,
     missingMandatoryInputs: requestedFinalRecommendation ? missingMandatoryInputs : [],
     buyerDecisionInput: requestedFinalRecommendation ? buyerDecisionInput : null,
     buyerInputClarification: requestedFinalRecommendation ? buyerInputClarification : null,
+    buyerGuidanceContext: requestedFinalRecommendation ? buyerGuidanceContext : null,
+    provisionalGuidanceMode: requestedFinalRecommendation ? provisionalGuidanceMode : '',
     finalPolicyReadiness: requestedFinalRecommendation ? finalPolicyReadiness : null,
     presentInputs,
     evidenceStatus: evidenceGate.evidenceStatus,
