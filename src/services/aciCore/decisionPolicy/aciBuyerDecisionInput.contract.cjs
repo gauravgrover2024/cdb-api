@@ -82,10 +82,37 @@ const normalizeAlternativeList = (...values) => {
   return [];
 };
 
+const normalizeBuyerInputValue = (value) => {
+  if (Array.isArray(value)) {
+    const alternatives = normalizeAlternativeList(value);
+    return alternatives.length ? alternatives : normalizeList(value);
+  }
+  if (value && typeof value === 'object') {
+    const object = asObject(value);
+    const label = textOf(firstValue(
+      object.label,
+      object.name,
+      object.title,
+      object.fullModel,
+      [object.make || object.brand, object.model, object.variant || object.variantName].filter(Boolean).join(' ')
+    ));
+    if (label) return label;
+    if (valuePresent(object.max) || valuePresent(object.min)) {
+      const currency = textOf(object.currency || 'INR');
+      return [
+        valuePresent(object.min) ? `min ${currency} ${object.min}` : '',
+        valuePresent(object.max) ? `max ${currency} ${object.max}` : '',
+      ].filter(Boolean).join(', ');
+    }
+    return '';
+  }
+  return value;
+};
+
 const hasInput = (inputStatus = {}, key = '') => Boolean(inputStatus[key]?.present);
 
 const getInputValue = (inputStatus = {}, key = '') =>
-  hasInput(inputStatus, key) ? inputStatus[key].value : '';
+  hasInput(inputStatus, key) ? normalizeBuyerInputValue(inputStatus[key].value) : '';
 
 const compactObject = (object = {}) =>
   Object.fromEntries(
@@ -147,6 +174,13 @@ const getNestedDecisionContext = ({ context = {}, response = {} } = {}) => {
   const filters = asObject(ctx.filters || contextState.filters || data.filters || response.filters);
   const entities = asObject(ctx.entities || data.entities || response.entities);
   const priorities = asObject(buyerContext.priorities || ctx.priorities || data.priorities || response.priorities);
+  const candidateSnapshot = asObject(
+    ctx.candidateSnapshot ||
+      contextState.candidateSnapshot ||
+      data.candidateSnapshot ||
+      response.candidateSnapshot ||
+      meta.candidateSnapshot
+  );
 
   const shortlistedModels = asArray(
     buyerContext.shortlistedModels ||
@@ -215,6 +249,7 @@ const getNestedDecisionContext = ({ context = {}, response = {} } = {}) => {
     selectedVehicleContext,
     filters,
     entities,
+    candidateSnapshot,
     priorities,
     shortlistedModels,
     comparisonTargets,
@@ -224,20 +259,101 @@ const getNestedDecisionContext = ({ context = {}, response = {} } = {}) => {
   };
 };
 
+const candidateMetadata = (candidate = {}) => asObject(candidate.metadata);
+const candidateRaw = (candidate = {}) =>
+  asObject(candidate.raw || candidateMetadata(candidate).raw || candidateMetadata(candidate).vehicle || candidate.vehicle);
+
+const normalizeCandidateVehicle = (candidate = {}, kind = '') => {
+  const raw = candidateRaw(candidate);
+  const meta = candidateMetadata(candidate);
+  const make = textOf(firstValue(candidate.make, candidate.brand, meta.make, meta.brand, raw.make, raw.brand));
+  const model = textOf(firstValue(candidate.model, meta.model, raw.model, raw.rawModel, kind === 'model' ? candidate.displayName : ''));
+  const variant = textOf(firstValue(candidate.variant, candidate.variantName, meta.variant, meta.variantName, raw.variant, raw.variantName, kind === 'variant' ? candidate.displayName : ''));
+  const fullModel = textOf(firstValue(candidate.fullModel, meta.fullModel, raw.fullModel, [make, model].filter(Boolean).join(' ')));
+  const label = textOf(firstValue(candidate.label, candidate.name, candidate.displayName, raw.label, [make, model, variant].filter(Boolean).join(' ')));
+
+  if (kind === 'make') {
+    return compactObject({
+      make: make || textOf(firstValue(candidate.displayName, candidate.rawText, candidate.canonicalKey)),
+      label,
+    });
+  }
+
+  return compactObject({
+    make,
+    model,
+    variant,
+    fullModel,
+    label,
+  });
+};
+
+const getCandidateVehicles = (candidateSnapshot = {}, kind = 'model') => {
+  const vehicles = asObject(candidateSnapshot.vehicles);
+  const items =
+    kind === 'variant'
+      ? vehicles.variants
+      : kind === 'make'
+        ? vehicles.makes
+        : vehicles.models;
+  return asArray(items)
+    .map((candidate) => normalizeCandidateVehicle(candidate, kind))
+    .filter((item) => Object.keys(item).length);
+};
+
+const labelFromMessageChunk = (chunk = '') =>
+  textOf(chunk)
+    .replace(/^[,.;:\-\s]+|[,.;:\-\s?]+$/g, '')
+    .replace(/\b(?:please|pls)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const inferUpgradeSubjectFromMessage = ({ message = '', selectedVehicleFacts = {} } = {}) => {
+  const match = textOf(message).match(/\bfrom\s+(.+?)\s+to\s+(.+?)(?:[?.!,]|$)/i);
+  if (!match) return {};
+
+  const baseLabel = labelFromMessageChunk(match[1]);
+  let targetLabel = labelFromMessageChunk(match[2]);
+  if (!baseLabel || !targetLabel) return {};
+
+  const baseTokens = baseLabel.split(/\s+/).filter(Boolean);
+  const targetTokens = targetLabel.split(/\s+/).filter(Boolean);
+  const knownModel = textOf(selectedVehicleFacts.model);
+  if (targetTokens.length === 1 && baseTokens.length > 1 && !knownModel) {
+    targetLabel = `${baseTokens.slice(0, -1).join(' ')} ${targetLabel}`.trim();
+  } else if (targetTokens.length === 1 && knownModel && !new RegExp(`\\b${knownModel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(targetLabel)) {
+    targetLabel = `${knownModel} ${targetLabel}`.trim();
+  }
+
+  return {
+    upgradeBase: compactObject({ label: baseLabel }),
+    upgradeTarget: compactObject({ label: targetLabel }),
+  };
+};
+
 function buildSelectedVehicleFacts({
   selectedVehicle = {},
   selectedVehicleContext = {},
   data = {},
+  entities = {},
+  candidateSnapshot = {},
 } = {}) {
   const vehicle = asObject(selectedVehicle);
   const facts = asObject(selectedVehicleContext);
+  const entityObject = asObject(entities);
+  const makeCandidate = getCandidateVehicles(candidateSnapshot, 'make')[0] || {};
+  const variantCandidate = getCandidateVehicles(candidateSnapshot, 'variant')[0] || {};
+  const modelCandidate = getCandidateVehicles(candidateSnapshot, 'model')[0] || variantCandidate || {};
+  const entityModel = firstValue(entityObject.model, entityObject.primaryModel, asArray(entityObject.models)[0]);
+  const entityVariant = firstValue(entityObject.variant, entityObject.primaryVariant, asArray(entityObject.variants)[0]);
+  const entityMake = firstValue(entityObject.make, entityObject.brand, asArray(entityObject.makes)[0]);
 
   return compactObject({
-    brand: textOf(firstValue(facts.brand, facts.make, vehicle.brand, vehicle.make)),
-    make: textOf(firstValue(facts.make, facts.brand, vehicle.make, vehicle.brand)),
-    model: textOf(firstValue(facts.model, vehicle.model)),
-    variant: textOf(firstValue(facts.variant, facts.variantName, vehicle.variant, vehicle.variantName)),
-    fullModel: textOf(firstValue(facts.fullModel, vehicle.fullModel, [facts.brand || facts.make || vehicle.brand || vehicle.make, facts.model || vehicle.model].filter(Boolean).join(' '))),
+    brand: textOf(firstValue(facts.brand, facts.make, vehicle.brand, vehicle.make, entityObject.brand, entityMake, modelCandidate.make, makeCandidate.make)),
+    make: textOf(firstValue(facts.make, facts.brand, vehicle.make, vehicle.brand, entityMake, modelCandidate.make, makeCandidate.make)),
+    model: textOf(firstValue(facts.model, vehicle.model, entityModel, modelCandidate.model)),
+    variant: textOf(firstValue(facts.variant, facts.variantName, vehicle.variant, vehicle.variantName, entityVariant, variantCandidate.variant)),
+    fullModel: textOf(firstValue(facts.fullModel, vehicle.fullModel, modelCandidate.fullModel, [facts.brand || facts.make || vehicle.brand || vehicle.make || entityMake || modelCandidate.make, facts.model || vehicle.model || entityModel || modelCandidate.model].filter(Boolean).join(' '))),
     bodyType: textOf(firstValue(facts.bodyType, facts.bodyStyle, vehicle.bodyType, vehicle.bodyStyle, data.bodyType)),
     seatingCapacity: firstValue(facts.seatingCapacity, facts.seats, vehicle.seatingCapacity, vehicle.seats),
     fuelTypes: normalizeFactList(facts.fuelTypes, facts.availableFuels, vehicle.fuelTypes, vehicle.availableFuels, vehicle.fuelType, data.fuelTypes),
@@ -307,6 +423,7 @@ const normalizeSubjectVehicle = (value = {}) => {
     model: textOf(vehicle.model),
     variant: textOf(firstValue(vehicle.variant, vehicle.variantName, vehicle.selectedVariant)),
     fullModel: textOf(vehicle.fullModel),
+    label: textOf(firstValue(vehicle.label, vehicle.name, vehicle.fullModel, [vehicle.make || vehicle.brand, vehicle.model, vehicle.variant || vehicle.variantName].filter(Boolean).join(' '))),
   });
 };
 
@@ -333,16 +450,24 @@ function buildDecisionSubject({
   comparisonTargets = [],
   upgradeBase = {},
   upgradeTarget = {},
+  entities = {},
+  candidateSnapshot = {},
+  message = '',
 } = {}) {
   const inputSubject = asObject(decisionEvidencePackInput.subject);
+  const candidateMakes = getCandidateVehicles(candidateSnapshot, 'make');
+  const candidateModels = getCandidateVehicles(candidateSnapshot, 'model');
+  const candidateVariants = getCandidateVehicles(candidateSnapshot, 'variant');
+  const entityObject = asObject(entities);
+  const inferredUpgrade = inferUpgradeSubjectFromMessage({ message, selectedVehicleFacts });
   const baseSubject = compactObject({
-    make: textOf(firstValue(inputSubject.make, selectedVehicleFacts.make, selectedVehicleFacts.brand, selectedVehicle.make, selectedVehicle.brand)),
-    model: textOf(firstValue(inputSubject.model, selectedVehicleFacts.model, selectedVehicle.model)),
-    variant: textOf(firstValue(inputSubject.variant, selectedVehicleFacts.variant, selectedVehicle.variant)),
+    make: textOf(firstValue(inputSubject.make, selectedVehicleFacts.make, selectedVehicleFacts.brand, selectedVehicle.make, selectedVehicle.brand, entityObject.make, entityObject.brand, candidateModels[0]?.make, candidateMakes[0]?.make)),
+    model: textOf(firstValue(inputSubject.model, selectedVehicleFacts.model, selectedVehicle.model, entityObject.model, entityObject.primaryModel, asArray(entityObject.models)[0], candidateModels[0]?.model, candidateVariants[0]?.model)),
+    variant: textOf(firstValue(inputSubject.variant, selectedVehicleFacts.variant, selectedVehicle.variant, entityObject.variant, entityObject.primaryVariant, asArray(entityObject.variants)[0], candidateVariants[0]?.variant)),
     discoveryLabel: textOf(inputSubject.discoveryLabel),
-    comparisonTargets: normalizeSubjectTargets(firstValue(inputSubject.comparisonTargets, comparisonTargets)),
-    upgradeBase: normalizeSubjectVehicle(firstValue(inputSubject.upgradeBase, upgradeBase)),
-    upgradeTarget: normalizeSubjectVehicle(firstValue(inputSubject.upgradeTarget, upgradeTarget)),
+    comparisonTargets: normalizeSubjectTargets(firstValue(inputSubject.comparisonTargets, comparisonTargets, candidateModels.length >= 2 ? candidateModels : [])),
+    upgradeBase: normalizeSubjectVehicle(firstValue(inputSubject.upgradeBase, upgradeBase, inferredUpgrade.upgradeBase)),
+    upgradeTarget: normalizeSubjectVehicle(firstValue(inputSubject.upgradeTarget, upgradeTarget, inferredUpgrade.upgradeTarget)),
   });
 
   return baseSubject;
@@ -357,16 +482,27 @@ function detectBuyerGuidanceScope({
   response = {},
 } = {}) {
   const explicitScope = textOf(decisionEvidencePackInput.scope || decisionEvidencePackInput.decisionScope);
-  if (explicitScope) return explicitScope;
 
   const raw = textOf(message).toLowerCase();
   const comparisonTargets = asArray(subject.comparisonTargets);
   const hasUpgradeSubject = Object.keys(asObject(subject.upgradeBase)).length || Object.keys(asObject(subject.upgradeTarget)).length;
+  const hasUpgradeIntent = /\b(stretch|upgrade|worth\s+(?:the\s+)?extra|extra\s+(?:money|cost|price))\b/.test(raw);
+  const hasComparisonIntent = /\b(vs|v\/s|versus)\b/.test(raw) || /\bshould\s+i\s+buy\b.+\bor\b.+\?/i.test(message);
 
-  if (hasUpgradeSubject || /\b(stretch|upgrade|worth\s+(?:the\s+)?extra|extra\s+(?:money|cost|price))\b/.test(raw)) {
+  if (explicitScope) {
+    if (explicitScope === 'upgrade_scope' && !(hasUpgradeSubject || hasUpgradeIntent)) {
+      // Ignore stale upstream upgrade labels unless the current question is actually about an upgrade.
+    } else if (explicitScope === 'comparison_scope' && !(comparisonTargets.length >= 2 || hasComparisonIntent)) {
+      // Ignore stale upstream comparison labels unless the current question is actually comparative.
+    } else {
+      return explicitScope;
+    }
+  }
+
+  if (hasUpgradeSubject || hasUpgradeIntent) {
     return 'upgrade_scope';
   }
-  if (comparisonTargets.length >= 2 || /\b(vs|v\/s|versus)\b/.test(raw) || /\bshould\s+i\s+buy\b.+\bor\b.+\?/i.test(message)) {
+  if (comparisonTargets.length >= 2 || hasComparisonIntent) {
     return 'comparison_scope';
   }
   if (subject.variant || selectedVehicleFacts.variant) return 'variant_scope';
@@ -497,6 +633,8 @@ function buildBuyerGuidanceContext({
   buyerContext = {},
   contextState = {},
   data = {},
+  entities = {},
+  candidateSnapshot = {},
   message = '',
   comparisonTargets = [],
   upgradeBase = {},
@@ -508,6 +646,8 @@ function buildBuyerGuidanceContext({
     selectedVehicle,
     selectedVehicleContext,
     data,
+    entities,
+    candidateSnapshot,
   });
   const subject = buildDecisionSubject({
     selectedVehicleFacts,
@@ -516,6 +656,9 @@ function buildBuyerGuidanceContext({
     comparisonTargets,
     upgradeBase,
     upgradeTarget,
+    entities,
+    candidateSnapshot,
+    message,
   });
   const scope = detectBuyerGuidanceScope({
     message,
@@ -588,6 +731,7 @@ function buildBuyerDecisionInputContract({ context = {}, response = {}, message 
     selectedVehicleContext,
     filters,
     entities,
+    candidateSnapshot,
     priorities,
     shortlistedModels,
     comparisonTargets,
@@ -731,6 +875,8 @@ function buildBuyerDecisionInputContract({ context = {}, response = {}, message 
     buyerContext,
     contextState,
     data,
+    entities,
+    candidateSnapshot,
     message,
     comparisonTargets,
     upgradeBase,

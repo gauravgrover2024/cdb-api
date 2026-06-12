@@ -28,7 +28,9 @@ const hasFinalBlockedReadinessWording = (value = '') => {
     /\bpractical first view\b/,
     /\bconditional guidance\b/,
     /\bprovisional view\b/,
-    /\bknown facts\b/,
+    /\bprovisional buying view\b/,
+    /\bevidence available\b/,
+    /\btrade-off comparison\b/,
     /\bbuyer-specific call\b/,
     /\bstarting points\b/,
   ].some((pattern) => pattern.test(raw));
@@ -38,8 +40,9 @@ const hasSafeNextStepOrMissingContextWording = (value = '') => {
   const raw = String(value || '').toLowerCase();
   return [
     /\bsafe now\b/,
-    /\bassumptions\b/,
-    /\bknown facts\b/,
+    /\bassumptions?\b/,
+    /\bbuyer context captured\b/,
+    /\bgrounded vehicle evidence\b/,
     /\bprovisional\b/,
     /\bdiagnostic\b/,
     /\bdiscovery\b/,

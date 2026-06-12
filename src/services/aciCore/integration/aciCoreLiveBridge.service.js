@@ -3668,6 +3668,8 @@ const formatGuidanceList = (items = []) => {
   return `${list.slice(0, -1).join(", ")}, and ${list[list.length - 1]}`;
 };
 
+const optionalGuidanceLine = (value = "") => cleanText(value) || " ";
+
 const buildBuyerGuidanceVehicleFactsLine = (facts = {}) => {
   const clauses = [];
   const bodyType = cleanText(facts.bodyType);
@@ -3690,7 +3692,7 @@ const buildBuyerGuidanceVehicleFactsLine = (facts = {}) => {
   if (ownershipSignals) clauses.push(`ownership signals ${ownershipSignals}`);
   if (similarAlternatives) clauses.push(`similar alternatives ${similarAlternatives}`);
 
-  return clauses.length ? clauses.join("; ") : "selected model facts are available";
+  return clauses.join("; ");
 };
 
 const buildBuyerGuidanceContextLine = (buyerContext = {}) => {
@@ -3709,7 +3711,7 @@ const buildBuyerGuidanceContextLine = (buyerContext = {}) => {
     .filter(([, value]) => value)
     .map(([label, value]) => `${label}: ${value}`);
 
-  return entries.length ? entries.join("; ") : "not enough buyer preferences yet";
+  return entries.join("; ");
 };
 
 const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, response = {} } = {}) => {
@@ -3730,14 +3732,19 @@ const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, respons
   }
 
   if (scope === "make_scope") return cleanText(subject.make || facts.make || facts.brand || "this make");
-  if (scope === "discovery_scope") return cleanText(subject.discoveryLabel || response.title || "this search");
+  if (scope === "discovery_scope") return cleanText(subject.discoveryLabel || response.title || "your car search");
+  if (scope === "variant_scope" && (facts.variant || subject.variant)) {
+    return cleanText(
+      [facts.make || facts.brand || subject.make, facts.model || subject.model, facts.variant || subject.variant].filter(Boolean).join(" "),
+    );
+  }
 
   return cleanText(
     facts.fullModel ||
       [facts.make || facts.brand || subject.make, facts.model || subject.model, facts.variant || subject.variant].filter(Boolean).join(" ") ||
       response.anchorFullModel ||
       response.anchorModel ||
-      "this choice",
+      (scope === "upgrade_scope" ? "this upgrade" : scope === "comparison_scope" ? "this comparison" : "this choice"),
   );
 };
 
@@ -3765,17 +3772,77 @@ const formatScoreSignalLine = (scoreSignals = {}) => {
   return formatGuidanceList(entries);
 };
 
-const buildBuyerGuidanceEvidenceLines = (evidencePack = {}) => {
+const buildBuyerGuidanceEvidenceValues = (evidencePack = {}) => {
   const scoreLine = formatScoreSignalLine(evidencePack.scoreSignals || {});
   return {
-    strengthsLine: formatGuidanceList([
+    strengths: formatGuidanceList([
       ...(Array.isArray(evidencePack.strengths) ? evidencePack.strengths : []),
       scoreLine,
-    ].filter(Boolean)) || "not enough scored strength evidence yet",
-    watchoutsLine: formatGuidanceList(evidencePack.watchouts || []) || "nothing specific in the supplied evidence",
-    fitLine: formatGuidanceList(evidencePack.fitSignals || []) || "your use case matches the available facts and trade-offs",
-    alternativeLine: formatGuidanceList(evidencePack.alternativeSignals || []) || "your top priority is not covered by the available evidence",
-    upgradeLine: formatGuidanceList(evidencePack.upgradeSignals || []) || "no upgrade-ladder evidence supplied for this question",
+    ].filter(Boolean)),
+    watchouts: formatGuidanceList(evidencePack.watchouts || []),
+    fit: formatGuidanceList(evidencePack.fitSignals || []),
+    alternatives: formatGuidanceList(evidencePack.alternativeSignals || []),
+    upgrade: formatGuidanceList(evidencePack.upgradeSignals || []),
+  };
+};
+
+const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
+  if (scope === "make_scope") {
+    return `For ${model}, I would keep this at brand level first: ownership/service reach, resale, model options in budget, and the exact model matter more than the badge alone.`;
+  }
+  if (scope === "variant_scope") {
+    return `For ${model}, I would judge the variant by the confirmed feature gains, price gap, score profile, and regret-risk evidence.`;
+  }
+  if (scope === "comparison_scope") {
+    return `For ${model}, the useful view is a trade-off comparison, not a single winner yet.`;
+  }
+  if (scope === "upgrade_scope") {
+    return `For ${model}, the decision is whether the upgrade evidence justifies the extra spend for your use case.`;
+  }
+  if (scope === "discovery_scope") {
+    return `For ${model}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
+  }
+  return `For ${model}, I can give a provisional buying view from the evidence available.`;
+};
+
+const buildBuyerGuidanceUsefulViewLine = ({ factsLine = "", buyerContextLine = "", scope = "" } = {}) => {
+  if (factsLine && buyerContextLine) {
+    return `What I can use now: ${factsLine}. Buyer context captured: ${buyerContextLine}.`;
+  }
+  if (factsLine) {
+    return `What I can use now: ${factsLine}. I would keep this modest until your use case and priorities are clearer.`;
+  }
+  if (buyerContextLine) {
+    return `Buyer context captured: ${buyerContextLine}. I still need grounded vehicle evidence before treating this as more than provisional guidance.`;
+  }
+  if (scope === "make_scope") {
+    return "The next step is to pin down the model and variant, because make-level guidance can only stay broad.";
+  }
+  if (scope === "discovery_scope") {
+    return "The next step is to compare shortlisted options on safety, features, value, running cost, and family practicality once those signals are available.";
+  }
+  return "I would keep this provisional until the exact use case, budget, and priority are clearer.";
+};
+
+const buildBuyerGuidanceLineInput = ({ model = "", facts = {}, guidance = {}, evidencePack = {} } = {}) => {
+  const scope = cleanText(evidencePack.scope || guidance.scope || "");
+  const factsLine = buildBuyerGuidanceVehicleFactsLine(facts);
+  const buyerContextLine = buildBuyerGuidanceContextLine(guidance.explicitBuyerContext || {});
+  const evidence = buildBuyerGuidanceEvidenceValues(evidencePack);
+  const assumptions = formatGuidanceList(guidance.softAssumptions || []);
+  const softQuestion = cleanText(guidance.softQuestion) || "Is your use mostly city, highway, or mixed?";
+
+  return {
+    model,
+    openingLine: optionalGuidanceLine(buildBuyerGuidanceOpeningLine({ scope, model })),
+    usefulViewLine: optionalGuidanceLine(buildBuyerGuidanceUsefulViewLine({ factsLine, buyerContextLine, scope })),
+    strengthLine: optionalGuidanceLine(evidence.strengths ? `Evidence-backed positives: ${evidence.strengths}.` : ""),
+    watchoutLine: optionalGuidanceLine(evidence.watchouts ? `Watch out for: ${evidence.watchouts}.` : ""),
+    fitLine: optionalGuidanceLine(evidence.fit ? `This fits better when: ${evidence.fit}.` : ""),
+    alternativeLine: optionalGuidanceLine(evidence.alternatives ? `Compare alternatives if: ${evidence.alternatives}.` : ""),
+    upgradeLine: optionalGuidanceLine(evidence.upgrade ? `For the upgrade: ${evidence.upgrade}.` : ""),
+    assumptionLine: optionalGuidanceLine(assumptions ? `Assumption: ${assumptions}.` : ""),
+    softQuestion: optionalGuidanceLine(softQuestion ? `One useful next question: ${softQuestion}` : ""),
   };
 };
 
@@ -3791,14 +3858,7 @@ const buildBuyerGuidanceAnswer = ({ eligibility = {}, bridge = {}, response = {}
 
   return renderAciLanguageText(
     templateKey,
-    {
-      model,
-      vehicleFactsLine: buildBuyerGuidanceVehicleFactsLine(facts),
-      ...buildBuyerGuidanceEvidenceLines(evidencePack),
-      buyerContextLine: buildBuyerGuidanceContextLine(guidance.explicitBuyerContext || {}),
-      assumptionsLine: formatGuidanceList(guidance.softAssumptions || []) || "none beyond the buyer context already shared",
-      softQuestion: cleanText(guidance.softQuestion) || "Share the one priority you want me to weigh most.",
-    },
+    buildBuyerGuidanceLineInput({ model, facts, guidance, evidencePack }),
     {
       seed: [
         templateKey,
@@ -5385,7 +5445,13 @@ export const runAciCoreLiveBridge = async ({
       },
     });
 
-    return attachDecisionRuntimeEnvelope(composed, { bridge, context: isolatedContext });
+    return attachDecisionRuntimeEnvelope(composed, {
+      bridge,
+      context: {
+        ...isolatedContext,
+        candidateSnapshot: managedCandidateSnapshot,
+      },
+    });
   }
 
   const directScoreInsightFastPath = await maybeReturnDirectScoreInsightFastPath({
@@ -5574,7 +5640,13 @@ export const runAciCoreLiveBridge = async ({
     },
   });
 
-  return attachDecisionRuntimeEnvelope(composed, { bridge, context: executionContext });
+  return attachDecisionRuntimeEnvelope(composed, {
+    bridge,
+    context: {
+      ...executionContext,
+      candidateSnapshot: managedCandidateSnapshot,
+    },
+  });
 };
 
 export {

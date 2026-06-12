@@ -23,12 +23,15 @@ addCheck(
 
 addCheck(
   'final-choice-language-has-practical-guidance',
-  /practical first view|conditional guidance|sharpened guidance/i.test(registry)
+  /decision_buyer_guidance_practical_first_view|decision_buyer_guidance_conditional|decision_buyer_guidance_sharpened_recommendation/i.test(registry) &&
+    /openingLine/.test(registry) &&
+    /usefulViewLine/.test(registry)
 );
 
 addCheck(
   'final-choice-language-labels-assumptions',
-  /Assumption:/i.test(registry)
+  /assumptionLine/.test(registry) &&
+    /Assumption:/.test(liveBridge)
 );
 
 addCheck(

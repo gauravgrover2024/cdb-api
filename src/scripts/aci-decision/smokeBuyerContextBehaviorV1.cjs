@@ -26,6 +26,18 @@ const INTERNAL_BLOCKER_PATTERNS = [
   /\bmissing mandatory inputs\b/i,
 ];
 
+const MECHANICAL_GUIDANCE_PATTERNS = [
+  /\bKnown facts:/i,
+  /\bStrong signals I can see:/i,
+  /\bnot enough scored strength evidence\b/i,
+  /\bnothing specific in the supplied evidence\b/i,
+  /\bno upgrade-ladder evidence supplied\b/i,
+  /\bselected model facts are available\b/i,
+  /\bthis search can be assessed\b/i,
+  /\byour use case matches the available facts and trade-offs\b/i,
+  /\byour top priority is not covered by the available evidence\b/i,
+];
+
 const FORBIDDEN_BUYER_UX_KEYS = [
   'buyerGuidanceContext',
   'blockedReasons',
@@ -69,6 +81,8 @@ const join = (items = []) => {
   return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
 };
 
+const optionalLine = (value = '') => String(value || '').trim() || ' ';
+
 const labelOf = (vehicle = {}) =>
   String(vehicle.label || vehicle.fullModel || [vehicle.make, vehicle.model, vehicle.variant].filter(Boolean).join(' ')).trim();
 
@@ -85,7 +99,44 @@ const subjectLabel = ({ facts = {}, evidencePack = {}, fallback = 'this choice' 
   }
   if (scope === 'make_scope') return subject.make || facts.make || facts.brand || fallback;
   if (scope === 'discovery_scope') return subject.discoveryLabel || fallback;
+  if (scope === 'variant_scope' && (facts.variant || subject.variant)) {
+    return [facts.make || facts.brand || subject.make, facts.model || subject.model, facts.variant || subject.variant].filter(Boolean).join(' ') || fallback;
+  }
   return facts.fullModel || [facts.make || facts.brand, facts.model, facts.variant].filter(Boolean).join(' ') || fallback;
+};
+
+const factLineForGuidance = (facts = {}) => [
+  facts.bodyType ? `body type ${facts.bodyType}` : '',
+  facts.seatingCapacity ? `${facts.seatingCapacity}-seater` : '',
+  facts.fuelTypes?.length ? `available fuels ${join(facts.fuelTypes)}` : '',
+  facts.transmissions?.length ? `available transmissions ${join(facts.transmissions)}` : '',
+  facts.safetyFeatures?.length ? `known safety features ${join(facts.safetyFeatures)}` : '',
+  facts.featureHighlights?.length ? `known feature highlights ${join(facts.featureHighlights)}` : '',
+  facts.similarAlternatives?.length ? `similar alternatives ${join(facts.similarAlternatives)}` : '',
+].filter(Boolean).join('; ');
+
+const buyerContextLineForGuidance = (guidance = {}) =>
+  Object.entries(guidance.explicitBuyerContext || {})
+    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .map(([key, value]) => `${key}: ${Array.isArray(value) ? join(value) : value}`)
+    .join('; ');
+
+const openingLineForGuidance = ({ scope = '', model = '' } = {}) => {
+  if (scope === 'make_scope') return `For ${model}, I would keep this at brand level first: ownership/service reach, resale, model options in budget, and the exact model matter more than the badge alone.`;
+  if (scope === 'variant_scope') return `For ${model}, I would judge the variant by the confirmed feature gains, price gap, score profile, and regret-risk evidence.`;
+  if (scope === 'comparison_scope') return `For ${model}, the useful view is a trade-off comparison, not a single winner yet.`;
+  if (scope === 'upgrade_scope') return `For ${model}, the decision is whether the upgrade evidence justifies the extra spend for your use case.`;
+  if (scope === 'discovery_scope') return `For ${model}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
+  return `For ${model}, I can give a provisional buying view from the evidence available.`;
+};
+
+const usefulViewLineForGuidance = ({ factsLine = '', buyerContextLine = '', scope = '' } = {}) => {
+  if (factsLine && buyerContextLine) return `What I can use now: ${factsLine}. Buyer context captured: ${buyerContextLine}.`;
+  if (factsLine) return `What I can use now: ${factsLine}. I would keep this modest until your use case and priorities are clearer.`;
+  if (buyerContextLine) return `Buyer context captured: ${buyerContextLine}. I still need grounded vehicle evidence before treating this as more than provisional guidance.`;
+  if (scope === 'make_scope') return 'The next step is to pin down the model and variant, because make-level guidance can only stay broad.';
+  if (scope === 'discovery_scope') return 'The next step is to compare shortlisted options on safety, features, value, running cost, and family practicality once those signals are available.';
+  return 'I would keep this provisional until the exact use case, budget, and priority are clearer.';
 };
 
 const formatScoreSignals = (scoreSignals = {}) => {
@@ -107,6 +158,34 @@ const formatScoreSignals = (scoreSignals = {}) => {
     }
     return value ? `${labels[key] || key}: ${value}` : '';
   }).filter(Boolean));
+};
+
+const composerInputForGuidance = ({ id = '', guidance = {} } = {}) => {
+  const facts = guidance.selectedVehicleFacts || {};
+  const evidencePack = guidance.decisionEvidencePack || {};
+  const model = subjectLabel({ facts, evidencePack, fallback: id });
+  const factsLine = factLineForGuidance(facts);
+  const buyerContextLine = buyerContextLineForGuidance(guidance);
+  const scoreLine = formatScoreSignals(evidencePack.scoreSignals || {});
+  const strengths = join([...(evidencePack.strengths || []), scoreLine].filter(Boolean));
+  const watchouts = join(evidencePack.watchouts || []);
+  const fit = join(evidencePack.fitSignals || []);
+  const alternatives = join(evidencePack.alternativeSignals || []);
+  const upgrade = join(evidencePack.upgradeSignals || []);
+  const assumptions = join(guidance.softAssumptions || []);
+
+  return {
+    model,
+    openingLine: optionalLine(openingLineForGuidance({ scope: evidencePack.scope, model })),
+    usefulViewLine: optionalLine(usefulViewLineForGuidance({ factsLine, buyerContextLine, scope: evidencePack.scope })),
+    strengthLine: optionalLine(strengths ? `Evidence-backed positives: ${strengths}.` : ''),
+    watchoutLine: optionalLine(watchouts ? `Watch out for: ${watchouts}.` : ''),
+    fitLine: optionalLine(fit ? `This fits better when: ${fit}.` : ''),
+    alternativeLine: optionalLine(alternatives ? `Compare alternatives if: ${alternatives}.` : ''),
+    upgradeLine: optionalLine(upgrade ? `For the upgrade: ${upgrade}.` : ''),
+    assumptionLine: optionalLine(assumptions ? `Assumption: ${assumptions}.` : ''),
+    softQuestion: optionalLine(`One useful next question: ${guidance.softQuestion || 'Is your use mostly city, highway, or mixed?'}`),
+  };
 };
 
 const renderGuidance = async ({ id, message, context = {}, response = {}, bridge = {} }) => {
@@ -136,38 +215,11 @@ const renderGuidance = async ({ id, message, context = {}, response = {}, bridge
   } = await import('../../services/aciCore/language/aciAnswerLanguageComposer.js');
 
   const guidance = eligibility.buyerGuidanceContext || {};
-  const facts = guidance.selectedVehicleFacts || {};
-  const evidencePack = guidance.decisionEvidencePack || {};
   const templateKey = TEMPLATE_BY_MODE[guidance.guidanceMode];
-  const factLine = [
-    facts.bodyType ? `body type ${facts.bodyType}` : '',
-    facts.seatingCapacity ? `${facts.seatingCapacity}-seater` : '',
-    facts.fuelTypes?.length ? `available fuels ${join(facts.fuelTypes)}` : '',
-    facts.transmissions?.length ? `available transmissions ${join(facts.transmissions)}` : '',
-    facts.safetyFeatures?.length ? `known safety features ${join(facts.safetyFeatures)}` : '',
-    facts.featureHighlights?.length ? `known feature highlights ${join(facts.featureHighlights)}` : '',
-    facts.similarAlternatives?.length ? `similar alternatives ${join(facts.similarAlternatives)}` : '',
-  ].filter(Boolean).join('; ');
-  const buyerContextLine = Object.entries(guidance.explicitBuyerContext || {})
-    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
-    .map(([key, value]) => `${key}: ${Array.isArray(value) ? join(value) : value}`)
-    .join('; ') || 'not enough buyer preferences yet';
-  const scoreLine = formatScoreSignals(evidencePack.scoreSignals || {});
 
   const rendered = renderAciTemplate(
     templateKey,
-    {
-      model: subjectLabel({ facts, evidencePack, fallback: id }),
-      vehicleFactsLine: factLine || 'selected facts are available',
-      strengthsLine: join([...(evidencePack.strengths || []), scoreLine].filter(Boolean)) || 'not enough scored strength evidence yet',
-      watchoutsLine: join(evidencePack.watchouts || []) || 'nothing specific in the supplied evidence',
-      fitLine: join(evidencePack.fitSignals || []) || 'your use case matches the available facts and trade-offs',
-      alternativeLine: join(evidencePack.alternativeSignals || []) || 'your top priority is not covered by the available evidence',
-      upgradeLine: join(evidencePack.upgradeSignals || []) || 'no upgrade-ladder evidence supplied for this question',
-      buyerContextLine,
-      assumptionsLine: join(guidance.softAssumptions || []) || 'none beyond the buyer context already shared',
-      softQuestion: guidance.softQuestion || 'Share the one priority you want me to weigh most.',
-    },
+    composerInputForGuidance({ id, guidance }),
     {
       seed: `buyer-context-behavior|${id}|${message}|${guidance.guidanceMode}`,
     },
@@ -197,6 +249,9 @@ const assertBuyerSafe = ({ id, result, expectedScope }) => {
 
   for (const pattern of INTERNAL_BLOCKER_PATTERNS) {
     assert(!pattern.test(text), `${id}: internal blocker wording leaked: ${pattern} :: ${text}`);
+  }
+  for (const pattern of MECHANICAL_GUIDANCE_PATTERNS) {
+    assert(!pattern.test(text), `${id}: mechanical guidance wording leaked: ${pattern} :: ${text}`);
   }
 };
 
@@ -374,6 +429,158 @@ const CASES = [
   },
 ];
 
+const LIVE_PROXY_CASES = [
+  {
+    id: 'proxy-live-baleno-model',
+    message: 'Should I buy Baleno?',
+    expectedScope: 'model_scope',
+    context: {
+      candidateSnapshot: {
+        vehicles: {
+          models: [
+            {
+              displayName: 'Baleno',
+              metadata: {
+                make: 'Maruti Suzuki',
+                model: 'Baleno',
+              },
+            },
+          ],
+        },
+      },
+      selectedVehicleContext: {
+        make: 'Maruti Suzuki',
+        model: 'Baleno',
+        bodyType: 'hatchback',
+        seatingCapacity: 5,
+      },
+      decisionEvidencePack: {
+        scope: 'model_scope',
+        strengths: ['model decision profile evidence is present in fixture'],
+        evidenceSources: ['proxy_model_decision_profile'],
+      },
+    },
+    assertText: (text) => {
+      assert(/\bBaleno\b/.test(text), `model label missing in proxy answer: ${text}`);
+    },
+  },
+  {
+    id: 'proxy-live-baleno-alpha-variant',
+    message: 'Should I buy Baleno Alpha?',
+    expectedScope: 'variant_scope',
+    context: {
+      candidateSnapshot: {
+        vehicles: {
+          variants: [
+            {
+              displayName: 'Alpha',
+              metadata: {
+                make: 'Maruti Suzuki',
+                model: 'Baleno',
+                variant: 'Alpha',
+              },
+            },
+          ],
+        },
+      },
+      selectedVehicleContext: {
+        make: 'Maruti Suzuki',
+        model: 'Baleno',
+        variant: 'Alpha',
+      },
+      decisionEvidencePack: {
+        scope: 'variant_scope',
+        scoreSignals: {
+          features: { score: 86, band: 'strong', source: 'proxy_variant_score_profile' },
+        },
+        strengths: ['variant decision profile evidence is present in fixture'],
+        evidenceSources: ['proxy_variant_decision_profile'],
+      },
+    },
+    assertText: (text, guidance) => {
+      assert(/\bAlpha\b/.test(text), `variant label missing in proxy answer: ${text}`);
+      assert.strictEqual(guidance.selectedVehicleFacts.variant, 'Alpha', 'variant not retained in buyerGuidanceContext');
+    },
+  },
+  {
+    id: 'proxy-live-maruti-make',
+    message: 'Should I buy Maruti?',
+    expectedScope: 'make_scope',
+    context: {
+      candidateSnapshot: {
+        vehicles: {
+          makes: [
+            {
+              displayName: 'Maruti Suzuki',
+              metadata: {
+                make: 'Maruti Suzuki',
+              },
+            },
+          ],
+        },
+      },
+      decisionEvidencePack: {
+        scope: 'make_scope',
+        subject: { make: 'Maruti Suzuki' },
+        fitSignals: ['make-level evidence is present in fixture'],
+        evidenceSources: ['proxy_make_decision_profile'],
+      },
+    },
+    assertText: (text) => {
+      assert(/\bMaruti\b/.test(text), `make label missing in proxy answer: ${text}`);
+      assert(!/\bthis search\b/i.test(text), `make answer fell back to search wording: ${text}`);
+    },
+  },
+  {
+    id: 'proxy-live-baleno-altroz-comparison',
+    message: 'Should I buy Baleno or Altroz?',
+    expectedScope: 'comparison_scope',
+    context: {
+      candidateSnapshot: {
+        vehicles: {
+          models: [
+            { displayName: 'Baleno', metadata: { model: 'Baleno' } },
+            { displayName: 'Altroz', metadata: { model: 'Altroz' } },
+          ],
+        },
+      },
+      decisionEvidencePack: {
+        scope: 'comparison_scope',
+        subject: {
+          comparisonTargets: [
+            { label: 'Baleno', model: 'Baleno' },
+            { label: 'Altroz', model: 'Altroz' },
+          ],
+        },
+        alternativeSignals: ['similar model graph evidence is present in fixture'],
+        evidenceSources: ['proxy_similar_model_graph'],
+      },
+    },
+    assertText: (text) => {
+      assert(/\bBaleno\b/.test(text) && /\bAltroz\b/.test(text), `comparison labels missing in proxy answer: ${text}`);
+    },
+  },
+  {
+    id: 'proxy-live-baleno-zeta-alpha-upgrade',
+    message: 'Should I stretch from Baleno Zeta to Alpha?',
+    expectedScope: 'upgrade_scope',
+    context: {
+      selectedVehicleContext: {
+        model: 'Baleno',
+      },
+      decisionEvidencePack: {
+        scope: 'upgrade_scope',
+        upgradeSignals: ['upgrade ladder evidence is present in fixture'],
+        evidenceSources: ['proxy_upgrade_ladder'],
+      },
+    },
+    assertText: (text, guidance) => {
+      assert(/\bBaleno Zeta\b/.test(text) && /\bBaleno Alpha\b/.test(text), `upgrade labels missing in proxy answer: ${text}`);
+      assert.strictEqual(guidance.decisionEvidencePack.subject.upgradeTarget.label, 'Baleno Alpha', 'upgrade target label not inferred generically');
+    },
+  },
+];
+
 const auditRuntimeHardcoding = () => {
   const runtimeSections = [
     {
@@ -435,6 +642,7 @@ const runLiveBridgeCautionSmoke = async () => {
     assert(eligibility, 'live path finalRecommendationEligibility missing');
     assert.strictEqual(eligibility.finalRecommendationEnabled, false, 'live path final recommendation enabled');
     assert.strictEqual(ux.status, 'provisional_buyer_guidance', `live path expected provisional guidance status, got ${ux.status}`);
+    assert.strictEqual(ux.decisionScope, 'model_scope', `live Baleno path expected model_scope, got ${ux.decisionScope}`);
     assert.strictEqual(ux.finalRecommendationEnabled, false, 'live UX final recommendation enabled');
     assert.strictEqual(ux.requestedFinalRecommendation, true, 'live UX missing requestedFinalRecommendation');
     assert.strictEqual(ux.canUseForFinalRecommendation, false, 'live UX canUseForFinalRecommendation should be false');
@@ -446,6 +654,9 @@ const runLiveBridgeCautionSmoke = async () => {
 
     for (const pattern of INTERNAL_BLOCKER_PATTERNS) {
       assert(!pattern.test(answer), `live answer leaked old blocker wording: ${pattern} :: ${answer}`);
+    }
+    for (const pattern of MECHANICAL_GUIDANCE_PATTERNS) {
+      assert(!pattern.test(answer), `live answer leaked mechanical guidance wording: ${pattern} :: ${answer}`);
     }
 
     return {
@@ -483,15 +694,34 @@ const runLiveBridgeCautionSmoke = async () => {
     });
   }
 
+  const proxyResults = [];
+  for (const testCase of LIVE_PROXY_CASES) {
+    const result = await renderGuidance(testCase);
+    assertBuyerSafe({ id: testCase.id, result, expectedScope: testCase.expectedScope });
+    if (testCase.assertText) testCase.assertText(result.text, result.eligibility.buyerGuidanceContext);
+
+    proxyResults.push({
+      id: testCase.id,
+      message: testCase.message,
+      scope: result.eligibility.buyerGuidanceContext.decisionEvidencePack.scope,
+      guidanceMode: result.eligibility.provisionalGuidanceMode,
+      finalRecommendationEnabled: result.eligibility.finalRecommendationEnabled,
+      templateKey: result.rendered.templateKey,
+      variantId: result.rendered.variantId,
+      answerPreview: result.text.slice(0, 360),
+    });
+  }
+
   const liveBridge = await runLiveBridgeCautionSmoke();
 
   console.log(JSON.stringify({
     suite: 'ACI Buyer Context Behavior Smoke v1',
     ok: true,
-    total: results.length,
-    passed: results.length,
+    total: results.length + proxyResults.length,
+    passed: results.length + proxyResults.length,
     failed: 0,
     liveBridge,
+    liveProxyCases: proxyResults,
     runtimeHardcodingAudit: {
       ok: true,
       checked: [
