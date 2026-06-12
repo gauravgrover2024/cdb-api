@@ -42,7 +42,7 @@ const hasSafeNextStepOrMissingContextWording = (value = '') => {
     /\bsafe now\b/,
     /\bassumptions?\b/,
     /\bbuyer context captured\b/,
-    /\bgrounded vehicle evidence\b/,
+    /\bcan keep this provisional\b/,
     /\bprovisional\b/,
     /\bdiagnostic\b/,
     /\bdiscovery\b/,

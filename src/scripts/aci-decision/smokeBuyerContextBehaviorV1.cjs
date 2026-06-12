@@ -15,6 +15,7 @@ const {
 } = require('../../services/aciCore/decisionPolicy/aciFinalRecommendationEligibility.service.cjs');
 
 const INTERNAL_BLOCKER_PATTERNS = [
+  /\bscore profile coverage includes\b/i,
   /\bfinal recommendation disabled\b/i,
   /\bfinal recommendation remains disabled\b/i,
   /\bmissing buyer context\b/i,
@@ -36,6 +37,10 @@ const MECHANICAL_GUIDANCE_PATTERNS = [
   /\bthis search can be assessed\b/i,
   /\byour use case matches the available facts and trade-offs\b/i,
   /\byour top priority is not covered by the available evidence\b/i,
+  /\bI still need grounded vehicle evidence\b/i,
+  /\bbefore treating this as more than provisional guidance\b/i,
+  /\bnot enough evidence\b/i,
+  /\bbackend\/debug-style evidence\b/i,
 ];
 
 const FORBIDDEN_BUYER_UX_KEYS = [
@@ -122,7 +127,7 @@ const buyerContextLineForGuidance = (guidance = {}) =>
     .join('; ');
 
 const openingLineForGuidance = ({ scope = '', model = '' } = {}) => {
-  if (scope === 'make_scope') return `For ${model}, I would keep this at brand level first: ownership/service reach, resale, model options in budget, and the exact model matter more than the badge alone.`;
+  if (scope === 'make_scope') return `For ${model}, I would keep this at brand level first: the exact model, budget, use case, and any ownership or resale evidence matter more than the badge alone.`;
   if (scope === 'variant_scope') return `For ${model}, I would judge the variant by the confirmed feature gains, price gap, score profile, and regret-risk evidence.`;
   if (scope === 'comparison_scope') return `For ${model}, the useful view is a trade-off comparison, not a single winner yet.`;
   if (scope === 'upgrade_scope') return `For ${model}, the decision is whether the upgrade evidence justifies the extra spend for your use case.`;
@@ -133,8 +138,8 @@ const openingLineForGuidance = ({ scope = '', model = '' } = {}) => {
 const usefulViewLineForGuidance = ({ factsLine = '', buyerContextLine = '', scope = '' } = {}) => {
   if (factsLine && buyerContextLine) return `What I can use now: ${factsLine}. Buyer context captured: ${buyerContextLine}.`;
   if (factsLine) return `What I can use now: ${factsLine}. I would keep this modest until your use case and priorities are clearer.`;
-  if (buyerContextLine) return `Buyer context captured: ${buyerContextLine}. I still need grounded vehicle evidence before treating this as more than provisional guidance.`;
-  if (scope === 'make_scope') return 'The next step is to pin down the model and variant, because make-level guidance can only stay broad.';
+  if (buyerContextLine) return `Buyer context captured: ${buyerContextLine}. I can keep this provisional for now.`;
+  if (scope === 'make_scope') return 'The next step is to pin down the model, budget, and use case, because make-level guidance should stay broad.';
   if (scope === 'discovery_scope') return 'The next step is to compare shortlisted options on safety, features, value, running cost, and family practicality once those signals are available.';
   return 'I would keep this provisional until the exact use case, budget, and priority are clearer.';
 };
@@ -173,6 +178,9 @@ const composerInputForGuidance = ({ id = '', guidance = {} } = {}) => {
   const alternatives = join(evidencePack.alternativeSignals || []);
   const upgrade = join(evidencePack.upgradeSignals || []);
   const assumptions = join(guidance.softAssumptions || []);
+  const softQuestion = evidencePack.scope === 'make_scope'
+    ? `Which ${model} model are you considering?`
+    : guidance.softQuestion || 'Is your use mostly city, highway, or mixed?';
 
   return {
     model,
@@ -184,7 +192,7 @@ const composerInputForGuidance = ({ id = '', guidance = {} } = {}) => {
     alternativeLine: optionalLine(alternatives ? `Compare alternatives if: ${alternatives}.` : ''),
     upgradeLine: optionalLine(upgrade ? `For the upgrade: ${upgrade}.` : ''),
     assumptionLine: optionalLine(assumptions ? `Assumption: ${assumptions}.` : ''),
-    softQuestion: optionalLine(`One useful next question: ${guidance.softQuestion || 'Is your use mostly city, highway, or mixed?'}`),
+    softQuestion: optionalLine(`One useful next question: ${softQuestion}`),
   };
 };
 
@@ -628,42 +636,108 @@ const runLiveBridgeCautionSmoke = async () => {
   }
 
   const { runAciCoreLiveBridge } = await import('../../services/aciCore/integration/aciCoreLiveBridge.service.js');
+  const liveCases = [
+    {
+      id: 'live-baleno-model',
+      message: 'Should I buy Baleno?',
+      expectedScope: 'model_scope',
+      assertAnswer: (answer) => {
+        assert(/\bBaleno\b/.test(answer), `live Baleno answer missing model: ${answer}`);
+      },
+    },
+    {
+      id: 'live-baleno-alpha-variant',
+      message: 'Should I buy Baleno Alpha?',
+      expectedScope: 'variant_scope',
+      assertAnswer: (answer) => {
+        assert(/\bAlpha\b/.test(answer), `live Baleno Alpha answer missing Alpha: ${answer}`);
+      },
+    },
+    {
+      id: 'live-maruti-make',
+      message: 'Should I buy Maruti?',
+      expectedScope: 'make_scope',
+      assertAnswer: (answer) => {
+        assert(/\bMaruti\b/.test(answer), `live Maruti answer missing make: ${answer}`);
+        assert(/\bWhich Maruti model are you considering\?/i.test(answer), `live Maruti answer should ask model question: ${answer}`);
+      },
+    },
+    {
+      id: 'live-baleno-altroz-comparison',
+      message: 'Should I buy Baleno or Altroz?',
+      expectedScope: 'comparison_scope',
+      assertAnswer: (answer) => {
+        const guidancePrefix = answer.split('\n\n')[0] || answer;
+        assert(/\bBaleno\b/.test(guidancePrefix) && /\bAltroz\b/.test(guidancePrefix), `live comparison guidance must include both cars: ${answer}`);
+        assert(!/^\s*Tata Altroz looks strongest/i.test(answer), `live comparison answered as only Altroz: ${answer}`);
+      },
+    },
+    {
+      id: 'live-baleno-zeta-alpha-upgrade',
+      message: 'Should I stretch from Baleno Zeta to Alpha?',
+      expectedScope: 'upgrade_scope',
+      assertAnswer: (answer) => {
+        const guidancePrefix = answer.split('\n\n')[0] || answer;
+        assert(/\bZeta\b/.test(guidancePrefix) && /\bAlpha\b/.test(guidancePrefix), `live upgrade guidance must include Zeta and Alpha: ${answer}`);
+        assert(!/^\s*Maruti Baleno Zeta looks/i.test(answer), `live upgrade answered as only Zeta: ${answer}`);
+      },
+    },
+  ];
+
   await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 60000 });
   try {
-    const response = await runAciCoreLiveBridge({
-      message: 'Should I buy Baleno?',
-      context: {},
-      meta: { smokeId: 'buyer-context-live-baleno' },
-    });
-    const answer = String(response.answer || response.data?.answer || '');
-    const ux = response.finalBlockedUx || response.data?.finalBlockedUx || response.meta?.finalBlockedUx || {};
-    const eligibility = response.finalRecommendationEligibility || response.data?.finalRecommendationEligibility || response.meta?.finalRecommendationEligibility;
+    const results = [];
+    for (const testCase of liveCases) {
+      const response = await runAciCoreLiveBridge({
+        message: testCase.message,
+        context: {},
+        meta: { smokeId: `buyer-context-${testCase.id}` },
+      });
+      const answer = String(response.answer || response.data?.answer || '');
+      const ux = response.finalBlockedUx || response.data?.finalBlockedUx || response.meta?.finalBlockedUx || {};
+      const eligibility = response.finalRecommendationEligibility || response.data?.finalRecommendationEligibility || response.meta?.finalRecommendationEligibility;
 
-    assert(eligibility, 'live path finalRecommendationEligibility missing');
-    assert.strictEqual(eligibility.finalRecommendationEnabled, false, 'live path final recommendation enabled');
-    assert.strictEqual(ux.status, 'provisional_buyer_guidance', `live path expected provisional guidance status, got ${ux.status}`);
-    assert.strictEqual(ux.decisionScope, 'model_scope', `live Baleno path expected model_scope, got ${ux.decisionScope}`);
-    assert.strictEqual(ux.finalRecommendationEnabled, false, 'live UX final recommendation enabled');
-    assert.strictEqual(ux.requestedFinalRecommendation, true, 'live UX missing requestedFinalRecommendation');
-    assert.strictEqual(ux.canUseForFinalRecommendation, false, 'live UX canUseForFinalRecommendation should be false');
-    assert(ux.provisionalGuidanceMode, 'live UX missing provisionalGuidanceMode');
-    assert(Object.prototype.hasOwnProperty.call(ux, 'decisionScope'), 'live UX missing decisionScope summary field');
-    assert(ux.allowedAnswerType, 'live UX missing allowedAnswerType');
-    assert(Array.isArray(ux.safeAnswerTypesNow), 'live UX missing safeAnswerTypesNow');
-    assertNoForbiddenUxKeys(ux);
+      assert(eligibility, `${testCase.id}: live path finalRecommendationEligibility missing`);
+      assert.strictEqual(eligibility.finalRecommendationEnabled, false, `${testCase.id}: live path final recommendation enabled`);
+      assert.strictEqual(ux.status, 'provisional_buyer_guidance', `${testCase.id}: expected provisional guidance status, got ${ux.status}`);
+      assert.strictEqual(ux.decisionScope, testCase.expectedScope, `${testCase.id}: expected ${testCase.expectedScope}, got ${ux.decisionScope}`);
+      assert.strictEqual(ux.finalRecommendationEnabled, false, `${testCase.id}: live UX final recommendation enabled`);
+      assert.strictEqual(ux.requestedFinalRecommendation, true, `${testCase.id}: live UX missing requestedFinalRecommendation`);
+      assert.strictEqual(ux.canUseForFinalRecommendation, false, `${testCase.id}: live UX canUseForFinalRecommendation should be false`);
+      assert(ux.provisionalGuidanceMode, `${testCase.id}: live UX missing provisionalGuidanceMode`);
+      assert(Object.prototype.hasOwnProperty.call(ux, 'decisionScope'), `${testCase.id}: live UX missing decisionScope summary field`);
+      assert(ux.allowedAnswerType, `${testCase.id}: live UX missing allowedAnswerType`);
+      assert(Array.isArray(ux.safeAnswerTypesNow), `${testCase.id}: live UX missing safeAnswerTypesNow`);
+      assertNoForbiddenUxKeys(ux);
+      assert(countQuestions(answer) <= 1, `${testCase.id}: live answer has more than one question: ${answer}`);
+      testCase.assertAnswer(answer);
 
-    for (const pattern of INTERNAL_BLOCKER_PATTERNS) {
-      assert(!pattern.test(answer), `live answer leaked old blocker wording: ${pattern} :: ${answer}`);
-    }
-    for (const pattern of MECHANICAL_GUIDANCE_PATTERNS) {
-      assert(!pattern.test(answer), `live answer leaked mechanical guidance wording: ${pattern} :: ${answer}`);
+      for (const pattern of INTERNAL_BLOCKER_PATTERNS) {
+        assert(!pattern.test(answer), `${testCase.id}: live answer leaked old blocker wording: ${pattern} :: ${answer}`);
+      }
+      for (const pattern of MECHANICAL_GUIDANCE_PATTERNS) {
+        assert(!pattern.test(answer), `${testCase.id}: live answer leaked mechanical guidance wording: ${pattern} :: ${answer}`);
+      }
+
+      const diagnosticNoteCount = (answer.match(/This score view is diagnostic-only|This is diagnostic-only module scoring|This is diagnostic-only, not a final recommendation|Treat this as diagnostic-only guidance/gi) || []).length;
+      assert(diagnosticNoteCount <= 1, `${testCase.id}: duplicate diagnostic-only notes leaked: ${answer}`);
+
+      results.push({
+        id: testCase.id,
+        message: testCase.message,
+        status: ux.status,
+        scope: ux.decisionScope,
+        finalRecommendationEnabled: eligibility.finalRecommendationEnabled,
+        evidenceSources: eligibility.buyerGuidanceContext?.decisionEvidencePack?.evidenceSources || [],
+        answerPreview: answer.slice(0, 320),
+      });
     }
 
     return {
       skipped: false,
-      status: ux.status,
-      finalRecommendationEnabled: eligibility.finalRecommendationEnabled,
-      answerPreview: answer.slice(0, 280),
+      total: results.length,
+      passed: results.length,
+      results,
     };
   } finally {
     await mongoose.disconnect();

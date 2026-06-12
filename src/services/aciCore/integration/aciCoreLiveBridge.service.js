@@ -72,6 +72,10 @@ const {
   buildFinalRecommendationEligibilityRuntime,
 } = require("../decisionPolicy/aciFinalRecommendationEligibility.service.cjs");
 
+const {
+  getModelScoreInsights,
+} = require("../scoreProfiles/aciVariantScoreInsight.service.cjs");
+
 const truthy = (value = "") =>
   ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 
@@ -88,6 +92,13 @@ const asArray = (value) => {
 
 const uniqueKeys = (items = []) =>
   [...new Set(items.map((item) => cleanText(item)).filter(Boolean))];
+
+const keyify = (value = "") =>
+  cleanText(value)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 
 const getSnapshotKeys = (items = []) =>
   uniqueKeys(
@@ -3714,7 +3725,7 @@ const buildBuyerGuidanceContextLine = (buyerContext = {}) => {
   return entries.join("; ");
 };
 
-const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, response = {} } = {}) => {
+const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, response = {}, bridge = {} } = {}) => {
   const subject = evidencePack.subject || {};
   const scope = cleanText(evidencePack.scope || "");
   const comparisonTargets = Array.isArray(subject.comparisonTargets) ? subject.comparisonTargets : [];
@@ -3722,7 +3733,41 @@ const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, respons
     cleanText(vehicle.label || vehicle.fullModel || [vehicle.make, vehicle.model, vehicle.variant].filter(Boolean).join(" "));
 
   if (scope === "comparison_scope" && comparisonTargets.length >= 2) {
-    return comparisonTargets.map(labelOf).filter(Boolean).join(" vs ");
+    const messageText = cleanText(
+      bridge.effectiveMessage ||
+        bridge.originalMessage ||
+        response.effectiveMessage ||
+        response.originalMessage ||
+        response.message ||
+        response.query ||
+        "",
+    ).toLowerCase();
+
+    const targetIndex = (vehicle = {}) => {
+      const candidates = [
+        vehicle.label,
+        vehicle.fullModel,
+        [vehicle.make, vehicle.model, vehicle.variant].filter(Boolean).join(" "),
+        vehicle.model,
+        vehicle.variant,
+        vehicle.make,
+      ]
+        .map((value) => cleanText(value))
+        .filter(Boolean);
+
+      let best = Number.MAX_SAFE_INTEGER;
+      for (const candidate of candidates) {
+        const index = messageText.indexOf(candidate.toLowerCase());
+        if (index >= 0 && index < best) best = index;
+      }
+      return best;
+    };
+
+    const orderedTargets = messageText
+      ? [...comparisonTargets].sort((a, b) => targetIndex(a) - targetIndex(b))
+      : comparisonTargets;
+
+    return orderedTargets.map(labelOf).filter(Boolean).join(" vs ");
   }
 
   if (scope === "upgrade_scope") {
@@ -3788,7 +3833,7 @@ const buildBuyerGuidanceEvidenceValues = (evidencePack = {}) => {
 
 const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
   if (scope === "make_scope") {
-    return `For ${model}, I would keep this at brand level first: ownership/service reach, resale, model options in budget, and the exact model matter more than the badge alone.`;
+    return `For ${model}, I would keep this at brand level first: the exact model, budget, use case, and any ownership or resale evidence matter more than the badge alone.`;
   }
   if (scope === "variant_scope") {
     return `For ${model}, I would judge the variant by the confirmed feature gains, price gap, score profile, and regret-risk evidence.`;
@@ -3813,10 +3858,10 @@ const buildBuyerGuidanceUsefulViewLine = ({ factsLine = "", buyerContextLine = "
     return `What I can use now: ${factsLine}. I would keep this modest until your use case and priorities are clearer.`;
   }
   if (buyerContextLine) {
-    return `Buyer context captured: ${buyerContextLine}. I still need grounded vehicle evidence before treating this as more than provisional guidance.`;
+    return `Buyer context captured: ${buyerContextLine}. I can keep this provisional for now.`;
   }
   if (scope === "make_scope") {
-    return "The next step is to pin down the model and variant, because make-level guidance can only stay broad.";
+    return "The next step is to pin down the model, budget, and use case, because make-level guidance should stay broad.";
   }
   if (scope === "discovery_scope") {
     return "The next step is to compare shortlisted options on safety, features, value, running cost, and family practicality once those signals are available.";
@@ -3830,7 +3875,11 @@ const buildBuyerGuidanceLineInput = ({ model = "", facts = {}, guidance = {}, ev
   const buyerContextLine = buildBuyerGuidanceContextLine(guidance.explicitBuyerContext || {});
   const evidence = buildBuyerGuidanceEvidenceValues(evidencePack);
   const assumptions = formatGuidanceList(guidance.softAssumptions || []);
-  const softQuestion = cleanText(guidance.softQuestion) || "Is your use mostly city, highway, or mixed?";
+  const sentenceFragment = (value = "") => cleanText(value).replace(/[.?!]+$/g, "");
+  const softQuestion =
+    scope === "make_scope"
+      ? `Which ${model} model are you considering?`
+      : cleanText(guidance.softQuestion) || "Is your use mostly city, highway, or mixed?";
 
   return {
     model,
@@ -3840,7 +3889,7 @@ const buildBuyerGuidanceLineInput = ({ model = "", facts = {}, guidance = {}, ev
     watchoutLine: optionalGuidanceLine(evidence.watchouts ? `Watch out for: ${evidence.watchouts}.` : ""),
     fitLine: optionalGuidanceLine(evidence.fit ? `This fits better when: ${evidence.fit}.` : ""),
     alternativeLine: optionalGuidanceLine(evidence.alternatives ? `Compare alternatives if: ${evidence.alternatives}.` : ""),
-    upgradeLine: optionalGuidanceLine(evidence.upgrade ? `For the upgrade: ${evidence.upgrade}.` : ""),
+    upgradeLine: optionalGuidanceLine(evidence.upgrade ? `For the upgrade: ${sentenceFragment(evidence.upgrade)}.` : ""),
     assumptionLine: optionalGuidanceLine(assumptions ? `Assumption: ${assumptions}.` : ""),
     softQuestion: optionalGuidanceLine(softQuestion ? `One useful next question: ${softQuestion}` : ""),
   };
@@ -3852,7 +3901,7 @@ const buildBuyerGuidanceAnswer = ({ eligibility = {}, bridge = {}, response = {}
   const templateKey = BUYER_GUIDANCE_TEMPLATE_BY_MODE[mode];
   const facts = guidance.selectedVehicleFacts || {};
   const evidencePack = guidance.decisionEvidencePack || {};
-  const model = buildBuyerGuidanceSubjectLabel({ facts, evidencePack, response });
+  const model = buildBuyerGuidanceSubjectLabel({ facts, evidencePack, response, bridge });
 
   if (!templateKey || !model || model === "this choice") return "";
 
@@ -3910,17 +3959,30 @@ const buildFinalRecommendationBlockedAnswer = ({ eligibility = {}, response = {}
   );
 };
 
+const DIAGNOSTIC_ONLY_NOTE_SENTENCE_PATTERN =
+  /\s*(?:This score view is diagnostic-only and should not be treated as a final recommendation\.|This is diagnostic-only module scoring, not a final recommendation\.|This is diagnostic-only, not a final recommendation\.|Treat this as diagnostic-only guidance, not a final recommendation\.)/gi;
+
+const normalizeDiagnosticOnlyNotes = (answer = "") => {
+  const text = cleanText(answer);
+  if (!text) return "";
+  const notes = text.match(DIAGNOSTIC_ONLY_NOTE_SENTENCE_PATTERN) || [];
+  if (notes.length <= 1) return text;
+  const base = cleanText(text.replace(DIAGNOSTIC_ONLY_NOTE_SENTENCE_PATTERN, " "));
+  const note = cleanText(notes[0]);
+  return cleanText(`${base} ${note}`);
+};
+
 const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}, bridge = {} } = {}) => {
   if (eligibility?.requestedFinalRecommendation !== true) return response;
 
   const blockedAnswer = buildFinalRecommendationBlockedAnswer({ eligibility, bridge });
-  const existingAnswer = String(
+  const existingAnswer = normalizeDiagnosticOnlyNotes(String(
     response.answer ||
     response.clarification ||
     response.data?.answer ||
     response.data?.clarification ||
     ""
-  ).trim();
+  ));
 
   const shouldPreserveExisting =
     existingAnswer &&
@@ -3979,7 +4041,7 @@ const ensureDiagnosticOnlyAnswerNote = (answer = "") => {
   const text = cleanText(answer);
   const note = getDecisionDiagnosticOnlyNote(text);
   if (!text) return note;
-  if (/\bdiagnostic-only\b/i.test(text)) return text;
+  if (/\bdiagnostic-only\b|\bnot\s+(?:a\s+)?final recommendation\b|\bshould not be treated as a final recommendation\b/i.test(text)) return text;
   return `${text} ${note}`;
 };
 
@@ -4816,12 +4878,236 @@ const buildDecisionRuntimeEnvelope = ({ response = {}, bridge = {} } = {}) => {
   };
 };
 
-const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {}, context = {} } = {}) => {
+const FINAL_RECOMMENDATION_REQUEST_PATTERNS = Object.freeze([
+  /\bshould\s+i\s+(buy|choose|pick|go\s+for|purchase|stretch|upgrade)\b/i,
+  /\bwhich\s+(one|car|variant|model)\s+should\s+i\s+(?:finally\s+|ultimately\s+)?(buy|choose|pick|go\s+for)\b/i,
+  /\bdecide\s+for\s+me\b/i,
+  /\bfinal\s+(answer|recommendation|verdict|call|decision)\b/i,
+  /\bbest\s+(car|option|choice|variant|model)\s+(for\s+me|to\s+buy|under|within)\b/i,
+  /\brecommend\s+(me|one|a\s+car|the\s+best)\b/i,
+  /\bworth\s+buying\b/i,
+  /\bworth\s+(?:the\s+)?extra\b/i,
+  /\bworth\s+upgrading\b/i,
+]);
+
+const isFinalChoiceRequestText = (message = "") =>
+  FINAL_RECOMMENDATION_REQUEST_PATTERNS.some((pattern) => pattern.test(message));
+
+const normalizeEvidenceSignal = (module = {}, scoreField = "score") => {
+  const score = module?.[scoreField] ?? module?.score;
+  return {
+    score: score !== undefined && score !== null && score !== "" ? score : "",
+    band: cleanText(module?.band || module?.status || module?.label),
+    confidence: cleanText(module?.confidence),
+    source: cleanText(module?.scoreType || module?.key),
+  };
+};
+
+const buildScoreSignalsFromInsight = (insight = {}) => {
+  const modules = insight?.modules || {};
+  return {
+    ...(modules.safety ? { safety: normalizeEvidenceSignal(modules.safety) } : {}),
+    ...(modules.features ? { features: normalizeEvidenceSignal(modules.features) } : {}),
+    ...(modules.value ? { value: normalizeEvidenceSignal(modules.value) } : {}),
+    ...(modules.mileageRunningCost ? { runningCost: normalizeEvidenceSignal(modules.mileageRunningCost) } : {}),
+    ...(modules.practicality ? { familyPracticality: normalizeEvidenceSignal(modules.practicality) } : {}),
+    ...(modules.premiumComfort ? { comfort: normalizeEvidenceSignal(modules.premiumComfort) } : {}),
+    ...(modules.regretRisk ? { regretRisk: normalizeEvidenceSignal(modules.regretRisk) } : {}),
+  };
+};
+
+const getVehicleFromContextForGuidance = ({ context = {}, response = {}, candidateSnapshot = {} } = {}) => {
+  const selected =
+    context?.selectedVehicle ||
+    context?.anchors?.primaryVehicle ||
+    context?.contextState?.selectedVehicle ||
+    context?.contextState?.anchors?.primaryVehicle ||
+    response?.data?.provenance?.selectedVehicle ||
+    response?.provenance?.selectedVehicle ||
+    {};
+  const modelCandidate = asArray(candidateSnapshot?.vehicles?.models)[0] || {};
+  const variantCandidate = asArray(candidateSnapshot?.vehicles?.variants)[0] || {};
+  const makeCandidate = asArray(candidateSnapshot?.vehicles?.makes)[0] || {};
+  const meta = selected?.metadata || selected?.raw || {};
+  const variantMeta = variantCandidate?.metadata || variantCandidate?.raw || {};
+  const modelMeta = modelCandidate?.metadata || modelCandidate?.raw || {};
+  return {
+    make: cleanText(selected.make || selected.brand || meta.make || meta.brand || modelMeta.make || modelMeta.brand || makeCandidate.displayName || makeCandidate.rawText),
+    model: cleanText(selected.model || meta.model || modelMeta.model || modelCandidate.displayName || modelCandidate.rawText),
+    variant: cleanText(selected.variant || selected.variantName || meta.variant || meta.variantName || variantMeta.variant || variantMeta.variantName || variantCandidate.displayName || variantCandidate.rawText),
+  };
+};
+
+const buildDecisionEvidencePackInputFromScorePayload = ({ response = {}, scope = "", subject = {} } = {}) => {
+  const data = response.data || {};
+  const topLevel = response || {};
+  const singleInsight = data.modules ? data : topLevel.modules ? topLevel : null;
+  const variants = asArray(data.variants || topLevel.variants || data.rows || topLevel.rows);
+  const representative = singleInsight || variants[0] || {};
+  const sources = uniqueKeys([
+    ...(asArray(data.sourceCollections || topLevel.sourceCollections)),
+    representative.buildVersion,
+    data.provenance?.buildVersion,
+    topLevel.provenance?.buildVersion,
+  ]);
+  const strengths = [
+    ...asArray(representative.strengths),
+  ];
+  const watchouts = asArray(representative.watchouts);
+  const upgradeSignals =
+    scope === "upgrade_scope"
+      ? ["I can judge this properly once the price gap and feature gains are available."]
+      : [];
+
+  if (!singleInsight && !variants.length && !sources.length) return {};
+
+  return {
+    scope,
+    subject,
+    ...(singleInsight ? { variantScoreProfile: singleInsight } : {}),
+    ...(variants.length ? { modelScoreProfile: { variants, count: variants.length } } : {}),
+    scoreSignals: singleInsight ? buildScoreSignalsFromInsight(singleInsight) : {},
+    strengths: uniqueKeys(strengths),
+    watchouts: uniqueKeys(watchouts),
+    upgradeSignals,
+    evidenceSources: sources.length ? sources : ["score_profile_read_model"],
+  };
+};
+
+const buildDecisionEvidencePackInputFromReadModel = async ({ context = {}, response = {}, bridge = {}, scope = "", subject = {} } = {}) => {
+  if (!mongoose.connection?.db) return {};
+  if (scope === "make_scope" || scope === "discovery_scope") return {};
+
+  const vehicle = getVehicleFromContextForGuidance({
+    context,
+    response,
+    candidateSnapshot: context?.candidateSnapshot || {},
+  });
+  const modelKey = keyify(subject.model || vehicle.model);
+  const makeKey = keyify(subject.make || vehicle.make);
+  if (!modelKey) return {};
+
+  try {
+    const modelInsights = await getModelScoreInsights({
+      db: mongoose.connection.db,
+      makeKey,
+      modelKey,
+      limit: 80,
+    });
+    const variants = asArray(modelInsights?.variants);
+    if (!variants.length) return {};
+
+    const requestedVariantKey = keyify(subject.variant || vehicle.variant);
+    const selectedInsight = requestedVariantKey
+      ? variants.find((variant) => keyify(variant.variantKey || variant.variantFullName).includes(requestedVariantKey))
+      : null;
+    const representative = selectedInsight || (scope === "variant_scope" ? variants[0] : null);
+    const sources = uniqueKeys([
+      "score_profile_read_model",
+      representative?.buildVersion,
+      ...variants.map((variant) => variant.buildVersion),
+    ]);
+    const strengths = [
+      ...(representative ? asArray(representative.strengths) : []),
+    ];
+    const watchouts = representative ? asArray(representative.watchouts) : [];
+    const upgradeSignals =
+      scope === "upgrade_scope"
+        ? ["I can judge this properly once the price gap and feature gains are available."]
+        : [];
+
+    return {
+      scope,
+      subject,
+      ...(representative ? { variantScoreProfile: representative } : {}),
+      modelScoreProfile: {
+        variants,
+        count: variants.length,
+      },
+      scoreSignals: representative ? buildScoreSignalsFromInsight(representative) : {},
+      strengths: uniqueKeys(strengths),
+      watchouts: uniqueKeys(watchouts),
+      upgradeSignals,
+      evidenceSources: sources,
+    };
+  } catch {
+    return {};
+  }
+};
+
+const buildHydratedFinalChoiceResponse = async (response = {}, { bridge = {}, context = {} } = {}) => {
+  const message = bridge.effectiveMessage || bridge.originalMessage || "";
+  if (!isFinalChoiceRequestText(message)) return response;
+
+  const preliminaryEligibility = buildFinalRecommendationEligibilityRuntime({
+    message,
+    bridge,
+    response,
+    context,
+  });
+  const guidance = preliminaryEligibility?.buyerGuidanceContext || {};
+  const scope = guidance.decisionEvidencePack?.scope || guidance.scope || "";
+  const subject = guidance.decisionEvidencePack?.subject || {};
+  const existing = response.decisionEvidencePack || response.data?.decisionEvidencePack || {};
+  const payloadEvidence = buildDecisionEvidencePackInputFromScorePayload({ response, scope, subject });
+  const readModelEvidence = await buildDecisionEvidencePackInputFromReadModel({ context, response, bridge, scope, subject });
+  const decisionEvidencePack = {
+    ...existing,
+    ...payloadEvidence,
+    ...readModelEvidence,
+    subject: {
+      ...(existing.subject || {}),
+      ...(payloadEvidence.subject || {}),
+      ...(readModelEvidence.subject || {}),
+      ...subject,
+    },
+    scope: readModelEvidence.scope || payloadEvidence.scope || existing.scope || scope,
+    strengths: uniqueKeys([
+      ...asArray(existing.strengths),
+      ...asArray(payloadEvidence.strengths),
+      ...asArray(readModelEvidence.strengths),
+    ]),
+    watchouts: uniqueKeys([
+      ...asArray(existing.watchouts),
+      ...asArray(payloadEvidence.watchouts),
+      ...asArray(readModelEvidence.watchouts),
+    ]),
+    upgradeSignals: uniqueKeys([
+      ...asArray(existing.upgradeSignals),
+      ...asArray(payloadEvidence.upgradeSignals),
+      ...asArray(readModelEvidence.upgradeSignals),
+    ]),
+    evidenceSources: uniqueKeys([
+      ...asArray(existing.evidenceSources),
+      ...asArray(payloadEvidence.evidenceSources),
+      ...asArray(readModelEvidence.evidenceSources),
+    ]),
+    scoreSignals: {
+      ...(existing.scoreSignals || {}),
+      ...(readModelEvidence.scoreSignals || {}),
+      ...(payloadEvidence.scoreSignals || {}),
+    },
+  };
+
+  if (!Object.keys(decisionEvidencePack).length) return response;
+
+  return {
+    ...response,
+    decisionEvidencePack,
+    data: {
+      ...(response.data || {}),
+      decisionEvidencePack,
+    },
+  };
+};
+
+const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, context = {} } = {}) => {
+  const responseForEligibility = await buildHydratedFinalChoiceResponse(response, { bridge, context });
   const envelope = buildDecisionRuntimeEnvelope({ response, bridge });
   const finalRecommendationEligibility = buildFinalRecommendationEligibilityRuntime({
     message: bridge.effectiveMessage || bridge.originalMessage || "",
     bridge,
-    response,
+    response: responseForEligibility,
     context,
     decisionPolicy: envelope?.decisionPolicy || response.decisionPolicy || response.data?.decisionPolicy || response.meta?.decisionPolicy || {},
     evidence: envelope?.evidence || response.evidence || response.data?.evidence || {},
@@ -4832,7 +5118,7 @@ const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {}, context = {
   if (!envelope) {
     if (!shouldAttachFinalRecommendationEligibility) return response;
 
-    const responseWithFinalBlockedAnswer = applyFinalRecommendationBlockedAnswer(response, {
+    const responseWithFinalBlockedAnswer = applyFinalRecommendationBlockedAnswer(responseForEligibility, {
       eligibility: finalRecommendationEligibility,
       bridge,
     });
@@ -4852,8 +5138,14 @@ const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {}, context = {
   }
 
   const decisionPolicy = envelope.decisionPolicy;
+  const responseWithFinalBlockedAnswer = shouldAttachFinalRecommendationEligibility
+    ? applyFinalRecommendationBlockedAnswer(responseForEligibility, {
+        eligibility: finalRecommendationEligibility,
+        bridge,
+      })
+    : responseForEligibility;
   const data = {
-    ...(response.data || {}),
+    ...(responseWithFinalBlockedAnswer.data || {}),
     decisionPolicy,
     evidence: envelope.evidence,
     provenance: envelope.provenance,
@@ -4863,8 +5155,8 @@ const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {}, context = {
   };
 
   return {
-    ...response,
-    module: response.module || envelope.module,
+    ...responseWithFinalBlockedAnswer,
+    module: responseWithFinalBlockedAnswer.module || envelope.module,
     decisionPolicy,
     evidence: envelope.evidence,
     provenance: envelope.provenance,
@@ -4872,14 +5164,14 @@ const attachDecisionRuntimeEnvelope = (response = {}, { bridge = {}, context = {
     ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
     sourceCollections: envelope.sourceCollections.length
       ? envelope.sourceCollections
-      : response.sourceCollections,
+      : responseWithFinalBlockedAnswer.sourceCollections,
     trace: {
-      ...(response.trace || {}),
+      ...(responseWithFinalBlockedAnswer.trace || {}),
       ...envelope.trace,
     },
     data,
     meta: {
-      ...(response.meta || {}),
+      ...(responseWithFinalBlockedAnswer.meta || {}),
       decisionPolicy,
       evidenceStatus: envelope.evidence.evidenceStatus,
       evidenceConfidence: envelope.evidence.confidence,
