@@ -778,6 +778,10 @@ const runLiveBridgeCautionSmoke = async () => {
       !/,\s*,|,\s*and\.|\band\s*\./i.test(result.text),
       `${testCase.id}: broken punctuation leaked in live buyer guidance: ${result.text}`
     );
+    assert(
+      !/\b(?:Feature score is|Safety-critical equipment|Ground-clearance|ground clearance|Highway score v2|Boot space data missing|CNG tank placement|NVH|tyre quality|braking feel|highway-assist features|taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|score snapshot|score profile|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable|data missing or reduced|unavailable; practicality)\b/i.test(result.text),
+      `${testCase.id}: technical score caveat leaked in live buyer guidance: ${result.text}`
+    );
     if (testCase.assertText) testCase.assertText(result.text, result.eligibility.buyerGuidanceContext);
 
     results.push({

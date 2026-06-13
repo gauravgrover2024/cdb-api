@@ -4023,53 +4023,111 @@ const sanitizeBuyerGuidanceEvidenceLines = (lines = {}) => {
 
 const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
   let text = cleanText(answer);
+  if (!text) return "";
+
+  const rawScore = "\\d+(?:\\.\\d+)?\\s*[(][^)]+[)]";
 
   const replacements = [
+    [new RegExp("\\bfeatures?\\s+score\\s+" + rawScore, "gi"), "feature evidence looks positive"],
+    [new RegExp("\\bvalue\\s+score\\s+" + rawScore, "gi"), "value evidence needs nearby-variant comparison"],
+    [new RegExp("\\brunning\\s*cost\\s+score\\s+" + rawScore, "gi"), "running-cost evidence looks positive"],
+    [new RegExp("\\bmileage\\s+score\\s+(?:is\\s+)?(?:not\\s+available|not\\s+fully\\s+scored|unavailable)\\.?", "gi"), "mileage evidence is incomplete"],
+    [new RegExp("\\bsafety\\s+score\\s+" + rawScore, "gi"), "safety evidence needs verified-source review"],
+    [new RegExp("\\bfamily\\s*practicality\\s+score\\s+" + rawScore, "gi"), "family-practicality evidence needs use-case review"],
+    [new RegExp("\\bcomfort\\s+score\\s+" + rawScore, "gi"), "comfort evidence needs comparison"],
+    [new RegExp("\\bregret\\s*risk\\s+score\\s+" + rawScore, "gi"), "regret-risk evidence needs use-case review"],
+
     [/Feature-rich for its scoring context/gi, "feature equipment looks strong"],
     [/Strong city-use suitability/gi, "city-use suitability looks strong"],
     [/Strong mileage\/running-cost signal/gi, "running-cost signal looks strong"],
     [/Strong same-model value signal/gi, "value evidence looks positive versus nearby variants"],
-    [/Same-model value score is weak/gi, "value evidence needs comparison with nearby variants"],
-    [/Premium comfort score is limited/gi, "comfort evidence is not the strongest reason to choose it"],
-    [/Safety\/crash applicability needs verified-source caution/gi, "safety evidence needs verified-source caution"],
-    [/Feature score is taxonomy-driven and layered\.?\s*Safety-critical equipment is handled mainly by safetyScore\.?/gi, ""],
-    [/Performance score v2 is global-percentile based; segment-relative performance will be added later\.?/gi, ""],
-    [/Ground-clearance value unavailable; practicality score excludes ground-clearance normalization\.?/gi, ""],
-    [/Power-to-weight unavailable; performance score uses power\/torque only\.?/gi, ""],
-    [/Highway score v2 uses performance, safety, mileage and highway-assist features; ride comfort, NVH, tyre quality and braking feel are not yet scored\.?/gi, ""],
-    [/Boot space data missing or reduced due to CNG tank placement; score excludes boot normalization\.?/gi, ""],
-    [/Mileage score is not available or not fully scored\.?/gi, ""],
-    [/\bscore snapshot\b[^.]*\.?/gi, ""],
-    [/\bThis score view is diagnostic-only and should not be treated as a final recommendation\.?/gi, ""],
-    [/\bThis is diagnostic-only module scoring, not a final recommendation\.?/gi, ""],
-    [/\bThis is diagnostic-only, not a final recommendation\.?/gi, ""],
-    [/\bTreat this as diagnostic-only guidance, not a final recommendation\.?/gi, ""],
+    [/Same-model value score is weak/gi, "value evidence needs nearby-variant comparison"],
+    [/Premium comfort score is limited/gi, "comfort evidence needs comparison"],
+    [/Safety\/crash applicability needs verified-source caution/gi, "safety evidence needs verified-source review"],
+    [/mileage evidence is incomplete or not fully scored/gi, "mileage evidence is incomplete"],
+    [/safety evidence needs verified-source caution/gi, "safety evidence needs verified-source review"],
+    [/value evidence needs comparison with nearby variants/gi, "value evidence needs nearby-variant comparison"],
+    [/comfort evidence is not the strongest reason to choose it/gi, "comfort evidence needs comparison"],
   ];
 
   for (const [pattern, safeText] of replacements) {
     text = text.replace(pattern, safeText);
   }
 
-  // Remove raw module-score dumps from buyer-facing guidance.
+  const unsafeTechnicalPattern = /\b(?:Feature score is|Safety-critical equipment|Ground-clearance|ground clearance|Highway score v2|Boot space data missing|CNG tank placement|NVH|tyre quality|braking feel|highway-assist features|taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|score snapshot|score profile|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable|data missing or reduced|unavailable; practicality)\b/i;
+
+  const normalizeItem = (item = "") => {
+    let value = cleanText(item)
+      .replace(/^[,.;:\s]+|[,.;:\s]+$/g, "")
+      .replace(/^and\s+/i, "")
+      .trim();
+
+    if (!value) return "";
+    if (unsafeTechnicalPattern.test(value)) return "";
+    if (/^(?:and|but|safety|mileage|features?|value|comfort|practicality)$/i.test(value)) return "";
+    if (value.length < 12) return "";
+
+    value = value
+      .replace(/\bFeature score is\b.*$/i, "")
+      .replace(/\bGround-clearance\b.*$/i, "")
+      .replace(/\bHighway score v2\b.*$/i, "")
+      .replace(/\bBoot space data missing\b.*$/i, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+    if (!value || unsafeTechnicalPattern.test(value)) return "";
+    return value;
+  };
+
+  const joinItems = (items = []) => {
+    const seen = new Set();
+    const cleanItems = [];
+    for (const item of items.map(normalizeItem).filter(Boolean)) {
+      const key = item.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cleanItems.push(item);
+    }
+
+    if (cleanItems.length === 0) return "";
+    if (cleanItems.length === 1) return cleanItems[0];
+    if (cleanItems.length === 2) return cleanItems.join(" and ");
+    return cleanItems.slice(0, -1).join(", ") + ", and " + cleanItems[cleanItems.length - 1];
+  };
+
+  const cleanListSection = (source = "", label = "") => {
+    const markers = "(?:Evidence-backed positives:|Watch out for:|This fits better when:|Compare alternatives if:|For the upgrade:|Assumption:|One useful next question:|$)";
+    const pattern = new RegExp("\\b" + label + ":\\s*([\\s\\S]*?)(?=\\s*" + markers + ")", "gi");
+
+    return source.replace(pattern, (match, body) => {
+      const rawItems = cleanText(body)
+        .replace(/\band\s*$/i, "")
+        .split(/\s*,\s*|\s+and\s+/i)
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      const joined = joinItems(rawItems);
+      return joined ? label + ": " + joined + ". " : "";
+    });
+  };
+
+  text = cleanListSection(text, "Evidence-backed positives");
+  text = cleanListSection(text, "Watch out for");
+  text = cleanListSection(text, "This fits better when");
+  text = cleanListSection(text, "Compare alternatives if");
+
+  // Last-resort full-clause removal for any technical phrase that survived list cleanup.
   text = text.replace(
-    /\s*(?:,\s*)?(?:and\s+)?(?:safety|features?|value|running\s*cost|mileage|family\s*practicality|comfort|regret\s*risk)\s+score\s+(?:is\s+)?(?:not\s+available|not\s+fully\s+scored|unavailable|\d+(?:\.\d+)?\s*[(][^)]+[)])\.?/gi,
+    /\s*(?:,?\s*(?:and\s+)?)?(?:Feature score is|Safety-critical equipment|Ground-clearance|ground clearance|Highway score v2|Boot space data missing|CNG tank placement|NVH|tyre quality|braking feel|highway-assist features|taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|score snapshot|score profile|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable|data missing or reduced|unavailable; practicality)[^.]*[.;,]?/gi,
     ""
   );
 
-  // Remove remaining technical terms if any clause survived.
-  text = text.replace(
-    /\b(taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|ground-clearance normalization|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable)\b[^.]*\.?/gi,
-    ""
-  );
-
-  // Clean punctuation and empty clause leftovers.
   text = text
-    .replace(/:\s*,\s*/g, ": ")
+    .replace(/:\s*[.,]\s*/g, ": ")
     .replace(/,\s*,+/g, ", ")
     .replace(/,\s*(?:and\s*)?(?=\.|$)/g, "")
     .replace(/,\s*(?:and\s*)?(?=\s*(?:Assumption:|One useful next question:|For the upgrade:))/g, ". ")
-    .replace(/\bWatch out for:\s*(?:\.|,|and\s*)*(?=\s*(?:Assumption:|One useful next question:|For the upgrade:|$))/gi, "")
-    .replace(/\bEvidence-backed positives:\s*(?:\.|,|and\s*)*(?=\s*(?:Watch out for:|Assumption:|One useful next question:|For the upgrade:|$))/gi, "")
+    .replace(/\b(?:Evidence-backed positives|Watch out for|This fits better when|Compare alternatives if):\s*(?:\.|,|and\s*)*(?=\s*(?:Assumption:|One useful next question:|For the upgrade:|$))/gi, "")
     .replace(/\band\s*\./gi, ".")
     .replace(/\s+\.\s*/g, ". ")
     .replace(/\.{2,}/g, ".")
