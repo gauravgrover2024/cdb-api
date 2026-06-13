@@ -147,12 +147,12 @@ const openingLineForGuidance = ({ scope = '', model = '' } = {}) => {
 };
 
 const usefulViewLineForGuidance = ({ factsLine = '', buyerContextLine = '', scope = '' } = {}) => {
-  if (factsLine && buyerContextLine) return `What I can use now: ${factsLine}. Buyer context captured: ${buyerContextLine}.`;
-  if (factsLine) return `What I can use now: ${factsLine}. I would keep this modest until your use case and priorities are clearer.`;
-  if (buyerContextLine) return `Buyer context captured: ${buyerContextLine}. I can keep this provisional for now.`;
+  if (factsLine && buyerContextLine) return `What I can use now: ${factsLine}.`;
+  if (factsLine) return `What I can use now: ${factsLine}.`;
+  if (buyerContextLine) return '';
   if (scope === 'make_scope') return 'The next step is to pin down the model, budget, and use case, because make-level guidance should stay broad.';
   if (scope === 'discovery_scope') return 'The next step is to compare shortlisted options on safety, features, value, running cost, and family practicality once those signals are available.';
-  return 'I would keep this provisional until the exact use case, budget, and priority are clearer.';
+  return '';
 };
 
 const buyerSafeScoreSignalText = (key = '', value = {}) => {
@@ -207,7 +207,7 @@ const composerInputForGuidance = ({ id = '', guidance = {} } = {}) => {
     fitLine: optionalLine(fit ? `This fits better when: ${fit}.` : ''),
     alternativeLine: optionalLine(alternatives ? `Compare alternatives if: ${alternatives}.` : ''),
     upgradeLine: optionalLine(upgrade ? `For the upgrade: ${upgrade}.` : ''),
-    assumptionLine: optionalLine(assumptions ? `Assumption: ${assumptions}.` : ''),
+    assumptionLine: '',
     softQuestion: optionalLine(`Best next question: ${softQuestion}`),
   };
 };
@@ -270,6 +270,10 @@ const assertBuyerSafe = ({ id, result, expectedScope }) => {
   assert(rendered && !rendered.missingTemplate, `${id}: central composer template missing`);
   assert(TEMPLATE_BY_MODE[guidance.guidanceMode] === rendered.templateKey, `${id}: rendered outside buyer guidance templates`);
   assert(countQuestions(text) <= 1, `${id}: expected at most one buyer-facing question: ${text}`);
+  assert(
+    !/\b(?:openingLine|usefulViewLine|strengthLine|watchoutLine|fitLine|alternativeLine|upgradeLine|assumptionLine|softQuestion)\b/i.test(text),
+    `${id}: unresolved template token leaked in buyer guidance: ${text}`
+  );
 
   for (const pattern of INTERNAL_BLOCKER_PATTERNS) {
     assert(!pattern.test(text), `${id}: internal blocker wording leaked: ${pattern} :: ${text}`);
@@ -726,6 +730,10 @@ const runLiveBridgeCautionSmoke = async () => {
       assert(Array.isArray(ux.safeAnswerTypesNow), `${testCase.id}: live UX missing safeAnswerTypesNow`);
       assertNoForbiddenUxKeys(ux);
       assert(countQuestions(answer) <= 1, `${testCase.id}: live answer has more than one question: ${answer}`);
+      assert(
+        !/\b(?:openingLine|usefulViewLine|strengthLine|watchoutLine|fitLine|alternativeLine|upgradeLine|assumptionLine|softQuestion)\b/i.test(answer),
+        `${testCase.id}: unresolved template token leaked in live answer: ${answer}`
+      );
       testCase.assertAnswer(answer);
 
       for (const pattern of INTERNAL_BLOCKER_PATTERNS) {

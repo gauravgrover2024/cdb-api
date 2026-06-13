@@ -231,8 +231,8 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Use only supplied facts.', 'Label assumptions.', 'Ask at most one soft question.', 'Do not expose internal blocker wording.'],
     forbiddenWording: ['internal blocker wording', 'you should buy', 'buy this'],
     variants: [
-      { id: 'buyer_guidance_practical_a', text: '{{openingLine}} {{usefulViewLine}} {{strengthLine}} {{watchoutLine}} {{fitLine}} {{alternativeLine}} {{upgradeLine}} {{assumptionLine}} {{softQuestion}}' },
-      { id: 'buyer_guidance_practical_b', text: '{{openingLine}} {{usefulViewLine}} {{fitLine}} {{strengthLine}} {{watchoutLine}} {{alternativeLine}} {{upgradeLine}} {{assumptionLine}} {{softQuestion}}' },
+      { id: 'buyer_guidance_practical_a', text: '{{openingLine}} {{usefulViewLine}} {{strengthLine}} {{watchoutLine}} {{fitLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
+      { id: 'buyer_guidance_practical_b', text: '{{openingLine}} {{usefulViewLine}} {{fitLine}} {{strengthLine}} {{watchoutLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
     ],
   },
   decision_buyer_guidance_conditional: {
@@ -243,8 +243,8 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Use only supplied facts.', 'Label assumptions.', 'Ask at most one soft question.', 'Do not expose internal blocker wording.'],
     forbiddenWording: ['internal blocker wording', 'you should buy', 'buy this'],
     variants: [
-      { id: 'buyer_guidance_conditional_a', text: '{{openingLine}} {{usefulViewLine}} {{strengthLine}} {{watchoutLine}} {{fitLine}} {{alternativeLine}} {{upgradeLine}} {{assumptionLine}} {{softQuestion}}' },
-      { id: 'buyer_guidance_conditional_b', text: '{{openingLine}} {{usefulViewLine}} {{fitLine}} {{strengthLine}} {{watchoutLine}} {{alternativeLine}} {{upgradeLine}} {{assumptionLine}} {{softQuestion}}' },
+      { id: 'buyer_guidance_conditional_a', text: '{{openingLine}} {{usefulViewLine}} {{strengthLine}} {{watchoutLine}} {{fitLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
+      { id: 'buyer_guidance_conditional_b', text: '{{openingLine}} {{usefulViewLine}} {{fitLine}} {{strengthLine}} {{watchoutLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
     ],
   },
   decision_buyer_guidance_sharpened_recommendation: {
@@ -255,8 +255,8 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Use only supplied facts and buyer context.', 'Label assumptions.', 'Do not expose internal blocker wording.', 'Do not present a final verdict.'],
     forbiddenWording: ['internal blocker wording', 'you should buy', 'buy this'],
     variants: [
-      { id: 'buyer_guidance_sharpened_a', text: '{{openingLine}} {{usefulViewLine}} {{strengthLine}} {{watchoutLine}} {{fitLine}} {{alternativeLine}} {{upgradeLine}} {{assumptionLine}} {{softQuestion}}' },
-      { id: 'buyer_guidance_sharpened_b', text: '{{openingLine}} {{usefulViewLine}} {{fitLine}} {{strengthLine}} {{watchoutLine}} {{alternativeLine}} {{upgradeLine}} {{assumptionLine}} {{softQuestion}}' },
+      { id: 'buyer_guidance_sharpened_a', text: '{{openingLine}} {{usefulViewLine}} {{strengthLine}} {{watchoutLine}} {{fitLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
+      { id: 'buyer_guidance_sharpened_b', text: '{{openingLine}} {{usefulViewLine}} {{fitLine}} {{strengthLine}} {{watchoutLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
     ],
   },
   decision_no_useful_evidence_recovery: {

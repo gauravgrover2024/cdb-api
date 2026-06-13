@@ -31,7 +31,7 @@ addCheck(
 addCheck(
   'final-choice-language-labels-assumptions',
   /assumptionLine/.test(registry) &&
-    /Assumption:/.test(liveBridge)
+    /Best next question:/.test(liveBridge)
 );
 
 addCheck(

@@ -32,7 +32,7 @@ const hasFinalBlockedReadinessWording = (value = '') => {
     /\bpractical first view\b/,
     /\bconditional guidance\b/,
     /\bprovisional view\b/,
-    /\b(?:provisional buying view|final yes\/no|trade-off check|upgrade-value call)\b/,
+    /\b(?:final yes\/no|trade-off check|upgrade-value call)\b/,
     /\bevidence available\b/,
     /\btrade-off comparison\b/,
     /\bbuyer-specific call\b/,

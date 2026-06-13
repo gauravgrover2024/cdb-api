@@ -3930,22 +3930,23 @@ const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
 };
 
 const buildBuyerGuidanceUsefulViewLine = ({ factsLine = "", buyerContextLine = "", scope = "" } = {}) => {
-  if (factsLine && buyerContextLine) {
-    return `What I can use now: ${factsLine}. Buyer context captured: ${buyerContextLine}.`;
-  }
   if (factsLine) {
-    return `What I can use now: ${factsLine}. I would keep this modest until your use case and priorities are clearer.`;
+    return `What I can use now: ${factsLine}.`;
   }
-  if (buyerContextLine) {
-    return `Buyer context captured: ${buyerContextLine}. I can keep this provisional for now.`;
-  }
+
   if (scope === "make_scope") {
     return "The next step is to pin down the model, budget, and use case, because make-level guidance should stay broad.";
   }
+
   if (scope === "discovery_scope") {
     return "The next step is to compare shortlisted options on safety, features, value, running cost, and family practicality once those signals are available.";
   }
-  return "I would keep this provisional until the exact use case, budget, and priority are clearer.";
+
+  if (buyerContextLine) {
+    return "";
+  }
+
+  return "";
 };
 
 const buildBuyerGuidanceLineInput = ({ model = "", facts = {}, guidance = {}, evidencePack = {} } = {}) => {
@@ -3970,7 +3971,7 @@ const buildBuyerGuidanceLineInput = ({ model = "", facts = {}, guidance = {}, ev
     fitLine: optionalGuidanceLine(evidence.fit ? `This fits better when: ${evidence.fit}.` : ""),
     alternativeLine: optionalGuidanceLine(evidence.alternatives ? `Compare alternatives if: ${evidence.alternatives}.` : ""),
     upgradeLine: optionalGuidanceLine(evidence.upgrade ? `For the upgrade: ${sentenceFragment(evidence.upgrade)}.` : ""),
-    assumptionLine: optionalGuidanceLine(assumptions ? `Assumption: ${assumptions}.` : ""),
+    assumptionLine: "",
     softQuestion: optionalGuidanceLine(softQuestion ? `Best next question: ${softQuestion}` : ""),
   };
 };
@@ -4249,6 +4250,12 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     /\s*(?:,?\s*(?:and\s+)?)?(?:Feature score is|Safety-critical equipment|Ground-clearance|ground clearance|Highway score v2|Boot space data missing|CNG tank placement|NVH|tyre quality|braking feel|highway-assist features|taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|score snapshot|score profile|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable|data missing or reduced|unavailable; practicality)[^.]*[.;,]?/gi,
     ""
   );
+
+  text = text
+    .replace(/\b(?:openingLine|usefulViewLine|strengthLine|watchoutLine|fitLine|alternativeLine|upgradeLine|assumptionLine|softQuestion)\b/gi, "")
+    .replace(/\{\{\s*(?:openingLine|usefulViewLine|strengthLine|watchoutLine|fitLine|alternativeLine|upgradeLine|assumptionLine|softQuestion)\s*\}\}/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 
   text = text
     .replace(/:\s*[.,]\s*/g, ": ")

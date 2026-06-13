@@ -98,7 +98,7 @@ add(
     /openingLine/.test(languageRegistry) &&
     /usefulViewLine/.test(languageRegistry) &&
     /assumptionLine/.test(languageRegistry) &&
-    /Assumption:/.test(liveBridge)
+    /Best next question:/.test(liveBridge)
 );
 add('progress-tracker-has-phase4e', /Phase 4E adds final-blocked readiness UX/i.test(progress));
 add('progress-tracker-points-to-phase4f-or-phase5', /Phase 4F closure gate|Phase 5|Buyer Context/i.test(progress));
