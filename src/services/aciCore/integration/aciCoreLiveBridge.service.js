@@ -3856,6 +3856,60 @@ const buildBuyerGuidanceEvidenceValues = (evidencePack = {}) => {
   };
 };
 
+const BUYER_GUIDANCE_UPPER_TOKENS = new Set([
+  "ABS",
+  "ADAS",
+  "AMT",
+  "AT",
+  "CNG",
+  "CVT",
+  "DCT",
+  "EV",
+  "EBD",
+  "IVT",
+  "MT",
+  "SUV",
+  "MPV",
+  "MUV",
+]);
+
+const titleCaseBuyerGuidanceLabelSide = (value = "") => {
+  return cleanText(value)
+    .split(/\s+/)
+    .map((token) => {
+      const cleanToken = cleanText(token);
+      if (!cleanToken) return "";
+
+      const upper = cleanToken.toUpperCase();
+      const lower = cleanToken.toLowerCase();
+
+      if (BUYER_GUIDANCE_UPPER_TOKENS.has(upper)) return upper;
+      if (/^\d/.test(cleanToken)) return cleanToken;
+      if (/^[A-Z0-9-]{2,}$/.test(cleanToken)) return cleanToken;
+      if (/^(and|or|with|for|to|vs|versus)$/i.test(cleanToken)) return lower;
+
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .filter(Boolean)
+    .join(" ");
+};
+
+const formatBuyerGuidanceDisplayLabel = (value = "", { preserveSentenceCase = false } = {}) => {
+  const text = cleanText(value);
+  if (!text) return "";
+  if (preserveSentenceCase) return text;
+
+  return text
+    .split(/\s+to\s+/i)
+    .map((part) =>
+      part
+        .split(/\s+vs\s+/i)
+        .map(titleCaseBuyerGuidanceLabelSide)
+        .join(" vs ")
+    )
+    .join(" to ");
+};
+
 const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
   if (scope === "make_scope") {
     return `For ${model}, I would keep this at brand level first: the exact model, budget, use case, and any ownership or resale evidence matter more than the badge alone.`;
@@ -3872,7 +3926,7 @@ const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
   if (scope === "discovery_scope") {
     return `For ${model}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
   }
-  return `For ${model}, I can give a provisional buying view from the evidence available.`;
+  return `For ${model}, here is a provisional buying view from the evidence available.`;
 };
 
 const buildBuyerGuidanceUsefulViewLine = ({ factsLine = "", buyerContextLine = "", scope = "" } = {}) => {
@@ -3896,6 +3950,7 @@ const buildBuyerGuidanceUsefulViewLine = ({ factsLine = "", buyerContextLine = "
 
 const buildBuyerGuidanceLineInput = ({ model = "", facts = {}, guidance = {}, evidencePack = {} } = {}) => {
   const scope = cleanText(evidencePack.scope || guidance.scope || "");
+  const displayModel = formatBuyerGuidanceDisplayLabel(model, { preserveSentenceCase: scope === "discovery_scope" });
   const factsLine = buildBuyerGuidanceVehicleFactsLine(facts);
   const buyerContextLine = buildBuyerGuidanceContextLine(guidance.explicitBuyerContext || {});
   const evidence = buildBuyerGuidanceEvidenceValues(evidencePack);
@@ -3903,12 +3958,12 @@ const buildBuyerGuidanceLineInput = ({ model = "", facts = {}, guidance = {}, ev
   const sentenceFragment = (value = "") => cleanText(value).replace(/[.?!]+$/g, "");
   const softQuestion =
     scope === "make_scope"
-      ? `Which ${model} model are you considering?`
+      ? `Which ${displayModel || model} model are you considering?`
       : cleanText(guidance.softQuestion) || "Is your use mostly city, highway, or mixed?";
 
   return {
-    model,
-    openingLine: optionalGuidanceLine(buildBuyerGuidanceOpeningLine({ scope, model })),
+    model: displayModel || model,
+    openingLine: optionalGuidanceLine(buildBuyerGuidanceOpeningLine({ scope, model: displayModel || model })),
     usefulViewLine: optionalGuidanceLine(buildBuyerGuidanceUsefulViewLine({ factsLine, buyerContextLine, scope })),
     strengthLine: optionalGuidanceLine(evidence.strengths ? `What looks good: ${evidence.strengths}.` : ""),
     watchoutLine: optionalGuidanceLine(evidence.watchouts ? `What to check: ${evidence.watchouts}.` : ""),
@@ -4156,9 +4211,9 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
 
   text = text
     .replace(/\s*Buyer context captured:[^.]*\./gi, "")
-    .replace(/\s*I can keep this provisional for now\./gi, " This is still a provisional view, not a final purchase verdict yet.")
-    .replace(/\s*I would keep this provisional until the exact use case, budget, and priority are clearer\./gi, " This is still a provisional view, not a final purchase verdict yet.")
-    .replace(/\s*I would keep this modest until your use case and priorities are clearer\./gi, " This is still a provisional view, not a final purchase verdict yet.")
+    .replace(/\s*I can keep this provisional for now\./gi, " This is a provisional view, not a final purchase verdict.")
+    .replace(/\s*I would keep this provisional until the exact use case, budget, and priority are clearer\./gi, " This is a provisional view, not a final purchase verdict.")
+    .replace(/\s*I would keep this modest until your use case and priorities are clearer\./gi, " This is a provisional view, not a final purchase verdict.")
     .replace(/\s*Assumption:[^.]*\./gi, "");
 
   text = cleanListSection(text, "What looks good", "positive");
