@@ -3910,13 +3910,13 @@ const buildBuyerGuidanceLineInput = ({ model = "", facts = {}, guidance = {}, ev
     model,
     openingLine: optionalGuidanceLine(buildBuyerGuidanceOpeningLine({ scope, model })),
     usefulViewLine: optionalGuidanceLine(buildBuyerGuidanceUsefulViewLine({ factsLine, buyerContextLine, scope })),
-    strengthLine: optionalGuidanceLine(evidence.strengths ? `Evidence-backed positives: ${evidence.strengths}.` : ""),
-    watchoutLine: optionalGuidanceLine(evidence.watchouts ? `Watch out for: ${evidence.watchouts}.` : ""),
+    strengthLine: optionalGuidanceLine(evidence.strengths ? `What looks good: ${evidence.strengths}.` : ""),
+    watchoutLine: optionalGuidanceLine(evidence.watchouts ? `What to check: ${evidence.watchouts}.` : ""),
     fitLine: optionalGuidanceLine(evidence.fit ? `This fits better when: ${evidence.fit}.` : ""),
     alternativeLine: optionalGuidanceLine(evidence.alternatives ? `Compare alternatives if: ${evidence.alternatives}.` : ""),
     upgradeLine: optionalGuidanceLine(evidence.upgrade ? `For the upgrade: ${sentenceFragment(evidence.upgrade)}.` : ""),
     assumptionLine: optionalGuidanceLine(assumptions ? `Assumption: ${assumptions}.` : ""),
-    softQuestion: optionalGuidanceLine(softQuestion ? `One useful next question: ${softQuestion}` : ""),
+    softQuestion: optionalGuidanceLine(softQuestion ? `Best next question: ${softQuestion}` : ""),
   };
 };
 
@@ -4037,10 +4037,10 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     [new RegExp("\\bcomfort\\s+score\\s+" + rawScore, "gi"), "comfort evidence needs comparison"],
     [new RegExp("\\bregret\\s*risk\\s+score\\s+" + rawScore, "gi"), "regret-risk evidence needs use-case review"],
 
-    [/Feature-rich for its scoring context/gi, "feature equipment looks strong"],
-    [/Strong city-use suitability/gi, "city-use suitability looks strong"],
-    [/Strong mileage\/running-cost signal/gi, "running-cost signal looks strong"],
-    [/Strong same-model value signal/gi, "value evidence looks positive versus nearby variants"],
+    [/Feature-rich for its scoring context/gi, "feature equipment looks positive"],
+    [/Strong city-use suitability/gi, "city-use suitability looks positive"],
+    [/Strong mileage\/running-cost signal/gi, "running-cost evidence looks favourable"],
+    [/Strong same-model value signal/gi, "value looks positive versus nearby variants"],
     [/Same-model value score is weak/gi, "value evidence needs nearby-variant comparison"],
     [/Premium comfort score is limited/gi, "comfort evidence needs comparison"],
     [/Safety\/crash applicability needs verified-source caution/gi, "safety evidence needs verified-source review"],
@@ -4048,6 +4048,10 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     [/safety evidence needs verified-source caution/gi, "safety evidence needs verified-source review"],
     [/value evidence needs comparison with nearby variants/gi, "value evidence needs nearby-variant comparison"],
     [/comfort evidence is not the strongest reason to choose it/gi, "comfort evidence needs comparison"],
+
+    [/Evidence-backed positives:/gi, "What looks good:"],
+    [/Watch out for:/gi, "What to check:"],
+    [/One useful next question:/gi, "Best next question:"],
   ];
 
   for (const [pattern, safeText] of replacements) {
@@ -4056,7 +4060,7 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
 
   const unsafeTechnicalPattern = /\b(?:Feature score is|Safety-critical equipment|Ground-clearance|ground clearance|Highway score v2|Boot space data missing|CNG tank placement|NVH|tyre quality|braking feel|highway-assist features|taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|score snapshot|score profile|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable|data missing or reduced|unavailable; practicality)\b/i;
 
-  const normalizeItem = (item = "") => {
+  const canonicalEvidenceItem = (item = "", section = "") => {
     let value = cleanText(item)
       .replace(/^[,.;:\s]+|[,.;:\s]+$/g, "")
       .replace(/^and\s+/i, "")
@@ -4064,29 +4068,68 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
 
     if (!value) return "";
     if (unsafeTechnicalPattern.test(value)) return "";
-    if (/^(?:and|but|safety|mileage|features?|value|comfort|practicality)$/i.test(value)) return "";
-    if (value.length < 12) return "";
+    if (value.length < 8) return "";
 
-    value = value
+    const lower = value.toLowerCase();
+
+    if (/feature|equipment/.test(lower)) {
+      return section === "watchout" ? "" : "Feature equipment looks positive";
+    }
+
+    if (/city-use|city use|city suitability/.test(lower)) {
+      return section === "watchout" ? "" : "City-use suitability looks positive";
+    }
+
+    if (/running-cost|running cost|mileage/.test(lower)) {
+      if (/incomplete|not available|not fully/.test(lower)) return "Mileage evidence is incomplete";
+      return section === "watchout" ? "" : "Running-cost evidence looks favourable";
+    }
+
+    if (/value|nearby variant|nearby-variant/.test(lower)) {
+      return section === "positive"
+        ? "Value looks positive versus nearby variants"
+        : "Compare value against nearby variants";
+    }
+
+    if (/safety|crash|verified-source|verified source/.test(lower)) {
+      return "Verify safety evidence for the exact variant/source";
+    }
+
+    if (/comfort|nvh|ride/.test(lower)) {
+      return "Compare comfort against alternatives";
+    }
+
+    if (/family-practicality|family practicality/.test(lower)) {
+      return section === "positive" ? "Family-practicality evidence looks acceptable" : "Check family practicality against your use case";
+    }
+
+    if (/regret-risk|regret risk/.test(lower)) {
+      return section === "positive" ? "" : "Check regret-risk against your actual use case";
+    }
+
+    if (/amt|cvt|ivt|torque converter|manual|automatic/.test(lower)) {
+      return "AMT is convenient, but may feel less smooth than CVT/IVT or torque converter in stop-go traffic";
+    }
+
+    return value
       .replace(/\bFeature score is\b.*$/i, "")
       .replace(/\bGround-clearance\b.*$/i, "")
       .replace(/\bHighway score v2\b.*$/i, "")
       .replace(/\bBoot space data missing\b.*$/i, "")
       .replace(/\s{2,}/g, " ")
       .trim();
-
-    if (!value || unsafeTechnicalPattern.test(value)) return "";
-    return value;
   };
 
-  const joinItems = (items = []) => {
+  const joinItems = (items = [], limit = 3) => {
     const seen = new Set();
     const cleanItems = [];
-    for (const item of items.map(normalizeItem).filter(Boolean)) {
+
+    for (const item of items.filter(Boolean)) {
       const key = item.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
       cleanItems.push(item);
+      if (cleanItems.length >= limit) break;
     }
 
     if (cleanItems.length === 0) return "";
@@ -4095,28 +4138,34 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     return cleanItems.slice(0, -1).join(", ") + ", and " + cleanItems[cleanItems.length - 1];
   };
 
-  const cleanListSection = (source = "", label = "") => {
-    const markers = "(?:Evidence-backed positives:|Watch out for:|This fits better when:|Compare alternatives if:|For the upgrade:|Assumption:|One useful next question:|$)";
+  const cleanListSection = (source = "", label = "", section = "") => {
+    const markers = "(?:What looks good:|What to check:|This fits better when:|Compare alternatives if:|For the upgrade:|Assumption:|Best next question:|$)";
     const pattern = new RegExp("\\b" + label + ":\\s*([\\s\\S]*?)(?=\\s*" + markers + ")", "gi");
 
     return source.replace(pattern, (match, body) => {
       const rawItems = cleanText(body)
         .replace(/\band\s*$/i, "")
         .split(/\s*,\s*|\s+and\s+/i)
-        .map((item) => item.trim())
+        .map((item) => canonicalEvidenceItem(item, section))
         .filter(Boolean);
 
-      const joined = joinItems(rawItems);
+      const joined = joinItems(rawItems, section === "positive" ? 3 : 3);
       return joined ? label + ": " + joined + ". " : "";
     });
   };
 
-  text = cleanListSection(text, "Evidence-backed positives");
-  text = cleanListSection(text, "Watch out for");
-  text = cleanListSection(text, "This fits better when");
-  text = cleanListSection(text, "Compare alternatives if");
+  text = text
+    .replace(/\s*Buyer context captured:[^.]*\./gi, "")
+    .replace(/\s*I can keep this provisional for now\./gi, " This is still a provisional view, not a final purchase verdict yet.")
+    .replace(/\s*I would keep this provisional until the exact use case, budget, and priority are clearer\./gi, " This is still a provisional view, not a final purchase verdict yet.")
+    .replace(/\s*I would keep this modest until your use case and priorities are clearer\./gi, " This is still a provisional view, not a final purchase verdict yet.")
+    .replace(/\s*Assumption:[^.]*\./gi, "");
 
-  // Last-resort full-clause removal for any technical phrase that survived list cleanup.
+  text = cleanListSection(text, "What looks good", "positive");
+  text = cleanListSection(text, "What to check", "watchout");
+  text = cleanListSection(text, "This fits better when", "positive");
+  text = cleanListSection(text, "Compare alternatives if", "watchout");
+
   text = text.replace(
     /\s*(?:,?\s*(?:and\s+)?)?(?:Feature score is|Safety-critical equipment|Ground-clearance|ground clearance|Highway score v2|Boot space data missing|CNG tank placement|NVH|tyre quality|braking feel|highway-assist features|taxonomy-driven|global-percentile|normalization|safetyScore|performance score v2|score snapshot|score profile|score excludes|not yet scored|diagnostic-only module scoring|power-to-weight unavailable|data missing or reduced|unavailable; practicality)[^.]*[.;,]?/gi,
     ""
@@ -4126,8 +4175,8 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     .replace(/:\s*[.,]\s*/g, ": ")
     .replace(/,\s*,+/g, ", ")
     .replace(/,\s*(?:and\s*)?(?=\.|$)/g, "")
-    .replace(/,\s*(?:and\s*)?(?=\s*(?:Assumption:|One useful next question:|For the upgrade:))/g, ". ")
-    .replace(/\b(?:Evidence-backed positives|Watch out for|This fits better when|Compare alternatives if):\s*(?:\.|,|and\s*)*(?=\s*(?:Assumption:|One useful next question:|For the upgrade:|$))/gi, "")
+    .replace(/,\s*(?:and\s*)?(?=\s*(?:Best next question:|For the upgrade:))/g, ". ")
+    .replace(/\b(?:What looks good|What to check|This fits better when|Compare alternatives if):\s*(?:\.|,|and\s*)*(?=\s*(?:Best next question:|For the upgrade:|$))/gi, "")
     .replace(/\band\s*\./gi, ".")
     .replace(/\s+\.\s*/g, ". ")
     .replace(/\.{2,}/g, ".")

@@ -202,13 +202,13 @@ const composerInputForGuidance = ({ id = '', guidance = {} } = {}) => {
     model,
     openingLine: optionalLine(openingLineForGuidance({ scope: evidencePack.scope, model })),
     usefulViewLine: optionalLine(usefulViewLineForGuidance({ factsLine, buyerContextLine, scope: evidencePack.scope })),
-    strengthLine: optionalLine(strengths ? `Evidence-backed positives: ${strengths}.` : ''),
-    watchoutLine: optionalLine(watchouts ? `Watch out for: ${watchouts}.` : ''),
+    strengthLine: optionalLine(strengths ? `What looks good: ${strengths}.` : ''),
+    watchoutLine: optionalLine(watchouts ? `What to check: ${watchouts}.` : ''),
     fitLine: optionalLine(fit ? `This fits better when: ${fit}.` : ''),
     alternativeLine: optionalLine(alternatives ? `Compare alternatives if: ${alternatives}.` : ''),
     upgradeLine: optionalLine(upgrade ? `For the upgrade: ${upgrade}.` : ''),
     assumptionLine: optionalLine(assumptions ? `Assumption: ${assumptions}.` : ''),
-    softQuestion: optionalLine(`One useful next question: ${softQuestion}`),
+    softQuestion: optionalLine(`Best next question: ${softQuestion}`),
   };
 };
 
