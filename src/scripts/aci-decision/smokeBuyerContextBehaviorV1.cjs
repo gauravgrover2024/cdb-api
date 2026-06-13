@@ -143,7 +143,7 @@ const openingLineForGuidance = ({ scope = '', model = '' } = {}) => {
   if (scope === 'comparison_scope') return `For ${model}, the useful view is a trade-off comparison, not a single winner yet.`;
   if (scope === 'upgrade_scope') return `For ${model}, the decision is whether the upgrade evidence justifies the extra spend for your use case.`;
   if (scope === 'discovery_scope') return `For ${model}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
-  return `For ${model}, I can give a provisional buying view from the evidence available.`;
+  return `For ${model}, I would not treat this as a final yes/no yet.`;
 };
 
 const usefulViewLineForGuidance = ({ factsLine = '', buyerContextLine = '', scope = '' } = {}) => {

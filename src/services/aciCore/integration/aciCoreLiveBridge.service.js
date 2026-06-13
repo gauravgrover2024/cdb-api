@@ -3915,18 +3915,18 @@ const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
     return `For ${model}, I would keep this at brand level first: the exact model, budget, use case, and any ownership or resale evidence matter more than the badge alone.`;
   }
   if (scope === "variant_scope") {
-    return `For ${model}, I would judge the variant by the confirmed feature gains, price gap, and regret-risk evidence.`;
+    return `For ${model}, I would not treat this as a final yes/no yet; I would first check features, price gap, and regret-risk evidence.`;
   }
   if (scope === "comparison_scope") {
-    return `For ${model}, the useful view is a trade-off comparison, not a single winner yet.`;
+    return `For ${model}, treat this as a trade-off check, not a single winner yet.`;
   }
   if (scope === "upgrade_scope") {
-    return `For ${model}, the decision is whether the upgrade evidence justifies the extra spend for your use case.`;
+    return `For ${model}, treat this as an upgrade-value call: the added benefits need to justify the extra spend for your use case.`;
   }
   if (scope === "discovery_scope") {
     return `For ${model}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
   }
-  return `For ${model}, here is a provisional buying view from the evidence available.`;
+  return `For ${model}, I would not treat this as a final yes/no yet.`;
 };
 
 const buildBuyerGuidanceUsefulViewLine = ({ factsLine = "", buyerContextLine = "", scope = "" } = {}) => {
@@ -4128,42 +4128,46 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     const lower = value.toLowerCase();
 
     if (/feature|equipment/.test(lower)) {
-      return section === "watchout" ? "" : "Feature equipment looks positive";
+      return section === "watchout" ? "" : "feature equipment";
     }
 
     if (/city-use|city use|city suitability/.test(lower)) {
-      return section === "watchout" ? "" : "City-use suitability looks positive";
+      return section === "watchout" ? "" : "city-use suitability";
     }
 
-    if (/running-cost|running cost|mileage/.test(lower)) {
-      if (/incomplete|not available|not fully/.test(lower)) return "Mileage evidence is incomplete";
-      return section === "watchout" ? "" : "Running-cost evidence looks favourable";
+    if (/running-cost|running cost/.test(lower)) {
+      return section === "watchout" ? "" : "running-cost evidence";
+    }
+
+    if (/mileage/.test(lower)) {
+      if (/incomplete|not available|not fully/.test(lower)) return "treat mileage evidence as incomplete";
+      return section === "watchout" ? "" : "running-cost evidence";
     }
 
     if (/value|nearby variant|nearby-variant/.test(lower)) {
       return section === "positive"
-        ? "Value looks positive versus nearby variants"
-        : "Compare value against nearby variants";
+        ? "value evidence"
+        : "compare value against nearby variants";
     }
 
     if (/safety|crash|verified-source|verified source/.test(lower)) {
-      return "Verify safety evidence for the exact variant/source";
+      return section === "positive" ? "" : "verify safety evidence for the exact variant";
     }
 
     if (/comfort|nvh|ride/.test(lower)) {
-      return "Compare comfort against alternatives";
+      return section === "positive" ? "" : "compare comfort against alternatives";
     }
 
     if (/family-practicality|family practicality/.test(lower)) {
-      return section === "positive" ? "Family-practicality evidence looks acceptable" : "Check family practicality against your use case";
+      return section === "positive" ? "family-practicality evidence" : "check family practicality against your use case";
     }
 
     if (/regret-risk|regret risk/.test(lower)) {
-      return section === "positive" ? "" : "Check regret-risk against your actual use case";
+      return section === "positive" ? "" : "check regret-risk against your actual use case";
     }
 
     if (/amt|cvt|ivt|torque converter|manual|automatic/.test(lower)) {
-      return "AMT is convenient, but may feel less smooth than CVT/IVT or torque converter in stop-go traffic";
+      return "test the AMT feel in traffic";
     }
 
     return value
@@ -4193,6 +4197,23 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     return cleanItems.slice(0, -1).join(", ") + ", and " + cleanItems[cleanItems.length - 1];
   };
 
+  const joinPositiveItems = (items = [], limit = 3) => {
+    const seen = new Set();
+    const cleanItems = [];
+
+    for (const item of items.filter(Boolean)) {
+      const key = item.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cleanItems.push(item);
+      if (cleanItems.length >= limit) break;
+    }
+
+    if (cleanItems.length === 0) return "";
+    if (cleanItems.length === 1) return cleanItems[0] + " looks positive";
+    return joinItems(cleanItems, limit) + " look positive";
+  };
+
   const cleanListSection = (source = "", label = "", section = "") => {
     const markers = "(?:What looks good:|What to check:|This fits better when:|Compare alternatives if:|For the upgrade:|Assumption:|Best next question:|$)";
     const pattern = new RegExp("\\b" + label + ":\\s*([\\s\\S]*?)(?=\\s*" + markers + ")", "gi");
@@ -4204,16 +4225,19 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
         .map((item) => canonicalEvidenceItem(item, section))
         .filter(Boolean);
 
-      const joined = joinItems(rawItems, section === "positive" ? 3 : 3);
+      const joined = section === "positive"
+        ? joinPositiveItems(rawItems, 3)
+        : joinItems(rawItems, 3);
+
       return joined ? label + ": " + joined + ". " : "";
     });
   };
 
   text = text
     .replace(/\s*Buyer context captured:[^.]*\./gi, "")
-    .replace(/\s*I can keep this provisional for now\./gi, " This is a provisional view, not a final purchase verdict.")
-    .replace(/\s*I would keep this provisional until the exact use case, budget, and priority are clearer\./gi, " This is a provisional view, not a final purchase verdict.")
-    .replace(/\s*I would keep this modest until your use case and priorities are clearer\./gi, " This is a provisional view, not a final purchase verdict.")
+    .replace(/\s*I can keep this provisional for now\./gi, "")
+    .replace(/\s*I would keep this provisional until the exact use case, budget, and priority are clearer\./gi, "")
+    .replace(/\s*I would keep this modest until your use case and priorities are clearer\./gi, "")
     .replace(/\s*Assumption:[^.]*\./gi, "");
 
   text = cleanListSection(text, "What looks good", "positive");

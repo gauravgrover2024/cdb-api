@@ -4,7 +4,7 @@ require('dotenv').config();
 const assert = require('assert');
 
 const isProvisionalBuyerGuidanceAnswer = (answer = '') =>
-  /\bprovisional\b|\bpractical\b|\bdiagnostic\b|\bbuying view\b|\btrade-off comparison\b|\bfeature gains\b|\bexact model\b/i.test(String(answer || ''));
+  /\bprovisional\b|\bpractical\b|\bdiagnostic\b|\bbuying view\b|\btrade-off comparison\b|\btrade-off check\b|\bfeature gains\b|\bexact model\b|\bfinal yes\/no\b|\bupgrade-value call\b/i.test(String(answer || ''));
 
 const mongoose = require('mongoose');
 
@@ -32,7 +32,7 @@ const hasFinalBlockedReadinessWording = (value = '') => {
     /\bpractical first view\b/,
     /\bconditional guidance\b/,
     /\bprovisional view\b/,
-    /\bprovisional buying view\b/,
+    /\b(?:provisional buying view|final yes\/no|trade-off check|upgrade-value call)\b/,
     /\bevidence available\b/,
     /\btrade-off comparison\b/,
     /\bbuyer-specific call\b/,
@@ -55,6 +55,8 @@ const hasSafeNextStepOrMissingContextWording = (value = '') => {
     /\bare still missing\b/,
     /\bi still need\b/,
     /\bshould not recommend one yet\b/,
+    /\bbest next question\b/,
+    /\bfinal yes\/no\b/,
   ].some((pattern) => pattern.test(raw));
 };
 
@@ -190,7 +192,7 @@ const CASES = [
 
                   assert(
         isProvisionalBuyerGuidanceAnswer(answerText) ||
-          /\b(diagnostic|practical|provisional|buying view|trade-off comparison|feature gains|exact model|car search)\b/i.test(answerText),
+          /\b(diagnostic|practical|provisional|buying view|trade-off comparison|trade-off check|feature gains|exact model|car search|final yes\/no|upgrade-value call)\b/i.test(answerText),
         `${testCase.id}: final-blocked readiness wording missing: ${answerText.slice(0, 260)}`
       );
 
