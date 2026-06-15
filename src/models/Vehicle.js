@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { buildSearchTokens } from "../utils/searchTokens.js";
 
 const vehicleSchema = mongoose.Schema(
   {
@@ -49,6 +50,7 @@ const vehicleSchema = mongoose.Schema(
     model_normalized: { type: String },
     variant_normalized: { type: String },
     search_text: { type: String },
+    searchTokens: { type: [String], default: [] },
     colors_normalized: { type: [String], default: undefined },
   },
   {
@@ -66,12 +68,6 @@ vehicleSchema.index({ city: 1 });
 vehicleSchema.index({ city: 1, make: 1, model: 1 });
 vehicleSchema.index({ city: 1, make: 1, model: 1, variant: 1 });
 vehicleSchema.index({ city: 1, brand: 1, model: 1 });
-vehicleSchema.index({
-  make: "text",
-  model: "text",
-  variant: "text",
-  city: "text",
-});
 vehicleSchema.index({ model: 1 });
 vehicleSchema.index({ brand: 1 });
 vehicleSchema.index({ brand: 1, model: 1, city: 1 });
@@ -88,6 +84,23 @@ vehicleSchema.index({ city: 1, is_discontinued: 1, make: 1, model: 1, ex_showroo
 vehicleSchema.index({ brand_normalized: 1, model_normalized: 1, variant_normalized: 1 });
 vehicleSchema.index({ brand_normalized: 1, model_normalized: 1, city: 1, fuel_type: 1 });
 vehicleSchema.index({ search_text: 1 });
+vehicleSchema.index({ searchTokens: 1 });
+
+vehicleSchema.pre("save", function () {
+  this.searchTokens = buildSearchTokens([
+    this.make,
+    this.brand,
+    this.model,
+    this.variant,
+    this.fuel,
+    this.fuel_type,
+    this.city,
+    this.brand_normalized,
+    this.model_normalized,
+    this.variant_normalized,
+    this.search_text,
+  ]);
+});
 
 const Vehicle = mongoose.model("Vehicle", vehicleSchema);
 export default Vehicle;

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { buildSearchTokens } from "../utils/searchTokens.js";
 
 const bankDetailSchema = new mongoose.Schema(
   {
@@ -25,6 +26,7 @@ const customerSchema = mongoose.Schema(
     email: { type: String },
     contactPersonName: { type: String },
     contactPersonMobile: { type: String },
+    searchTokens: { type: [String], default: [] },
 
     // --- Personal ---
     sdwOf: { type: String }, // Son/Daughter/Wife of
@@ -215,9 +217,29 @@ const customerSchema = mongoose.Schema(
 );
 
 // Index for search
-customerSchema.index({ customerName: 'text', primaryMobile: 'text', panNumber: 'text', city: 'text' });
 customerSchema.index({ "bankDetails.ifscCode": 1 });
 customerSchema.index({ "bankDetails.accountNumber": 1 });
+customerSchema.index({ searchTokens: 1 });
+
+customerSchema.pre("save", function () {
+  this.searchTokens = buildSearchTokens([
+    this.customerId,
+    this.customerName,
+    this.companyName,
+    this.contactPersonName,
+    this.primaryMobile,
+    this.extraMobiles,
+    this.whatsappNumber,
+    this.panNumber,
+    this.aadharNumber,
+    this.aadhaarNumber,
+    this.gstNumber,
+    this.city,
+    this.state,
+    this.companyCity,
+    this.registrationCity,
+  ]);
+});
 
 const Customer = mongoose.model('Customer', customerSchema);
 

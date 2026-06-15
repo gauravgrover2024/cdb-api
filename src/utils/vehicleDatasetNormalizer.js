@@ -1,3 +1,5 @@
+import { buildSearchTokens } from "./searchTokens.js";
+
 const MARKETING_WORDS_PATTERN =
   /\b(all\s+new|new|facelift|20\d{2})\b/gi;
 
@@ -183,6 +185,18 @@ export const normalizeVehicleDatasetRow = (row = {}, options = {}) => {
     .toLowerCase();
 
   const colorsNormalized = normalizeColors(options.colors || row.colors_normalized);
+  const searchTokens = buildSearchTokens([
+    rawBrand,
+    brandNormalized,
+    rawModel,
+    modelNormalized,
+    rawVariant,
+    variantNormalized,
+    fuel,
+    transmission,
+    row.city,
+    searchText,
+  ]);
 
   return {
     brand: rawBrand,
@@ -192,6 +206,7 @@ export const normalizeVehicleDatasetRow = (row = {}, options = {}) => {
     model_normalized: modelNormalized,
     variant_normalized: variantNormalized,
     search_text: searchText,
+    searchTokens,
     ...(colorsNormalized.length ? { colors_normalized: colorsNormalized } : {}),
   };
 };
@@ -203,6 +218,7 @@ export const buildVehicleNormalizationUpdate = (row = {}, options = {}) => {
     model_normalized: normalized.model_normalized,
     variant_normalized: normalized.variant_normalized,
     search_text: normalized.search_text,
+    searchTokens: normalized.searchTokens,
   };
   const $unset = {};
 

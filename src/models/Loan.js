@@ -902,15 +902,6 @@ loanSchema.pre("save", function computeBusinessFields() {
 });
 
 // --- Indexes ---
-// Text index for global search
-loanSchema.index({
-  customerName: "text",
-  primaryMobile: "text",
-  loanId: "text",
-  registrationNumber: "text",
-  chassisNumber: "text",
-  engineNumber: "text",
-});
 loanSchema.index({ loanId: 1 }, { unique: true, name: "loanId_1" });
 
 // Single field indexes for performance

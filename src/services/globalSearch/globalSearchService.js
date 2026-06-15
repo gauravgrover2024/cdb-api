@@ -1,4 +1,5 @@
 import { SEARCH_ADAPTERS } from "./adapters.js";
+import { buildSearchTokenFilter } from "../../utils/searchTokens.js";
 import {
   buildLooseRegPattern,
   digitsOnly,
@@ -114,6 +115,14 @@ const buildAdapterFilter = (adapter, parsed) => {
 
   if (!clauses.length) return null;
   return { $or: clauses.slice(0, 100) };
+};
+
+const buildAdapterIndexedFilter = (adapter, parsed) => {
+  if (!adapter.searchTokenField) return null;
+  return buildSearchTokenFilter(
+    parsed.rawQuery || parsed.normalizedQuery,
+    adapter.searchTokenField,
+  );
 };
 
 const daysDiff = (dateValue) => {
@@ -243,17 +252,37 @@ const scoreDocument = (adapter, doc, parsed) => {
 };
 
 const runAdapterSearch = async (adapter, parsed, perEntityLimit) => {
-  const filter = buildAdapterFilter(adapter, parsed);
-  if (!filter) return [];
-
   const limit = Math.max(1, Math.min(20, Number(perEntityLimit || adapter.limit || 8)));
   let docs = [];
   try {
-    docs = await adapter.model
-      .find(filter, adapter.projection || {})
-      .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
-      .limit(limit)
-      .lean();
+    const indexedFilter = buildAdapterIndexedFilter(adapter, parsed);
+    const fallbackFilter = buildAdapterFilter(adapter, parsed);
+    if (!indexedFilter && !fallbackFilter) return [];
+
+    if (indexedFilter) {
+      docs = await adapter.model
+        .find(indexedFilter, adapter.projection || {})
+        .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+        .limit(limit)
+        .lean();
+    }
+
+    if (fallbackFilter && docs.length < limit) {
+      const seenIds = new Set(docs.map((doc) => String(doc._id)));
+      const fallbackDocs = await adapter.model
+        .find(fallbackFilter, adapter.projection || {})
+        .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+        .limit(limit)
+        .lean();
+
+      fallbackDocs.forEach((doc) => {
+        const id = String(doc._id);
+        if (!seenIds.has(id) && docs.length < limit) {
+          seenIds.add(id);
+          docs.push(doc);
+        }
+      });
+    }
   } catch (error) {
     console.warn(
       `[GlobalSearch] adapter "${adapter.key}" failed: ${error?.message || "unknown error"}`,

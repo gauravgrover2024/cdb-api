@@ -1,5 +1,9 @@
 import asyncHandler from "express-async-handler";
 import Showroom from "../models/Showroom.js";
+import {
+  buildSearchTokenFilter,
+  mergeMongoFilters,
+} from "../utils/searchTokens.js";
 
 const cleanText = (value) =>
   String(value ?? "")
@@ -58,6 +62,7 @@ const getShowrooms = asyncHandler(async (req, res) => {
   const skip = Number(req.query.skip) || 0;
 
   const query = {};
+  const baseQuery = {};
 
   if (q) {
     const re = safeRegex(q);
@@ -70,15 +75,31 @@ const getShowrooms = asyncHandler(async (req, res) => {
     ];
   }
 
-  if (city) query.city = safeRegex(city);
-  if (status) query.status = status;
+  if (city) baseQuery.city = safeRegex(city);
+  if (status) baseQuery.status = status;
 
-  const count = await Showroom.countDocuments(query);
-  const showrooms = await Showroom.find(query)
+  Object.assign(query, baseQuery);
+
+  const tokenFilter = q ? buildSearchTokenFilter(q) : null;
+  const indexedQuery =
+    q && tokenFilter ? mergeMongoFilters(baseQuery, tokenFilter) : null;
+  const activeQuery = indexedQuery || query;
+
+  let count = await Showroom.countDocuments(activeQuery);
+  let showrooms = await Showroom.find(activeQuery)
     .sort({ createdAt: -1 })
     .limit(pageSize)
     .skip(skip)
     .lean();
+
+  if (indexedQuery && count === 0) {
+    count = await Showroom.countDocuments(query);
+    showrooms = await Showroom.find(query)
+      .sort({ createdAt: -1 })
+      .limit(pageSize)
+      .skip(skip)
+      .lean();
+  }
 
   res.json({
     success: true,

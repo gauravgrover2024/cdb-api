@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { buildSearchTokens } from "../utils/searchTokens.js";
 
 const showroomSchema = mongoose.Schema(
   {
@@ -27,6 +28,7 @@ const showroomSchema = mongoose.Schema(
     businessType: { type: String }, // Dealership, Independent, etc.
     brands: { type: [String], default: [] }, // Display brand names
     brandKeys: { type: [String], default: [] }, // Canonical normalized brand keys for fast filtering
+    searchTokens: { type: [String], default: [] },
 
     // Banking Details
     bankName: { type: String },
@@ -79,12 +81,10 @@ const showroomSchema = mongoose.Schema(
   }
 );
 
-// Indexes for faster queries
-showroomSchema.index({ name: 'text', mobile: 'text', city: 'text' });
+// Indexes for current query paths.
 showroomSchema.index({ showroomId: 1 });
 showroomSchema.index({ mobile: 1 });
-showroomSchema.index({ status: 1 });
-// Core autosuggest index: status + brandKeys + name
+showroomSchema.index({ searchTokens: 1 });
 showroomSchema.index({ status: 1, brandKeys: 1, name: 1, city: 1 });
 
 // Auto-generate showroomId before saving
@@ -94,6 +94,22 @@ showroomSchema.pre('save', async function () {
     const count = await mongoose.model('Showroom').countDocuments();
     this.showroomId = `SH-${year}-${String(count + 1).padStart(4, '0')}`;
   }
+});
+
+showroomSchema.pre('save', function () {
+  this.searchTokens = buildSearchTokens([
+    this.showroomId,
+    this.name,
+    this.businessName,
+    this.contactPerson,
+    this.mobile,
+    this.alternatePhone,
+    this.city,
+    this.state,
+    this.status,
+    this.brands,
+    this.brandKeys,
+  ]);
 });
 
 // Calculate outstanding commission before saving

@@ -2,6 +2,10 @@ import asyncHandler from 'express-async-handler';
 import Customer from '../models/Customer.js';
 import Loan from '../models/Loan.js';
 import InsuranceCase from '../models/InsuranceCase.js';
+import {
+  buildSearchTokenFilter,
+  escapeSearchRegex,
+} from "../utils/searchTokens.js";
 
 const buildInsuranceCustomerSnapshot = (customer) => {
   if (!customer) return {};
@@ -229,8 +233,20 @@ const searchCustomers = asyncHandler(async (req, res) => {
     return res.json({ success: true, data: [] });
   }
 
-  // Simple regex search on multiple fields
-  const regex = new RegExp(q, 'i');
+  const tokenFilter = buildSearchTokenFilter(q);
+
+  if (tokenFilter) {
+    const indexedCustomers = await Customer.find(tokenFilter).limit(20);
+    if (indexedCustomers.length) {
+      return res.json({
+        success: true,
+        data: indexedCustomers,
+      });
+    }
+  }
+
+  // Fallback keeps middle-of-field substring matches working.
+  const regex = new RegExp(escapeSearchRegex(q), 'i');
   
   const customers = await Customer.find({
     $or: [

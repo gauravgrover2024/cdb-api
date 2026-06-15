@@ -7,6 +7,10 @@ import {
   normalizeVehicleDatasetRow,
   vehicleNormalizationFields,
 } from "../utils/vehicleDatasetNormalizer.js";
+import {
+  buildSearchTokenFilter,
+  escapeSearchRegex,
+} from "../utils/searchTokens.js";
 
 const VEHICLE_LIST_PROJECTION = {
   make: 1,
@@ -789,19 +793,32 @@ const mergeAndCondition = (query, condition) => {
   query.$and = [...(query.$and || []), condition];
 };
 
-const buildVehicleQuery = ({ q, make, model, variant, city, fuel }) => {
+const buildVehicleQuery = ({
+  q,
+  make,
+  model,
+  variant,
+  city,
+  fuel,
+  useSearchTokens = true,
+}) => {
   const query = {};
 
   if (q) {
-    mergeAndCondition(query, {
-      $or: [
-        { make: new RegExp(q, "i") },
-        { brand: new RegExp(q, "i") },
-        { model: new RegExp(q, "i") },
-        { variant: new RegExp(q, "i") },
-        { search_text: new RegExp(q, "i") },
-      ],
-    });
+    const tokenFilter = useSearchTokens ? buildSearchTokenFilter(q) : null;
+    const escapedQ = escapeSearchRegex(q);
+    mergeAndCondition(
+      query,
+      tokenFilter || {
+        $or: [
+          { make: new RegExp(escapedQ, "i") },
+          { brand: new RegExp(escapedQ, "i") },
+          { model: new RegExp(escapedQ, "i") },
+          { variant: new RegExp(escapedQ, "i") },
+          { search_text: new RegExp(escapedQ, "i") },
+        ],
+      },
+    );
   }
 
   if (make) mergeAndCondition(query, buildMakeMatch(make));
@@ -1307,17 +1324,36 @@ const getVehicles = asyncHandler(async (req, res) => {
     return res.json({ ...cached, fromCache: true });
   }
 
-  const query = buildVehicleQuery({ q, make, model, variant, city, fuel });
-  const cursor = Vehicle.find(query).sort({ make: 1, model: 1, variant: 1 });
+  let query = buildVehicleQuery({ q, make, model, variant, city, fuel });
+  let cursor = Vehicle.find(query).sort({ make: 1, model: 1, variant: 1 });
 
   if (!includeFullPayload) cursor.select(VEHICLE_LIST_PROJECTION);
   if (skip > 0) cursor.skip(skip);
   if (pageSize) cursor.limit(pageSize);
 
   const shouldCountSeparately = Boolean(pageSize || skip > 0);
-  const [docs, count] = shouldCountSeparately
+  let [docs, count] = shouldCountSeparately
     ? await Promise.all([cursor.lean(), Vehicle.countDocuments(query)])
     : [await cursor.lean(), null];
+
+  if (q && docs.length === 0) {
+    query = buildVehicleQuery({
+      q,
+      make,
+      model,
+      variant,
+      city,
+      fuel,
+      useSearchTokens: false,
+    });
+    cursor = Vehicle.find(query).sort({ make: 1, model: 1, variant: 1 });
+    if (!includeFullPayload) cursor.select(VEHICLE_LIST_PROJECTION);
+    if (skip > 0) cursor.skip(skip);
+    if (pageSize) cursor.limit(pageSize);
+    [docs, count] = shouldCountSeparately
+      ? await Promise.all([cursor.lean(), Vehicle.countDocuments(query)])
+      : [await cursor.lean(), null];
+  }
 
   const data = includeFullPayload
     ? docs.map(normalizeVehicleRecord)
