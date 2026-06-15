@@ -22,8 +22,8 @@ const addToken = (tokens, value, { minLength, maxLength }) => {
 
 export const buildSearchTokens = (values = [], options = {}) => {
   const minLength = options.minLength ?? 2;
-  const maxLength = options.maxLength ?? 80;
-  const maxTokens = options.maxTokens ?? 80;
+  const maxLength = options.maxLength ?? 32;
+  const maxTokens = options.maxTokens ?? 48;
   const tokens = new Set();
 
   values.flat().forEach((value) => {
@@ -31,14 +31,13 @@ export const buildSearchTokens = (values = [], options = {}) => {
     const normalized = normalizeSearchValue(value);
     if (!normalized) return;
 
-    addToken(tokens, normalized, { minLength, maxLength });
+    normalized.split(" ").forEach((part) => {
+      addToken(tokens, part, { minLength, maxLength });
+    });
+
     addToken(tokens, normalizeSearchCompact(normalized), {
       minLength,
       maxLength,
-    });
-
-    normalized.split(" ").forEach((part) => {
-      addToken(tokens, part, { minLength, maxLength });
     });
   });
 
@@ -54,7 +53,8 @@ export const buildSearchTokenFilter = (
   const maxTokens = options.maxQueryTokens ?? 6;
   const normalized = normalizeSearchValue(query);
   const compact = normalizeSearchCompact(query);
-  const queryTokens = [...normalized.split(" "), compact]
+  const queryTokens = normalized
+    .split(" ")
     .map((token) => token.trim())
     .filter(
       (token, index, all) =>
@@ -62,13 +62,30 @@ export const buildSearchTokenFilter = (
     )
     .slice(0, maxTokens);
 
-  if (!queryTokens.length) return null;
+  const compactToken =
+    compact.length >= minLength && !queryTokens.includes(compact)
+      ? compact
+      : "";
 
-  const clauses = queryTokens.map((token) => ({
+  if (!queryTokens.length && !compactToken) return null;
+
+  const tokenClauses = queryTokens.map((token) => ({
     [field]: new RegExp(`^${escapeSearchRegex(token)}`),
   }));
 
-  return clauses.length === 1 ? clauses[0] : { $and: clauses };
+  const compactClause = compactToken
+    ? { [field]: new RegExp(`^${escapeSearchRegex(compactToken)}`) }
+    : null;
+
+  if (!compactClause) {
+    return tokenClauses.length === 1 ? tokenClauses[0] : { $and: tokenClauses };
+  }
+
+  if (!tokenClauses.length) return compactClause;
+
+  const tokenFilter =
+    tokenClauses.length === 1 ? tokenClauses[0] : { $and: tokenClauses };
+  return { $or: [tokenFilter, compactClause] };
 };
 
 export const mergeMongoFilters = (...filters) => {
