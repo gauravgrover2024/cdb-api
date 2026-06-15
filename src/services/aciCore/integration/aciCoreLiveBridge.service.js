@@ -4174,7 +4174,7 @@ const sanitizeRenderedBuyerGuidanceAnswer = (answer = "") => {
     [/Same-model value score is weak/gi, "value evidence needs nearby-variant comparison"],
     [/Premium comfort score is limited/gi, "comfort evidence needs comparison"],
     [/Safety\/crash applicability needs verified-source caution/gi, "safety evidence needs verified-source review"],
-    [/mileage evidence is incomplete or not fully scored/gi, "mileage evidence is incomplete"],
+    [/mileage evidence is incomplete/gi, "mileage evidence is incomplete"],
     [/safety evidence needs verified-source caution/gi, "safety evidence needs verified-source review"],
     [/value evidence needs comparison with nearby variants/gi, "value evidence needs nearby-variant comparison"],
     [/comfort evidence is not the strongest reason to choose it/gi, "comfort evidence needs comparison"],
@@ -4412,7 +4412,7 @@ const buildFinalRecommendationBlockedAnswer = ({ eligibility = {}, response = {}
 };
 
 const DIAGNOSTIC_ONLY_NOTE_SENTENCE_PATTERN =
-  /\s*(?:This score view is diagnostic-only and should not be treated as a final recommendation\.|This is diagnostic-only module scoring, not a final recommendation\.|This is diagnostic-only, not a final recommendation\.|Treat this as diagnostic-only guidance, not a final recommendation\.)/gi;
+  /\s*(?:This score view is diagnostic-only and should not be treated as a final recommendation\.|Use this as directional scoring, not as a final purchase verdict\.|This is diagnostic-only, not a final recommendation\.|Treat this as diagnostic-only guidance, not a final recommendation\.)/gi;
 
 const normalizeDiagnosticOnlyNotes = (answer = "") => {
   const text = cleanText(answer);
@@ -4494,7 +4494,7 @@ const collapseDuplicateDiagnosticOnlyNotes = (answer = "") => {
   const text = cleanText(answer);
   if (!text) return "";
 
-  const diagnosticOnlyNotePattern = /\s*(?:This score view is diagnostic-only and should not be treated as a final recommendation\.|This is diagnostic-only module scoring, not a final recommendation\.|This is diagnostic-only, not a final recommendation\.|Treat this as diagnostic-only guidance, not a final recommendation\.|This is a diagnostic signal only; it is not a final purchase recommendation\.|Use this as diagnostic context, not as a final recommendation\.)/gi;
+  const diagnosticOnlyNotePattern = /\s*(?:This score view is diagnostic-only and should not be treated as a final recommendation\.|Use this as directional scoring, not as a final purchase verdict\.|This is diagnostic-only, not a final recommendation\.|Treat this as diagnostic-only guidance, not a final recommendation\.|This is a diagnostic signal only; it is not a final purchase recommendation\.|Use this as directional context\.)/gi;
   let seen = false;
 
   return cleanText(text.replace(diagnosticOnlyNotePattern, (match) => {

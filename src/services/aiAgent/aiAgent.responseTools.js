@@ -284,7 +284,7 @@ export const getRuntimeRows = (runtimeData = {}) =>
 
 const responseToolDecisionLanguageText = (templateKey = "", input = {}) => {
   if (templateKey === "decision_score_module_summary_note") {
-    return "This is diagnostic-only module scoring, not a final recommendation.";
+    return "Use this as directional scoring, not as a final purchase verdict.";
   }
   if (templateKey === "decision_similar_graph_guardrail_reason") {
     return "Similar cars graph v1 is a deterministic discovery aid, not a purchase verdict.";

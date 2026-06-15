@@ -374,7 +374,10 @@ const scoreDiagnosticAssert = ({ models = [], variants = [], crossModel = false 
   const answer = text(body.answer);
   const blob = JSON.stringify(body || {});
   assert(!genericScoreSubject.test(answer), "buyer answer leaked generic score-insight wording");
-  assert(/diagnostic/i.test(answer), "score answer must be diagnostic-only");
+  assert(
+    /\b(diagnostic|directional scoring|directional context|final purchase verdict)\b/i.test(answer),
+    "score answer must include score-scope guardrail"
+  );
   assert(!hasUnsafePositiveRecommendation(blob), "score answer leaked final recommendation wording");
   models.forEach((model) => assert(rx(model).test(blob), `score response must mention ${model}`));
   variants.forEach((variant) => assert(rx(variant).test(blob), `score response must mention ${variant}`));

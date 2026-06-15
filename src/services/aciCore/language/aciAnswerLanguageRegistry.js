@@ -233,7 +233,8 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     variants: [
       { id: 'buyer_guidance_practical_a', text: '{{openingLine}} {{usefulViewLine}} {{strengthLine}} {{watchoutLine}} {{fitLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
       { id: 'buyer_guidance_practical_b', text: '{{openingLine}} {{usefulViewLine}} {{fitLine}} {{strengthLine}} {{watchoutLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
-    ],
+    
+      { id: 'decision_buyer_guidance_practical_first_view_c', text: 'Use the verified strengths as the starting point, then check the weak spots against your actual usage before deciding.' },],
   },
   decision_buyer_guidance_conditional: {
     key: 'decision_buyer_guidance_conditional',
@@ -245,7 +246,8 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     variants: [
       { id: 'buyer_guidance_conditional_a', text: '{{openingLine}} {{usefulViewLine}} {{strengthLine}} {{watchoutLine}} {{fitLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
       { id: 'buyer_guidance_conditional_b', text: '{{openingLine}} {{usefulViewLine}} {{fitLine}} {{strengthLine}} {{watchoutLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
-    ],
+    
+      { id: 'decision_buyer_guidance_conditional_c', text: 'It can stay shortlisted if the strengths match your use case; compare alternatives first if the weak spots affect your daily ownership.' },],
   },
   decision_buyer_guidance_sharpened_recommendation: {
     key: 'decision_buyer_guidance_sharpened_recommendation',
@@ -257,7 +259,8 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     variants: [
       { id: 'buyer_guidance_sharpened_a', text: '{{openingLine}} {{usefulViewLine}} {{strengthLine}} {{watchoutLine}} {{fitLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
       { id: 'buyer_guidance_sharpened_b', text: '{{openingLine}} {{usefulViewLine}} {{fitLine}} {{strengthLine}} {{watchoutLine}} {{alternativeLine}} {{upgradeLine}} {{softQuestion}}' },
-    ],
+    
+      { id: 'decision_buyer_guidance_sharpened_recommendation_c', text: 'My sharper read is to keep it only if its strengths clearly match your priorities; otherwise compare the closest alternative before finalising.' },],
   },
   decision_no_useful_evidence_recovery: {
     key: 'decision_no_useful_evidence_recovery',
@@ -296,9 +299,9 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     forbiddenWording: ['you should buy', 'buy this', 'best final choice'],
     variants: [
       { id: 'decision_diag_note_a', text: 'This is diagnostic-only, not a final recommendation.' },
-      { id: 'decision_diag_note_b', text: 'Treat this as diagnostic-only guidance, not a final recommendation.' },
+      { id: 'decision_diag_note_b', text: 'Use this as directional scoring, not as a final purchase verdict.' },
       { id: 'decision_diag_note_c', text: 'This is a diagnostic signal only; it is not a final purchase recommendation.' },
-      { id: 'decision_diag_note_d', text: 'Use this as diagnostic context, not as a final recommendation.' },
+      { id: 'decision_diag_note_d', text: 'Use this as directional context.' },
     ],
   },
   decision_score_module_summary_note: {
@@ -309,9 +312,9 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Use only with score-profile diagnostics.', 'Do not imply a final winner.'],
     forbiddenWording: ['you should buy', 'buy this', 'best final choice'],
     variants: [
-      { id: 'score_module_note_a', text: 'This is diagnostic-only module scoring, not a final recommendation.' },
+      { id: 'score_module_note_a', text: 'Use this as directional scoring, not as a final purchase verdict.' },
       { id: 'score_module_note_b', text: 'These are module-score signals only, not a final recommendation.' },
-      { id: 'score_module_note_c', text: 'This score view is diagnostic-only and should not be treated as a final recommendation.' },
+      { id: 'score_module_note_c', text: 'Use this as directional scoring, not as a final purchase verdict.' },
       { id: 'score_module_note_d', text: 'Use these module scores as diagnostics, not as a final recommendation.' },
     ],
   },

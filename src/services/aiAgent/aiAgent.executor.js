@@ -235,7 +235,7 @@ export const safeJsonText = (value = {}) => {
 
 const executorDecisionLanguageText = (templateKey = "", input = {}) => {
   if (templateKey === "decision_score_module_summary_note") {
-    return "This is diagnostic-only module scoring, not a final recommendation.";
+    return "Use this as directional scoring, not as a final purchase verdict.";
   }
   return "";
 };

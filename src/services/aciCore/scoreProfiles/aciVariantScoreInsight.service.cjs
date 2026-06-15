@@ -94,9 +94,9 @@ const buildWatchouts = (modules, profile) => {
   };
 
   pushIf(modules.safety?.confidence === 'medium' || modules.safety?.confidence === 'low',
-    'Safety/crash applicability needs verified-source caution');
+    'Safety evidence needs verified-source review');
   pushIf(modules.mileageRunningCost?.score === null || modules.mileageRunningCost?.status !== 'scored',
-    'Mileage score is not available or not fully scored');
+    'Mileage evidence is incomplete, so treat running-cost judgement as directional');
   pushIf(modules.value?.score !== null && modules.value.score <= 30,
     'Same-model value score is weak');
   pushIf(modules.premiumComfort?.score !== null && modules.premiumComfort.score <= 30,

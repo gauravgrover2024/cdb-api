@@ -1268,7 +1268,7 @@ const compactVariantLine = (insight) => {
     verdict += " Regret-risk signal is low.";
   }
 
-  const scoreLine = `Score snapshot: safety ${safetyScore}, features ${featureScore}, same-model value ${valueScore}, regret risk ${regretRisk}.`;
+  const scoreLine = `Signals reviewed: safety, features, same-model value, and regret risk.`;
 
   const watchoutLine = watchouts.length
     ? `Watchouts: ${watchouts.join("; ")}.`
