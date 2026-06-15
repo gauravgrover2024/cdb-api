@@ -1631,6 +1631,17 @@ const deleteVehicle = asyncHandler(async (req, res) => {
   }
 });
 
+const deleteVehicleRecord = asyncHandler(async (req, res) => {
+  const record = await VehicleRecord.findById(req.params.id);
+  if (record) {
+    await record.deleteOne();
+    res.json({ success: true, message: "Vehicle record removed" });
+  } else {
+    res.status(404);
+    throw new Error("Vehicle record not found");
+  }
+});
+
 const bulkUploadVehicles = asyncHandler(async (req, res) => {
   const vehiclesData = req.body;
 
@@ -3131,6 +3142,7 @@ export {
   createVehicle,
   updateVehicle,
   deleteVehicle,
+  deleteVehicleRecord,
   bulkUploadVehicles,
   getUniqueMakes,
   getUniqueModels,
