@@ -3748,12 +3748,53 @@ const extractMakeLabelFromBuyerMessage = (message = "") => {
   return hit ? hit[1] : "";
 };
 
+const stripComparisonSideNoise = (value = "") =>
+  cleanText(value)
+    .replace(/^[,:;\-\s]+/g, "")
+    .replace(/[,:;\-\s]+$/g, "")
+    .replace(/^(?:which\s+one\s+should\s+i\s+(?:finally\s+|ultimately\s+)?(?:buy|choose|pick|go\s+for)|which\s+should\s+i\s+(?:finally\s+|ultimately\s+)?(?:buy|choose|pick|go\s+for)|should\s+i\s+(?:buy|choose|pick|go\s+for|purchase)|i\s+should\s+(?:buy|choose|pick|go\s+for|purchase)|(?:finally|ultimately)\s+(?:buy|choose|pick|go\s+for)|choose|pick|buy|go\s+for)[,:;\-\s]+/i, "")
+    .replace(/\b(?:which\s+is\s+better|which\s+one\s+is\s+better|which\s+should\s+i\s+choose|which\s+should\s+i\s+pick|for\s+family|for\s+me|overall|finally|ultimately)\b.*$/i, "")
+    .trim();
+
+const extractComparisonSubjectLabelFromMessage = (message = "") => {
+  const raw = cleanText(message).replace(/[?!.]+$/g, "");
+  if (!raw) return "";
+
+  const scopedText = raw.includes(":") ? raw.split(":").pop() : raw;
+
+  const betweenMatch = scopedText.match(/\bbetween\s+(.+?)\s+and\s+(.+?)(?:\s+(?:which|for|overall)\b.*)?$/i);
+  const parts = betweenMatch
+    ? [betweenMatch[1], betweenMatch[2]]
+    : scopedText.split(/\s+(?:vs|v\/s|versus|against|or)\s+/i);
+
+  if (parts.length < 2) return "";
+
+  const left = stripComparisonSideNoise(parts[0]);
+  const right = stripComparisonSideNoise(parts[1]);
+
+  if (!left || !right) return "";
+  if (/^(?:this|that|one|car|variant|model)$/i.test(left) || /^(?:this|that|one|car|variant|model)$/i.test(right)) return "";
+
+  return formatBuyerGuidanceDisplayLabel(`${left} vs ${right}`);
+};
+
 const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, response = {}, bridge = {} } = {}) => {
   const subject = evidencePack.subject || {};
   const scope = cleanText(evidencePack.scope || "");
   const comparisonTargets = Array.isArray(subject.comparisonTargets) ? subject.comparisonTargets : [];
+  const messageComparisonLabel = extractComparisonSubjectLabelFromMessage(
+    bridge.effectiveMessage ||
+      bridge.originalMessage ||
+      response.effectiveMessage ||
+      response.originalMessage ||
+      response.message ||
+      response.query ||
+      "",
+  );
   const labelOf = (vehicle = {}) =>
     cleanText(vehicle.label || vehicle.fullModel || [vehicle.make, vehicle.model, vehicle.variant].filter(Boolean).join(" "));
+
+  if (scope === "comparison_scope" && comparisonTargets.length < 2 && messageComparisonLabel) return messageComparisonLabel;
 
   if (scope === "comparison_scope" && comparisonTargets.length >= 2) {
     const messageText = cleanText(
@@ -3800,6 +3841,7 @@ const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, respons
   }
 
   if (scope === "make_scope") return cleanText(subject.make || extractMakeLabelFromBuyerMessage(bridge.effectiveMessage || bridge.originalMessage || "") || facts.make || facts.brand || "this make");
+  if (scope === "discovery_scope" && messageComparisonLabel) return messageComparisonLabel;
   if (scope === "discovery_scope") return cleanText(subject.discoveryLabel || response.title || "your car search");
   if (scope === "variant_scope" && (facts.variant || subject.variant)) {
     return cleanText(
@@ -3923,6 +3965,9 @@ const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
   if (scope === "upgrade_scope") {
     return `For ${model}, treat this as an upgrade-value call: the added benefits need to justify the extra spend for your use case.`;
   }
+  if (scope === "discovery_scope" && /\s+vs\s+/i.test(model)) {
+    return `For ${model}, treat this as a trade-off check, not a single winner yet.`;
+  }
   if (scope === "discovery_scope") {
     return `For ${model}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
   }
@@ -3960,7 +4005,9 @@ const buildBuyerGuidanceLineInput = ({ model = "", facts = {}, guidance = {}, ev
   const softQuestion =
     scope === "make_scope"
       ? `Which ${displayModel || model} model are you considering?`
-      : cleanText(guidance.softQuestion) || "Is your use mostly city, highway, or mixed?";
+      : scope === "discovery_scope" && /\s+vs\s+/i.test(displayModel || model)
+        ? "What matters more here: safety, features, mileage/running cost, or family comfort?"
+        : cleanText(guidance.softQuestion) || "Is your use mostly city, highway, or mixed?";
 
   return {
     model: displayModel || model,
