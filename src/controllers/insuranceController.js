@@ -1163,6 +1163,7 @@ export const getInsuranceCases = asyncHandler(async (req, res) => {
   const count = await InsuranceCase.countDocuments(query);
   const rows = await InsuranceCase.find(query)
     .sort({ updatedAt: -1 })
+    .allowDiskUse(true)
     .limit(limit)
     .skip(skip);
 
@@ -1235,6 +1236,7 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
 
   const baseRows = await InsuranceCase.find(query)
     .sort({ updatedAt: -1, createdAt: -1 })
+    .allowDiskUse(true)
     .lean();
 
   const today = new Date();
@@ -1529,6 +1531,7 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
 
   const rows = await InsuranceCase.find({})
     .sort({ updatedAt: -1 })
+    .allowDiskUse(true)
     .lean();
   let pendingRows = rows.filter((doc) => {
     if (String(doc?.policyCategory || "").trim().toLowerCase() === "extended warranty") return false;
