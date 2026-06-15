@@ -75,6 +75,80 @@ function assertNoUnsafeRecommendationLanguage(output) {
   );
 }
 
+function assertSingleDiagnosticOnlyNote(output, message = '') {
+  const answer = String(output?.answer || '');
+  const count = (
+    answer.match(/This score view is diagnostic-only|This is diagnostic-only module scoring|This is diagnostic-only, not a final recommendation|Treat this as diagnostic-only guidance|This is a diagnostic signal only|Use this as diagnostic context/gi) || []
+  ).length;
+
+  assert(
+    count <= 1,
+    `${message}: duplicate diagnostic-only note leaked in answer: ${answer}`
+  );
+}
+
+
+async function assertCrossModelScoreRoute({ runAciCoreLiveBridge, message, fixture }) {
+  const output = await runAciCoreLiveBridge({
+    message,
+    context: {},
+    user: null,
+    session: {},
+    meta: { source: 'smokeCrossModelScoreLiveBridgeRoutingV1' },
+  });
+
+  const bridge = bridgeOf(output);
+  const blob = JSON.stringify(output || {});
+
+  assert(bridge, `${message}: aciCoreBridge metadata missing`);
+  assert.strictEqual(bridge.tool, 'vehicle_score_insight', `${message}: wrong bridge tool`);
+  assert.strictEqual(bridge.primaryTask, 'score_insight', `${message}: wrong primary task`);
+  assert.strictEqual(bridge.operation, 'cross_model_score_diagnostic', `${message}: wrong bridge operation`);
+  assert.strictEqual(output.canvasType, 'score_insight_canvas', `${message}: wrong canvas type`);
+  assert.strictEqual(output.inlineType, 'score_insight_summary', `${message}: wrong inline type`);
+  assert.strictEqual(
+    output.operation || output.data?.operation || output.data?.diagnosticType,
+    'cross_model_score_diagnostic',
+    `${message}: actual output operation missing`
+  );
+  assert(Array.isArray(output.data?.models), `${message}: actual output models array missing`);
+  assert.strictEqual(output.data.models.length, 2, `${message}: actual output should include exactly two model summaries`);
+  assert(Array.isArray(output.data?.moduleComparisons), `${message}: actual output moduleComparisons missing`);
+  assert(output.data.moduleComparisons.length >= 5, `${message}: actual output should include module comparisons`);
+
+  const answerText = String(output.answer || '');
+  for (const model of fixture.models) {
+    assert(
+      new RegExp(model.replace(/[-_]+/g, ' '), 'i').test(answerText) ||
+        blob.toLowerCase().includes(model.toLowerCase()),
+      `${message}: answer/output missing compared model: ${model}`
+    );
+  }
+
+  assert(blob.includes('cross_model_score_diagnostic'), `${message}: cross-model diagnostic marker missing`);
+  assert(/diagnostic-only/i.test(output.answer || blob), `${message}: diagnostic-only wording missing`);
+  assert(
+    blob.includes('"canUseForFinalRecommendation":false') ||
+      blob.includes('"finalRecommendationEnabled":false'),
+    `${message}: final recommendation guardrail missing`
+  );
+  assertNoUnsafeRecommendationLanguage(output);
+  assertSingleDiagnosticOnlyNote(output, message);
+
+  return {
+    message,
+    answerPreview: String(output.answer || '').slice(0, 500),
+    bridge: {
+      tool: bridge.tool,
+      primaryTask: bridge.primaryTask,
+      operation: bridge.operation,
+      routingReason: bridge.routingReason,
+      planMode: bridge.planMode,
+      usedGemini: bridge.usedGemini,
+    },
+  };
+}
+
 (async () => {
   const mongoUri = getMongoUri();
   if (!mongoUri) throw new Error('Missing Mongo URI');
@@ -89,69 +163,26 @@ function assertNoUnsafeRecommendationLanguage(output) {
   const db = mongoose.connection.db;
   const fixture = await findDynamicFixture(db);
 
-  const output = await runAciCoreLiveBridge({
-    message: fixture.message,
-    context: {},
-    user: null,
-    session: {},
-    meta: { source: 'smokeCrossModelScoreLiveBridgeRoutingV1' },
-  });
+  const displayModels = fixture.models.map(titleCase);
+  const messages = [
+    fixture.message,
+    `${displayModels[0]} vs ${displayModels[1]}: which scores better overall?`,
+    `Compare ${displayModels[0]} and ${displayModels[1]} on overall score`,
+    `Which one scores better, ${displayModels[0]} or ${displayModels[1]}?`,
+  ];
 
-  const bridge = bridgeOf(output);
-  const blob = JSON.stringify(output || {});
-
-  assert(bridge, 'aciCoreBridge metadata missing');
-  assert.strictEqual(bridge.tool, 'vehicle_score_insight', 'wrong bridge tool');
-  assert.strictEqual(bridge.primaryTask, 'score_insight', 'wrong primary task');
-  assert.strictEqual(bridge.operation, 'cross_model_score_diagnostic', 'wrong bridge operation');
-  assert.strictEqual(output.canvasType, 'score_insight_canvas', 'wrong canvas type');
-  assert.strictEqual(output.inlineType, 'score_insight_summary', 'wrong inline type');
-  assert.strictEqual(
-    output.operation || output.data?.operation || output.data?.diagnosticType,
-    'cross_model_score_diagnostic',
-    'actual output operation missing'
-  );
-  assert(Array.isArray(output.data?.models), 'actual output models array missing');
-  assert.strictEqual(output.data.models.length, 2, 'actual output should include exactly two model summaries');
-  assert(Array.isArray(output.data?.moduleComparisons), 'actual output moduleComparisons missing');
-  assert(output.data.moduleComparisons.length >= 5, 'actual output should include module comparisons');
-
-  const answerText = String(output.answer || '');
-  for (const model of fixture.models) {
-    assert(
-      new RegExp(model.replace(/[-_]+/g, ' '), 'i').test(answerText) ||
-        blob.toLowerCase().includes(model.toLowerCase()),
-      `answer/output missing compared model: ${model}`
-    );
+  const cases = [];
+  for (const message of messages) {
+    cases.push(await assertCrossModelScoreRoute({ runAciCoreLiveBridge, message, fixture }));
   }
-
-  assert(blob.includes('cross_model_score_diagnostic'), 'cross-model diagnostic marker missing');
-  assert(/diagnostic-only/i.test(output.answer || blob), 'diagnostic-only wording missing');
-  assert(
-    blob.includes('"canUseForFinalRecommendation":false') ||
-      blob.includes('"finalRecommendationEnabled":false'),
-    'final recommendation guardrail missing'
-  );
-  assertNoUnsafeRecommendationLanguage(output);
 
   console.log(JSON.stringify({
     suite: 'ACI Cross-Model Score Live Bridge Routing Smoke v1',
     ok: true,
     fixture,
-    output: {
-      intent: output.intent,
-      canvasType: output.canvasType,
-      inlineType: output.inlineType,
-      answerPreview: String(output.answer || '').slice(0, 500),
-      bridge: {
-        tool: bridge.tool,
-        primaryTask: bridge.primaryTask,
-        operation: bridge.operation,
-        routingReason: bridge.routingReason,
-        planMode: bridge.planMode,
-        usedGemini: bridge.usedGemini,
-      },
-    },
+    total: cases.length,
+    passed: cases.length,
+    cases,
   }, null, 2));
 
   await mongoose.disconnect();

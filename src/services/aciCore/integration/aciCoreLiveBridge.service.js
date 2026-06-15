@@ -4416,8 +4416,22 @@ const getDecisionDiagnosticOnlyNote = (seed = "") =>
   renderAciLanguageText("decision_diagnostic_only_note", {}, { seed }) ||
   "Diagnostic-only output.";
 
-const ensureDiagnosticOnlyAnswerNote = (answer = "") => {
+const collapseDuplicateDiagnosticOnlyNotes = (answer = "") => {
   const text = cleanText(answer);
+  if (!text) return "";
+
+  const diagnosticOnlyNotePattern = /\s*(?:This score view is diagnostic-only and should not be treated as a final recommendation\.|This is diagnostic-only module scoring, not a final recommendation\.|This is diagnostic-only, not a final recommendation\.|Treat this as diagnostic-only guidance, not a final recommendation\.|This is a diagnostic signal only; it is not a final purchase recommendation\.|Use this as diagnostic context, not as a final recommendation\.)/gi;
+  let seen = false;
+
+  return cleanText(text.replace(diagnosticOnlyNotePattern, (match) => {
+    if (seen) return "";
+    seen = true;
+    return ` ${cleanText(match)}`;
+  }));
+};
+
+const ensureDiagnosticOnlyAnswerNote = (answer = "") => {
+  const text = collapseDuplicateDiagnosticOnlyNotes(answer);
   const note = getDecisionDiagnosticOnlyNote(text);
   if (!text) return note;
   if (/\bdiagnostic-only\b|\bnot\s+(?:a\s+)?final recommendation\b|\bshould not be treated as a final recommendation\b/i.test(text)) return text;
