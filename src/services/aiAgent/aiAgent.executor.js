@@ -1632,7 +1632,8 @@ const resolveDirectComparisonRows = async ({
         .find(query)
         .project(priceProjection)
         .sort({ sortOrder: 1, exShowroomPrice: 1, variantKey: 1 })
-        .hint("aci_price_rows_model_city_sort")
+        // No hard hint here: Atlas free-tier/storage cleanup may remove old named index.
+        // The collection is small enough for Mongo planner to choose the available plan safely.
         .limit(1)
         .next();
     }),
@@ -2737,7 +2738,7 @@ const getCachedBudgetDiscoveryRows = async ({
       .batchSize(1000);
 
     try {
-      cursor.hint("aci_price_rows_city_price");
+      cursor.hint({ citySlug: 1, exShowroomPrice: 1 });
     } catch {
       // Some local/dev DBs may not have the hinted index yet.
     }
@@ -2875,7 +2876,7 @@ const getScopedBudgetDiscoveryRows = async ({
     .batchSize(750);
 
   try {
-    cursor.hint("aci_price_rows_city_price");
+    cursor.hint({ citySlug: 1, exShowroomPrice: 1 });
   } catch {
     // Keep local/dev DBs without this read-model index working.
   }
@@ -3626,11 +3627,8 @@ const hydratePreviewBudgetGroups = async ({
     .limit(500)
     .batchSize(250);
 
-  try {
-    cursor.hint("aci_price_rows_model_city_sort");
-  } catch {
-    // Keep local/dev DBs without this read-model index working.
-  }
+  // No hard hint here: Atlas free-tier/storage cleanup may remove old named index.
+  // The collection is small enough for Mongo planner to choose the available plan safely.
 
   const rows = (await cursor.toArray())
     .map(normalizeBudgetDiscoveryRow)
@@ -3759,7 +3757,7 @@ const runtimeBudgetVehicleDiscoveryFromSummaries = async ({
             },
           },
         ],
-        { hint: "aci_price_rows_city_price" },
+        { hint: { citySlug: 1, exShowroomPrice: 1 } },
       )
       .toArray();
   } catch {

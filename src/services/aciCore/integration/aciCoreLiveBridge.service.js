@@ -1449,7 +1449,18 @@ const detectBatch4FuelAdviceRequest = (message = "") => {
 const detectBatch4PendingModuleRequest = (message = "") => {
   const normalized = String(message || "").toLowerCase();
 
-  if (/\b(wait\s+for\s+discount|discount|offers?|deal|benefit)\b/i.test(normalized)) {
+  const hasOfferOrDiscountIntent = /\b(wait\s+for\s+discount|discount|offers?|deal|benefit)\b/i.test(normalized);
+  const hasPriceIntent = /\b(price|pricing|pricelist|price list|on[-\s]?road|ex[-\s]?showroom)\b/i.test(normalized);
+  const hasComparisonIntent = /\b(compare|comparison|vs|v\/s|versus|difference|cheaper|costlier|expensive)\b/i.test(normalized);
+  const hasEmiIntent = /\b(emi|loan|finance|tenure|down\s*payment)\b/i.test(normalized);
+
+  // Do not let the pending offers fast path swallow useful multi-intent answers.
+  // Price/comparison/EMI must still be answered, with offer honesty as a secondary note.
+  if (hasOfferOrDiscountIntent && [hasPriceIntent, hasComparisonIntent, hasEmiIntent].filter(Boolean).length >= 1) {
+    return null;
+  }
+
+  if (hasOfferOrDiscountIntent) {
     return {
       unavailableReason: "offers_discount_data_not_available",
       topic: "discount or offer",
@@ -2520,11 +2531,27 @@ const isAciCoreLiveBridgeEnabled = () =>
     ? true
     : truthy(process.env.ACI_CORE_LIVE_BRIDGE_ENABLED);
 
+const isHeavyNewCarMultiIntentForLegacyPlanner = (message = "") => {
+  const text = String(message || "").toLowerCase();
+  if (!text.trim()) return false;
+
+  const hasPriceIntent = /\b(price|pricing|pricelist|price list|on[-\s]?road|ex[-\s]?showroom)\b/i.test(text);
+  const hasComparisonIntent = /\b(compare|comparison|vs|v\/s|versus|difference|cheaper|costlier|expensive)\b/i.test(text);
+  const hasEmiIntent = /\b(emi|loan|finance|tenure|down\s*payment)\b/i.test(text);
+  const hasOfferIntent = /\b(offer|offers|discount|deal|benefit|quotation|quote)\b/i.test(text);
+
+  return [hasPriceIntent, hasComparisonIntent, hasEmiIntent, hasOfferIntent].filter(Boolean).length >= 3;
+};
+
 const shouldUseAciCoreLiveBridge = ({ message = "" } = {}) => {
   if (!isAciCoreLiveBridgeEnabled()) return false;
 
   const text = String(message || "").trim();
   if (!text) return false;
+
+  // Heavy buyer queries need the legacy V2 multi-tool composer for secondary cards.
+  // Live bridge single-tool fast paths must not collapse price + compare + EMI + offers.
+  if (isHeavyNewCarMultiIntentForLegacyPlanner(text)) return false;
 
   return true;
 };

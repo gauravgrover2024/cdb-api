@@ -190,7 +190,7 @@ export const safeFindDocs = async (db, collectionName) => {
           },
         )
         .sort({ citySlug: 1, exShowroomPrice: 1 })
-        .hint("aci_price_rows_city_price")
+        .hint({ citySlug: 1, exShowroomPrice: 1 })
         .batchSize(DEFAULT_DOC_LIMIT)
         .toArray();
     }
