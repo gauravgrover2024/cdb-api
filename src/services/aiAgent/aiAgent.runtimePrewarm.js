@@ -88,7 +88,7 @@ export const prewarmAciAssistRuntime = async ({ force = false } = {}) => {
       results,
     };
 
-    if (process.env.ACI_RUNTIME_PREWARM_LOG !== "false") {
+    if (process.env.ACI_RUNTIME_PREWARM_LOG === "true") {
       const summary = results.map((item) => `${item.label}:${item.ok ? "ok" : "failed"}`).join(", ");
       console.log(
         `[ACI Assist] runtime prewarm ${prewarmState.status} in ${prewarmState.durationMs}ms (${summary})`,

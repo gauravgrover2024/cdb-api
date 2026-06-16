@@ -208,6 +208,7 @@ const syncCustomerFromInsurancePayload = async (customerId, payload = {}) => {
   setIfPresent("pincode", nextPincode);
   setIfPresent("nomineeName", nextNomineeName);
   setIfPresent("nomineeRelation", nextNomineeRelation);
+  setIfPresent("nomineeRelationship", nextNomineeRelation);
   if (nextNomineeDob) {
     const existingDob = customer.nomineeDob
       ? new Date(customer.nomineeDob).toISOString()
@@ -293,6 +294,14 @@ const normalizeStep1Payload = (payload = {}, options = {}) => {
     normalized.assignedTo = safeString(payload.employeeUserId).trim();
   } else if (hasOwn(payload, "assignedTo")) {
     normalized.assignedTo = safeString(payload.assignedTo).trim();
+  }
+
+  // Normalize aadhaar alias so only one canonical key is stored
+  if (hasOwn(payload, "aadharNumber") || hasOwn(payload, "aadhaarNumber")) {
+    normalized.aadhaarNumber = safeString(
+      payload.aadhaarNumber || payload.aadharNumber,
+    ).trim();
+    delete normalized.aadharNumber;
   }
 
   return normalized;
@@ -597,6 +606,7 @@ const toDateOrNull = (value) => {
 
 const upsertVehicleRecordFromInsuranceCase = async (doc) => {
   if (!doc) return null;
+
   const registrationNumber = safeString(doc.registrationNumber).trim();
   const registrationNumberNormalized = normalizeRegNumber(registrationNumber);
   const engineNumber = safeString(doc.engineNumber).trim();
@@ -604,6 +614,16 @@ const upsertVehicleRecordFromInsuranceCase = async (doc) => {
   const make = safeString(doc.vehicleMake).trim();
   const model = safeString(doc.vehicleModel).trim();
   const variant = safeString(doc.vehicleVariant).trim();
+
+  // Skip TEMP registrations entirely — they are placeholder values and must
+  // not pollute the vehicle master with throwaway records.
+  if (isTempRegistration(registrationNumber)) return null;
+
+  // Require at least one real unique identifier before upserting.
+  // Falling back to { make, model, variant } is too broad — it would match
+  // any vehicle of that type and cause duplicate records across different cases.
+  const hasUniqueIdentifier = registrationNumberNormalized || chassisNumber || engineNumber;
+  if (!hasUniqueIdentifier) return null;
 
   const cubicCapacityParsed = extractCubicCapacity(doc.cubicCapacity);
   const updateDoc = {
@@ -636,21 +656,17 @@ const upsertVehicleRecordFromInsuranceCase = async (doc) => {
     lastSyncedAt: new Date(),
   };
 
+  // Strip undefined/empty-string fields so we don't overwrite existing data with blanks
   Object.keys(updateDoc).forEach((key) => {
-    if (updateDoc[key] === undefined) delete updateDoc[key];
+    if (updateDoc[key] === undefined || updateDoc[key] === "") delete updateDoc[key];
   });
 
-  const hasCoreIdentity =
-    registrationNumberNormalized || chassisNumber || engineNumber || make || model;
-  if (!hasCoreIdentity) return null;
-
+  // Priority: real reg → chassis → engine. Never fall back to make/model/variant.
   const query = registrationNumberNormalized
     ? { registrationNumberNormalized }
     : chassisNumber
       ? { chassisNumber }
-      : engineNumber
-        ? { engineNumber }
-        : { make, model, variant };
+      : { engineNumber };
 
   return await VehicleRecord.findOneAndUpdate(
     query,
@@ -702,7 +718,7 @@ export const resolveVehicleCubicCapacity = asyncHandler(async (req, res) => {
   const registrationNumberNormalized = normalizeRegNumber(registrationNumber);
   let vehicleRecord = null;
 
-  if (registrationNumberNormalized) {
+  if (registrationNumberNormalized && !isTempRegistration(registrationNumber)) {
     const updateDoc = {
       registrationNumber: registrationNumber || registrationNumberNormalized,
       registrationNumberNormalized,
@@ -1707,20 +1723,34 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
   const payload = stripImmutableInsuranceFields(
     normalizeStep1Payload(req.body || {}, { applyDefaults: false }),
   );
+  const existingDoc =
+    (mongoose.Types.ObjectId.isValid(raw)
+      ? await InsuranceCase.findById(raw)
+      : null) || (await InsuranceCase.findOne({ caseId: raw }));
+
   if (hasOwn(payload, "paymentHistory") || hasOwn(payload, "payment_history")) {
     const normalizedPaymentHistory = normalizePaymentHistoryPayload(
       hasOwn(payload, "paymentHistory")
         ? payload.paymentHistory
         : payload.payment_history,
     );
-    payload.paymentHistory = normalizedPaymentHistory;
+    // Merge with existing DB entries to prevent race condition where a stale
+    // PUT overwrites entries appended via the atomic /payments endpoint.
+    const existingPaymentHistory = Array.isArray(existingDoc?.paymentHistory)
+      ? existingDoc.paymentHistory
+      : [];
+    const incomingKeys = new Set(
+      normalizedPaymentHistory
+        .map((e) => e.idempotencyKey || e.clientEntryId)
+        .filter(Boolean),
+    );
+    const preservedFromDb = existingPaymentHistory.filter((e) => {
+      const key = safeString(e.idempotencyKey || e.clientEntryId).trim();
+      return key && !incomingKeys.has(key);
+    });
+    payload.paymentHistory = [...normalizedPaymentHistory, ...preservedFromDb];
     delete payload.payment_history;
   }
-
-  const existingDoc =
-    (mongoose.Types.ObjectId.isValid(raw)
-      ? await InsuranceCase.findById(raw)
-      : null) || (await InsuranceCase.findOne({ caseId: raw }));
 
   if (!existingDoc) {
     res.status(404);
@@ -1798,6 +1828,7 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
       existingDoc.currentStep || 1,
     ),
     status: normalizedStatus,
+    ...(req.user?._id ? { updatedBy: req.user._id } : {}),
   };
   if (normalizedStatus === "submitted") {
     const submitValidation = isInsuranceCaseReadyForSubmit({
