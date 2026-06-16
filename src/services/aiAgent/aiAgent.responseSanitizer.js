@@ -727,11 +727,44 @@ const patchFeatureAnswerWording = (response = {}, message = "", context = {}) =>
 const patchContextCompareResponse = (response = {}, message = "", context = {}) => {
   if (!/\bcompare with\b/i.test(message)) return response;
 
-  const baseModel = getResponseModel(response, context);
+  const comparisonVehicleLabel = (vehicle = {}) =>
+    firstMeaningful(
+      vehicle.fullModel,
+      [vehicle.make || vehicle.brand, vehicle.model].filter(Boolean).join(" "),
+      vehicle.model,
+    );
+
+  const comparisonVehicles = [
+    ...asArray(response?.contextPatch?.selectedComparisonSet?.vehicles),
+    ...asArray(response?.contextPatch?.activeComparison?.vehicles),
+    ...asArray(response?.contextPatch?.contextState?.activeComparison?.vehicles),
+    ...asArray(response?.data?.selectedComparisonSet?.vehicles),
+    ...asArray(response?.selectedComparisonSet?.vehicles),
+  ];
+
+  const comparisonLabels = comparisonVehicles
+    .map(comparisonVehicleLabel)
+    .filter(Boolean)
+    .filter((item, index, arr) => arr.findIndex((candidate) => key(candidate) === key(item)) === index)
+    .slice(0, 2);
+
+  const baseModel = comparisonLabels[0] || getResponseModel(response, context);
   const baseVariant = getResponseVariant(response, context);
-  const target = extractCompareTarget(message) || "the requested car";
+  const target = comparisonLabels[1] || extractCompareTarget(message) || "the requested car";
 
   if (!baseModel) return response;
+
+  const compareVsLabel = comparisonLabels.length >= 2
+    ? comparisonLabels.join(" vs ")
+    : `${baseModel} vs ${target}`;
+  const compareAndLabel = comparisonLabels.length >= 2
+    ? comparisonLabels.join(" and ")
+    : `${baseModel} and ${target}`;
+
+  const hasResolvedComparison =
+    comparisonLabels.length >= 2 ||
+    /\bvs\b/i.test(String(response.title || "")) ||
+    asArray(response.runtimeResultsMeta).some((item = {}) => item.tool === "vehicle_compare" && Number(item.matched || 0) > 0);
 
   return {
     ...response,
@@ -739,27 +772,28 @@ const patchContextCompareResponse = (response = {}, message = "", context = {}) 
     displayMode: "both",
     canvasType: "comparison_canvas",
     inlineType: "",
-    answer:
-      `I’ll compare your selected ${baseModel}${baseVariant ? ` ${baseVariant}` : ""} with ${target}. I’ll use representative/popular variants for the other car unless you choose a specific variant.`,
+    answer: hasResolvedComparison
+      ? response.answer
+      : `I’ll compare your selected ${baseModel}${baseVariant ? ` ${baseVariant}` : ""} with ${target}. I’ll use representative/popular variants for the other car unless you choose a specific variant.`,
     actions: [
       makeAction({
         id: "context-compare-change-variants",
         label: "Change variants",
-        query: `Change variants for ${baseModel} vs ${target}`,
+        query: `Change variants for ${compareVsLabel}`,
         canvasType: "comparison_canvas",
         intent: "vehicle_comparison",
       }),
       makeAction({
         id: "context-compare-emi",
         label: "Check EMI difference",
-        query: `Compare EMI of ${baseModel} and ${target}`,
+        query: `Compare EMI of ${compareAndLabel}`,
         canvasType: "emi_calculator_canvas",
         intent: "vehicle_emi_calculator",
       }),
       makeAction({
         id: "context-compare-price",
         label: "Show price difference",
-        query: `Compare price of ${baseModel} and ${target}`,
+        query: `Compare price of ${compareAndLabel}`,
         canvasType: "comparison_canvas",
         intent: "vehicle_comparison",
       }),

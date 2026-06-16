@@ -617,6 +617,13 @@ function shouldClearStaleVehicleContext({ message = '', contextState = {}, candi
   const explicitAnchor = buildResolvedVehicleAnchor({ candidate: explicitModels[0] });
   if (!explicitAnchor.model) return false;
 
+  // Relative comparison follow-ups such as "Compare with City" must preserve
+  // the current selected vehicle as the anchor and use the detected model as
+  // the comparison target. Clearing here causes City vs City self-comparisons.
+  if (/\b(compare\s+with|compare\s+against|vs|v\/s|versus|difference\s+with|difference\s+between)\b/i.test(message)) {
+    return false;
+  }
+
   if (/\b(this|that|it|its|same|current|selected|previous|earlier)\b/i.test(message)) return false;
 
   return vehicleIdentityKey(explicitAnchor) !== vehicleIdentityKey(selected);
@@ -731,23 +738,39 @@ async function hydrateContextFromCandidates({
   const aliasAnchor = primaryCandidate
     ? null
     : normalizeVehicleAnchor(await resolveVehicleAlias({ message, candidateSnapshot }) || {});
+  const comparisonTargetVehicle = primaryCandidate
+    ? buildResolvedVehicleAnchor({
+        candidate: primaryCandidate,
+        fallback: previousSelectedVehicle,
+        explicitFuelType,
+        explicitTransmission,
+      })
+    : null;
+  const isRelativeComparisonFollowUp =
+    hasComparisonLanguage(message) &&
+    previousSelectedVehicle?.model &&
+    comparisonTargetVehicle?.model &&
+    vehicleIdentityKey(previousSelectedVehicle) !== vehicleIdentityKey(comparisonTargetVehicle);
+
   const selectedVehicle = aliasAnchor?.model
     ? aliasAnchor
-    : primaryCandidate
-      ? buildResolvedVehicleAnchor({
-          candidate: primaryCandidate,
-          fallback: previousSelectedVehicle,
-          explicitFuelType,
-          explicitTransmission,
+    : isRelativeComparisonFollowUp
+      ? normalizeVehicleAnchor({
+          ...previousSelectedVehicle,
+          fuelType: explicitFuelType || previousSelectedVehicle.fuelType,
+          transmission: explicitTransmission || previousSelectedVehicle.transmission,
+          source: 'active_context',
         })
-      : previousSelectedVehicle.model && hasTopicOrTaskFollowUp
-        ? normalizeVehicleAnchor({
-            ...previousSelectedVehicle,
-            fuelType: explicitFuelType || previousSelectedVehicle.fuelType,
-            transmission: explicitTransmission || previousSelectedVehicle.transmission,
-            source: 'active_context',
-          })
-        : createEmptySelectedVehicleState();
+      : primaryCandidate
+        ? comparisonTargetVehicle
+        : previousSelectedVehicle.model && hasTopicOrTaskFollowUp
+          ? normalizeVehicleAnchor({
+              ...previousSelectedVehicle,
+              fuelType: explicitFuelType || previousSelectedVehicle.fuelType,
+              transmission: explicitTransmission || previousSelectedVehicle.transmission,
+              source: 'active_context',
+            })
+          : createEmptySelectedVehicleState();
   const fuelKey = getFirstCandidateKey(candidateSnapshot?.taxonomy?.fuelTypes);
   const transmissionKey = getFirstCandidateKey(candidateSnapshot?.taxonomy?.transmissions);
   const comparisonVehicles = modelCandidates.length >= 2
@@ -756,14 +779,24 @@ async function hydrateContextFromCandidates({
         explicitFuelType,
         explicitTransmission,
       }))
-    : shouldPreserveComparison({ message, previousContext: activeContext, candidateSnapshot })
-      ? asArray(
-          activeContext?.activeComparison?.vehicles ||
-          activeContext?.selectedComparisonSet?.vehicles ||
-          activeContext?.contextState?.activeComparison?.vehicles ||
-          activeContext?.aciContextState?.activeComparison?.vehicles,
-        ).map(normalizeVehicleAnchor)
-      : [];
+    : isRelativeComparisonFollowUp
+      ? [
+          normalizeVehicleAnchor({
+            ...previousSelectedVehicle,
+            fuelType: explicitFuelType || previousSelectedVehicle.fuelType,
+            transmission: explicitTransmission || previousSelectedVehicle.transmission,
+            source: 'active_context',
+          }),
+          comparisonTargetVehicle,
+        ].filter((vehicle) => vehicle?.model)
+      : shouldPreserveComparison({ message, previousContext: activeContext, candidateSnapshot })
+        ? asArray(
+            activeContext?.activeComparison?.vehicles ||
+            activeContext?.selectedComparisonSet?.vehicles ||
+            activeContext?.contextState?.activeComparison?.vehicles ||
+            activeContext?.aciContextState?.activeComparison?.vehicles,
+          ).map(normalizeVehicleAnchor)
+        : [];
 
   const resolvedState = createEmptyAciContextState({
     selectedVehicle,
@@ -855,6 +888,25 @@ function applyContextIsolationRules({ message = '', contextState = {}, candidate
     !hasContextReference(message) &&
     (hasBroadVehicleLanguage(message) || makes.length > 0);
   const explicitVehicleSwitch = explicitTargetCount > 0 && !hasContextReference(message);
+  const relativeComparisonFollowUp =
+    hasComparisonLanguage(message) &&
+    explicitTargetCount === 1 &&
+    state.selectedVehicle?.model &&
+    !hasContextReference(message);
+
+  if (relativeComparisonFollowUp) {
+    return {
+      contextState: createEmptyAciContextState({
+        ...state,
+        provenance: {
+          ...(state.provenance || {}),
+          isolation: 'contextual_comparison_follow_up',
+          updatedBy: CONTEXT_MANAGER_VERSION,
+        },
+      }),
+      isolation: 'contextual_comparison_follow_up',
+    };
+  }
 
   if (explicitComparison) {
     return {

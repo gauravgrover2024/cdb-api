@@ -1526,12 +1526,25 @@ export const buildVehicleCompareResponse = ({
 
   const compactRows = rows.map(compactComparisonRow);
 
+  const comparisonVehicleLabel = (vehicle = {}) =>
+    firstMeaningful(
+      vehicle.fullModel,
+      [vehicle.make || vehicle.brand, vehicle.model].filter(Boolean).join(" "),
+      vehicle.model,
+    );
+
+  const actionCompareModels = runtimeVehicles
+    .map(comparisonVehicleLabel)
+    .filter(Boolean);
+
   const compareLabel =
-    models.length >= 2
-      ? models.join(" vs ")
-      : model
-        ? `${model}${variant ? ` ${variant}` : ""} comparison`
-        : "Vehicle comparison";
+    actionCompareModels.length >= 2
+      ? actionCompareModels.slice(0, 2).join(" vs ")
+      : models.length >= 2
+        ? models.slice(0, 2).join(" vs ")
+        : model
+          ? `${model}${variant ? ` ${variant}` : ""} comparison`
+          : "Vehicle comparison";
 
   return baseResponse({
     toolPlan,
