@@ -300,6 +300,7 @@ const insuranceCaseSchema = new mongoose.Schema(
         "CAR_SOLD",
         "CAR_EXPIRED",
         "POLICY_FROM_ELSEWHERE",
+        "RENEW_NEXT_YEAR",
       ],
       default: "NONE",
     },

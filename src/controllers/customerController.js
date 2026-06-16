@@ -344,16 +344,6 @@ const getCustomerDashboard = asyncHandler(async (req, res) => {
     .select('loanId status currentStage vehicleModel loanAmount tenure approval_status approval_loanAmountApproved createdAt')
     .sort({ createdAt: -1 });
 
-  console.log('📊 CUSTOMER DASHBOARD DATA RETRIEVED');
-  console.log('Customer:', customer.customerName, '-', customer.primaryMobile);
-  console.log('Total Loans:', loans.length);
-  console.log('Profile Status:', {
-    kycStatus: customer.kycStatus,
-    occupationType: customer.occupationType,
-    panNumber: customer.panNumber ? '✓' : '✗',
-    aadharNumber: customer.aadharNumber ? '✓' : '✗'
-  });
-
   res.json({
     success: true,
     data: {
@@ -480,11 +470,6 @@ const calculateProfileCompletion = (customer) => {
 // @route   POST /api/customers
 // @access  Public
 const createCustomer = asyncHandler(async (req, res) => {
-  console.log('📥 CUSTOMER CREATE REQUEST RECEIVED');
-  console.log('📊 Request Body Keys:', Object.keys(req.body));
-  console.log('📋 customerName:', req.body.customerName);
-  console.log('📋 primaryMobile:', req.body.primaryMobile);
-
   const normalizedData = normalizeCustomerData(req.body);
 
   // companyType is single-select in UI; businessNature remains multi-select
@@ -506,32 +491,6 @@ const createCustomer = asyncHandler(async (req, res) => {
     throw new Error('Please include Customer Name and Mobile Number');
   }
 
-  // Log all received customer details
-  console.log('✅ All normalized customer fields:', {
-    personalDetails: {
-      dob: normalizedData.dob,
-      gender: normalizedData.gender,
-      maritalStatus: normalizedData.maritalStatus,
-      education: normalizedData.education
-    },
-    contactDetails: {
-      primaryMobile: normalizedData.primaryMobile,
-      email: normalizedData.email,
-      extraMobiles: normalizedData.extraMobiles
-    },
-    employmentDetails: {
-      occupationType: normalizedData.occupationType,
-      monthlyIncome: normalizedData.monthlyIncome,
-      salaryMonthly: normalizedData.salaryMonthly,
-      companyName: normalizedData.companyName
-    },
-    identityProofs: {
-      panNumber: normalizedData.panNumber,
-      aadharNumber: normalizedData.aadharNumber,
-      identityProofType: normalizedData.identityProofType
-    }
-  });
-
   const today = new Date();
   const createdOn = `${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${today.getFullYear()}`;
 
@@ -550,11 +509,6 @@ const createCustomer = asyncHandler(async (req, res) => {
 
       customer = await Customer.create(customerPayload);
 
-      console.log('✅ CUSTOMER CREATED WITH ALL DETAILS');
-      console.log('Customer ID:', customer.customerId);
-      console.log('Name:', customer.customerName, '- Mobile:', customer.primaryMobile);
-      console.log('Occupation:', customer.occupationType, '| Income:', customer.monthlySalary || customer.monthlyIncome);
-      
   } catch (error) {
      if (error.code === 11000 && error.keyPattern?.customerId) {
         console.warn("Customer ID collision, retrying with new ID...");
@@ -573,7 +527,6 @@ const createCustomer = asyncHandler(async (req, res) => {
             customerType: normalizedData.customerType || 'New'
         });
 
-        console.log('✅ Customer created on retry! ID:', customer.customerId);
      } else {
         throw error;
      }
@@ -616,26 +569,6 @@ const updateCustomer = asyncHandler(async (req, res) => {
   if (customer) {
     // Normalize incoming data
     const normalizedData = normalizeCustomerData(req.body);
-
-    console.log('📝 CUSTOMER UPDATE - ALL FIELDS RECEIVED:');
-    console.log('Personal Details:', {
-      name: normalizedData.customerName,
-      dob: normalizedData.dob,
-      gender: normalizedData.gender
-    });
-    console.log('Contact:', {
-      mobile: normalizedData.primaryMobile,
-      email: normalizedData.email
-    });
-    console.log('Employment:', {
-      occupationType: normalizedData.occupationType,
-      monthlyIncome: normalizedData.monthlyIncome,
-      companyName: normalizedData.companyName
-    });
-    console.log('Identity Proofs:', {
-      panNumber: normalizedData.panNumber,
-      aadharNumber: normalizedData.aadharNumber
-    });
 
     // companyType is single-select in UI; businessNature remains multi-select
     if (Array.isArray(normalizedData.companyType)) {
@@ -694,7 +627,6 @@ const updateCustomer = asyncHandler(async (req, res) => {
           { customerId: customer._id },
           { $set: { ...loanUpdate, updatedAt: new Date() } }
         );
-        console.log('🔄 Loans synced with customer update:', loanSyncResult?.modifiedCount || 0);
       }
     } catch (err) {
       console.error('⚠️ Failed to sync loans with customer update:', err.message);
@@ -727,19 +659,12 @@ const updateCustomer = asyncHandler(async (req, res) => {
           { customerId: customer._id },
           { $set: { ...insuranceUpdate, updatedAt: new Date() } },
         );
-        console.log(
-          '🔄 Insurance cases synced with customer update:',
-          insuranceSyncResult?.modifiedCount || 0,
-        );
       }
     } catch (err) {
       console.error('⚠️ Failed to sync insurance cases with customer update:', err.message);
     }
 
-    console.log('✅ CUSTOMER UPDATED WITH ALL DETAILS');
-    console.log('Fields Updated:', Object.keys(cleanedData).length);
-    
-    res.json({ 
+    res.json({
       success: true, 
       data: updatedCustomer,
       message: '✅ Customer profile updated with all details saved',

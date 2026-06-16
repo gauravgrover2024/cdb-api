@@ -7,6 +7,7 @@ import {
   createVehicle,
   updateVehicle,
   deleteVehicle,
+  deleteVehicleRecord,
   bulkUploadVehicles,
   getUniqueMakes,
   getUniqueModels,
@@ -30,6 +31,7 @@ router.route('/')
   .post(createVehicle);
 
 router.get('/records/search', searchVehicleRecords);
+router.delete('/records/:id', deleteVehicleRecord);
 
 router.route('/bulk')
   .post(bulkUploadVehicles);
