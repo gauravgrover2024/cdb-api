@@ -173,17 +173,18 @@ const syncCustomerFromInsurancePayload = async (customerId, payload = {}) => {
   const nextReferencePhone = normalizeMobile10(payload.referencePhone);
 
   let hasChanges = false;
-  const setIfPresent = (field, value) => {
-    if (value === undefined || value === null || value === "") return;
+  const setIfPresent = (field, value, allowEmpty = true) => {
+    if (value === undefined || value === null) return;
+    if (!allowEmpty && value === "") return;
     if (safeString(customer[field]) === safeString(value)) return;
     customer[field] = value;
     hasChanges = true;
   };
 
-  setIfPresent("customerName", nextCustomerName);
-  setIfPresent("companyName", nextCompanyName);
-  setIfPresent("contactPersonName", nextContactPersonName);
-  setIfPresent("primaryMobile", nextMobile);
+  setIfPresent("customerName", nextCustomerName, false);
+  setIfPresent("companyName", nextCompanyName, true);
+  setIfPresent("contactPersonName", nextContactPersonName, true);
+  setIfPresent("primaryMobile", nextMobile, false);
   if (nextAltMobile) {
     const existingExtraMobiles = Array.isArray(customer.extraMobiles)
       ? customer.extraMobiles
@@ -1061,6 +1062,8 @@ export const mergeVehicleMatch = asyncHandler(async (req, res) => {
     hypothecation: baseData.hypothecation || "Not applicable",
     customerName: baseData.customerName,
     mobile: baseData.primaryMobile,
+    "customerSnapshot.customerName": baseData.customerName,
+    "customerSnapshot.primaryMobile": baseData.primaryMobile,
   };
   if (baseData.registrationDate) {
     mergePatch.dateOfReg = baseData.registrationDate.toISOString();
@@ -1128,6 +1131,20 @@ export const mergeVehicleMatch = asyncHandler(async (req, res) => {
     applyMergeField("batteryNumber", baseData.batteryNumber);
     applyMergeField("chargerNumber", baseData.chargerNumber);
     applyMergeField("hypothecation", baseData.hypothecation || "Not applicable");
+    applyMergeField("customerName", baseData.customerName);
+    applyMergeField("mobile", baseData.primaryMobile);
+
+    if (insuranceCaseDoc.customerSnapshot) {
+      const nameVal = safeString(baseData.customerName).trim();
+      if (nameVal && (overwriteHistoricalRecords || !safeString(insuranceCaseDoc.customerSnapshot.customerName).trim())) {
+        insuranceCaseDoc.customerSnapshot.customerName = nameVal;
+      }
+      const mobileVal = safeString(baseData.primaryMobile).trim();
+      if (mobileVal && (overwriteHistoricalRecords || !safeString(insuranceCaseDoc.customerSnapshot.primaryMobile).trim())) {
+        insuranceCaseDoc.customerSnapshot.primaryMobile = mobileVal;
+      }
+    }
+
     if (baseData.registrationDate && (overwriteHistoricalRecords || !insuranceCaseDoc.dateOfReg)) {
       insuranceCaseDoc.dateOfReg = baseData.registrationDate.toISOString();
     }
@@ -1612,9 +1629,9 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
 export const getInsuranceCaseById = asyncHandler(async (req, res) => {
   const raw = safeString(req.params.id).trim();
   const byObjectId = mongoose.Types.ObjectId.isValid(raw)
-    ? await InsuranceCase.findById(raw)
+    ? await InsuranceCase.findById(raw).populate("customerId")
     : null;
-  const doc = byObjectId || (await InsuranceCase.findOne({ caseId: raw }));
+  const doc = byObjectId || (await InsuranceCase.findOne({ caseId: raw }).populate("customerId"));
 
   if (!doc) {
     res.status(404);

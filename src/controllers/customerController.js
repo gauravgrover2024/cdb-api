@@ -634,15 +634,24 @@ const updateCustomer = asyncHandler(async (req, res) => {
 
     // Sync linked insurance cases (denormalized customer fields + snapshot)
     try {
+      const isCorporate =
+        String(updatedCustomer.customerType || '').trim().toLowerCase() === 'company' ||
+        String(updatedCustomer.applicantType || '').trim().toLowerCase() === 'company';
+
       const insuranceUpdate = {};
       if (normalizedData?.customerName !== undefined) {
         insuranceUpdate.customerName = normalizedData.customerName;
       }
-      if (normalizedData?.companyName !== undefined) {
-        insuranceUpdate.companyName = normalizedData.companyName;
-      }
-      if (normalizedData?.contactPersonName !== undefined) {
-        insuranceUpdate.contactPersonName = normalizedData.contactPersonName;
+      if (isCorporate) {
+        if (normalizedData?.companyName !== undefined) {
+          insuranceUpdate.companyName = normalizedData.companyName;
+        }
+        if (normalizedData?.contactPersonName !== undefined) {
+          insuranceUpdate.contactPersonName = normalizedData.contactPersonName;
+        }
+      } else {
+        insuranceUpdate.companyName = "";
+        insuranceUpdate.contactPersonName = "";
       }
       if (normalizedData?.primaryMobile !== undefined) {
         insuranceUpdate.mobile = normalizedData.primaryMobile;
