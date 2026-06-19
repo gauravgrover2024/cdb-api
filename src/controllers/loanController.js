@@ -1066,6 +1066,7 @@ const normalizeCustomerFields = (payload) => {
       .replace(/\D/g, "")
       .slice(0, 6);
     if (!pin) return "";
+    if (pin === "110092") return "East Delhi";
     if (pin.startsWith("110")) return "Delhi";
     if (pin.startsWith("122")) return "Gurgaon";
     if (pin.startsWith("121")) return "Faridabad";
