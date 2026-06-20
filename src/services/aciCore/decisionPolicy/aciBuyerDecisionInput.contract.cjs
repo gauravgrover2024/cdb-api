@@ -16,8 +16,10 @@ const textOf = (value) => String(value ?? '').trim();
 
 const valuePresent = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean).length > 0;
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0;
   if (value && typeof value === 'object') return Object.keys(value).length > 0;
-  return Boolean(textOf(value));
+  const text = textOf(value);
+  return Boolean(text) && text !== '0';
 };
 
 const normalizeList = (value) => {

@@ -5568,16 +5568,174 @@ const buildHydratedFinalChoiceResponse = async (response = {}, { bridge = {}, co
   };
 };
 
+
+const isMeaningfulBuyerContextValue = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean).length > 0;
+  if (typeof value === "number") return Number.isFinite(value) && value > 0;
+  if (value && typeof value === "object") {
+    return Object.values(value).some((item) => isMeaningfulBuyerContextValue(item));
+  }
+  const text = cleanText(value);
+  return Boolean(text) && text !== "0";
+};
+
+const compactBuyerContextForEligibility = (buyerContext = {}) => {
+  if (!buyerContext || typeof buyerContext !== "object" || Array.isArray(buyerContext)) return {};
+  const output = {};
+  for (const [key, value] of Object.entries(buyerContext)) {
+    if (isMeaningfulBuyerContextValue(value)) output[key] = value;
+  }
+  return output;
+};
+
+const mergeBuyerContextForEligibility = (...contexts) => {
+  const merged = {};
+  for (const context of contexts) {
+    const compact = compactBuyerContextForEligibility(context);
+    for (const [key, value] of Object.entries(compact)) {
+      if (key === "featurePriority") {
+        const values = [
+          ...(Array.isArray(merged.featurePriority) ? merged.featurePriority : []),
+          ...(Array.isArray(value) ? value : [value]),
+        ].map((item) => cleanText(item)).filter(Boolean);
+        merged.featurePriority = [...new Set(values)];
+        continue;
+      }
+      merged[key] = value;
+    }
+  }
+  return merged;
+};
+
+const getBuyerContextFromEligibilitySource = (source = {}) => {
+  if (!source || typeof source !== "object") return {};
+  return mergeBuyerContextForEligibility(
+    source.buyerContext,
+    source.buyerIntent,
+    source.contextState?.buyerContext,
+    source.contextState?.buyerIntent,
+    source.aciContextState?.buyerContext,
+    source.aciContextState?.buyerIntent,
+    source.data?.buyerContext,
+    source.data?.buyerIntent,
+    source.data?.contextState?.buyerContext,
+    source.data?.aciContextState?.buyerContext,
+    source.meta?.buyerContext,
+    source.meta?.buyerIntent,
+    source.contextPatch?.buyerContext,
+    source.contextPatch?.buyerIntent,
+    source.contextPatch?.contextState?.buyerContext,
+    source.contextPatch?.aciContextState?.buyerContext
+  );
+};
+
+const buildEligibilityContextWithExtractedBuyerContext = async ({
+  message = "",
+  context = {},
+  response = {},
+} = {}) => {
+  const { applyBuyerContextToContextState } = await import("../context/aciBuyerContextExtractor.service.js");
+
+  const baseState =
+    context.contextState ||
+    context.aciContextState ||
+    response.contextPatch?.contextState ||
+    response.contextPatch?.aciContextState ||
+    response.data?.contextState ||
+    response.data?.aciContextState ||
+    {};
+
+  const extractedState = applyBuyerContextToContextState({
+    message,
+    contextState: baseState,
+  });
+
+  const buyerContext = mergeBuyerContextForEligibility(
+    getBuyerContextFromEligibilitySource(context),
+    getBuyerContextFromEligibilitySource(response),
+    extractedState.buyerContext
+  );
+
+  const buyerGuidanceContext = {
+    ...(baseState.buyerGuidanceContext || {}),
+    ...(extractedState.buyerGuidanceContext || {}),
+  };
+
+  const contextState = {
+    ...baseState,
+    ...extractedState,
+    buyerContext,
+    buyerGuidanceContext,
+  };
+
+  const enrichedContextPatch = {
+    ...(response.contextPatch || {}),
+    buyerContext,
+    buyerGuidanceContext,
+    contextState: {
+      ...(response.contextPatch?.contextState || {}),
+      ...contextState,
+    },
+    aciContextState: {
+      ...(response.contextPatch?.aciContextState || {}),
+      ...contextState,
+    },
+  };
+
+  const enrichedResponse = {
+    ...response,
+    buyerContext,
+    buyerGuidanceContext,
+    contextState,
+    aciContextState: contextState,
+    contextPatch: enrichedContextPatch,
+    data: {
+      ...(response.data || {}),
+      buyerContext,
+      buyerGuidanceContext,
+      contextState,
+      aciContextState: contextState,
+    },
+    meta: {
+      ...(response.meta || {}),
+      buyerContext,
+      buyerGuidanceContext,
+    },
+  };
+
+  const enrichedContext = {
+    ...(context || {}),
+    buyerContext,
+    buyerGuidanceContext,
+    contextState,
+    aciContextState: contextState,
+  };
+
+  return {
+    context: enrichedContext,
+    response: enrichedResponse,
+  };
+};
+
+
 const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, context = {} } = {}) => {
-  const responseForEligibility = await buildHydratedFinalChoiceResponse(response, { bridge, context });
-  const envelope = buildDecisionRuntimeEnvelope({ response, bridge });
+  const messageForEligibility = bridge.effectiveMessage || bridge.originalMessage || "";
+  const rawResponseForEligibility = await buildHydratedFinalChoiceResponse(response, { bridge, context });
+  const enrichedEligibilityInput = await buildEligibilityContextWithExtractedBuyerContext({
+    message: messageForEligibility,
+    context,
+    response: rawResponseForEligibility,
+  });
+  const responseForEligibility = enrichedEligibilityInput.response;
+  const eligibilityContext = enrichedEligibilityInput.context;
+  const envelope = buildDecisionRuntimeEnvelope({ response: responseForEligibility, bridge });
   const finalRecommendationEligibility = buildFinalRecommendationEligibilityRuntime({
-    message: bridge.effectiveMessage || bridge.originalMessage || "",
+    message: messageForEligibility,
     bridge,
     response: responseForEligibility,
-    context,
-    decisionPolicy: envelope?.decisionPolicy || response.decisionPolicy || response.data?.decisionPolicy || response.meta?.decisionPolicy || {},
-    evidence: envelope?.evidence || response.evidence || response.data?.evidence || {},
+    context: eligibilityContext,
+    decisionPolicy: envelope?.decisionPolicy || responseForEligibility.decisionPolicy || responseForEligibility.data?.decisionPolicy || responseForEligibility.meta?.decisionPolicy || {},
+    evidence: envelope?.evidence || responseForEligibility.evidence || responseForEligibility.data?.evidence || {},
   });
   const shouldAttachFinalRecommendationEligibility =
     finalRecommendationEligibility.requestedFinalRecommendation === true;

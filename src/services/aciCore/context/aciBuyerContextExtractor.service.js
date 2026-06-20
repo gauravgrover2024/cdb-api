@@ -69,7 +69,7 @@ const extractUseCase = (text = '') => {
   const raw = cleanText(text).toLowerCase();
   const signals = [];
   if (/\bfamily\b|\bparents?\b|\bkids?\b|\bpractical\b|\bspacious\b|\brear seat\b/.test(raw)) signals.push('family use');
-  if (/\bcity\s+(?:use|drive|driving|commute|commuting)|\btraffic\b|\bdaily\s+use\b/.test(raw)) signals.push('city use');
+  if (/\bcity\s+(?:use|drive|driving|commute|commuting)|\b(?:mostly|mainly|primarily)\s+in\s+city\b|\bcity\s+(?:mostly|mainly|primarily)\b|\btraffic\b|\bdaily\s+use\b/.test(raw)) signals.push('city use');
   if (/\bhighway\b|\blong\s+(?:drive|trip|route)|\btouring\b/.test(raw)) signals.push('highway use');
   if (/\bbad\s+roads?\b|\brough\s+roads?\b|\bground clearance\b/.test(raw)) signals.push('bad-road use');
   if (/\bchauffeur\b|\brear\s+comfort\b|\bdriver driven\b/.test(raw)) signals.push('chauffeur/rear-seat use');
