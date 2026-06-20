@@ -21,6 +21,7 @@
     "showrooms:import": "node src/scripts/importCardekhoShowrooms.js",
     "data:import": "node src/seeder.js",
     "vehicles:import": "node src/scripts/importVehicles.js",
+    "seed:used-cars": "node src/scripts/importUsedCars.js",
     "vehicles:clear": "node src/scripts/clearVehicles.js",
     "vehicle:data-pipeline": "python3 scripts/vehicle-scrapers/run_vehicle_data_pipeline.py",
     "vehicles:normalize-pricing": "node src/scripts/normalizeVehiclePricing.js",

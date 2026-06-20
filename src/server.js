@@ -21,6 +21,7 @@ import quotationsRouter from "./routes/quotations.js";
 import featuresRoutes from "./routes/featuresRoutes.js";
 import bookingsRouter from "./routes/bookings.js";
 import usedCarRoutes from "./routes/usedCarRoutes.js";
+import usedCarMasterRoutes from "./routes/usedCarMasterRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
 import aiAgentRoutes from "./routes/aiAgent.routes.js";
 import {
@@ -125,6 +126,7 @@ app.use("/api/features", featuresRoutes);
 app.use("/api/bookings", bookingsRouter);
 app.use("/api/insurance", insuranceRoutes);
 app.use("/api/used-cars", usedCarRoutes);
+app.use("/api/used-cars-db", usedCarMasterRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/ai-agent", aiAgentRoutes);
 app.use("/media", express.static(path.join(__dirname, "../public/media")));
