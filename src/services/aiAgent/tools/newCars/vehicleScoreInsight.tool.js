@@ -353,7 +353,7 @@ const buildCrossModelScoreDiagnosticLine = (result = {}) => {
   const modelText = models.length >= 2 ? models.join(" vs ") : "selected models";
   const scopeText = scope ? ` (${scope})` : "";
   const leaderText = moduleLeaders.length
-    ? ` Module signals: ${moduleLeaders.join("; ")}.`
+    ? ` Main diagnostic signals: ${moduleLeaders.map((line) => String(line || "").replace(/\s+by\s+[-+]?\d+(?:\.\d+)?/gi, "").replace(/\s+/g, " ").trim()).filter(Boolean).join("; ")}.`
     : "";
 
   const note = decisionLanguageText("decision_diagnostic_only_note", {
@@ -557,9 +557,9 @@ const inferSameFamilyParamsFromMessage = async ({
     const makeKey = normalizeKey(doc.makeKey);
     let score = 0;
 
-    if (normalizedPreferredModel && modelKey === normalizedPreferredModel) score += 80;
+    if (normalizedPreferredModel && modelKey === normalizedPreferredModel) score += 80 + Math.min(modelKey.length, 30);
     if (normalizedPreferredMake && makeKey === normalizedPreferredMake) score += 10;
-    if (hasNormalizedPhrase(normalizedMessage, modelKey)) score += 50;
+    if (hasNormalizedPhrase(normalizedMessage, modelKey)) score += 50 + Math.min(modelKey.length, 30);
     if (makeKey && hasNormalizedPhrase(normalizedMessage, makeKey)) score += 8;
 
     if (score <= 0) continue;
@@ -588,6 +588,7 @@ const inferSameFamilyParamsFromMessage = async ({
   return {
     makeKey: normalizeKey(bestModel.makeKey),
     modelKey: normalizeKey(bestModel.modelKey),
+    canonicalModelKey: String(bestModel.modelKey || "").trim(),
     fuelKey,
     transmissionKey,
     fuelTransmissionFamilyKey: fuelKey && transmissionKey ? `${fuelKey}_${transmissionKey}` : "",
@@ -966,15 +967,14 @@ const buildVariantUpgradeInsightLine = ({ baseInsight, targetInsight } = {}) => 
   }
 
   if (Number.isFinite(priceDelta) && priceDelta > 0) {
-    verdict += ` The ex-showroom price jump is about ${formatPriceDelta(priceDelta)}.`;
+    verdict += ` The ex-showroom price jump is roughly ${formatPriceDelta(priceDelta)}.`;
   }
 
   const moduleLine = deltaParts.length
     ? `Score movement: ${deltaParts.join("; ")}.`
     : "";
 
-  const snapshotLine =
-    `Snapshot: ${baseName} is ${Number.isFinite(baseSnapshot.price) ? formatPriceDelta(baseSnapshot.price) : "price NA"} ex-showroom with features ${formatScore(baseSnapshot.features)}, value ${formatScore(baseSnapshot.value)}, safety ${formatScore(baseSnapshot.safety)}, city-use ${formatScore(baseSnapshot.cityUse)}, premium/comfort ${formatScore(baseSnapshot.premiumComfort)}, regret risk ${formatScore(baseSnapshot.regretRisk)}; ${targetName} is ${Number.isFinite(targetSnapshot.price) ? formatPriceDelta(targetSnapshot.price) : "price NA"} ex-showroom with features ${formatScore(targetSnapshot.features)}, value ${formatScore(targetSnapshot.value)}, safety ${formatScore(targetSnapshot.safety)}, city-use ${formatScore(targetSnapshot.cityUse)}, premium/comfort ${formatScore(targetSnapshot.premiumComfort)}, regret risk ${formatScore(targetSnapshot.regretRisk)}.`;
+  const snapshotLine = "";
 
   const conclusion =
     Number.isFinite(valueDelta) && valueDelta < -8
@@ -1011,114 +1011,92 @@ const buildSameFamilyValueLine = (result = {}, params = {}) => {
   const modelLabel = variants[0]?.variantFullName?.split(" ").slice(0, 2).join(" ") || params.modelKey || "this model";
 
   if (!variants.length) {
-    return `I could not find enough same-family value score data for ${modelLabel}. I can still help with listed variants, model-level price/features, or a basic comparison if you share city and requirements.`;
+    return `I could not find enough same-family value data for ${modelLabel}. I can still help with listed variants, model-level price/features, or a basic comparison if you share city and requirements.`;
   }
 
   const top = variants[0];
   const second = variants[1];
   const last = variants[variants.length - 1];
 
-  const topValue = top.modules?.value?.score ?? "NA";
-  const topFeature = top.modules?.features?.score ?? "NA";
-
-  const ranked = variants
+  const shortlistNames = variants
     .slice(0, 5)
-    .map((variant, index) => {
-      const valueScore = variant.modules?.value?.score ?? "NA";
-      const featureScore = variant.modules?.features?.score ?? "NA";
-      return `${index + 1}. ${variant.variantFullName} — value ${valueScore}, features ${featureScore}`;
-    })
-    .join("; ");
+    .map((variant) => variant.variantFullName)
+    .filter(Boolean);
 
-  let verdict = `${top.variantFullName} has the highest same-family value score in this set at ${topValue}.`;
+  const parts = [
+    `${top.variantFullName} shows the strongest same-family value signal in this set.`,
+  ];
 
   if (second) {
-    verdict += ` ${second.variantFullName} is the next practical step if you want more equipment without jumping straight to the weakest-value top trim.`;
+    parts.push(`${second.variantFullName} is the next practical step if you want more equipment without jumping straight to the most equipment-led top trim.`);
   }
 
   if (last && last.scoreProfileKey !== top.scoreProfileKey) {
-    verdict += ` ${last.variantFullName} scores lowest on same-family value; treat it as equipment-led rather than value-led and check whether the extra features matter to you.`;
+    parts.push(`${last.variantFullName} looks more equipment-led than value-led, so check whether the extra features matter to you.`);
   }
 
-  return `${verdict} Ranked ladder: ${ranked}.`;
-};
-
-
-
-const getModelLabelFromVariants = (variants = [], fallbackModelKey = "") => {
-  const firstName = variants[0]?.variantFullName || "";
-  const parts = firstName.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) return parts.slice(0, 2).join(" ");
-  return humanizeFeatureKey(fallbackModelKey || "this model");
-};
-
-const getModelModuleScoreValue = (insight = {}, key = "") => {
-  const value = insight.modules?.[key]?.score;
-  return Number.isFinite(Number(value)) ? Number(value) : null;
-};
-
-const getBestModelVariantByModule = (variants = [], key = "") =>
-  variants
-    .filter((item) => Number.isFinite(getModelModuleScoreValue(item, key)))
-    .sort((a, b) => getModelModuleScoreValue(b, key) - getModelModuleScoreValue(a, key))[0] || null;
-
-const getBalancedModelVariant = (variants = []) => {
-  const weighted = variants
-    .map((variant) => {
-      const parts = [
-        getModelModuleScoreValue(variant, "value"),
-        getModelModuleScoreValue(variant, "features"),
-        getModelModuleScoreValue(variant, "safety"),
-        getModelModuleScoreValue(variant, "cityUse"),
-        getModelModuleScoreValue(variant, "mileageRunningCost"),
-        getModelModuleScoreValue(variant, "practicality"),
-      ].filter((value) => Number.isFinite(value));
-
-      if (!parts.length) return null;
-
-      return {
-        variant,
-        score: parts.reduce((sum, value) => sum + value, 0) / parts.length,
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.score - a.score);
-
-  return weighted[0]?.variant || null;
-};
-
-const uniqueModelStrings = (values = [], limit = 4) => {
-  const out = [];
-  const seen = new Set();
-
-  for (const value of values) {
-    const text = String(value || "").trim();
-    const key = text.toLowerCase();
-    if (!text || seen.has(key)) continue;
-    seen.add(key);
-    out.push(text);
-    if (out.length >= limit) break;
+  if (shortlistNames.length) {
+    parts.push(`Shortlist order by value signal: ${shortlistNames.join(" → ")}.`);
   }
 
-  return out;
+  return sanitizeBuyerFacingScoreText(parts.join(" "));
 };
+
 
 const inferModelSummaryContext = (userMessage = "") => {
   const text = String(userMessage || "").toLowerCase();
 
-  if (/\b(city|city driving|daily driving|daily use|traffic|urban)\b/i.test(text)) {
+  if (/\b(city|traffic|daily|urban|office|commute|commuting)\b/.test(text)) {
     return "city";
   }
 
-  if (/\b(family|family use|family car|practical|practicality|parents|kids|children)\b/i.test(text)) {
+  if (/\b(family|parents|highway|long drive|long-drive|kids|rear seat|boot|practical|practicality)\b/.test(text)) {
     return "family";
   }
 
-  if (/\b(value|sensible|worth|best buy|best variant)\b/i.test(text)) {
+  if (/\b(value|vfm|money|worth|best variant|best-value|best value|budget|cheapest)\b/.test(text)) {
     return "value";
   }
 
   return "overall";
+};
+
+const humanizeModelKeyLabel = (value = "") =>
+  String(value || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const getModelLabelFromVariants = (variants = [], fallback = "") => {
+  const first = Array.isArray(variants) ? variants.find(Boolean) || {} : {};
+
+  const directLabel =
+    first.modelLabel ||
+    first.fullModel ||
+    first.modelDisplayName ||
+    "";
+
+  if (directLabel) return String(directLabel).replace(/\s+/g, " ").trim();
+
+  const makeFromKey = humanizeModelKeyLabel(first.makeKey || first.make || "");
+  const modelFromKey = humanizeModelKeyLabel(first.modelKey || first.model || fallback || "");
+  const makeModelFromKeys = [makeFromKey, modelFromKey].filter(Boolean).join(" ").trim();
+
+  if (makeModelFromKeys) return makeModelFromKeys;
+
+  const makeModel = [first.make, first.model].filter(Boolean).join(" ");
+  if (makeModel) return makeModel.replace(/\s+/g, " ").trim();
+
+  const variantFullName = String(first.variantFullName || "").replace(/\s+/g, " ").trim();
+  if (variantFullName) {
+    const tokens = variantFullName.split(" ").filter(Boolean);
+    if (tokens.length >= 3 && /^[a-z0-9]{1,3}$/i.test(tokens[2])) return tokens.slice(0, 3).join(" ");
+    if (tokens.length >= 2) return tokens.slice(0, 2).join(" ");
+    return variantFullName;
+  }
+
+  return humanizeModelKeyLabel(fallback || "this model");
 };
 
 const buildScopeLabel = ({ fuelKey = "", transmissionKey = "" } = {}) => {
@@ -1129,6 +1107,112 @@ const buildScopeLabel = ({ fuelKey = "", transmissionKey = "" } = {}) => {
   return parts.join(" ").toLowerCase();
 };
 
+const uniqueModelStrings = (items = [], limit = 3) => {
+  const seen = new Set();
+  const out = [];
+
+  for (const item of Array.isArray(items) ? items : []) {
+    const value = String(item || "").replace(/\s+/g, " ").trim();
+    if (!value) continue;
+
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    out.push(value);
+    if (out.length >= limit) break;
+  }
+
+  return out;
+};
+
+const getModelModuleScoreValue = (variant = {}, moduleKey = "") => {
+  const modules = variant.modules || {};
+  const aliases = {
+    value: ["value", "valueScore"],
+    features: ["features", "feature", "featureScore"],
+    cityUse: ["cityUse", "city", "cityUseScore"],
+    mileageRunningCost: ["mileageRunningCost", "mileage", "runningCost", "mileageRunningCostScore"],
+    practicality: ["practicality", "family", "practicalityScore"],
+    safety: ["safety", "safetyScore"],
+    performance: ["performance", "performanceScore"],
+    premiumComfort: ["premiumComfort", "comfort", "premiumComfortScore"],
+    regretRisk: ["regretRisk", "regret", "regretRiskScore"],
+  };
+
+  const keys = aliases[moduleKey] || [moduleKey];
+
+  for (const key of keys) {
+    const module = modules[key] || variant[key];
+    const raw =
+      module?.score ??
+      module?.riskScore ??
+      module?.value ??
+      module;
+
+    const number = Number(raw);
+    if (Number.isFinite(number)) return number;
+  }
+
+  return null;
+};
+
+const getBestModelVariantByModule = (variants = [], moduleKey = "") => {
+  const scored = (Array.isArray(variants) ? variants : [])
+    .map((variant) => ({
+      variant,
+      score: getModelModuleScoreValue(variant, moduleKey),
+    }))
+    .filter((item) => Number.isFinite(item.score));
+
+  if (!scored.length) return null;
+
+  scored.sort((left, right) => right.score - left.score);
+  return scored[0].variant || null;
+};
+
+const getBalancedModelVariant = (variants = []) => {
+  const scored = (Array.isArray(variants) ? variants : [])
+    .map((variant) => {
+      const values = [
+        getModelModuleScoreValue(variant, "value"),
+        getModelModuleScoreValue(variant, "features"),
+        getModelModuleScoreValue(variant, "cityUse"),
+        getModelModuleScoreValue(variant, "mileageRunningCost"),
+        getModelModuleScoreValue(variant, "practicality"),
+      ].filter((value) => Number.isFinite(value));
+
+      if (!values.length) return null;
+
+      const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+      return { variant, average };
+    })
+    .filter(Boolean);
+
+  if (!scored.length) return null;
+
+  scored.sort((left, right) => right.average - left.average);
+  return scored[0].variant || null;
+};
+
+const sanitizeBuyerFacingScoreText = (value = "") => {
+  return String(value || "")
+    .replace(/\s*(?:Feature score is taxonomy-driven and layered\.[^.]*\.?|Safety-critical equipment is handled mainly by safetyScore\.?)/gi, " ")
+    .replace(/\bFeature score is\b/gi, "Feature evidence is")
+    .replace(/\btaxonomy-driven\b/gi, "evidence-based")
+    .replace(/\bsafetyScore\b/gi, "safety evidence")
+    .replace(/\bsame-model value score\b/gi, "same-family value signal")
+    .replace(/\bPremium comfort score\b/gi, "Premium/comfort evidence")
+    .replace(/\bscore is weak\b/gi, "signal needs review")
+    .replace(/\bscore is limited\b/gi, "evidence is limited")
+    .replace(/\s*;\s*\./g, ".")
+    .replace(/Watchouts:\s*\./gi, "")
+    .replace(/\s+\./g, ".")
+    .replace(/\.\./g, ".")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
 const buildModelScoreSummaryLine = (result = {}, params = {}) => {
   const variants = Array.isArray(result.variants) ? result.variants : [];
   const modelLabel = getModelLabelFromVariants(variants, params.modelKey);
@@ -1136,7 +1220,7 @@ const buildModelScoreSummaryLine = (result = {}, params = {}) => {
   const scopeLabel = buildScopeLabel(params);
 
   if (!variants.length) {
-    return `I could not find enough diagnostic score data for ${modelLabel}. I can still help with price, features, variants, similar cars, or comparison from the DB-backed catalogue.`;
+    return `I could not find enough diagnostic data for ${modelLabel}. I can still help with price, features, variants, similar cars, or comparison from the DB-backed catalogue.`;
   }
 
   const bestValue = getBestModelVariantByModule(variants, "value");
@@ -1149,7 +1233,14 @@ const buildModelScoreSummaryLine = (result = {}, params = {}) => {
   const watchouts = uniqueModelStrings(
     variants.flatMap((variant) => variant.watchouts || []),
     3
-  );
+  ).map((item) =>
+    String(item || "")
+      .replace(/Same-model value score/gi, "Same-family value signal")
+      .replace(/Premium comfort score/gi, "Premium/comfort evidence")
+      .replace(/score is weak/gi, "signal needs review")
+      .replace(/score is limited/gi, "evidence is limited")
+      .trim()
+  ).filter(Boolean);
 
   const summaryParts = [];
 
@@ -1158,57 +1249,37 @@ const buildModelScoreSummaryLine = (result = {}, params = {}) => {
   }
 
   if (buyerContext === "city" && cityStrong) {
-    summaryParts.push(
-      `For city driving, ${modelLabel} looks strongest where city-use score is highest: ${cityStrong.variantFullName} at ${formatScore(getModelModuleScoreValue(cityStrong, "cityUse"))}.`
-    );
+    summaryParts.push(`For city driving, ${modelLabel} looks strongest around ${cityStrong.variantFullName} because it has the strongest city-use signal in this family.`);
   } else if (buyerContext === "family" && practicalStrong) {
-    summaryParts.push(
-      `For family use, ${modelLabel} should be read through practicality, safety and daily-use scores first. Practicality signal is strongest on ${practicalStrong.variantFullName} at ${formatScore(getModelModuleScoreValue(practicalStrong, "practicality"))}.`
-    );
+    summaryParts.push(`For family use, ${modelLabel} should be read through practicality, safety and daily-use signals first. ${practicalStrong.variantFullName} has the strongest practicality signal in this family.`);
   } else if (buyerContext === "value" && bestValue) {
-    summaryParts.push(
-      `For value, ${modelLabel} looks strongest on ${bestValue.variantFullName} with same-model value ${formatScore(getModelModuleScoreValue(bestValue, "value"))}.`
-    );
+    summaryParts.push(`For value, ${modelLabel} looks strongest around ${bestValue.variantFullName} because it has the strongest same-family value signal.`);
   } else {
-    summaryParts.push(
-      `${modelLabel} looks strongest as a practical, efficient city hatchback in the current diagnostic score data.`
-    );
+    summaryParts.push(`${modelLabel} has usable diagnostic coverage in the current score-profile data, so it can be read across value, features, daily-use, running-cost and practicality signals.`);
   }
 
   if (bestValue) {
-    summaryParts.push(
-      `Best value signal: ${bestValue.variantFullName} with same-model value ${formatScore(getModelModuleScoreValue(bestValue, "value"))}.`
-    );
+    summaryParts.push(`Best value signal: ${bestValue.variantFullName} appears strongest within the available same-family variants.`);
   }
 
   if (balanced) {
-    summaryParts.push(
-      `Most balanced diagnostic pick: ${balanced.variantFullName}, because it keeps a better mix of value, features and daily-use scores.`
-    );
+    summaryParts.push(`Most balanced diagnostic pick: ${balanced.variantFullName}, because it keeps a better mix of value, features and daily-use signals.`);
   }
 
   if (featureRich) {
-    summaryParts.push(
-      `Top-trim caveat: ${featureRich.variantFullName} is the most feature-rich at features ${formatScore(getModelModuleScoreValue(featureRich, "features"))}, but value is ${formatScore(getModelModuleScoreValue(featureRich, "value"))}.`
-    );
+    summaryParts.push(`Top-trim caveat: ${featureRich.variantFullName} looks feature-rich, but check whether its extra equipment justifies the weaker value signal.`);
   }
 
-  if (cityStrong) {
-    summaryParts.push(
-      `City-use signal is strongest on ${cityStrong.variantFullName} at ${formatScore(getModelModuleScoreValue(cityStrong, "cityUse"))}.`
-    );
+  if (cityStrong && buyerContext !== "city") {
+    summaryParts.push(`City-use signal is strongest on ${cityStrong.variantFullName}.`);
   }
 
   if (buyerContext === "family" && practicalStrong) {
-    summaryParts.push(
-      `Family/practicality signal: ${practicalStrong.variantFullName} is strongest on practicality at ${formatScore(getModelModuleScoreValue(practicalStrong, "practicality"))}.`
-    );
+    summaryParts.push(`Family/practicality signal is strongest on ${practicalStrong.variantFullName}.`);
   }
 
   if (mileageStrong) {
-    summaryParts.push(
-      `Mileage/running-cost signal is strong across the family at about ${formatScore(getModelModuleScoreValue(mileageStrong, "mileageRunningCost"))}.`
-    );
+    summaryParts.push(`Mileage/running-cost evidence looks strong across the family.`);
   }
 
   if (watchouts.length) {
@@ -1220,8 +1291,9 @@ const buildModelScoreSummaryLine = (result = {}, params = {}) => {
     modelText: result?.modelLabel || result?.model || "",
   }));
 
-  return summaryParts.join(" ");
+  return sanitizeBuyerFacingScoreText(summaryParts.join(" "));
 };
+
 
 
 const compactVariantLine = (insight) => {
@@ -1278,9 +1350,9 @@ const compactVariantLine = (insight) => {
     ? `Strengths: ${strengths.join("; ")}.`
     : "";
 
-  return [verdict, watchoutLine, strengthLine, scoreLine]
+  return sanitizeBuyerFacingScoreText([verdict, watchoutLine, strengthLine, scoreLine]
     .filter(Boolean)
-    .join(" ");
+    .join(" "));
 };
 
 const resolveVariantInsightFromMessage = async ({ db, userMessage = "" } = {}) => {
@@ -1463,7 +1535,7 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
         transmissionKey: args.transmissionKey || args.transmission_key,
       });
 
-      const modelKey = inferred.modelKey || args.modelKey || args.model_key;
+      const modelKey = inferred.canonicalModelKey || inferred.modelKey || args.modelKey || args.model_key || args.model;
       if (!modelKey) {
         return createError({
           operation,
@@ -1546,7 +1618,7 @@ export const runVehicleScoreInsightTool = async (rawArgs = {}) => {
 
       // Prefer message-inferred canonical keys because live bridge entities can be display labels
       // such as "Maruti Baleno", while score profiles use canonical modelKey like "baleno".
-      const modelKey = inferred.modelKey || args.modelKey || args.model_key;
+      const modelKey = inferred.canonicalModelKey || inferred.modelKey || args.modelKey || args.model_key || args.model;
       if (!modelKey) {
         return createError({
           operation,

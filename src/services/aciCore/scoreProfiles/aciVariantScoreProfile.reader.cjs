@@ -70,6 +70,30 @@ const getDb = (db) => {
   throw new Error('MongoDB connection is not available for score profile reader.');
 };
 
+
+const buildModelKeyAliases = (value = "") => {
+  const raw = String(value || "").trim().toLowerCase();
+  const normalized = normalizeKey(value);
+  const dashFromNormalized = normalized ? normalized.replace(/_/g, "-") : "";
+  const underscoreFromRaw = raw ? raw.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") : "";
+  const dashFromRaw = raw ? raw.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") : "";
+
+  return [...new Set([
+    raw,
+    normalized,
+    dashFromNormalized,
+    underscoreFromRaw,
+    dashFromRaw,
+  ].filter(Boolean))];
+};
+
+const buildModelKeyFilter = (value = "") => {
+  const aliases = buildModelKeyAliases(value);
+  if (!aliases.length) return undefined;
+  return aliases.length === 1 ? aliases[0] : { $in: aliases };
+};
+
+
 const getCollection = (db) => getDb(db).collection(SCORE_PROFILE_COLLECTION);
 
 const collectCaveats = (doc = {}) => {
@@ -132,7 +156,7 @@ const buildBaseFilter = ({
   const filter = {};
 
   if (makeKey) filter.makeKey = normalizeKey(makeKey);
-  if (modelKey) filter.modelKey = normalizeKey(modelKey);
+  if (modelKey) filter.modelKey = buildModelKeyFilter(modelKey);
   if (variantKey) filter.variantKey = normalizeKey(variantKey);
   if (fuelKey) filter.fuelKey = normalizeKey(fuelKey);
   if (transmissionKey) filter.transmissionKey = normalizeKey(transmissionKey);

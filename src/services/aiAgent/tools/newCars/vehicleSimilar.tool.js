@@ -292,7 +292,7 @@ const buildAnswer = ({ anchor = {}, rows = [], mode = "default" } = {}) => {
     anchorName: anchor.displayName || "",
   });
 
-  return `Similar Cars Graph v1 found ${rows.length} ${relationLabel} for ${anchor.displayName}: ${names}. ${note}`.trim();
+  return `I found ${relationLabel} for ${anchor.displayName}: ${names}. ${note}`.trim();
 };
 
 export const runVehicleSimilarTool = async ({

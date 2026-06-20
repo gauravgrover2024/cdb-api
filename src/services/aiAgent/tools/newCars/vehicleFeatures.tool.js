@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+
 import {
   getModelFeatureExplorerV2,
   answerModelFeatureV2,
@@ -1342,6 +1344,226 @@ const buildUnavailableResponse = ({
   };
 };
 
+
+const MODEL_FEATURE_SUMMARY_COLLECTION = "aci_vehicle_model_feature_summary_v1";
+
+const modelFeatureSummaryAliases = (value = "") => {
+  const normalized = normalizeText(value);
+  if (!normalized) return [];
+
+  const hyphen = normalized.replace(/\s+/g, "-");
+  const underscore = normalized.replace(/\s+/g, "_");
+  const compact = normalized.replace(/\s+/g, "");
+
+  return [...new Set([normalized, hyphen, underscore, compact].filter(Boolean))];
+};
+
+const labelsFromHighlights = (...groups) => {
+  const labels = [];
+
+  for (const group of groups) {
+    for (const item of Array.isArray(group) ? group : []) {
+      const label = firstText(item?.label, item?.displayName, item?.name);
+      if (label && !labels.some((existing) => normalizeText(existing) === normalizeText(label))) {
+        labels.push(label);
+      }
+    }
+  }
+
+  return labels;
+};
+
+const buildModelFeatureSummaryAnswer = ({
+  doc = {},
+  model = "",
+  safetyOnly = false,
+} = {}) => {
+  const modelLabel = firstText(doc.fullModel, [doc.make, doc.model].filter(Boolean).join(" "), model);
+
+  if (safetyOnly) {
+    const safety = labelsFromHighlights(doc.safetyHighlights, doc.adasHighlights).slice(0, 10);
+
+    return safety.length
+      ? `${modelLabel} safety highlights indexed across current variants include ${safety.join(", ")}. Features vary by variant, so the exact trim should be checked before finalizing.`
+      : `I found the model feature summary for ${modelLabel}, but no dedicated safety highlights are indexed yet.`;
+  }
+
+  const premium = labelsFromHighlights(doc.premiumHighlights).slice(0, 8);
+  const safety = labelsFromHighlights(doc.safetyHighlights).slice(0, 4);
+  const comfort = labelsFromHighlights(doc.comfortHighlights).slice(0, 4);
+  const infotainment = labelsFromHighlights(doc.infotainmentHighlights).slice(0, 4);
+
+  const parts = [];
+  if (premium.length) parts.push(`Top highlights include ${premium.join(", ")}`);
+  if (safety.length) parts.push(`Safety coverage includes ${safety.join(", ")}`);
+  if (comfort.length) parts.push(`Comfort features include ${comfort.join(", ")}`);
+  if (infotainment.length) parts.push(`Tech features include ${infotainment.join(", ")}`);
+
+  if (!parts.length) {
+    return `I found indexed feature coverage for ${modelLabel}, but the model summary does not yet have enough clean highlights to present confidently.`;
+  }
+
+  return `${modelLabel}: ${parts.join(". ")}. Features vary by variant, so check the exact trim before finalizing.`;
+};
+
+const buildModelFeatureSummaryReadModelResponse = async ({
+  model = "",
+  city = DEFAULT_CITY,
+  context = {},
+  userMessage = "",
+  safetyOnly = false,
+} = {}) => {
+  const db = mongoose.connection?.db;
+  if (!db) return null;
+
+  const aliases = modelFeatureSummaryAliases(model);
+  if (!aliases.length) return null;
+
+  const doc = await db.collection(MODEL_FEATURE_SUMMARY_COLLECTION).findOne(
+    { modelKey: { $in: aliases } },
+    {
+      projection: {
+        _id: 0,
+        make: 1,
+        brand: 1,
+        model: 1,
+        modelKey: 1,
+        fullModel: 1,
+        activeVariantCount: 1,
+        totalIndexedFeatureCount: 1,
+        premiumHighlights: 1,
+        safetyHighlights: 1,
+        adasHighlights: 1,
+        comfortHighlights: 1,
+        infotainmentHighlights: 1,
+        allFeatures: 1,
+        sourceCollection: 1,
+        sourceBuildIds: 1,
+        builtAt: 1,
+        updatedAt: 1,
+      },
+    },
+  );
+
+  if (!doc) return null;
+
+  const modelLabel = firstText(doc.model, model);
+  const make = firstText(doc.make, doc.brand, context.selectedVehicle?.make, context.selectedVehicle?.brand);
+  const fullModel = firstText(doc.fullModel, [make, modelLabel].filter(Boolean).join(" "), modelLabel);
+  const answer = buildModelFeatureSummaryAnswer({ doc, model: fullModel, safetyOnly });
+
+  const selectedVehicle = {
+    make,
+    brand: make,
+    model: modelLabel,
+    fullModel,
+    variant: "",
+    variantName: "",
+    selectedVariant: "",
+    city,
+  };
+
+  const leadingQuestions = buildBridgeLeadingQuestions({
+    model: modelLabel,
+    variant: "",
+    city,
+  });
+
+  const features = safetyOnly
+    ? [...(doc.safetyHighlights || []), ...(doc.adasHighlights || [])]
+    : [
+        ...(doc.premiumHighlights || []),
+        ...(doc.safetyHighlights || []),
+        ...(doc.comfortHighlights || []),
+        ...(doc.infotainmentHighlights || []),
+      ];
+
+  const data = {
+    ...doc,
+    model: modelLabel,
+    fullModel,
+    city,
+    features,
+    rows: [],
+    variants: [],
+    dataStatus: "available",
+  };
+
+  const widget = {
+    type: TOOL_NAME,
+    tool: TOOL_NAME,
+    intent: "vehicle_model_features_explorer",
+    canvasType: "features_explorer_canvas",
+    title: `${modelLabel} features`,
+    answer,
+    vehicle: selectedVehicle,
+    model: modelLabel,
+    variant: "",
+    features,
+    featureList: features,
+    rows: [],
+    items: features,
+    groups: [],
+    stats: {
+      activeVariantCount: doc.activeVariantCount || 0,
+      totalIndexedFeatureCount: doc.totalIndexedFeatureCount || 0,
+    },
+    leadingQuestions,
+    data,
+    meta: {
+      resolver: "modelFeatureSummaryReadModel",
+      collection: MODEL_FEATURE_SUMMARY_COLLECTION,
+      builtAt: doc.builtAt || null,
+      updatedAt: doc.updatedAt || null,
+    },
+  };
+
+  return {
+    tool: TOOL_NAME,
+    intent: "vehicle_model_features_explorer",
+    displayMode: "canvas",
+    canvasType: "features_explorer_canvas",
+    title: `${modelLabel} features`,
+    answer,
+    dataStatus: "available",
+    vehicle: selectedVehicle,
+    widget,
+    widgets: [widget],
+    rows: [],
+    features,
+    variants: [],
+    selectedVariant: null,
+    leadingQuestions,
+    conversationSuggestions: leadingQuestions,
+    data,
+    contextPatch: {
+      selectedVehicle,
+      anchorMake: make || "",
+      anchorModel: modelLabel,
+      anchorVariant: "",
+      anchorCity: city,
+    },
+    sourceTransparency: {
+      modulesChecked: [
+        MODEL_FEATURE_SUMMARY_COLLECTION,
+        "vehicle_variant_feature_matrix_v2",
+        "vehicle_feature_catalog_v2",
+      ],
+      recordCount: 1,
+    },
+    meta: {
+      resolver: "modelFeatureSummaryReadModel",
+      collection: MODEL_FEATURE_SUMMARY_COLLECTION,
+      activeVariantCount: doc.activeVariantCount || 0,
+      totalIndexedFeatureCount: doc.totalIndexedFeatureCount || 0,
+      builtAt: doc.builtAt || null,
+      updatedAt: doc.updatedAt || null,
+      userMessage,
+    },
+  };
+};
+
+
 export const runVehicleFeaturesTool = async (args = {
 }) => {
 
@@ -1418,6 +1640,25 @@ export const runVehicleFeaturesTool = async (args = {
     safetyFeatureSummary ||
     genericFeatureSummary ||
     featureLossSummary;
+
+  if (
+    wantsExplorer &&
+    !requestedVariant &&
+    (!requestedCategory.key || safetyFeatureSummary) &&
+    !featureLossSummary &&
+    !wantsComparison({ intent, userMessage, toolPlan }) &&
+    (contextFeatureSummary || genericFeatureSummary || safetyFeatureSummary || isExplicitModelLevelFeatureExplorerQuery(userMessage))
+  ) {
+    const summaryResponse = await buildModelFeatureSummaryReadModelResponse({
+      model,
+      city,
+      context,
+      userMessage,
+      safetyOnly: safetyFeatureSummary,
+    });
+
+    if (summaryResponse) return summaryResponse;
+  }
 
   if (wantsExplorer) {
     result = await getModelFeatureExplorerV2({

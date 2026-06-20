@@ -40,6 +40,7 @@ const DERIVED_COLLECTIONS = [
   "aci_vehicle_model_summary",
   "vehicle_feature_catalog_v2",
   "vehicle_variant_feature_matrix_v2",
+  "aci_vehicle_model_feature_summary_v1",
   "aci_vehicle_variant_decision_profile",
   "aci_vehicle_variant_city_price_profile",
   "aci_vehicle_variant_upgrade_ladder",
@@ -65,6 +66,10 @@ const DUPLICATE_CHECKS = [
   {
     collection: "vehicle_variant_feature_matrix_v2",
     keys: ["modelKey", "variantKey"],
+  },
+  {
+    collection: "aci_vehicle_model_feature_summary_v1",
+    keys: ["modelKey"],
   },
   {
     collection: "aci_vehicle_variant_decision_profile",
@@ -162,6 +167,12 @@ if (!decisionOnly) {
         ...(write ? ["--replace"] : []),
       ],
     ),
+  );
+
+  steps.push(
+    command("B1. Build model-level feature summary read-model", "node", [
+      "src/scripts/aci-builds/buildAciVehicleModelFeatureSummaryV1.js",
+    ]),
   );
 
   if (write) {

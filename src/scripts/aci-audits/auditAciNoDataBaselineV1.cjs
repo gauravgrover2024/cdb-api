@@ -26,10 +26,6 @@ const EXPECTED_NO_DATA = {
     bucket: "expectedUnsupportedCity",
     requiredText: [/mumbai/i, /new delhi/i, /noida/i, /gurgaon/i],
   },
-  "G122-how-good-is-scorpio-n-overall": {
-    bucket: "expectedKnownScoreDataGap",
-    requiredText: [/could not find enough diagnostic score data/i, /diagnostic/i],
-  },
   "I157-should-i-wait-for-discount": {
     bucket: "expectedPendingModule",
     requiredText: [/discount|offer/i, /not invent|verified|not available/i],

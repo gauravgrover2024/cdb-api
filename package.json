@@ -48,7 +48,7 @@
     "aci:read-models:build": "ACI_READ_MODEL_DRY_RUN=false node src/scripts/aci-read-models/buildAciVehicleReadModels.js",
     "aci:feature-kb:build": "node src/scripts/buildVehicleFeatureKnowledgeBaseV2.js --write --replace",
     "aci:feature-kb:indexes": "node src/scripts/ensureFeatureKbV2Indexes.js",
-    "aci:rebuild-read-models": "npm run aci:feature-kb:build && npm run aci:read-models:build",
+    "aci:rebuild-read-models": "npm run aci:feature-kb:build && npm run aci:features:model-summary:build && npm run aci:read-models:build",
     "aci:ensure-read-model-indexes": "npm run indexes:vehicle && npm run aci:feature-kb:indexes && npm run aci:ensure-feature-matrix-indexes",
     "aci:decision:profiles": "node src/scripts/aci-decision/buildVariantDecisionProfilesFastV2.js --write",
     "aci:decision:city-prices": "node src/scripts/aci-decision/buildVariantCityPriceProfilesFastV2.js --write",
@@ -168,7 +168,8 @@
     "aci:decision:buyer-clarification:smoke": "node src/scripts/aci-decision/smokeBuyerInputClarificationPayloadV1.cjs",
     "aci:decision:context-reuse-readiness:smoke": "node src/scripts/aci-decision/smokeBuyerContextReuseAndReadinessV1.cjs",
     "aci:decision:phase5-closure:smoke": "node src/scripts/aci-decision/smokeDecisionPhase5ClosureGateV1.cjs",
-    "aci:decision:final-composer-readiness:audit": "node src/scripts/aci-decision/auditFinalComposerReadinessV1.cjs"
+    "aci:decision:final-composer-readiness:audit": "node src/scripts/aci-decision/auditFinalComposerReadinessV1.cjs",
+    "aci:features:model-summary:build": "node src/scripts/aci-builds/buildAciVehicleModelFeatureSummaryV1.js"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

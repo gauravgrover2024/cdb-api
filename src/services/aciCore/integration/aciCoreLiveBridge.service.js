@@ -4494,7 +4494,7 @@ const collapseDuplicateDiagnosticOnlyNotes = (answer = "") => {
   const text = cleanText(answer);
   if (!text) return "";
 
-  const diagnosticOnlyNotePattern = /\s*(?:This score view is diagnostic-only and should not be treated as a final recommendation\.|Use this as directional scoring, not as a final purchase verdict\.|This is diagnostic-only, not a final recommendation\.|Treat this as diagnostic-only guidance, not a final recommendation\.|This is a diagnostic signal only; it is not a final purchase recommendation\.|Use this as directional context\.)/gi;
+  const diagnosticOnlyNotePattern = /\s*(?:This score view is diagnostic-only and should not be treated as a final recommendation\.|Use this as directional module-score diagnostics, not as a final purchase verdict\.|Use this as directional scoring, not as a final purchase verdict\.|This is diagnostic-only, not a final recommendation\.|Treat this as diagnostic-only guidance, not a final recommendation\.|This is a diagnostic signal only; it is not a final purchase recommendation\.|Use this as directional context\.)/gi;
   let seen = false;
 
   return cleanText(text.replace(diagnosticOnlyNotePattern, (match) => {
@@ -4508,7 +4508,7 @@ const ensureDiagnosticOnlyAnswerNote = (answer = "") => {
   const text = collapseDuplicateDiagnosticOnlyNotes(answer);
   const note = getDecisionDiagnosticOnlyNote(text);
   if (!text) return note;
-  if (/\bdiagnostic-only\b|\bnot\s+(?:a\s+)?final recommendation\b|\bshould not be treated as a final recommendation\b/i.test(text)) return text;
+  if (/\bdiagnostic-only\b|\bnot\s+(?:a\s+)?final recommendation\b|\bshould not be treated as a final recommendation\b|\bdirectional module-score diagnostics\b|\bdirectional context\b/i.test(text)) return collapseDuplicateDiagnosticOnlyNotes(text);
   return `${text} ${note}`;
 };
 

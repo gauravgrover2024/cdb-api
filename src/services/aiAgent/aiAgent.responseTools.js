@@ -284,7 +284,7 @@ export const getRuntimeRows = (runtimeData = {}) =>
 
 const responseToolDecisionLanguageText = (templateKey = "", input = {}) => {
   if (templateKey === "decision_score_module_summary_note") {
-    return "Use this as directional scoring, not as a final purchase verdict.";
+    return "Use this as directional module-score diagnostics, not as a final purchase verdict.";
   }
   if (templateKey === "decision_similar_graph_guardrail_reason") {
     return "Similar cars graph v1 is a deterministic discovery aid, not a purchase verdict.";
@@ -1792,7 +1792,7 @@ export const buildVehicleSimilarResponse = ({
     runtimeData.answer ||
     (
       rows.length
-        ? `Similar Cars Graph v1 found ${rows.length} similar cars for ${anchorLabel}: ${rows
+        ? `I found similar cars for ${anchorLabel}: ${rows
             .slice(0, 5)
             .map((row) => row.displayName)
             .filter(Boolean)
@@ -2928,9 +2928,32 @@ export const buildVehicleScoreInsightResponse = ({
         : `${variantName}: diagnostic value data is available.`
     );
 
+  const stripScoreDiagnosticNotes = (value = "") =>
+    cleanText(value)
+      .replace(/\s*(?:Use this as directional module-score diagnostics, not as a final purchase verdict\.|Use this as directional scoring, not as a final purchase verdict\.|These are module-score signals only, not a final recommendation\.|Use these module scores as diagnostics, not as a final recommendation\.|This score view is diagnostic-only and should not be treated as a final recommendation\.|This is diagnostic-only, not a final recommendation\.|Treat this as diagnostic-only guidance, not as a final recommendation\.|This is a diagnostic signal only; it is not a final purchase recommendation\.|Use this as directional context\.)/gi, " ")
+      .replace(/\s*;\s*\./g, ".")
+      .replace(/\s+\./g, ".")
+      .replace(/\.\./g, ".")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const hasScoreDiagnosticNote = (value = "") =>
+    /\b(?:directional module-score diagnostics|diagnostic-only|final purchase verdict|final recommendation|diagnostic signal only|directional context)\b/i.test(cleanText(value));
+
+  const buildSingleScoreDiagnosticAnswer = (body = "", note = "") => {
+    const originalBody = cleanText(body);
+    const cleanBody = stripScoreDiagnosticNotes(originalBody);
+    const cleanNote = cleanText(note);
+
+    if (!cleanBody) return cleanNote || originalBody;
+    if (hasScoreDiagnosticNote(originalBody)) return cleanBody ? `${cleanBody} ${cleanNote}`.replace(/\s+/g, " ").trim() : cleanNote;
+    return [cleanBody, cleanNote].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  };
+
   const guardrailText = responseToolDecisionLanguageText("decision_score_module_summary_note", {
     operation,
   });
+  const buyerSafeBaseAnswer = stripScoreDiagnosticNotes(baseAnswer);
   const modelSummaries = scoreDiagnosticModelSummaries;
   const moduleComparisons = asArray(
     data.moduleComparisons ||
@@ -2942,6 +2965,7 @@ export const buildVehicleScoreInsightResponse = ({
     ? modelSummaries
     : (runtimeData.rows || data.variants || []);
 
+
   return {
     intent: runtimeData.intent || toolPlan.tool || "vehicle_score_insight",
     displayMode: "canvas",
@@ -2950,7 +2974,7 @@ export const buildVehicleScoreInsightResponse = ({
     operation,
     diagnosticType: isCrossModelScoreDiagnostic ? "cross_model_score_diagnostic" : data.diagnosticType,
     title: scoreTitle,
-    answer: `${baseAnswer} ${guardrailText}`,
+    answer: buildSingleScoreDiagnosticAnswer(buyerSafeBaseAnswer || baseAnswer, guardrailText),
     data,
     rows: responseRows,
     ...(isCrossModelScoreDiagnostic
