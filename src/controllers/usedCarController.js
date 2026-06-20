@@ -131,10 +131,95 @@ const deleteUsedCar = asyncHandler(async (req, res) => {
   });
 });
 
+const getUniqueMakes = asyncHandler(async (req, res) => {
+  const includeDiscontinued = req.query.includeDiscontinued === "true";
+  const query = {};
+  if (!includeDiscontinued) {
+    query.$or = [
+      { is_discontinued: { $exists: false } },
+      { is_discontinued: false },
+      { is_discontinued: null }
+    ];
+  }
+  const makes = await UsedCar.distinct("make", query);
+  makes.sort((a, b) => a.localeCompare(b));
+  res.json({ success: true, data: makes });
+});
+
+const getUniqueModels = asyncHandler(async (req, res) => {
+  const { make } = req.query;
+  const includeDiscontinued = req.query.includeDiscontinued === "true";
+  if (!make) {
+    res.status(400);
+    throw new Error("Make parameter is required");
+  }
+  const query = {
+    make: { $regex: new RegExp(`^${make.trim()}$`, "i") }
+  };
+  if (!includeDiscontinued) {
+    query.$or = [
+      { is_discontinued: { $exists: false } },
+      { is_discontinued: false },
+      { is_discontinued: null }
+    ];
+  }
+  const models = await UsedCar.distinct("model", query);
+  models.sort((a, b) => a.localeCompare(b));
+  res.json({ success: true, data: models });
+});
+
+const getUniqueVariants = asyncHandler(async (req, res) => {
+  const { make, model } = req.query;
+  const includeDiscontinued = req.query.includeDiscontinued === "true";
+  if (!make || !model) {
+    res.status(400);
+    throw new Error("Make and Model parameters are required");
+  }
+  const query = {
+    make: { $regex: new RegExp(`^${make.trim()}$`, "i") },
+    model: { $regex: new RegExp(`^${model.trim()}$`, "i") }
+  };
+  if (!includeDiscontinued) {
+    query.$or = [
+      { is_discontinued: { $exists: false } },
+      { is_discontinued: false },
+      { is_discontinued: null }
+    ];
+  }
+  const variants = await UsedCar.distinct("variant", query);
+  variants.sort((a, b) => a.localeCompare(b));
+  res.json({ success: true, data: variants });
+});
+
+const getUsedCarByDetails = asyncHandler(async (req, res) => {
+  const { make, model, variant } = req.query;
+  if (!make || !model || !variant) {
+    res.status(400);
+    throw new Error("Make, model, and variant are required");
+  }
+  const query = {
+    make: { $regex: new RegExp(`^${make.trim()}$`, "i") },
+    model: { $regex: new RegExp(`^${model.trim()}$`, "i") },
+    variant: { $regex: new RegExp(`^${variant.trim()}$`, "i") }
+  };
+  const car = await UsedCar.findOne(query).sort({ year: -1 });
+  if (car) {
+    res.json({ success: true, data: car });
+  } else {
+    res.status(404);
+    throw new Error("Used car variant not found");
+  }
+});
+
 export {
   getUsedCars,
   getUsedCarById,
   createUsedCar,
   updateUsedCar,
   deleteUsedCar,
+  getUniqueMakes,
+  getUniqueModels,
+  getUniqueVariants,
+  getUsedCarByDetails,
 };
+
