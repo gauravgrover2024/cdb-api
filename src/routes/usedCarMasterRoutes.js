@@ -5,6 +5,7 @@ import {
   createUsedCar,
   updateUsedCar,
   deleteUsedCar,
+  getUniqueYears,
   getUniqueMakes,
   getUniqueModels,
   getUniqueVariants,
@@ -17,6 +18,7 @@ router.route("/")
   .get(getUsedCars)
   .post(createUsedCar);
 
+router.get("/years", getUniqueYears);
 router.get("/makes", getUniqueMakes);
 router.get("/models", getUniqueModels);
 router.get("/variants", getUniqueVariants);
