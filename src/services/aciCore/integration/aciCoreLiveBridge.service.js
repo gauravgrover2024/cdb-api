@@ -1751,7 +1751,7 @@ const maybeReturnBatch4BareClarificationFastPath = ({
 } = {}) => {
   const normalized = normalizeFastPathText(effectiveMessage || message);
 
-  if (!/^(price|sunroof|mileage|colors|colours|which one is better|compare these|best car|recommend me a car)$/.test(normalized)) {
+  if (!/^(price|sunroof|mileage|which one is better|compare these|best car|recommend me a car)$/.test(normalized)) {
     return null;
   }
 
@@ -5799,6 +5799,107 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
 };
 
 
+
+const hasUsableSelectedVehicleContext = (vehicle = {}) =>
+  Boolean(
+    vehicle &&
+      typeof vehicle === "object" &&
+      !Array.isArray(vehicle) &&
+      (vehicle.model || vehicle.fullModel || vehicle.modelKey || vehicle.displayName)
+  );
+
+const getSelectedVehicleForDurableContext = (response = {}, context = {}) => {
+  const candidates = [
+    response.selectedVehicle,
+    response.data?.selectedVehicle,
+    response.contextPatch?.selectedVehicle,
+    response.contextPatch?.contextState?.selectedVehicle,
+    response.contextPatch?.aciContextState?.selectedVehicle,
+    response.contextPatch?.contextState?.anchors?.primaryVehicle,
+    response.contextPatch?.aciContextState?.anchors?.primaryVehicle,
+    context.selectedVehicle,
+    context.contextState?.selectedVehicle,
+    context.aciContextState?.selectedVehicle,
+    context.contextState?.anchors?.primaryVehicle,
+    context.aciContextState?.anchors?.primaryVehicle,
+    context.anchors?.primaryVehicle,
+  ];
+
+  return candidates.find(hasUsableSelectedVehicleContext) || {};
+};
+
+const ensureDurableSelectedVehicleInResponse = (response = {}, { context = {} } = {}) => {
+  const selectedVehicle = getSelectedVehicleForDurableContext(response, context);
+  if (!hasUsableSelectedVehicleContext(selectedVehicle)) return response;
+
+  const basePatch = response.contextPatch || {};
+  const baseContextState = basePatch.contextState || response.contextState || {};
+  const baseAciContextState = basePatch.aciContextState || response.aciContextState || baseContextState || {};
+
+  const durableSelectedVehicle = {
+    ...(basePatch.selectedVehicle || {}),
+    ...selectedVehicle,
+  };
+
+  const contextState = {
+    ...baseContextState,
+    selectedVehicle: {
+      ...(baseContextState.selectedVehicle || {}),
+      ...durableSelectedVehicle,
+    },
+    anchors: {
+      ...(baseContextState.anchors || {}),
+      primaryVehicle: {
+        ...(baseContextState.anchors?.primaryVehicle || {}),
+        ...durableSelectedVehicle,
+      },
+    },
+  };
+
+  const aciContextState = {
+    ...baseAciContextState,
+    selectedVehicle: {
+      ...(baseAciContextState.selectedVehicle || {}),
+      ...durableSelectedVehicle,
+    },
+    anchors: {
+      ...(baseAciContextState.anchors || {}),
+      primaryVehicle: {
+        ...(baseAciContextState.anchors?.primaryVehicle || {}),
+        ...durableSelectedVehicle,
+      },
+    },
+  };
+
+  const contextPatch = {
+    ...basePatch,
+    selectedVehicle: durableSelectedVehicle,
+    anchorMake: basePatch.anchorMake || durableSelectedVehicle.make || durableSelectedVehicle.brand || "",
+    anchorModel: basePatch.anchorModel || durableSelectedVehicle.model || durableSelectedVehicle.fullModel || durableSelectedVehicle.displayName || "",
+    anchorCity: basePatch.anchorCity || durableSelectedVehicle.citySlug || durableSelectedVehicle.city || "",
+    contextState,
+    aciContextState,
+  };
+
+  return {
+    ...response,
+    selectedVehicle: response.selectedVehicle || durableSelectedVehicle,
+    contextPatch,
+    data: {
+      ...(response.data || {}),
+      selectedVehicle: response.data?.selectedVehicle || durableSelectedVehicle,
+      contextPatch: response.data?.contextPatch || contextPatch,
+      contextState: response.data?.contextState || contextState,
+      aciContextState: response.data?.aciContextState || aciContextState,
+    },
+    meta: {
+      ...(response.meta || {}),
+      selectedVehicle: response.meta?.selectedVehicle || durableSelectedVehicle,
+    },
+  };
+};
+
+
 const buildEligibilityContextWithExtractedBuyerContext = async ({
   message = "",
   context = {},
@@ -5896,8 +5997,15 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
     context,
     response: rawResponseForEligibility,
   });
-  const responseForEligibility = await attachRecommendationCandidateResolverEvidence(
+  const responseWithDurableSelectedVehicleContext = ensureDurableSelectedVehicleInResponse(
     enrichedEligibilityInput.response,
+    {
+      context: enrichedEligibilityInput.context,
+    },
+  );
+
+  const responseForEligibility = await attachRecommendationCandidateResolverEvidence(
+    responseWithDurableSelectedVehicleContext,
     {
       bridge,
       context: enrichedEligibilityInput.context,
