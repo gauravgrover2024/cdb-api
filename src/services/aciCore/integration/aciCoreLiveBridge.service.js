@@ -5741,7 +5741,7 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
     finalRecommendationEligibility.requestedFinalRecommendation === true;
 
   if (!envelope) {
-    if (!shouldAttachFinalRecommendationEligibility) return response;
+    if (!shouldAttachFinalRecommendationEligibility) return responseForEligibility;
 
     const responseWithFinalBlockedAnswer = applyFinalRecommendationBlockedAnswer(responseForEligibility, {
       eligibility: finalRecommendationEligibility,
@@ -5769,6 +5769,11 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
         bridge,
       })
     : responseForEligibility;
+
+  const enrichedBuyerContext = responseForEligibility.buyerContext || responseForEligibility.data?.buyerContext || {};
+  const enrichedBuyerGuidanceContext = responseForEligibility.buyerGuidanceContext || responseForEligibility.data?.buyerGuidanceContext || {};
+  const enrichedContextPatch = responseForEligibility.contextPatch || response.contextPatch || {};
+
   const data = {
     ...(responseWithFinalBlockedAnswer.data || {}),
     decisionPolicy,
@@ -5781,6 +5786,9 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
 
   return {
     ...responseWithFinalBlockedAnswer,
+    buyerContext: enrichedBuyerContext,
+    buyerGuidanceContext: enrichedBuyerGuidanceContext,
+    contextPatch: enrichedContextPatch,
     module: responseWithFinalBlockedAnswer.module || envelope.module,
     decisionPolicy,
     evidence: envelope.evidence,
@@ -5794,9 +5802,15 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
       ...(responseWithFinalBlockedAnswer.trace || {}),
       ...envelope.trace,
     },
-    data,
+    data: {
+      ...data,
+      buyerContext: enrichedBuyerContext,
+      buyerGuidanceContext: enrichedBuyerGuidanceContext,
+    },
     meta: {
       ...(responseWithFinalBlockedAnswer.meta || {}),
+      buyerContext: enrichedBuyerContext,
+      buyerGuidanceContext: enrichedBuyerGuidanceContext,
       decisionPolicy,
       evidenceStatus: envelope.evidence.evidenceStatus,
       evidenceConfidence: envelope.evidence.confidence,

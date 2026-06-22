@@ -100,6 +100,89 @@ const assertInputPresent = (inputStatus = {}, key = '', expectedPredicate = null
     assert(lower(buyerContext.familySizeOrOccupancyUse).includes('4'), 'response buyerContext family occupancy should be propagated');
     assert(lower(buyerContext.transmissionPreference).includes('automatic'), 'response buyerContext transmission should be propagated');
 
+    const nonFinalCases = [
+      {
+        message: 'Recommend automatic SUV for family city use under 18 lakh in Delhi',
+        expectedBudget: 1800000,
+        expectsCity: true,
+        expectsFamily: true,
+        expectsCityUse: true,
+        expectsAutomatic: true,
+      },
+      {
+        message: 'Best SUV under 20 lakh for family in Delhi',
+        expectedBudget: 2000000,
+        expectsCity: true,
+        expectsFamily: true,
+      },
+      {
+        message: 'Show me automatic cars under 15 lakh for city use in Delhi',
+        expectedBudget: 1500000,
+        expectsCity: true,
+        expectsCityUse: true,
+        expectsAutomatic: true,
+      },
+      {
+        message: 'Suggest safest SUVs under 20 lakh for family in Delhi',
+        expectedBudget: 2000000,
+        expectsCity: true,
+        expectsFamily: true,
+        expectsSafety: true,
+      },
+    ];
+
+    const nonFinalResults = [];
+
+    for (const testCase of nonFinalCases) {
+      const nonFinalResponse = await chatWithAgent({ message: testCase.message, context: {} });
+      const nonFinalBlob = JSON.stringify(nonFinalResponse || {});
+      const nonFinalEligibility = getEligibility(nonFinalResponse);
+      const nonFinalBuyerContext =
+        nonFinalResponse.buyerContext ||
+        nonFinalResponse.data?.buyerContext ||
+        nonFinalResponse.contextPatch?.buyerContext ||
+        nonFinalResponse.contextPatch?.contextState?.buyerContext ||
+        nonFinalResponse.meta?.buyerContext ||
+        {};
+
+      assert(!/final_recommendation_allowed/i.test(nonFinalBlob), `${testCase.message}: final_recommendation_allowed must not leak`);
+      if (nonFinalEligibility) {
+        assert.notStrictEqual(nonFinalEligibility.requestedFinalRecommendation, true, `${testCase.message}: should not be treated as final-choice request`);
+      }
+
+      assert.strictEqual(Number(nonFinalBuyerContext.budgetOrPriceCeiling), testCase.expectedBudget, `${testCase.message}: budget should be propagated`);
+
+      if (testCase.expectsCity) {
+        assert(lower(nonFinalBuyerContext.city || nonFinalBuyerContext.citySlug).includes('delhi'), `${testCase.message}: city should be propagated`);
+      }
+
+      if (testCase.expectsFamily) {
+        assert(lower(nonFinalBuyerContext.bodyPreferenceOrPrimaryUseCase).includes('family'), `${testCase.message}: family use should be propagated`);
+      }
+
+      if (testCase.expectsCityUse) {
+        assert(lower(nonFinalBuyerContext.bodyPreferenceOrPrimaryUseCase).includes('city'), `${testCase.message}: city use should be propagated`);
+      }
+
+      if (testCase.expectsAutomatic) {
+        assert(lower(nonFinalBuyerContext.transmissionPreference).includes('automatic'), `${testCase.message}: automatic preference should be propagated`);
+      }
+
+      if (testCase.expectsSafety) {
+        assert(lower(nonFinalBuyerContext.safetyPriority).includes('high'), `${testCase.message}: safety priority should be propagated`);
+      }
+
+      nonFinalResults.push({
+        message: testCase.message,
+        intent: nonFinalResponse.intent,
+        budgetOrPriceCeiling: nonFinalBuyerContext.budgetOrPriceCeiling,
+        city: nonFinalBuyerContext.city || nonFinalBuyerContext.citySlug,
+        bodyPreferenceOrPrimaryUseCase: nonFinalBuyerContext.bodyPreferenceOrPrimaryUseCase,
+        transmissionPreference: nonFinalBuyerContext.transmissionPreference,
+        safetyPriority: nonFinalBuyerContext.safetyPriority,
+      });
+    }
+
     console.log(JSON.stringify({
       suite: 'ACI buyer context propagation runtime smoke v1',
       ok: true,
@@ -112,6 +195,7 @@ const assertInputPresent = (inputStatus = {}, key = '', expectedPredicate = null
       presentInputs,
       missingInputs,
       normalizedBuyerInputs: buyerInput.normalizedBuyerInputs,
+      nonFinalBuyerContextResults: nonFinalResults,
     }, null, 2));
   } finally {
     await mongoose.disconnect();
