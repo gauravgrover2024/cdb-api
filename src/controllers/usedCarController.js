@@ -18,15 +18,39 @@ const getUsedCars = asyncHandler(async (req, res) => {
   if (transmission) query.transmission = { $regex: new RegExp(transmission.trim(), "i") };
   if (fuel_type) query.fuel_type = { $regex: new RegExp(fuel_type.trim(), "i") };
 
-  // General search query matching make, model or variant
+  // Smart multi-token search: "ertiga 2023" → model:ertiga AND year:2023
   if (q) {
-    const searchRegex = new RegExp(q.trim(), "i");
-    query.$or = [
-      { make: searchRegex },
-      { model: searchRegex },
-      { variant: searchRegex },
-      { model_generation: searchRegex }
-    ];
+    const tokens = q.trim().split(/\s+/).filter(Boolean);
+    const yearTokens = tokens.filter(
+      (t) => /^\d{4}$/.test(t) && Number(t) >= 1990 && Number(t) <= 2030
+    );
+    const textTokens = tokens.filter(
+      (t) => !(/^\d{4}$/.test(t) && Number(t) >= 1990 && Number(t) <= 2030)
+    );
+
+    const conditions = [];
+
+    for (const token of textTokens) {
+      const regex = new RegExp(token, "i");
+      conditions.push({
+        $or: [
+          { make: regex },
+          { model: regex },
+          { variant: regex },
+          { fuel_type: regex },
+          { transmission: regex },
+          { model_generation: regex },
+        ],
+      });
+    }
+
+    if (yearTokens.length > 0) {
+      conditions.push({ year: { $in: yearTokens.map(Number) } });
+    }
+
+    if (conditions.length > 0) {
+      query.$and = [...(query.$and || []), ...conditions];
+    }
   }
 
   const count = await UsedCar.countDocuments(query);
@@ -131,6 +155,12 @@ const deleteUsedCar = asyncHandler(async (req, res) => {
   });
 });
 
+const getUniqueYears = asyncHandler(async (req, res) => {
+  const years = await UsedCar.distinct("year");
+  years.sort((a, b) => b - a);
+  res.json({ success: true, data: years });
+});
+
 const getUniqueMakes = asyncHandler(async (req, res) => {
   const includeDiscontinued = req.query.includeDiscontinued === "true";
   const query = {};
@@ -217,6 +247,7 @@ export {
   createUsedCar,
   updateUsedCar,
   deleteUsedCar,
+  getUniqueYears,
   getUniqueMakes,
   getUniqueModels,
   getUniqueVariants,
