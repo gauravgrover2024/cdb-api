@@ -72,6 +72,7 @@ const GATES = {
     { id: 'buyer-context-propagation-smoke', cmd: 'npm run -s aci:decision:buyer-context-propagation:smoke' },
     { id: 'context-carry-colors-smoke', cmd: 'npm run -s aci:decision:context-carry-colors:smoke' },
     { id: 'recommendation-candidate-resolver-smoke', cmd: 'npm run -s aci:decision:recommendation-candidates:smoke' },
+    { id: 'candidate-evidence-readiness-smoke', cmd: 'npm run -s aci:decision:candidate-evidence-readiness:smoke' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },

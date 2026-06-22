@@ -172,7 +172,8 @@
     "aci:features:model-summary:build": "node src/scripts/aci-builds/buildAciVehicleModelFeatureSummaryV1.js",
     "aci:decision:buyer-context-propagation:smoke": "node src/scripts/aci-decision/smokeBuyerContextPropagationRuntimeV1.cjs",
     "aci:decision:recommendation-candidates:smoke": "node src/scripts/aci-decision/smokeRecommendationCandidateResolverRuntimeV1.cjs",
-    "aci:decision:context-carry-colors:smoke": "node src/scripts/aci-decision/smokeContextCarryVehicleColorsRuntimeV1.cjs"
+    "aci:decision:context-carry-colors:smoke": "node src/scripts/aci-decision/smokeContextCarryVehicleColorsRuntimeV1.cjs",
+    "aci:decision:candidate-evidence-readiness:smoke": "node src/scripts/aci-decision/smokeCandidateEvidenceReadinessRuntimeV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

@@ -5711,6 +5711,23 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
 
   if (!resolved?.ok || !Array.isArray(resolved.rows) || !resolved.rows.length) return response;
 
+  const {
+    buildCandidateEvidenceReadinessContract,
+    summarizeCandidateEvidenceReadiness,
+  } = await import("../candidates/aciCandidateEvidenceReadiness.service.js");
+
+  const candidateEvidenceReadiness = buildCandidateEvidenceReadinessContract({
+    rows: resolved.rows,
+    buyerContext,
+    bridge,
+    response,
+  });
+  const readinessRows =
+    Array.isArray(candidateEvidenceReadiness.rows) && candidateEvidenceReadiness.rows.length
+      ? candidateEvidenceReadiness.rows
+      : resolved.rows;
+  const candidateEvidenceReadinessSummary = summarizeCandidateEvidenceReadiness(candidateEvidenceReadiness);
+
   const sourceCollections = unionList(
     response.sourceCollections,
     response.data?.sourceCollections,
@@ -5736,14 +5753,16 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       totalCandidates: resolved.totalCandidates,
       finalRecommendationEnabled: false,
     },
+    candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
   };
 
   return {
     ...response,
-    rows: resolved.rows,
-    items: resolved.rows,
-    modelGroups: Array.isArray(response.modelGroups) ? resolved.rows : response.modelGroups,
-    previewModelGroups: Array.isArray(response.previewModelGroups) ? resolved.rows : response.previewModelGroups,
+    candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+    rows: readinessRows,
+    items: readinessRows,
+    modelGroups: Array.isArray(response.modelGroups) ? readinessRows : response.modelGroups,
+    previewModelGroups: Array.isArray(response.previewModelGroups) ? readinessRows : response.previewModelGroups,
     sourceCollections,
     sourceTransparency,
     contextPatch,
@@ -5757,13 +5776,14 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     },
     data: {
       ...(response.data || {}),
-      rows: resolved.rows,
-      items: resolved.rows,
-      modelGroups: Array.isArray(response.data?.modelGroups) ? resolved.rows : response.data?.modelGroups,
-      previewModelGroups: Array.isArray(response.data?.previewModelGroups) ? resolved.rows : response.data?.previewModelGroups,
+      rows: readinessRows,
+      items: readinessRows,
+      modelGroups: Array.isArray(response.data?.modelGroups) ? readinessRows : response.data?.modelGroups,
+      previewModelGroups: Array.isArray(response.data?.previewModelGroups) ? readinessRows : response.data?.previewModelGroups,
       sourceCollections,
       sourceTransparency,
       recommendationCandidateResolver: resolved,
+      candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
       evidence: {
         ...(response.data?.evidence || {}),
         evidenceStatus: resolved.evidenceStatus,
@@ -5785,6 +5805,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
         featureSummaryCount: resolved.featureSummaryCount,
         finalRecommendationEnabled: false,
       },
+      candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     },
     trace: {
       ...(response.trace || {}),
@@ -5794,6 +5815,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
         enrichedCount: resolved.enrichedCount,
         totalCandidates: resolved.totalCandidates,
       },
+      candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     },
   };
 };
