@@ -70,6 +70,7 @@ const GATES = {
     { id: 'final-composer-readiness-audit', cmd: 'npm run -s aci:decision:final-composer-readiness:audit' },
     { id: 'buyer-context-behavior-smoke', cmd: 'npm run -s aci:decision:buyer-context-behavior:smoke' },
     { id: 'buyer-context-propagation-smoke', cmd: 'npm run -s aci:decision:buyer-context-propagation:smoke' },
+    { id: 'recommendation-candidate-resolver-smoke', cmd: 'npm run -s aci:decision:recommendation-candidates:smoke' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },

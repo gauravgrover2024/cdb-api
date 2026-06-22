@@ -5629,6 +5629,176 @@ const getBuyerContextFromEligibilitySource = (source = {}) => {
   );
 };
 
+
+const isUnsupportedOrBlockedRecommendationResponse = (response = {}, bridge = {}) => {
+  const dataStatus = String(response.dataStatus || response.data?.dataStatus || response.meta?.dataStatus || "").toLowerCase();
+  const degradedMode = String(
+    response.degradedMode ||
+      response.data?.degradedMode ||
+      response.meta?.degradedMode ||
+      response.decisionPolicy?.degradedMode ||
+      "",
+  ).toLowerCase();
+
+  const answer = String(response.answer || response.data?.answer || "").toLowerCase();
+  const cityStatus = String(
+    response.cityStatus ||
+      response.data?.cityStatus ||
+      response.meta?.cityStatus ||
+      bridge.cityStatus ||
+      "",
+  ).toLowerCase();
+
+  return (
+    dataStatus === "unsupported_city" ||
+    dataStatus === "no_data" ||
+    dataStatus === "blocked" ||
+    degradedMode === "unsupported_city" ||
+    degradedMode.includes("unsupported_city") ||
+    cityStatus === "unsupported" ||
+    answer.includes("not supported") ||
+    answer.includes("unsupported city") ||
+    answer.includes("we currently support")
+  );
+};
+
+const isRecommendationCandidateResolverEligible = (response = {}, bridge = {}) => {
+  if (isUnsupportedOrBlockedRecommendationResponse(response, bridge)) return false;
+
+  const tool = bridge.tool || response.tool || response.meta?.responseTool || response.data?.provenance?.tool || "";
+  const intent = response.intent || response.data?.intent || "";
+  const canvasType = response.canvasType || response.data?.canvasType || "";
+  const dataStatus = String(response.dataStatus || response.data?.dataStatus || response.meta?.dataStatus || "").toLowerCase();
+
+  const looksLikeRecommendation =
+    tool === "vehicle_recommend" ||
+    tool === "vehicle_recommendation" ||
+    intent === "vehicle_recommendation" ||
+    canvasType === "recommendation_results_canvas";
+
+  if (!looksLikeRecommendation) return false;
+  if (dataStatus && dataStatus !== "available") return false;
+
+  const rows = getDecisionRuntimeRows(response);
+  return rows.length > 0;
+};
+
+const unionList = (...lists) => [...new Set(lists.flatMap((list) => Array.isArray(list) ? list : []).filter(Boolean))];
+
+const attachRecommendationCandidateResolverEvidence = async (response = {}, { bridge = {}, context = {} } = {}) => {
+  if (!isRecommendationCandidateResolverEligible(response, bridge)) return response;
+
+  const rows = getDecisionRuntimeRows(response);
+  if (!rows.length) return response;
+
+  const { buildRecommendationCandidateResolver } = await import("../candidates/aciRecommendationCandidateResolver.service.js");
+
+  const buyerContext =
+    response.buyerContext ||
+    response.data?.buyerContext ||
+    response.contextPatch?.buyerContext ||
+    response.contextPatch?.contextState?.buyerContext ||
+    context.buyerContext ||
+    context.contextState?.buyerContext ||
+    {};
+
+  const resolved = await buildRecommendationCandidateResolver({
+    rows,
+    buyerContext,
+    bridge,
+    limit: rows.length,
+  });
+
+  if (!resolved?.ok || !Array.isArray(resolved.rows) || !resolved.rows.length) return response;
+
+  const sourceCollections = unionList(
+    response.sourceCollections,
+    response.data?.sourceCollections,
+    response.meta?.sourceCollections,
+    response.sourceTransparency?.modulesChecked,
+    resolved.sourceCollections,
+  );
+
+  const sourceTransparency = {
+    ...(response.sourceTransparency || {}),
+    modulesChecked: sourceCollections,
+    matched: response.sourceTransparency?.matched ?? response.matched ?? resolved.totalCandidates,
+    dataSource: response.sourceTransparency?.dataSource || "aci_vehicle_read_models",
+    candidateResolver: resolved.version,
+  };
+
+  const contextPatch = {
+    ...(response.contextPatch || {}),
+    recommendationCandidateResolver: {
+      version: resolved.version,
+      evidenceStatus: resolved.evidenceStatus,
+      enrichedCount: resolved.enrichedCount,
+      totalCandidates: resolved.totalCandidates,
+      finalRecommendationEnabled: false,
+    },
+  };
+
+  return {
+    ...response,
+    rows: resolved.rows,
+    items: resolved.rows,
+    modelGroups: Array.isArray(response.modelGroups) ? resolved.rows : response.modelGroups,
+    previewModelGroups: Array.isArray(response.previewModelGroups) ? resolved.rows : response.previewModelGroups,
+    sourceCollections,
+    sourceTransparency,
+    contextPatch,
+    evidence: {
+      ...(response.evidence || {}),
+      evidenceStatus: resolved.evidenceStatus,
+      confidence: response.evidence?.confidence || "medium",
+      usableEvidenceCount: resolved.enrichedCount,
+      requiredEvidenceCount: Math.max(1, resolved.totalCandidates || resolved.rows.length),
+      sourceTransparency,
+    },
+    data: {
+      ...(response.data || {}),
+      rows: resolved.rows,
+      items: resolved.rows,
+      modelGroups: Array.isArray(response.data?.modelGroups) ? resolved.rows : response.data?.modelGroups,
+      previewModelGroups: Array.isArray(response.data?.previewModelGroups) ? resolved.rows : response.data?.previewModelGroups,
+      sourceCollections,
+      sourceTransparency,
+      recommendationCandidateResolver: resolved,
+      evidence: {
+        ...(response.data?.evidence || {}),
+        evidenceStatus: resolved.evidenceStatus,
+        confidence: response.data?.evidence?.confidence || "medium",
+        usableEvidenceCount: resolved.enrichedCount,
+        requiredEvidenceCount: Math.max(1, resolved.totalCandidates || resolved.rows.length),
+        sourceTransparency,
+      },
+    },
+    meta: {
+      ...(response.meta || {}),
+      sourceCollections,
+      recommendationCandidateResolver: {
+        version: resolved.version,
+        evidenceStatus: resolved.evidenceStatus,
+        enrichedCount: resolved.enrichedCount,
+        totalCandidates: resolved.totalCandidates,
+        scoreProfileCount: resolved.scoreProfileCount,
+        featureSummaryCount: resolved.featureSummaryCount,
+        finalRecommendationEnabled: false,
+      },
+    },
+    trace: {
+      ...(response.trace || {}),
+      recommendationCandidateResolver: {
+        version: resolved.version,
+        evidenceStatus: resolved.evidenceStatus,
+        enrichedCount: resolved.enrichedCount,
+        totalCandidates: resolved.totalCandidates,
+      },
+    },
+  };
+};
+
+
 const buildEligibilityContextWithExtractedBuyerContext = async ({
   message = "",
   context = {},
@@ -5726,7 +5896,13 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
     context,
     response: rawResponseForEligibility,
   });
-  const responseForEligibility = enrichedEligibilityInput.response;
+  const responseForEligibility = await attachRecommendationCandidateResolverEvidence(
+    enrichedEligibilityInput.response,
+    {
+      bridge,
+      context: enrichedEligibilityInput.context,
+    },
+  );
   const eligibilityContext = enrichedEligibilityInput.context;
   const envelope = buildDecisionRuntimeEnvelope({ response: responseForEligibility, bridge });
   const finalRecommendationEligibility = buildFinalRecommendationEligibilityRuntime({
