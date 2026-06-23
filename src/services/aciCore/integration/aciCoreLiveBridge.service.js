@@ -5712,12 +5712,29 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
   if (!resolved?.ok || !Array.isArray(resolved.rows) || !resolved.rows.length) return response;
 
   const {
+    buildCandidateDiagnosticRanking,
+    summarizeCandidateDiagnosticRanking,
+  } = await import("../candidates/aciCandidateDiagnosticRanking.service.js");
+
+  const candidateDiagnosticRanking = buildCandidateDiagnosticRanking({
+    rows: resolved.rows,
+    buyerContext,
+    bridge,
+    response,
+  });
+  const rankedRows =
+    Array.isArray(candidateDiagnosticRanking.rows) && candidateDiagnosticRanking.rows.length
+      ? candidateDiagnosticRanking.rows
+      : resolved.rows;
+  const candidateDiagnosticRankingSummary = summarizeCandidateDiagnosticRanking(candidateDiagnosticRanking);
+
+  const {
     buildCandidateEvidenceReadinessContract,
     summarizeCandidateEvidenceReadiness,
   } = await import("../candidates/aciCandidateEvidenceReadiness.service.js");
 
   const candidateEvidenceReadiness = buildCandidateEvidenceReadinessContract({
-    rows: resolved.rows,
+    rows: rankedRows,
     buyerContext,
     bridge,
     response,
@@ -5742,6 +5759,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     matched: response.sourceTransparency?.matched ?? response.matched ?? resolved.totalCandidates,
     dataSource: response.sourceTransparency?.dataSource || "aci_vehicle_read_models",
     candidateResolver: resolved.version,
+    candidateDiagnosticRanking: candidateDiagnosticRankingSummary.version,
   };
 
   const contextPatch = {
@@ -5753,11 +5771,13 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       totalCandidates: resolved.totalCandidates,
       finalRecommendationEnabled: false,
     },
+    candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
   };
 
   return {
     ...response,
+    candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     rows: readinessRows,
     items: readinessRows,
@@ -5783,6 +5803,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       sourceCollections,
       sourceTransparency,
       recommendationCandidateResolver: resolved,
+      candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
       evidence: {
         ...(response.data?.evidence || {}),
@@ -5805,6 +5826,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
         featureSummaryCount: resolved.featureSummaryCount,
         finalRecommendationEnabled: false,
       },
+      candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     },
     trace: {
@@ -5815,6 +5837,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
         enrichedCount: resolved.enrichedCount,
         totalCandidates: resolved.totalCandidates,
       },
+      candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     },
   };
