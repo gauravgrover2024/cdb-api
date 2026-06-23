@@ -85,6 +85,27 @@ const marketConfidenceValue = (band = '') => {
 const getMarketConfidence = (row = {}) =>
   asObject(row.candidateMarketConfidence || row.decisionCandidate?.marketConfidence);
 
+const activeMarketEligibilityValue = (eligibility = {}) => {
+  const band = lower(eligibility.activeMarketConfidenceBand || '');
+  if (eligibility.diagnosticUseAllowed === false) return -22;
+
+  switch (band) {
+    case 'strong':
+      return 3;
+    case 'good':
+      return 1;
+    case 'limited':
+      return -8;
+    case 'weak':
+      return -20;
+    default:
+      return -4;
+  }
+};
+
+const getActiveMarketEligibility = (row = {}) =>
+  asObject(row.candidateActiveMarketEligibility || row.decisionCandidate?.activeMarketEligibility);
+
 
 const highlightsText = (row = {}) =>
   joinText(
@@ -189,6 +210,22 @@ const scoreCandidate = ({ row = {}, index = 0, priorityFrame = {} } = {}) => {
     addContribution(contributions, 'marketConfidence', `market confidence ${marketBand}`, marketPoints, marketConfidence.strengths?.join('; '));
   } else if (marketPoints < 0) {
     tradeoffs.push(...asArray(marketConfidence.risks));
+  }
+
+  const activeMarketEligibility = getActiveMarketEligibility(row);
+  const activeMarketPoints = activeMarketEligibilityValue(activeMarketEligibility);
+  score += activeMarketPoints;
+
+  if (activeMarketPoints > 0) {
+    addContribution(
+      contributions,
+      'activeMarketEligibility',
+      `active-market diagnostic evidence ${activeMarketEligibility.activeMarketConfidenceBand}`,
+      activeMarketPoints,
+      activeMarketEligibility.status,
+    );
+  } else if (activeMarketPoints < 0) {
+    tradeoffs.push(...asArray(activeMarketEligibility.risks));
   }
 
   if (hasUsableEvidence(row)) {

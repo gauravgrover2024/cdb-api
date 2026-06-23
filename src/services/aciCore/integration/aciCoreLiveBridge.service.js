@@ -5730,12 +5730,30 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
   const candidateMarketConfidenceSummary = summarizeCandidateMarketConfidence(candidateMarketConfidence);
 
   const {
+    buildCandidateActiveMarketEligibility,
+    summarizeCandidateActiveMarketEligibility,
+  } = await import("../candidates/aciCandidateActiveMarketEligibility.service.js");
+
+  const candidateActiveMarketEligibility = buildCandidateActiveMarketEligibility({
+    rows: marketConfidenceRows,
+    buyerContext,
+    bridge,
+    response,
+  });
+  const activeMarketRows =
+    Array.isArray(candidateActiveMarketEligibility.rows) && candidateActiveMarketEligibility.rows.length
+      ? candidateActiveMarketEligibility.rows
+      : marketConfidenceRows;
+  const candidateActiveMarketEligibilitySummary =
+    summarizeCandidateActiveMarketEligibility(candidateActiveMarketEligibility);
+
+  const {
     buildCandidateDiagnosticRanking,
     summarizeCandidateDiagnosticRanking,
   } = await import("../candidates/aciCandidateDiagnosticRanking.service.js");
 
   const candidateDiagnosticRanking = buildCandidateDiagnosticRanking({
-    rows: marketConfidenceRows,
+    rows: activeMarketRows,
     buyerContext,
     bridge,
     response,
@@ -5778,6 +5796,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     dataSource: response.sourceTransparency?.dataSource || "aci_vehicle_read_models",
     candidateResolver: resolved.version,
     candidateMarketConfidence: candidateMarketConfidenceSummary.version,
+    candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary.version,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary.version,
   };
 
@@ -5791,6 +5810,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       finalRecommendationEnabled: false,
     },
     candidateMarketConfidence: candidateMarketConfidenceSummary,
+    candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
   };
@@ -5798,6 +5818,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
   return {
     ...response,
     candidateMarketConfidence: candidateMarketConfidenceSummary,
+    candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     rows: readinessRows,
@@ -5825,6 +5846,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       sourceTransparency,
       recommendationCandidateResolver: resolved,
       candidateMarketConfidence: candidateMarketConfidenceSummary,
+      candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
       evidence: {
@@ -5849,6 +5871,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
         finalRecommendationEnabled: false,
       },
       candidateMarketConfidence: candidateMarketConfidenceSummary,
+      candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     },
@@ -5861,6 +5884,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
         totalCandidates: resolved.totalCandidates,
       },
       candidateMarketConfidence: candidateMarketConfidenceSummary,
+      candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     },
