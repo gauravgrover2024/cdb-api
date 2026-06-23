@@ -67,6 +67,25 @@ const getSignalBand = (row = {}, key = '') => getSignal(row, key)?.band || '';
 
 const getSignalValue = (row = {}, key = '') => bandValue(getSignalBand(row, key));
 
+const marketConfidenceValue = (band = '') => {
+  switch (lower(band)) {
+    case 'strong':
+      return 8;
+    case 'good':
+      return 4;
+    case 'limited':
+      return -6;
+    case 'weak':
+      return -18;
+    default:
+      return -8;
+  }
+};
+
+const getMarketConfidence = (row = {}) =>
+  asObject(row.candidateMarketConfidence || row.decisionCandidate?.marketConfidence);
+
+
 const highlightsText = (row = {}) =>
   joinText(
     row.featureSignals?.highlights,
@@ -160,6 +179,17 @@ const scoreCandidate = ({ row = {}, index = 0, priorityFrame = {} } = {}) => {
   const contributions = [];
   const tradeoffs = [];
   let score = 0;
+
+  const marketConfidence = getMarketConfidence(row);
+  const marketBand = marketConfidence.confidenceBand || '';
+  const marketPoints = marketConfidenceValue(marketBand);
+
+  score += marketPoints;
+  if (marketPoints > 0) {
+    addContribution(contributions, 'marketConfidence', `market confidence ${marketBand}`, marketPoints, marketConfidence.strengths?.join('; '));
+  } else if (marketPoints < 0) {
+    tradeoffs.push(...asArray(marketConfidence.risks));
+  }
 
   if (hasUsableEvidence(row)) {
     score += 2;
