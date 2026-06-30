@@ -24,6 +24,7 @@ import usedCarRoutes from "./routes/usedCarRoutes.js";
 import usedCarMasterRoutes from "./routes/usedCarMasterRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
 import aiAgentRoutes from "./routes/aiAgent.routes.js";
+import homeLoanRoutes from "./routes/homeLoanRoutes.js";
 import {
   prewarmAciAssistRuntime,
   triggerAciAssistRuntimePrewarm,
@@ -129,6 +130,7 @@ app.use("/api/used-cars", usedCarRoutes);
 app.use("/api/used-cars-db", usedCarMasterRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/ai-agent", aiAgentRoutes);
+app.use("/api/home-loans", homeLoanRoutes);
 app.use("/media", express.static(path.join(__dirname, "../public/media")));
 
 // Health check
