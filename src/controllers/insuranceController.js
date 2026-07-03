@@ -1178,8 +1178,10 @@ export const getInsuranceCases = asyncHandler(async (req, res) => {
   const search = req.query.search ? String(req.query.search).trim() : "";
 
   const query = {};
-  if (search) {
-    const searchRegex = new RegExp(search, "i");
+  // Skip the $or regex scan for 1-character queries — they match almost every
+  // document and were the main cause of the dashboard search hanging on "loading".
+  if (search && search.length >= 2) {
+    const searchRegex = new RegExp(escapeRegex(search), "i");
     query.$or = [
       { caseId: searchRegex },
       { customerName: searchRegex },
@@ -1198,7 +1200,8 @@ export const getInsuranceCases = asyncHandler(async (req, res) => {
     .sort({ updatedAt: -1 })
     .allowDiskUse(true)
     .limit(limit)
-    .skip(skip);
+    .skip(skip)
+    .lean();
 
   res.json({ success: true, count, data: rows });
 });

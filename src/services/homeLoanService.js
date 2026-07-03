@@ -772,8 +772,20 @@ export async function updateHomeLoan(id, flatPayload, userId) {
 }
 
 export async function getHomeLoanById(id) {
+  const safeId = String(id || "").trim();
+  if (!safeId) return null;
+
+  // The view modal tries several candidate identifiers (loanId, loan_number,
+  // Mongo _id) in sequence, so this must resolve by whichever one matches
+  // instead of only _id — otherwise every non-ObjectId candidate throws a
+  // CastError and the modal has to fail its way through to the right one.
+  const orConditions = [{ loanId: safeId }, { applicationNumber: safeId }];
+  if (mongoose.Types.ObjectId.isValid(safeId)) {
+    orConditions.push({ _id: safeId });
+  }
+
   const loan = await HomeLoan.findOne({
-    _id: id,
+    $or: orConditions,
     deletedAt: null,
   });
   if (!loan) return null;
@@ -798,7 +810,9 @@ export async function listHomeLoans(query = {}) {
   if (currentStep) filter.currentStep = currentStep;
   if (typeOfLoan) filter.typeOfLoan = typeOfLoan;
   if (customerId) filter.customerId = customerId;
-  if (search) {
+  // Skip the $or regex scan for 1-character queries — they match almost every
+  // document and were the main cause of the dashboard search hanging on "loading".
+  if (search && String(search).trim().length >= 2) {
     filter.$or = [
       { customerName: { $regex: search, $options: "i" } },
       { applicationNumber: { $regex: search, $options: "i" } },
@@ -815,7 +829,8 @@ export async function listHomeLoans(query = {}) {
       .sort(sort)
       .skip(skip)
       .limit(Number(limit))
-      .select("-auditLog -workflowHistory"),
+      .select("-auditLog -workflowHistory")
+      .lean(),
     HomeLoan.countDocuments(filter),
   ]);
 
@@ -839,7 +854,23 @@ export async function softDeleteHomeLoan(id, userId) {
 
 export async function getDashboardStats() {
   const base = { deletedAt: null };
-  const [total, byStatus, byType] = await Promise.all([
+  const isDisbursedExpr = {
+    $or: [
+      { $eq: ["$status", "disbursed"] },
+      { $ifNull: ["$approval.disbursedDate", false] },
+      { $ifNull: ["$disbursement.date", false] },
+      { $gt: [{ $ifNull: ["$approval.loanAmountDisbursed", 0] }, 0] },
+    ],
+  };
+  const isApprovedExpr = {
+    $or: [
+      { $eq: ["$status", "approved"] },
+      { $gt: [{ $ifNull: ["$approval.loanAmountApproved", 0] }, 0] },
+      { $ifNull: ["$approval.approvalDate", false] },
+    ],
+  };
+
+  const [total, byStatus, byType, agg] = await Promise.all([
     HomeLoan.countDocuments(base),
     HomeLoan.aggregate([
       { $match: base },
@@ -849,8 +880,94 @@ export async function getDashboardStats() {
       { $match: base },
       { $group: { _id: "$typeOfLoan", count: { $sum: 1 } } },
     ]),
+    HomeLoan.aggregate([
+      { $match: base },
+      {
+        $addFields: {
+          __isDisbursed: isDisbursedExpr,
+          __isApproved: isApprovedExpr,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          pending: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$currentStep", "approval"] },
+                    { $eq: ["$__isApproved", false] },
+                    { $eq: ["$__isDisbursed", false] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          pendingDisbursal: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$__isApproved", true] },
+                    { $eq: ["$__isDisbursed", false] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          disbursed: {
+            $sum: { $cond: ["$__isDisbursed", 1, 0] },
+          },
+          totalBookValue: {
+            $sum: {
+              $cond: [
+                "$__isDisbursed",
+                {
+                  $ifNull: [
+                    "$approval.loanAmountDisbursed",
+                    { $ifNull: ["$disbursement.amount", 0] },
+                  ],
+                },
+                0,
+              ],
+            },
+          },
+          emiCapturedCount: {
+            $sum: {
+              $cond: [{ $gt: [{ $ifNull: ["$postFile.emiAmount", 0] }, 0] }, 1, 0],
+            },
+          },
+          regNoCapturedCount: {
+            $sum: {
+              $cond: [
+                { $gt: [{ $strLenCP: { $ifNull: ["$vehicle.regNo", ""] } }, 0] },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]),
   ]);
-  return { total, byStatus, byType };
+
+  const summary = agg[0] || {};
+  return {
+    total,
+    pending: summary.pending || 0,
+    pendingDisbursal: summary.pendingDisbursal || 0,
+    disbursed: summary.disbursed || 0,
+    totalBookValue: summary.totalBookValue || 0,
+    emiCapturedCount: summary.emiCapturedCount || 0,
+    regNoCapturedCount: summary.regNoCapturedCount || 0,
+    byStatus,
+    byType,
+  };
 }
 
 export async function saveBanksData(loanId, banksData) {
