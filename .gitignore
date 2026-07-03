@@ -54,3 +54,4 @@ src/scripts/recoverPostfileDocumentsFromR2.js
 
 # ACI eval runtime reports
 src/scripts/aci-evals/reports/*.json
+.claude-flow/

@@ -499,8 +499,7 @@ const homeLoanSchema = new Schema(
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
 
-homeLoanSchema.index({ applicationNumber: 1 });
-homeLoanSchema.index({ loanId: 1 });
+// applicationNumber and loanId already get an index from `unique: true` above.
 homeLoanSchema.index({ customerId: 1 });
 homeLoanSchema.index({ status: 1 });
 homeLoanSchema.index({ currentStep: 1 });
