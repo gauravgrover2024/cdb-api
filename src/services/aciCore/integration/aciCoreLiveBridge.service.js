@@ -4427,6 +4427,39 @@ const normalizeDiagnosticOnlyNotes = (answer = "") => {
 const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}, bridge = {} } = {}) => {
   if (eligibility?.requestedFinalRecommendation !== true) return response;
 
+  const existingDiagnosticShortlistComposer =
+    response.diagnosticShortlistComposer ||
+    response.data?.diagnosticShortlistComposer ||
+    response.meta?.diagnosticShortlistComposer ||
+    response.contextPatch?.diagnosticShortlistComposer ||
+    null;
+
+  const nextBuyerQuestion =
+    existingDiagnosticShortlistComposer?.buyerFacingQuestion ||
+    eligibility?.buyerInputClarification?.buyerFacingQuestions?.[0] ||
+    eligibility?.buyerInputClarification?.nextBestQuestion ||
+    null;
+
+  const hasDiagnosticShortlistComposer = Boolean(existingDiagnosticShortlistComposer?.answer);
+  const composerAnswerBase = cleanText(existingDiagnosticShortlistComposer?.answer || "");
+  const composerQuestionText = cleanText(nextBuyerQuestion?.question || "");
+  const composerAnswer =
+    hasDiagnosticShortlistComposer && composerQuestionText && !composerAnswerBase.includes(composerQuestionText)
+      ? cleanText(`${composerAnswerBase} Next best question: ${composerQuestionText}`)
+      : composerAnswerBase;
+
+  const diagnosticShortlistComposer = hasDiagnosticShortlistComposer
+    ? {
+        ...existingDiagnosticShortlistComposer,
+        title: existingDiagnosticShortlistComposer.title || "Diagnostic shortlist",
+        answer: composerAnswer,
+        buyerFacingQuestion: existingDiagnosticShortlistComposer.buyerFacingQuestion || nextBuyerQuestion || null,
+        canUseForFinalRecommendation: false,
+        finalRecommendationEnabled: false,
+        diagnosticOnly: true,
+      }
+    : null;
+
   const blockedAnswer = buildFinalRecommendationBlockedAnswer({ eligibility, bridge });
   const existingAnswer = normalizeDiagnosticOnlyNotes(String(
     response.answer ||
@@ -4444,11 +4477,17 @@ const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}
 
   const guidanceMode = eligibility.provisionalGuidanceMode || eligibility.buyerGuidanceContext?.guidanceMode || "";
   const effectiveShouldPreserveExisting = guidanceMode ? false : shouldPreserveExisting;
-  const answer = effectiveShouldPreserveExisting
-    ? `${blockedAnswer}\n\n${existingAnswer}`
-    : blockedAnswer;
+  const answer = hasDiagnosticShortlistComposer
+    ? diagnosticShortlistComposer.answer
+    : effectiveShouldPreserveExisting
+      ? `${blockedAnswer}\n\n${existingAnswer}`
+      : blockedAnswer;
   const decisionScope = eligibility.buyerGuidanceContext?.decisionEvidencePack?.scope || "";
-  const guidanceTitle = guidanceMode ? "Practical guidance" : "Need one detail";
+  const guidanceTitle = hasDiagnosticShortlistComposer
+    ? diagnosticShortlistComposer.title
+    : guidanceMode
+      ? "Practical guidance"
+      : "Need one detail";
 
   const finalBlockedUx = {
     status: guidanceMode ? "provisional_buyer_guidance" : "final_recommendation_blocked",
@@ -4468,20 +4507,27 @@ const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}
 
   return {
     ...response,
-    title: response.title === "Need one detail" || guidanceMode ? guidanceTitle : response.title,
+    title: response.title === "Need one detail" || guidanceMode || hasDiagnosticShortlistComposer ? guidanceTitle : response.title,
     answer,
     clarification: response.clarification || answer,
     finalBlockedUx,
+    ...(diagnosticShortlistComposer ? { diagnosticShortlistComposer } : {}),
     data: {
       ...(response.data || {}),
-      title: response.data?.title === "Need one detail" || guidanceMode ? guidanceTitle : response.data?.title,
+      title: response.data?.title === "Need one detail" || guidanceMode || hasDiagnosticShortlistComposer ? guidanceTitle : response.data?.title,
       answer,
       clarification: response.data?.clarification || answer,
       finalBlockedUx,
+      ...(diagnosticShortlistComposer ? { diagnosticShortlistComposer } : {}),
     },
     meta: {
       ...(response.meta || {}),
       finalBlockedUx,
+      ...(diagnosticShortlistComposer ? { diagnosticShortlistComposer } : {}),
+    },
+    contextPatch: {
+      ...(response.contextPatch || {}),
+      ...(diagnosticShortlistComposer ? { diagnosticShortlistComposer } : {}),
     },
   };
 };
@@ -5781,6 +5827,33 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       : resolved.rows;
   const candidateEvidenceReadinessSummary = summarizeCandidateEvidenceReadiness(candidateEvidenceReadiness);
 
+  const finalEligibilityForComposer =
+    response.finalRecommendationEligibility ||
+    response.meta?.finalRecommendationEligibility ||
+    response.data?.finalRecommendationEligibility ||
+    null;
+  const buyerInputClarificationForComposer =
+    response.buyerInputClarification ||
+    response.meta?.buyerInputClarification ||
+    response.data?.buyerInputClarification ||
+    finalEligibilityForComposer?.buyerInputClarification ||
+    null;
+
+  const {
+    buildDiagnosticShortlistComposer,
+  } = await import("../candidates/aciDiagnosticShortlistComposer.service.js");
+
+  const diagnosticShortlistComposer = buildDiagnosticShortlistComposer({
+    response,
+    rows: readinessRows,
+    buyerContext,
+    finalEligibility: finalEligibilityForComposer,
+    buyerInputClarification: buyerInputClarificationForComposer,
+    candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
+    candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+    candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+  });
+
   const sourceCollections = unionList(
     response.sourceCollections,
     response.data?.sourceCollections,
@@ -5798,6 +5871,8 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     candidateMarketConfidence: candidateMarketConfidenceSummary.version,
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary.version,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary.version,
+    candidateEvidenceReadiness: candidateEvidenceReadinessSummary.version,
+    diagnosticShortlistComposer: diagnosticShortlistComposer.version,
   };
 
   const contextPatch = {
@@ -5813,14 +5888,18 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+    diagnosticShortlistComposer,
   };
 
   return {
     ...response,
+    title: diagnosticShortlistComposer.title || response.title,
+    answer: diagnosticShortlistComposer.answer || response.answer,
     candidateMarketConfidence: candidateMarketConfidenceSummary,
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+    diagnosticShortlistComposer,
     rows: readinessRows,
     items: readinessRows,
     modelGroups: Array.isArray(response.modelGroups) ? readinessRows : response.modelGroups,
@@ -5844,11 +5923,14 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       previewModelGroups: Array.isArray(response.data?.previewModelGroups) ? readinessRows : response.data?.previewModelGroups,
       sourceCollections,
       sourceTransparency,
+      title: diagnosticShortlistComposer.title || response.data?.title || response.title,
+      answer: diagnosticShortlistComposer.answer || response.data?.answer || response.answer,
       recommendationCandidateResolver: resolved,
       candidateMarketConfidence: candidateMarketConfidenceSummary,
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+    diagnosticShortlistComposer,
       evidence: {
         ...(response.data?.evidence || {}),
         evidenceStatus: resolved.evidenceStatus,
@@ -5874,6 +5956,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+    diagnosticShortlistComposer,
     },
     trace: {
       ...(response.trace || {}),
@@ -5887,6 +5970,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+    diagnosticShortlistComposer,
     },
   };
 };
@@ -6082,6 +6166,44 @@ const buildEligibilityContextWithExtractedBuyerContext = async ({
 };
 
 
+
+const sealDiagnosticShortlistComposerForBuyer = (response = {}) => {
+  const composer =
+    response.diagnosticShortlistComposer ||
+    response.data?.diagnosticShortlistComposer ||
+    response.meta?.diagnosticShortlistComposer ||
+    response.contextPatch?.diagnosticShortlistComposer ||
+    null;
+
+  if (!composer?.answer) return response;
+
+  const title = composer.title || response.title || response.data?.title || "Diagnostic shortlist";
+  const answer = composer.answer;
+
+  return {
+    ...response,
+    title,
+    answer,
+    clarification: response.clarification || answer,
+    diagnosticShortlistComposer: composer,
+    data: {
+      ...(response.data || {}),
+      title,
+      answer,
+      clarification: response.data?.clarification || answer,
+      diagnosticShortlistComposer: composer,
+    },
+    meta: {
+      ...(response.meta || {}),
+      diagnosticShortlistComposer: composer,
+    },
+    contextPatch: {
+      ...(response.contextPatch || {}),
+      diagnosticShortlistComposer: composer,
+    },
+  };
+};
+
 const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, context = {} } = {}) => {
   const messageForEligibility = bridge.effectiveMessage || bridge.originalMessage || "";
   const rawResponseForEligibility = await buildHydratedFinalChoiceResponse(response, { bridge, context });
@@ -6118,14 +6240,14 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
     finalRecommendationEligibility.requestedFinalRecommendation === true;
 
   if (!envelope) {
-    if (!shouldAttachFinalRecommendationEligibility) return responseForEligibility;
+    if (!shouldAttachFinalRecommendationEligibility) return sealDiagnosticShortlistComposerForBuyer(responseForEligibility);
 
     const responseWithFinalBlockedAnswer = applyFinalRecommendationBlockedAnswer(responseForEligibility, {
       eligibility: finalRecommendationEligibility,
       bridge,
     });
 
-    return {
+    return sealDiagnosticShortlistComposerForBuyer({
       ...responseWithFinalBlockedAnswer,
       finalRecommendationEligibility,
       data: {
@@ -6136,7 +6258,7 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
         ...(responseWithFinalBlockedAnswer.meta || {}),
         finalRecommendationEligibility,
       },
-    };
+    });
   }
 
   const decisionPolicy = envelope.decisionPolicy;
@@ -6161,7 +6283,7 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
     ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
   };
 
-  return {
+  return sealDiagnosticShortlistComposerForBuyer({
     ...responseWithFinalBlockedAnswer,
     buyerContext: enrichedBuyerContext,
     buyerGuidanceContext: enrichedBuyerGuidanceContext,
@@ -6195,7 +6317,7 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
       degradedMode: envelope.degradedMode,
       ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
     },
-  };
+  });
 };
 
 const buildScoreValueLookupOverride = ({

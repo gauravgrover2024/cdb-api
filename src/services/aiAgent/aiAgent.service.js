@@ -13,6 +13,46 @@ import {
   maybeRunAciPreBridgeMultiFeatureAnswer,
 } from "./aiAgent.earlyFeatureGate.js";
 
+const sealDiagnosticShortlistComposerAtRoot = (response = {}) => {
+  if (!response || typeof response !== "object") return response;
+
+  const composer =
+    response.diagnosticShortlistComposer ||
+    response.data?.diagnosticShortlistComposer ||
+    response.meta?.diagnosticShortlistComposer ||
+    response.contextPatch?.diagnosticShortlistComposer ||
+    null;
+
+  if (!composer?.answer) return response;
+
+  const title = composer.title || response.title || response.data?.title || "Diagnostic shortlist";
+  const answer = composer.answer;
+
+  return {
+    ...response,
+    title,
+    answer,
+    clarification: response.clarification || answer,
+    diagnosticShortlistComposer: composer,
+    data: {
+      ...(response.data || {}),
+      title,
+      answer,
+      clarification: response.data?.clarification || answer,
+      diagnosticShortlistComposer: composer,
+    },
+    meta: {
+      ...(response.meta || {}),
+      diagnosticShortlistComposer: composer,
+    },
+    contextPatch: {
+      ...(response.contextPatch || {}),
+      diagnosticShortlistComposer: composer,
+    },
+  };
+};
+
+
 import {
   makeUnavailablePlan,
   sanitizePlannerPlan,
@@ -748,9 +788,11 @@ export const chatWithAgent = async (...args) => {
     hydrateModelEntity: hydrateAciExplicitModelEntityFromReadModel,
   });
 
-  return normalizeAciServiceResponseContract(normalized, {
+  const serviceContractResponse = normalizeAciServiceResponseContract(normalized, {
     startedAt,
   });
+
+  return sealDiagnosticShortlistComposerAtRoot(serviceContractResponse);
 };
 
 export const chatWithAciAssist = chatWithAgent;
