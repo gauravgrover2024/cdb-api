@@ -177,7 +177,8 @@
     "aci:decision:candidate-ranking:smoke": "node src/scripts/aci-decision/smokeCandidateDiagnosticRankingRuntimeV1.cjs",
     "aci:decision:candidate-market-confidence:smoke": "node src/scripts/aci-decision/smokeCandidateMarketConfidenceRuntimeV1.cjs",
     "aci:decision:candidate-active-market:smoke": "node src/scripts/aci-decision/smokeCandidateActiveMarketEligibilityRuntimeV1.cjs",
-    "aci:decision:diagnostic-shortlist-composer:smoke": "node src/scripts/aci-decision/smokeDiagnosticShortlistComposerRuntimeV1.cjs"
+    "aci:decision:diagnostic-shortlist-composer:smoke": "node src/scripts/aci-decision/smokeDiagnosticShortlistComposerRuntimeV1.cjs",
+    "aci:decision:candidate-source-provenance:smoke": "node src/scripts/aci-decision/smokeCandidateSourceProvenanceRuntimeV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

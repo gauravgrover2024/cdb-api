@@ -7,6 +7,7 @@ import { runAciUnderstandingEngine } from "../understanding/aciUnderstandingEngi
 import { normalizeAciBuyerLanguage } from "../understanding/aciLanguageNormalization.service.js";
 import mongoose from "mongoose";
 import resolveVehicleAlias from "../context/aciVehicleAliasRegistry.service.js";
+import { evaluateCandidateSourceProvenance } from "../candidates/aciCandidateSourceProvenance.service.js";
 
 import { buildLegacyPlanFromAciMeaningFrame } from "./aciCoreToLegacyPlan.adapter.js";
 import { executeAciPlannerPlan } from "../../aiAgent/aiAgent.executor.js";
@@ -5798,8 +5799,18 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     summarizeCandidateDiagnosticRanking,
   } = await import("../candidates/aciCandidateDiagnosticRanking.service.js");
 
-  const candidateDiagnosticRanking = buildCandidateDiagnosticRanking({
+const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance({
+    response,
     rows: activeMarketRows,
+    buyerContext,
+  });
+
+  const sourceProvenanceRows = Array.isArray(candidateSourceProvenanceSummary?.rows)
+    ? candidateSourceProvenanceSummary.rows
+    : activeMarketRows;
+
+    const candidateDiagnosticRanking = buildCandidateDiagnosticRanking({
+    rows: sourceProvenanceRows,
     buyerContext,
     bridge,
     response,
@@ -5852,6 +5863,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+    candidateSourceProvenance: candidateSourceProvenanceSummary,
   });
 
   const sourceCollections = unionList(
@@ -5886,6 +5898,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     },
     candidateMarketConfidence: candidateMarketConfidenceSummary,
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+    candidateSourceProvenance: candidateSourceProvenanceSummary,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     diagnosticShortlistComposer,
@@ -5897,6 +5910,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     answer: diagnosticShortlistComposer.answer || response.answer,
     candidateMarketConfidence: candidateMarketConfidenceSummary,
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+    candidateSourceProvenance: candidateSourceProvenanceSummary,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     diagnosticShortlistComposer,
@@ -5928,6 +5942,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       recommendationCandidateResolver: resolved,
       candidateMarketConfidence: candidateMarketConfidenceSummary,
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+      candidateSourceProvenance: candidateSourceProvenanceSummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     diagnosticShortlistComposer,
@@ -5954,6 +5969,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       },
       candidateMarketConfidence: candidateMarketConfidenceSummary,
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+      candidateSourceProvenance: candidateSourceProvenanceSummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     diagnosticShortlistComposer,
@@ -5968,6 +5984,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       },
       candidateMarketConfidence: candidateMarketConfidenceSummary,
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+      candidateSourceProvenance: candidateSourceProvenanceSummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     diagnosticShortlistComposer,
