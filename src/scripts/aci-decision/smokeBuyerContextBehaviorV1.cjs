@@ -706,8 +706,7 @@ const runLiveBridgeCautionSmoke = async () => {
 
   await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 60000 });
   try {
-    const results = [];
-    for (const testCase of liveCases) {
+    const results = await Promise.all(liveCases.map(async (testCase) => {
       const response = await runAciCoreLiveBridge({
         message: testCase.message,
         context: {},
@@ -746,7 +745,7 @@ const runLiveBridgeCautionSmoke = async () => {
       const diagnosticNoteCount = (answer.match(/This score view is diagnostic-only|This is diagnostic-only module scoring|This is diagnostic-only, not a final recommendation|Treat this as diagnostic-only guidance/gi) || []).length;
       assert(diagnosticNoteCount <= 1, `${testCase.id}: duplicate diagnostic-only notes leaked: ${answer}`);
 
-      results.push({
+      return {
         id: testCase.id,
         message: testCase.message,
         status: ux.status,
@@ -754,8 +753,8 @@ const runLiveBridgeCautionSmoke = async () => {
         finalRecommendationEnabled: eligibility.finalRecommendationEnabled,
         evidenceSources: eligibility.buyerGuidanceContext?.decisionEvidencePack?.evidenceSources || [],
         answerPreview: answer.slice(0, 320),
-      });
-    }
+      };
+    }));
 
     return {
       skipped: false,
@@ -771,8 +770,7 @@ const runLiveBridgeCautionSmoke = async () => {
 (async () => {
   auditRuntimeHardcoding();
 
-  const results = [];
-  for (const testCase of CASES) {
+  const results = await Promise.all(CASES.map(async (testCase) => {
     const result = await renderGuidance(testCase);
     assertBuyerSafe({ id: testCase.id, result, expectedScope: testCase.expectedScope });
     if (testCase.id === 'live-maruti-make') {
@@ -799,7 +797,7 @@ const runLiveBridgeCautionSmoke = async () => {
 
     if (testCase.assertText) testCase.assertText(result.text, result.eligibility.buyerGuidanceContext);
 
-    results.push({
+    return {
       id: testCase.id,
       message: testCase.message,
       scope: result.eligibility.buyerGuidanceContext.decisionEvidencePack.scope,
@@ -811,16 +809,15 @@ const runLiveBridgeCautionSmoke = async () => {
       variantId: result.rendered.variantId,
       evidenceSources: result.eligibility.buyerGuidanceContext.decisionEvidencePack.evidenceSources,
       answerPreview: result.text.slice(0, 360),
-    });
-  }
+    };
+  }));
 
-  const proxyResults = [];
-  for (const testCase of LIVE_PROXY_CASES) {
+  const proxyResults = await Promise.all(LIVE_PROXY_CASES.map(async (testCase) => {
     const result = await renderGuidance(testCase);
     assertBuyerSafe({ id: testCase.id, result, expectedScope: testCase.expectedScope });
     if (testCase.assertText) testCase.assertText(result.text, result.eligibility.buyerGuidanceContext);
 
-    proxyResults.push({
+    return {
       id: testCase.id,
       message: testCase.message,
       scope: result.eligibility.buyerGuidanceContext.decisionEvidencePack.scope,
@@ -829,8 +826,8 @@ const runLiveBridgeCautionSmoke = async () => {
       templateKey: result.rendered.templateKey,
       variantId: result.rendered.variantId,
       answerPreview: result.text.slice(0, 360),
-    });
-  }
+    };
+  }));
 
   const liveBridge = await runLiveBridgeCautionSmoke();
 
