@@ -123,8 +123,38 @@ function buildDiagnosticShortlistComposer({
   candidateEvidenceReadiness = null,
   candidateActiveMarketEligibility = null,
 } = {}) {
+  const explicitRowsProvided = Array.isArray(rows);
   const inputRows = getRows({ rows, response });
   const topRows = inputRows.slice(0, 3);
+
+  if (explicitRowsProvided && inputRows.length === 0) {
+    const scope = buyerContextSummary({ buyerContext, finalEligibility: asObject(finalEligibility), response });
+    const answerParts = [
+      "I do not have enough verified current data to create a diagnostic shortlist from these candidates.",
+      scope ? `Scope: ${scope}.` : "",
+      "Please share another model, budget, city, or requirement so I can check current database-backed options.",
+    ].filter(Boolean);
+
+    return {
+      version: "aci_diagnostic_shortlist_composer_v1",
+      status: "blocked_no_verified_candidates",
+      title: "No verified diagnostic shortlist",
+      answer: answerParts.join(" "),
+      topModels: [],
+      limitations: ["no source-provenance-verified candidates available for diagnostic shortlist"],
+      buyerFacingQuestion:
+        "Which city, budget, and body type should I check for current database-backed options?",
+      requestedFinalRecommendation: false,
+      finalRecommendationEnabled: false,
+      canUseForDiagnosticShortlist: false,
+      canUseForFinalRecommendation: false,
+      safety: {
+        hasUnsafeFinalLanguage: false,
+        hasInternalLeakLanguage: false,
+      },
+      renderOnly: ["answer", "rows", "buyerFacingQuestion"],
+    };
+  }
   const nextQuestion = getNextBestQuestion({
     finalEligibility: asObject(finalEligibility),
     buyerInputClarification: asObject(buyerInputClarification),

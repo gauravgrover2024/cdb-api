@@ -48,6 +48,68 @@ const buyerContext = {
 const fakeModelKeys = new Set(fakeRows.map((row) => row.modelKey));
 const fakeNames = fakeRows.map((row) => row.fullModel.toLowerCase());
 
+
+const runPipeline = async ({
+  rows,
+  buyerContext,
+  evaluateCandidateSourceProvenance,
+  filterDiagnosticSourceProvenanceRows,
+  buildCandidateDiagnosticRanking,
+  summarizeCandidateDiagnosticRanking,
+  buildCandidateEvidenceReadinessContract,
+  summarizeCandidateEvidenceReadiness,
+  buildDiagnosticShortlistComposer,
+  response = {},
+}) => {
+  const sourceSummary = await evaluateCandidateSourceProvenance({
+    rows,
+    buyerContext,
+  });
+
+  const sourceRows = Array.isArray(sourceSummary.rows) ? sourceSummary.rows : [];
+  const filteredRows = filterDiagnosticSourceProvenanceRows(sourceRows);
+
+  const ranking = buildCandidateDiagnosticRanking({
+    rows: filteredRows,
+    buyerContext,
+    bridge: {},
+    response,
+  });
+
+  const rankedRows = Array.isArray(ranking.rows) ? ranking.rows : [];
+
+  const readiness = buildCandidateEvidenceReadinessContract({
+    rows: rankedRows,
+    buyerContext,
+    bridge: {},
+    response,
+  });
+
+  const readinessRows = Array.isArray(readiness.rows) ? readiness.rows : [];
+  const rankingSummary = summarizeCandidateDiagnosticRanking(ranking);
+  const readinessSummary = summarizeCandidateEvidenceReadiness(readiness);
+
+  const composer = buildDiagnosticShortlistComposer({
+    response,
+    rows: readinessRows,
+    buyerContext,
+    candidateDiagnosticRanking: rankingSummary,
+    candidateEvidenceReadiness: readinessSummary,
+    candidateSourceProvenance: sourceSummary,
+  });
+
+  return {
+    sourceSummary,
+    sourceRows,
+    filteredRows,
+    ranking,
+    rankedRows,
+    readiness,
+    readinessRows,
+    composer,
+  };
+};
+
 const rowView = (row = {}) => ({
   model: row.fullModel || row.displayName || row.model,
   modelKey: row.modelKey,
@@ -74,44 +136,48 @@ const main = async () => {
 
   await connectDB();
 
-  const sourceSummary = await evaluateCandidateSourceProvenance({
+  const mixedPipeline = await runPipeline({
     rows: [...knownRows, ...fakeRows],
     buyerContext,
+    evaluateCandidateSourceProvenance,
+    filterDiagnosticSourceProvenanceRows,
+    buildCandidateDiagnosticRanking,
+    summarizeCandidateDiagnosticRanking,
+    buildCandidateEvidenceReadinessContract,
+    summarizeCandidateEvidenceReadiness,
+    buildDiagnosticShortlistComposer,
   });
 
-  const sourceRows = Array.isArray(sourceSummary.rows) ? sourceSummary.rows : [];
-  const filteredRows = filterDiagnosticSourceProvenanceRows(sourceRows);
-
-  const ranking = buildCandidateDiagnosticRanking({
-    rows: filteredRows,
+  const allWeakPipeline = await runPipeline({
+    rows: fakeRows,
     buyerContext,
-    bridge: {},
-    response: {},
+    evaluateCandidateSourceProvenance,
+    filterDiagnosticSourceProvenanceRows,
+    buildCandidateDiagnosticRanking,
+    summarizeCandidateDiagnosticRanking,
+    buildCandidateEvidenceReadinessContract,
+    summarizeCandidateEvidenceReadiness,
+    buildDiagnosticShortlistComposer,
+    response: {
+      rows: fakeRows,
+      data: {
+        rows: fakeRows,
+      },
+      answer: "Fallback should not be used for Imaginary Phantom X or Madeup Rocket SUV.",
+    },
   });
 
-  const rankedRows = Array.isArray(ranking.rows) ? ranking.rows : [];
-
-  const readiness = buildCandidateEvidenceReadinessContract({
-    rows: rankedRows,
-    buyerContext,
-    bridge: {},
-    response: {},
-  });
-
-  const readinessRows = Array.isArray(readiness.rows) ? readiness.rows : [];
-  const rankingSummary = summarizeCandidateDiagnosticRanking(ranking);
-  const readinessSummary = summarizeCandidateEvidenceReadiness(readiness);
-
-  const composer = buildDiagnosticShortlistComposer({
-    response: {},
-    rows: readinessRows,
-    buyerContext,
-    candidateDiagnosticRanking: rankingSummary,
-    candidateEvidenceReadiness: readinessSummary,
-    candidateSourceProvenance: sourceSummary,
-  });
+  const {
+    sourceSummary,
+    sourceRows,
+    filteredRows,
+    rankedRows,
+    readinessRows,
+    composer,
+  } = mixedPipeline;
 
   const answer = String(composer.answer || "").toLowerCase();
+  const allWeakAnswer = String(allWeakPipeline.composer.answer || "").toLowerCase();
 
   const result = {
     suite: "ACI candidate source provenance downstream guard smoke v1",
@@ -133,6 +199,27 @@ const main = async () => {
       answer: composer.answer,
       topModels: composer.topModels || [],
       safety: composer.safety || {},
+    },
+    allWeakCase: {
+      sourceSummary: {
+        candidateCount: allWeakPipeline.sourceSummary.candidateCount,
+        goodCount: allWeakPipeline.sourceSummary.goodCount,
+        weakCount: allWeakPipeline.sourceSummary.weakCount,
+        diagnosticAllowedCount: allWeakPipeline.sourceSummary.diagnosticAllowedCount,
+        finalEligibleCount: allWeakPipeline.sourceSummary.finalEligibleCount,
+        finalRecommendationEnabled: allWeakPipeline.sourceSummary.finalRecommendationEnabled,
+      },
+      sourceRows: allWeakPipeline.sourceRows.map(rowView),
+      filteredRows: allWeakPipeline.filteredRows.map(rowView),
+      rankedRows: allWeakPipeline.rankedRows.map(rowView),
+      readinessRows: allWeakPipeline.readinessRows.map(rowView),
+      composer: {
+        status: allWeakPipeline.composer.status,
+        title: allWeakPipeline.composer.title,
+        answer: allWeakPipeline.composer.answer,
+        topModels: allWeakPipeline.composer.topModels || [],
+        safety: allWeakPipeline.composer.safety || {},
+      },
     },
     ok: true,
     failReasons: [],
@@ -158,6 +245,40 @@ const main = async () => {
   }
 
   if (composer.safety?.hasUnsafeFinalLanguage) result.failReasons.push("composer_unsafe_final_language");
+
+  if (allWeakPipeline.sourceSummary.goodCount !== 0) {
+    result.failReasons.push(`all_weak_expected_0_good_got_${allWeakPipeline.sourceSummary.goodCount}`);
+  }
+
+  if (allWeakPipeline.sourceSummary.weakCount !== fakeRows.length) {
+    result.failReasons.push(`all_weak_expected_${fakeRows.length}_weak_got_${allWeakPipeline.sourceSummary.weakCount}`);
+  }
+
+  if (allWeakPipeline.filteredRows.length !== 0) {
+    result.failReasons.push(`all_weak_filtered_rows_expected_0_got_${allWeakPipeline.filteredRows.length}`);
+  }
+
+  if (allWeakPipeline.rankedRows.length !== 0) {
+    result.failReasons.push(`all_weak_ranked_rows_expected_0_got_${allWeakPipeline.rankedRows.length}`);
+  }
+
+  if (allWeakPipeline.readinessRows.length !== 0) {
+    result.failReasons.push(`all_weak_readiness_rows_expected_0_got_${allWeakPipeline.readinessRows.length}`);
+  }
+
+  if (Array.isArray(allWeakPipeline.composer.topModels) && allWeakPipeline.composer.topModels.length > 0) {
+    result.failReasons.push(`all_weak_composer_top_models_expected_0_got_${allWeakPipeline.composer.topModels.length}`);
+  }
+
+  for (const fakeName of fakeNames) {
+    if (allWeakAnswer.includes(fakeName)) {
+      result.failReasons.push(`${fakeName}_leaked_into_all_weak_composer_answer`);
+    }
+  }
+
+  if (allWeakPipeline.composer.safety?.hasUnsafeFinalLanguage) {
+    result.failReasons.push("all_weak_composer_unsafe_final_language");
+  }
 
   result.ok = result.failReasons.length === 0;
 
