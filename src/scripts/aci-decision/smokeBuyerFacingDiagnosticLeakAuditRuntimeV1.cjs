@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+require('dotenv').config();
+
 const assert = require('assert');
 
 const FORBIDDEN_VISIBLE_PATTERNS = [
