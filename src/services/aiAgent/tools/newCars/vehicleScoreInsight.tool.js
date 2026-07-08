@@ -954,20 +954,20 @@ const buildVariantUpgradeInsightLine = ({ baseInsight, targetInsight } = {}) => 
     riskDeltaPhrase("regret risk", regretDelta),
   ].filter(Boolean);
 
-  let verdict = "";
+  const diagnosticParts = [];
 
   if (Number.isFinite(featureDelta) && Number.isFinite(valueDelta) && featureDelta > 3 && valueDelta < -8) {
-    verdict = `${targetName} gives you more equipment than ${baseName}, but the value score drops sharply.`;
+    diagnosticParts.push(`${targetName} gives you more equipment than ${baseName}, but the same-family value signal drops sharply.`);
   } else if (Number.isFinite(featureDelta) && featureDelta > 3) {
-    verdict = `${targetName} gives you a clearer equipment upgrade over ${baseName}.`;
+    diagnosticParts.push(`${targetName} shows a clearer equipment-upgrade signal over ${baseName}.`);
   } else if (Number.isFinite(valueDelta) && valueDelta < -8) {
-    verdict = `${targetName} is weaker value than ${baseName}; choose it only if the specific extras matter to you.`;
+    diagnosticParts.push(`${targetName} has a weaker same-family value signal than ${baseName}; treat the extra equipment as the main reason to continue comparing it.`);
   } else {
-    verdict = `${targetName} and ${baseName} are close on diagnostic module scores.`;
+    diagnosticParts.push(`${targetName} and ${baseName} are close on diagnostic module signals.`);
   }
 
   if (Number.isFinite(priceDelta) && priceDelta > 0) {
-    verdict += ` The ex-showroom price jump is roughly ${formatPriceDelta(priceDelta)}.`;
+    diagnosticParts.push(`The ex-showroom price gap is roughly ${formatPriceDelta(priceDelta)}.`);
   }
 
   const moduleLine = deltaParts.length
@@ -992,7 +992,7 @@ const buildVariantUpgradeInsightLine = ({ baseInsight, targetInsight } = {}) => 
     : "";
 
   return [
-    verdict,
+    ...diagnosticParts,
     featureGainLine,
     featureLossLine,
     snapshotLine,
@@ -1322,22 +1322,22 @@ const compactVariantLine = (insight) => {
   const isGoodValue = Number.isFinite(valueScoreNumber) && valueScoreNumber >= 70;
   const isLowRegret = Number.isFinite(regretRiskNumber) && regretRiskNumber <= 25;
 
-  let verdict = `${insight.variantFullName} has diagnostic score data available.`;
+  const diagnosticParts = [`${insight.variantFullName} has diagnostic score data available.`];
 
   if (isWeakValue && isFeatureRich) {
-    verdict = `${insight.variantFullName} is feature-rich, but its same-model value signal is weak — the score indicates a top-trim equipment focus rather than the strongest same-model value position.`;
+    diagnosticParts[0] = `${insight.variantFullName} is feature-rich, but its same-model value signal is weak — the score indicates a top-trim equipment focus rather than the strongest same-model value position.`;
   } else if (isGoodValue && isFeatureRich) {
-    verdict = `${insight.variantFullName} has a strong same-model value signal and is also feature-rich.`;
+    diagnosticParts[0] = `${insight.variantFullName} has a strong same-model value signal and is also feature-rich.`;
   } else if (isGoodValue) {
-    verdict = `${insight.variantFullName} looks like a strong same-model value pick.`;
+    diagnosticParts[0] = `${insight.variantFullName} has a strong same-model value signal in this diagnostic profile.`;
   } else if (isWeakValue) {
-    verdict = `${insight.variantFullName} has a weak same-model value signal compared with other variants in its family.`;
+    diagnosticParts[0] = `${insight.variantFullName} has a weak same-model value signal compared with other variants in its family.`;
   } else if (isFeatureRich) {
-    verdict = `${insight.variantFullName} looks feature-rich, but value should be checked against nearby variants.`;
+    diagnosticParts[0] = `${insight.variantFullName} is feature-rich, but value should be checked against nearby variants.`;
   }
 
   if (isLowRegret) {
-    verdict += " Regret-risk signal is low.";
+    diagnosticParts.push("Regret-risk signal is low.");
   }
 
   const scoreLine = `Signals reviewed: safety, features, same-model value, and regret risk.`;
@@ -1350,7 +1350,7 @@ const compactVariantLine = (insight) => {
     ? `Strengths: ${strengths.join("; ")}.`
     : "";
 
-  return sanitizeBuyerFacingScoreText([verdict, watchoutLine, strengthLine, scoreLine]
+  return sanitizeBuyerFacingScoreText([...diagnosticParts, watchoutLine, strengthLine, scoreLine]
     .filter(Boolean)
     .join(" "));
 };
