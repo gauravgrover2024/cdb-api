@@ -48,9 +48,7 @@ const getReadiness = (response = {}) =>
       },
     ];
 
-    const results = [];
-
-    for (const testCase of cases) {
+    const results = await Promise.all(cases.map(async (testCase) => {
       const response = await chatWithAgent({ message: testCase.message, context: {} });
       const rows = getRows(response);
       const readiness = getReadiness(response);
@@ -83,7 +81,7 @@ const getReadiness = (response = {}) =>
         assert(readiness.missingBuyerInputsForFinalRecommendation.includes('featurePriority'), `${testCase.id}: feature missing input should be retained`);
       }
 
-      results.push({
+      return {
         id: testCase.id,
         status: readiness.status,
         evidenceStatus: readiness.evidenceStatus,
@@ -99,8 +97,8 @@ const getReadiness = (response = {}) =>
           readinessStatus: row.candidateEvidenceReadiness?.status,
           candidateRankReason: row.candidateRankReason,
         })),
-      });
-    }
+      };
+    }));
 
     console.log(JSON.stringify({
       suite: 'ACI candidate evidence readiness runtime smoke v1',
