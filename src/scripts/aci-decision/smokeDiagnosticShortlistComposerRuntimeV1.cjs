@@ -55,9 +55,7 @@ const internalLeakLanguage =
       },
     ];
 
-    const results = [];
-
-    for (const testCase of cases) {
+    const results = await Promise.all(cases.map(async (testCase) => {
       const response = await chatWithAgent({ message: testCase.message, context: {} });
       const rows = getRows(response);
       const composer = getComposer(response);
@@ -115,7 +113,7 @@ const internalLeakLanguage =
         assert.strictEqual(eligibility.finalRecommendationEnabled, false, `${testCase.id}: eligibility final enabled leaked`);
       }
 
-      results.push({
+      return {
         id: testCase.id,
         title: response.title,
         answer: response.answer,
@@ -132,8 +130,8 @@ const internalLeakLanguage =
           rank: row.diagnosticRanking?.rank,
           reason: row.diagnosticRanking?.candidateRankReason || row.candidateRankReason,
         })),
-      });
-    }
+      };
+    }));
 
     console.log(JSON.stringify({
       suite: 'ACI diagnostic shortlist composer runtime smoke v1',

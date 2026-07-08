@@ -49,9 +49,7 @@ const getEligibility = (response = {}) =>
       },
     ];
 
-    const results = [];
-
-    for (const testCase of cases) {
+    const results = await Promise.all(cases.map(async (testCase) => {
       const response = await chatWithAgent({ message: testCase.message, context: {} });
       const rows = getRows(response);
       const eligibility = getEligibility(response);
@@ -101,7 +99,7 @@ const getEligibility = (response = {}) =>
         );
       }
 
-      results.push({
+      return {
         id: testCase.id,
         intent: response.intent,
         rowCount: rows.length,
@@ -122,8 +120,8 @@ const getEligibility = (response = {}) =>
               blockedReasons: eligibility.blockedReasons,
             }
           : null,
-      });
-    }
+      };
+    }));
 
     console.log(JSON.stringify({
       suite: 'ACI recommendation candidate resolver runtime smoke v1',
