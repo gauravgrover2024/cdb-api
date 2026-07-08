@@ -80,6 +80,7 @@ const GATES = {
     { id: 'candidate-source-provenance-downstream', cmd: 'npm run -s aci:decision:candidate-source-provenance:downstream' },
     { id: 'candidate-market-confidence-smoke', cmd: 'npm run -s aci:decision:candidate-market-confidence:smoke' },
     { id: 'candidate-diagnostic-ranking-smoke', cmd: 'npm run -s aci:decision:candidate-ranking:smoke' },
+    { id: 'buyer-facing-diagnostic-leak-audit-smoke', cmd: 'npm run -s aci:decision:buyer-facing-diagnostic-leak-audit:smoke' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
     { id: 'market-judgement-audit', cmd: 'npm run -s aci:decision:market-judgement:audit' },
     { id: 'score-output-fixture', cmd: 'npm run -s aci:decision:score-output-fixture:eval' },
