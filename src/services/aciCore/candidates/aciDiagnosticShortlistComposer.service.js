@@ -52,11 +52,12 @@ const topSignalsForRow = (row = {}) =>
     ...asArray(row.evidenceSummary?.fitSignals).map(cleanSignal),
   ]).slice(0, 3);
 
-const getRows = ({ rows = [], response = {} } = {}) => {
-  const rootRows = asArray(rows);
-  if (rootRows.length) return rootRows;
+const getRows = ({ rows, response = {} } = {}) => {
+  if (Array.isArray(rows)) return rows.filter(Boolean);
+
   if (Array.isArray(response?.rows)) return response.rows.filter(Boolean);
   if (Array.isArray(response?.data?.rows)) return response.data.rows.filter(Boolean);
+
   return [];
 };
 
@@ -114,7 +115,7 @@ const sanitizeAnswer = (value = '') =>
 
 function buildDiagnosticShortlistComposer({
   response = {},
-  rows = [],
+  rows,
   buyerContext = {},
   finalEligibility = null,
   buyerInputClarification = null,

@@ -414,4 +414,10 @@ export const evaluateCandidateSourceProvenance = async ({ rows = [] } = {}) => {
   };
 };
 
+
+export const filterDiagnosticSourceProvenanceRows = (rows = []) =>
+  (Array.isArray(rows) ? rows : []).filter(
+    (row) => row?.candidateSourceProvenance?.diagnosticUseAllowed !== false,
+  );
+
 export default evaluateCandidateSourceProvenance;

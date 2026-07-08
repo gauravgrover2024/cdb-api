@@ -7,7 +7,10 @@ import { runAciUnderstandingEngine } from "../understanding/aciUnderstandingEngi
 import { normalizeAciBuyerLanguage } from "../understanding/aciLanguageNormalization.service.js";
 import mongoose from "mongoose";
 import resolveVehicleAlias from "../context/aciVehicleAliasRegistry.service.js";
-import { evaluateCandidateSourceProvenance } from "../candidates/aciCandidateSourceProvenance.service.js";
+import {
+  evaluateCandidateSourceProvenance,
+  filterDiagnosticSourceProvenanceRows,
+} from "../candidates/aciCandidateSourceProvenance.service.js";
 
 import { buildLegacyPlanFromAciMeaningFrame } from "./aciCoreToLegacyPlan.adapter.js";
 import { executeAciPlannerPlan } from "../../aiAgent/aiAgent.executor.js";
@@ -5809,8 +5812,10 @@ const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance
     ? candidateSourceProvenanceSummary.rows
     : activeMarketRows;
 
+  const diagnosticSourceProvenanceRows = filterDiagnosticSourceProvenanceRows(sourceProvenanceRows);
+
     const candidateDiagnosticRanking = buildCandidateDiagnosticRanking({
-    rows: sourceProvenanceRows,
+    rows: diagnosticSourceProvenanceRows,
     buyerContext,
     bridge,
     response,
@@ -5818,7 +5823,7 @@ const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance
   const rankedRows =
     Array.isArray(candidateDiagnosticRanking.rows) && candidateDiagnosticRanking.rows.length
       ? candidateDiagnosticRanking.rows
-      : resolved.rows;
+      : diagnosticSourceProvenanceRows;
   const candidateDiagnosticRankingSummary = summarizeCandidateDiagnosticRanking(candidateDiagnosticRanking);
 
   const {
@@ -5835,7 +5840,7 @@ const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance
   const readinessRows =
     Array.isArray(candidateEvidenceReadiness.rows) && candidateEvidenceReadiness.rows.length
       ? candidateEvidenceReadiness.rows
-      : resolved.rows;
+      : rankedRows;
   const candidateEvidenceReadinessSummary = summarizeCandidateEvidenceReadiness(candidateEvidenceReadiness);
 
   const finalEligibilityForComposer =

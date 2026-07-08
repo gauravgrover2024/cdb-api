@@ -77,6 +77,7 @@ const GATES = {
     { id: 'candidate-active-market-smoke', cmd: 'npm run -s aci:decision:candidate-active-market:smoke' },
     { id: 'candidate-source-provenance-smoke', cmd: 'npm run -s aci:decision:candidate-source-provenance:smoke' },
     { id: 'candidate-source-provenance-contract', cmd: 'npm run -s aci:decision:candidate-source-provenance:contract' },
+    { id: 'candidate-source-provenance-downstream', cmd: 'npm run -s aci:decision:candidate-source-provenance:downstream' },
     { id: 'candidate-market-confidence-smoke', cmd: 'npm run -s aci:decision:candidate-market-confidence:smoke' },
     { id: 'candidate-diagnostic-ranking-smoke', cmd: 'npm run -s aci:decision:candidate-ranking:smoke' },
     { id: 'module-policy-eval', cmd: 'npm run -s aci:decision:module-policy:eval' },
