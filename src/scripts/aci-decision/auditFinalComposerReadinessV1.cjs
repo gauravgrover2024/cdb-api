@@ -134,6 +134,22 @@ if (scatteredDiagnostics.length) {
   });
 }
 
+add('diagnostic-verdict-wording-centralized', scatteredDiagnostics.length === 0, {
+  scatteredDiagnostics,
+});
+
+add('final-activation-still-blocked-after-wording-centralization',
+  scatteredDiagnostics.length === 0 &&
+    content.finalReadiness.includes('recommendationActivationEnabled: false') &&
+    content.finalReadiness.includes('canActivateFinalRecommendation: false') &&
+    content.finalEligibility.includes('finalRecommendationEnabled: false') &&
+    content.liveBridge.includes('finalRecommendationEnabled: false'),
+  {
+    diagnosticVerdictWordingCentralized: scatteredDiagnostics.length === 0,
+    activationAllowed: false,
+  }
+);
+
 add(
   'final-composer-readiness-status-is-not-ready',
   scatteredDiagnostics.length >= 0 &&
@@ -146,10 +162,16 @@ console.log(JSON.stringify({
   suite: 'ACI Final Composer Readiness Audit v1',
   ok: failed.length === 0,
   readiness: {
+    centralLanguageComposerAvailable:
+      content.languageComposer.includes('renderAciLanguageText') &&
+      content.languageComposer.includes('renderAciTemplate'),
+    diagnosticVerdictWordingCentralized: scatteredDiagnostics.length === 0,
     finalComposerReady: false,
     finalRecommendationActivationReady: false,
     activationAllowed: false,
-    reason: 'Central composer exists, but final verdict activation remains disabled until diagnostic/verdict wording is fully centralized and buyer-journey evals pass.',
+    reason: scatteredDiagnostics.length === 0
+      ? 'Diagnostic/verdict wording is centralized, but final verdict activation remains disabled until final recommendation policy, evidence thresholds, buyer-journey evals and current-market validation are explicitly activated.'
+      : 'Central composer exists, but final verdict activation remains disabled until diagnostic/verdict wording is fully centralized and buyer-journey evals pass.',
   },
   total: checks.length,
   passed: checks.length - failed.length,
