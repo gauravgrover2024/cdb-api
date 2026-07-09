@@ -3,7 +3,7 @@
 const { spawn } = require('child_process');
 
 const DEFAULT_GATE_WORKERS = Object.freeze({
-  phase0: 1,
+  phase0: 10,
   score: 4,
   scoreFull: 3,
   similar: 3,
