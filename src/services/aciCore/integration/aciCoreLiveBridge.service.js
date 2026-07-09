@@ -38,6 +38,9 @@ import {
   mergeContextPatches,
 } from "../context/aciContextManager.service.js";
 import {
+  enrichAciContextPatchWithTurnLedger,
+} from "../context/aciConversationTurnLedger.service.js";
+import {
   resolveModelScopedVariantFromMessage,
 } from "../variants/modelScopedVariantResolver.service.js";
 
@@ -135,9 +138,14 @@ const hasActiveComparisonFollowUp = ({ message = "", context = {} } = {}) => {
 
   if (!Array.isArray(vehicles) || vehicles.length < 2) return false;
 
-  if (isDirectNonComparisonTask(message)) return false;
+  const explicitlyRefersToComparison =
+    /\b(which|which one|which has|between them|both|them|their)\b/i.test(message);
 
-  return /\b(which one|which is better|better|safer|safety|their|price difference|show price difference|which is cheaper|cheaper|costlier|expensive|which should i|should i buy|choose|pick|recommend|verdict|final choice)\b/i.test(
+  if (isDirectNonComparisonTask(message) && !explicitlyRefersToComparison) {
+    return false;
+  }
+
+  return /\b(which|which one|which has|which is better|better|safer|safety|between them|both|them|their|price difference|show price difference|which is cheaper|cheaper|costlier|expensive|which should i|should i buy|choose|pick|recommend|verdict|final choice)\b/i.test(
     message,
   );
 };
@@ -915,6 +923,12 @@ const maybeReturnContextDirectFactFastPath = async ({
   const lookup = detectDirectFactLookup(message);
   if (!lookup) return null;
   if (hasComparisonLanguage(message)) return null;
+
+  // Context-only fast paths are valid only when the user did not explicitly
+  // name a vehicle in this turn. Explicit mentions must flow through the
+  // DB-backed model resolver so they can replace stale selectedVehicle state.
+  const explicitVehicle = await resolveStandaloneModelMentionFromSummary(message);
+  if (explicitVehicle?.model) return null;
 
   const vehicle = getSelectedVehicleFromContext(context);
   const model = selectedVehicleLabel(vehicle);
@@ -3597,6 +3611,56 @@ const maybeReturnExactSingleFeatureFastPath = async ({
   }
 
   const variant = variantResolution.selected.variant;
+  const fullModel = [resolved.make, resolved.model].filter(Boolean).join(" ");
+  const selectedVehicle = {
+    make: resolved.make,
+    brand: resolved.make,
+    model: resolved.model,
+    fullModel,
+    makeKey: normalizeFastPathSlug(resolved.make),
+    modelKey: resolved.modelKey || normalizeFastPathSlug(fullModel),
+    shortModelKey: normalizeFastPathSlug(resolved.model),
+    variant,
+    variantName: variant,
+    selectedVariant: variant,
+    variantKey: variantResolution.selected.variantKey || normalizeFastPathSlug(variant),
+    city: citySlug,
+    citySlug,
+    source: "exact_single_feature_fast_path",
+    confidence: 0.95,
+  };
+  const fastPathContext = {
+    ...context,
+    anchorMake: resolved.make,
+    anchorBrand: resolved.make,
+    anchorModel: resolved.model,
+    anchorFullModel: fullModel,
+    anchorVariant: variant,
+    anchorCity: citySlug,
+    selectedVehicle,
+    activeComparison: {},
+    selectedComparisonSet: null,
+    contextState: {
+      ...(context.contextState || {}),
+      selectedVehicle,
+      activeComparison: {},
+      anchors: {
+        ...(context.contextState?.anchors || {}),
+        primaryVehicle: selectedVehicle,
+        comparisonTargets: [],
+      },
+    },
+    aciContextState: {
+      ...(context.aciContextState || {}),
+      selectedVehicle,
+      activeComparison: {},
+      anchors: {
+        ...(context.aciContextState?.anchors || {}),
+        primaryVehicle: selectedVehicle,
+        comparisonTargets: [],
+      },
+    },
+  };
   const toolPlan = {
     tool: "vehicle_feature_lookup",
     input: {
@@ -3634,13 +3698,13 @@ const maybeReturnExactSingleFeatureFastPath = async ({
     userMessage: text,
     message: text,
     query: text,
-    context,
+    context: fastPathContext,
     toolPlan,
   });
 
   const normalized = await normalizeAciFinalResponse(toolResult, {
     message: text,
-    context,
+    context: fastPathContext,
   });
 
   const bridge = {
@@ -6617,7 +6681,7 @@ const applyExplicitScoreModelPlanOverride = ({ plan = {}, override = null, messa
 
 
 
-export const runAciCoreLiveBridge = async ({
+const runAciCoreLiveBridgeInternal = async ({
   message = "",
   context = {},
   user = null,
@@ -7108,6 +7172,37 @@ export const runAciCoreLiveBridge = async ({
       candidateSnapshot: managedCandidateSnapshot,
     },
   });
+};
+
+export const runAciCoreLiveBridge = async (input = {}) => {
+  const response = await runAciCoreLiveBridgeInternal(input);
+  if (!response || typeof response !== "object") return response;
+
+  const previousContext =
+    input.context && typeof input.context === "object" ? input.context : {};
+  const bridge = response.aciCoreBridge || response.meta?.aciCoreBridge || {};
+  const contextPatch = enrichAciContextPatchWithTurnLedger({
+    previousContext,
+    contextPatch: response.contextPatch || {},
+    message: input.message || input.rawMessage || "",
+    intent: response.intent || bridge.primaryTask || "",
+    tool: response.tool || bridge.tool || "",
+    response,
+    resolvedContext:
+      response.contextPatch?.contextState ||
+      response.contextPatch?.aciContextState ||
+      {},
+    candidateSnapshot: previousContext.candidateSnapshot || {},
+  });
+
+  return {
+    ...response,
+    contextPatch,
+    meta: {
+      ...(response.meta || {}),
+      contextTrace: contextPatch.contextTrace || {},
+    },
+  };
 };
 
 export {
