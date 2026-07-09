@@ -51,7 +51,7 @@ const escapeRegex = (value = "") =>
 export const removeMarketingWords = (value = "") =>
   normalizeSpaces(String(value || "").replace(MARKETING_WORDS_PATTERN, " "));
 
-const lowerKey = (value = "") =>
+export const lowerKey = (value = "") =>
   normalizeSpaces(value)
     .toLowerCase()
     .replace(/&/g, " and ")

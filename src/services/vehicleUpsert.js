@@ -1,28 +1,27 @@
-import Vehicle from "../models/Vehicle.js";
+import { createSuggestionTerm } from "./vehicleSuggestionTermService.js";
 
+// A make/model/variant missing from the scraped `vehicles` collection is
+// recorded as a manual suggestion term (see VehicleSuggestionTerm), not as a
+// new `vehicles` row — that collection is scraper-owned and would silently
+// discontinue anything it doesn't recognize from a run.
 export const syncVehicleFromInsurancePayload = async (payload = {}) => {
+  const make = String(payload.vehicleMake || "").trim();
+  const model = String(payload.vehicleModel || "").trim();
+  const variant = String(payload.vehicleVariant || "").trim();
+
+  if (!make || !model || !variant) return null;
+
   try {
-    const make = String(payload.vehicleMake || "").trim();
-    const model = String(payload.vehicleModel || "").trim();
-    const variant = String(payload.vehicleVariant || "").trim();
-
-    if (!make || !model || !variant) return null;
-
-    // Check if it exists
-    const existing = await Vehicle.findOne({ make, model, variant });
-    if (existing) return existing;
-
-    // Upsert
-    const vehicle = await Vehicle.create({
+    const result = await createSuggestionTerm({
+      level: "variant",
       make,
       model,
       variant,
-      brand: make, // assuming brand = make as fallback
-      fuel: payload.fuelType || "Unknown",
     });
-    
-    console.log(`[Insurance] Auto-ingested missing vehicle: ${make} ${model} ${variant}`);
-    return vehicle;
+    if (!result.matchedExisting) {
+      console.log(`[Insurance] Recorded manual vehicle term: ${make} ${model} ${variant}`);
+    }
+    return result;
   } catch (err) {
     console.warn("[Insurance] Vehicle sync failed:", err?.message);
     return null;

@@ -5077,6 +5077,7 @@ const createLoan = asyncHandler(async (req, res) => {
       "hypothecationDocUrl",
       "delivery_invoiceFile",
       "delivery_rcFile",
+      "delivery_rcBackFile",
       "postfile_documents",
       "postfile_documents_ledger",
       "photoUrl",
