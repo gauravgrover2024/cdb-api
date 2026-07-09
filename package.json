@@ -170,6 +170,7 @@
     "aci:decision:phase5-closure:smoke": "node src/scripts/aci-decision/smokeDecisionPhase5ClosureGateV1.cjs",
     "aci:decision:final-composer-readiness:audit": "node src/scripts/aci-decision/auditFinalComposerReadinessV1.cjs",
     "aci:decision:final-activation-blocker-matrix:audit": "node src/scripts/aci-decision/auditFinalActivationBlockerMatrixV1.cjs",
+    "aci:decision:final-intent-runtime-snapshot:smoke": "node src/scripts/aci-decision/smokeFinalIntentRuntimeSnapshotV1.cjs",
     "aci:features:model-summary:build": "node src/scripts/aci-builds/buildAciVehicleModelFeatureSummaryV1.js",
     "aci:decision:buyer-context-propagation:smoke": "node src/scripts/aci-decision/smokeBuyerContextPropagationRuntimeV1.cjs",
     "aci:decision:recommendation-candidates:smoke": "node src/scripts/aci-decision/smokeRecommendationCandidateResolverRuntimeV1.cjs",

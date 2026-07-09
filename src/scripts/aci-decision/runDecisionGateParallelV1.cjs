@@ -69,6 +69,7 @@ const GATES = {
     { id: 'decision-phase5-closure-smoke', cmd: 'npm run -s aci:decision:phase5-closure:smoke' },
     { id: 'final-composer-readiness-audit', cmd: 'npm run -s aci:decision:final-composer-readiness:audit' },
     { id: 'final-activation-blocker-matrix-audit', cmd: 'npm run -s aci:decision:final-activation-blocker-matrix:audit' },
+    { id: 'final-intent-runtime-snapshot-smoke', cmd: 'npm run -s aci:decision:final-intent-runtime-snapshot:smoke' },
     { id: 'buyer-context-behavior-smoke', cmd: 'npm run -s aci:decision:buyer-context-behavior:smoke' },
     { id: 'buyer-context-propagation-smoke', cmd: 'npm run -s aci:decision:buyer-context-propagation:smoke' },
     { id: 'context-carry-colors-smoke', cmd: 'npm run -s aci:decision:context-carry-colors:smoke' },
