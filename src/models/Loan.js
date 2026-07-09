@@ -412,6 +412,7 @@ const loanSchema = mongoose.Schema(
     // Delivery Order & Invoices
     delivery_invoiceFile: { type: String },
     delivery_rcFile: { type: String },
+    delivery_rcBackFile: { type: String },
 
     // PostFile Documents
     postfile_documents: [mongoose.Schema.Types.Mixed], // Array of document objects
