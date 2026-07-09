@@ -56,6 +56,7 @@ const GATES = {
     { id: 'provenance-eval', cmd: 'npm run -s aci:decision:provenance:eval' },
     { id: 'degraded-mode-eval', cmd: 'npm run -s aci:decision:degraded-mode:eval' },
     { id: 'evidence-freshness-audit', cmd: 'npm run -s aci:decision:evidence-freshness:audit' },
+    { id: 'evidence-threshold-final-blocker-audit', cmd: 'npm run -s aci:decision:evidence-threshold-final-blocker:audit' },
     { id: 'decision-runtime-envelope-smoke-fast', cmd: 'npm run -s aci:decision:runtime-envelope:smoke:fast' },
     { id: 'decision-final-eligibility-smoke-fast', cmd: 'npm run -s aci:decision:final-eligibility:smoke:fast' },
     { id: 'decision-language-composer-smoke', cmd: 'npm run -s aci:decision:language-composer:smoke' },
