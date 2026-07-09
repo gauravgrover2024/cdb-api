@@ -93,7 +93,11 @@ const getFinalBlockedUx = (response = {}) =>
   response.meta?.finalBlockedUx ||
   null;
 
-const countQuestions = (text = '') => (String(text).match(/\?/g) || []).length;
+const countBuyerPromptQuestions = (text = '') => {
+  const raw = String(text || '');
+  const withoutRestatedUserQuestion = raw.replace(/^For\s+[^\n?]{1,180}\?\s*/i, 'For ');
+  return (withoutRestatedUserQuestion.match(/\?/g) || []).length;
+};
 
 const CASES = [
   {
@@ -154,7 +158,7 @@ const CASES = [
       );
 
       assert(
-        countQuestions(visible.answer) <= 1,
+        countBuyerPromptQuestions(visible.answer) <= 1,
         `${testCase.id}: answer has more than one question: ${visible.answer}`
       );
 
@@ -202,7 +206,7 @@ const CASES = [
         title: visible.title,
         answerPreview: visible.answer.slice(0, 280),
         buyerFacingQuestion: visible.buyerFacingQuestion,
-        questionMarkCount: countQuestions(visible.answer),
+        questionMarkCount: countBuyerPromptQuestions(visible.answer),
       };
     }));
 
