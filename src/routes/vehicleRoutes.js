@@ -17,6 +17,8 @@ import {
   getVehicleMedia,
   getPopularCars,
   getSimilarModels,
+  addVehicleSuggestionTerm,
+  reconcileVehicleSuggestionTerms,
 } from '../controllers/vehicleController.js';
 import {
   getScraperCatalog,
@@ -48,6 +50,11 @@ router.route('/distinct/variants')
 
 router.route('/distinct/variants-with-price')
   .get(getVariantOptionsByModel);
+
+router.route('/suggestions/terms')
+  .post(addVehicleSuggestionTerm);
+
+router.post('/suggestions/reconcile', reconcileVehicleSuggestionTerms);
 
 router.route('/by-details')
   .get(getVehicleByDetails);
