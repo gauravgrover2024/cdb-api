@@ -184,7 +184,8 @@
     "aci:decision:diagnostic-shortlist-composer:smoke": "node src/scripts/aci-decision/smokeDiagnosticShortlistComposerRuntimeV1.cjs",
     "aci:decision:candidate-source-provenance:smoke": "node src/scripts/aci-decision/smokeCandidateSourceProvenanceRuntimeV1.cjs",
     "aci:decision:candidate-source-provenance:contract": "node src/scripts/aci-decision/smokeCandidateSourceProvenanceContractV1.cjs",
-    "aci:decision:candidate-source-provenance:downstream": "node src/scripts/aci-decision/smokeCandidateSourceProvenanceDownstreamGuardV1.cjs"
+    "aci:decision:candidate-source-provenance:downstream": "node src/scripts/aci-decision/smokeCandidateSourceProvenanceDownstreamGuardV1.cjs",
+    "aci:buyer-journey:backend:audit:fast": "ACI_BUYER_JOURNEY_AUDIT_FAST=1 node src/scripts/aci-audits/auditAciCoreBuyerJourneyBackendV1.cjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",
