@@ -45,7 +45,20 @@ const UNSAFE_FINAL_VERDICT_PATTERNS = [
 ];
 
 const REQUIRED_SAFE_FINAL_INTENT_PATTERNS = [
-  /not a final buy verdict yet|not a final purchase verdict|not a final purchase recommendation|diagnostic shortlist|diagnostic view|practical, diagnostic/i,
+  /not a final buy verdict yet/i,
+  /not a final purchase verdict/i,
+  /not a final purchase recommendation/i,
+  /diagnostic shortlist/i,
+  /diagnostic view/i,
+  /practical, diagnostic/i,
+  /provisional discovery guidance/i,
+  /provisional guidance/i,
+  /practical guidance/i,
+  /not a final yes\/no yet/i,
+  /not a single winner yet/i,
+  /trade-off check/i,
+  /trade-off comparison/i,
+  /buy-now verdict/i,
 ];
 
 const getText = (value) => String(value || '').trim();
