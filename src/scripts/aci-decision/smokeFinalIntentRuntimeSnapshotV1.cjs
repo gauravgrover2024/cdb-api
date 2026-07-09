@@ -44,6 +44,11 @@ const UNSAFE_FINAL_VERDICT_PATTERNS = [
   /\bbuy this\b/i,
 ];
 
+const UNPOLISHED_FINAL_INTENT_PATTERNS = [
+  /\?\s*(?:give me|i want|tell me)\b[^.\n]{0,140}\bfinal\b/i,
+  /\bGive Me The Final Answer\b/,
+];
+
 const REQUIRED_SAFE_FINAL_INTENT_PATTERNS = [
   /not a final buy verdict yet/i,
   /not a final purchase verdict/i,
@@ -152,6 +157,13 @@ const CASES = [
         );
       }
 
+      for (const pattern of UNPOLISHED_FINAL_INTENT_PATTERNS) {
+        assert(
+          !pattern.test(visible.visibleText),
+          `${testCase.id}: unpolished final-intent wording leaked ${pattern}: ${visible.visibleText}`
+        );
+      }
+
       assert(
         REQUIRED_SAFE_FINAL_INTENT_PATTERNS.some((pattern) => pattern.test(visible.visibleText)),
         `${testCase.id}: final-intent answer did not clearly stay diagnostic/provisional: ${visible.visibleText}`
@@ -216,6 +228,7 @@ const CASES = [
       caseCount: CASES.length,
       forbiddenVisiblePatternCount: FORBIDDEN_VISIBLE_PATTERNS.length,
       unsafeFinalVerdictPatternCount: UNSAFE_FINAL_VERDICT_PATTERNS.length,
+      unpolishedFinalIntentPatternCount: UNPOLISHED_FINAL_INTENT_PATTERNS.length,
       results,
     }, null, 2));
   } catch (error) {

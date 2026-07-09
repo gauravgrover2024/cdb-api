@@ -3946,6 +3946,15 @@ const BUYER_GUIDANCE_UPPER_TOKENS = new Set([
   "MUV",
 ]);
 
+const cleanBuyerGuidanceFinalIntentSubject = (value = "") =>
+  String(value || "")
+    .replace(/\?.*$/g, "")
+    .replace(/\b(?:give\s+me\s+)?(?:the\s+)?final\s+(?:answer|recommendation|verdict)\b.*$/i, "")
+    .replace(/\b(?:decide\s+for\s+me|which\s+car\s+should\s+i\s+buy|should\s+i\s+buy)\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+(?:or|vs|versus)\s*$/i, "")
+    .trim();
+
 const titleCaseBuyerGuidanceLabelSide = (value = "") => {
   return cleanText(value)
     .split(/\s+/)
@@ -3991,16 +4000,16 @@ const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
     return `For ${model}, I would not treat this as a final yes/no yet; I would first check features, price gap, and regret-risk evidence.`;
   }
   if (scope === "comparison_scope") {
-    return `For ${model}, treat this as a trade-off check, not a single winner yet.`;
+    return `For ${cleanBuyerGuidanceFinalIntentSubject(model) || "these options"}, treat this as a trade-off check, not a single winner yet.`;
   }
   if (scope === "upgrade_scope") {
     return `For ${model}, treat this as an upgrade-value call: the added benefits need to justify the extra spend for your use case.`;
   }
   if (scope === "discovery_scope" && /\s+vs\s+/i.test(model)) {
-    return `For ${model}, treat this as a trade-off check, not a single winner yet.`;
+    return `For ${cleanBuyerGuidanceFinalIntentSubject(model) || "these options"}, treat this as a trade-off check, not a single winner yet.`;
   }
   if (scope === "discovery_scope") {
-    return `For ${model}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
+    return `For ${cleanBuyerGuidanceFinalIntentSubject(model) || "your car search"}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
   }
   return `For ${model}, I would not treat this as a final yes/no yet.`;
 };
