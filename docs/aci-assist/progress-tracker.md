@@ -1148,3 +1148,42 @@ Do not broaden `explicit_comparison_fast_path` without re-running:
 - score-diagnostic non-hijack check
 - no-data freeze gate
 
+---
+
+## 2026-07-10 - Context Roller-Coaster, ABS and Conditional Decisions
+
+Status: **Backend context scope ready; overall ACI Assist backend not launch-complete**
+
+### Completed in this pass
+
+- ABS is classified as a feature in the deterministic direct-fact and feature routes.
+- Feature names and acronyms are removed from legacy variant slots before DB queries.
+- Model-level feature switches clear inherited variant and comparison state.
+- The frontend chat transport preserves `contextLedger`, `buyerContext` and `buyerGuidanceContext` instead of dropping them between turns.
+- Active comparisons support feature follow-ups such as `which has abs` and `which has sunroof`.
+- Contextual `vs creta` and relative `last vs thar roxx` comparisons use the DB-backed direct comparison path.
+- Comparison answers no longer expose `indexed feature/spec differences` wording.
+- Feature and comparison catalogs are prewarmed for warm-turn latency.
+- Conditional decision guidance is active for comparison-scoped final-choice questions with complete buyer context. It gives a practical lean and mismatch caveats while keeping absolute final-recommendation flags disabled.
+- Three unused tracked legacy `.bak` files were removed after import/reference checks.
+
+### Verified
+
+- Frontend-contract roller-coaster: 13/13 passed; latest median 512 ms and p95/max 1,013 ms after warm-up.
+- Context Phase1Co2 gate: passed.
+- Context stress audit: passed.
+- Decision Phase0 gate: all 41 tasks passed with the conditional guidance smoke included.
+- Safety fast gate: passed with 72 pass mentions and 0 failures.
+- Conditional comparison decision smoke: passed; final flags remain false.
+- Frontend production build: passed.
+- Repository-wide backend JavaScript syntax scan: all 506 `.js`, `.cjs` and `.mjs` files passed.
+
+### Honest readiness
+
+`context_manager_v1` can be marked `ready` for the current backend and frontend transport contract. A deployed multi-instance/session soak test is still required before claiming infrastructure-level persistence.
+
+The Decision Policy module is `mostly_ready`. Conditional guidance is active, but an absolute `buy this car` verdict remains blocked until matched fuel/transmission candidates and trustworthy service-network, ownership-cost, resale and current-market evidence are available.
+
+The controlled ACI Learning Engine remains `planned`. It was not silently activated because production learning requires consent, retention policy, versioned offline training/evaluation and rollback controls. Autosuggest, visible context controls, shortlist persistence, lead/CRM workflows, offers freshness, feature explainer, fair-deal assistance and broader language coverage also remain incomplete.
+
+The backend should not be labelled globally launch-ready yet. The reported six-turn ABS/context failure is fixed and regression-gated, but the remaining modules above are real product blockers rather than code-cleanup leftovers.

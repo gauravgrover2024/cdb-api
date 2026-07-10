@@ -16,8 +16,13 @@ import {
 
 import {
   prewarmBudgetDiscoveryCache,
+  prewarmAciComparisonReadModelCache,
   triggerBudgetDiscoveryCacheWarm,
 } from '../aiAgent/aiAgent.executor.js';
+
+import {
+  prewarmAciLiveBridgeFastPathCaches,
+} from './integration/aciCoreLiveBridge.service.js';
 
 import {
   runVehicleScoreInsightTool,
@@ -233,6 +238,14 @@ async function prewarmAciCoreRuntime({ force = false, mode = null, background = 
           'score_diagnostic_read_path',
           prewarmScoreDiagnosticReadPath({ force }),
         ],
+        [
+          'conversation_fast_path_catalog',
+          prewarmAciLiveBridgeFastPathCaches(),
+        ],
+        [
+          'comparison_read_model_catalog',
+          prewarmAciComparisonReadModelCache(),
+        ],
       ];
 
       const settled = await Promise.allSettled(tasks.map(([, promise]) => promise));
@@ -242,6 +255,14 @@ async function prewarmAciCoreRuntime({ force = false, mode = null, background = 
         [
           'score_diagnostic_read_path',
           prewarmScoreDiagnosticReadPath({ force }),
+        ],
+        [
+          'conversation_fast_path_catalog',
+          prewarmAciLiveBridgeFastPathCaches(),
+        ],
+        [
+          'comparison_read_model_catalog',
+          prewarmAciComparisonReadModelCache(),
         ],
       ];
 

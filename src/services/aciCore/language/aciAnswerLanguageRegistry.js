@@ -91,10 +91,10 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Avoid final recommendation unless structured decision mode supports it.', 'Include both compared vehicles.'],
     forbiddenWording: ['clear winner', 'best choice', 'buy this'],
     variants: [
-      { id: 'comparison_a', text: 'I compared {{vehicleA}} and {{vehicleB}}. {{priceLine}} {{differenceLine}}' },
-      { id: 'comparison_b', text: 'Here is the {{vehicleA}} vs {{vehicleB}} comparison. {{priceLine}} {{differenceLine}}' },
-      { id: 'comparison_c', text: '{{vehicleA}} and {{vehicleB}} are compared on the available price and feature/spec data. {{priceLine}} {{differenceLine}}' },
-      { id: 'comparison_d', text: 'For {{vehicleA}} against {{vehicleB}}, I found the comparison data. {{priceLine}} {{differenceLine}}' },
+      { id: 'comparison_a', text: 'Quick comparison between {{vehicleA}} and {{vehicleB}}: {{priceLine}} {{differenceLine}}' },
+      { id: 'comparison_b', text: 'Here is the useful read on {{vehicleA}} vs {{vehicleB}}: {{priceLine}} {{differenceLine}}' },
+      { id: 'comparison_c', text: 'For {{vehicleA}} vs {{vehicleB}}, {{priceLine}} {{differenceLine}}' },
+      { id: 'comparison_d', text: 'Side by side, {{vehicleA}} and {{vehicleB}}: {{priceLine}} {{differenceLine}}' },
     ],
   },
   price_summary: {

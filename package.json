@@ -190,6 +190,8 @@
     "aci:context-manager:mixed-flow:smoke": "node src/scripts/aci-audits/smokeAciContextMixedVehicleFlowV1.cjs",
     "aci:context-manager:relative-reference:smoke": "node src/scripts/aci-audits/smokeAciContextRelativeReferenceV1.cjs",
     "aci:context-manager:no-stale-comparison:smoke": "node src/scripts/aci-audits/smokeAciContextNoStaleComparisonV1.cjs",
+    "aci:context-manager:roller-coaster:smoke": "node src/scripts/aci-audits/smokeAciContextRollerCoasterV1.cjs",
+    "aci:decision:conditional-comparison:smoke": "node src/scripts/aci-decision/smokeConditionalComparisonDecisionGuidanceV1.cjs",
     "aci:context-manager:phase1co2": "npm run -s aci:progress-registry:guard && npm run -s aci:context-manager:mixed-flow:smoke && npm run -s aci:context-manager:relative-reference:smoke && npm run -s aci:context-manager:no-stale-comparison:smoke && npm run -s aci:context-manager:audit && npm run -s aci:context-manager:stress && npm run -s aci:context-manager:public-smoke && npm run -s aci:decision:context-carry-colors:smoke && npm run -s aci:buyer-journey:backend:audit:fast"
   },
   "dependencies": {

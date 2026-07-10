@@ -487,20 +487,40 @@ const composeFeatureComparisonAnswer = (response = {}) => {
     activeComparison.fuelFilter,
   );
 
-  const compared = vehicleLabels.slice(0, 2).join(" vs ");
-  const scope = fuelFilter ? `${fuelFilter.toUpperCase()} variants` : "the selected comparison";
+  const featureLines = rows.slice(0, 4).map((row) => {
+    const featureName = humanizeFeatureKey(
+      firstText(row.feature, row.displayName, row.name, row.featureKey, row.key),
+    );
+    const modelLines = asArray(row.models).slice(0, 2).map((model) => {
+      const modelName = firstText(model.model, model.fullModel, model.label);
+      const availableCount = Number(model.availableCount || 0);
+      const totalVariants = Number(model.totalVariants || model.checkedVariants || 0);
+
+      if (model.status === "unknown") return `${modelName}: not listed in the current data`;
+      if (model.available === false) return `${modelName}: not listed on current variants`;
+      if (availableCount && totalVariants) {
+        return `${modelName}: ${availableCount}/${totalVariants} current variants`;
+      }
+      return `${modelName}: available`;
+    });
+
+    return `${featureName}: ${modelLines.join("; ")}`;
+  }).filter(Boolean);
+
+  const priceLine = featureLines.length
+    ? `${featureLines.join(". ")}.`
+    : `${featureNames.join(", ")} comparison is ready.`;
+  const differenceLine = fuelFilter
+    ? `This view is limited to ${fuelFilter.toUpperCase()} variants. Open it for the exact variant breakdown.`
+    : "Open the comparison for the exact variant breakdown.";
 
   return renderLanguage(
     "comparison_summary",
     {
       vehicleA: vehicleLabels[0],
       vehicleB: vehicleLabels[1],
-      priceLine: `Scope: ${scope}.`,
-      differenceLine: `Requested features: ${featureNames.join(", ")}. ${
-        fuelFilter
-          ? `${fuelFilter.toUpperCase()} is being used as a fuel filter, not as a feature row.`
-          : "The answer focuses only on the requested comparison scope."
-      }`,
+      priceLine,
+      differenceLine,
     },
     response,
   ).text;
@@ -547,16 +567,18 @@ const composeVehicleComparisonAnswer = (response = {}) => {
 
   const priceLine =
     priceDeltaLabel && cheaperVehicle
-      ? `${cheaperVehicle} is cheaper by about ${priceDeltaLabel} on-road.`
-      : "The price difference is available in the comparison table.";
+      ? `${cheaperVehicle} is about ${priceDeltaLabel} cheaper on-road for the variants shown.`
+      : "The side-by-side price is ready below.";
 
   const differenceLine = differenceCount
-    ? `I also found ${differenceCount} indexed feature/spec differences and ${commonCount} common highlights in the compared variant data.${
-        missingEvidence.length ? " Some indexed evidence is partial, so this is not a complete brochure-level diff." : ""
-      }`
+    ? `Their equipment and specs are meaningfully different${
+        commonCount ? ", although they still share several everyday essentials" : ""
+      }.${
+        missingEvidence.length ? " A few details are still incomplete, so I will not overstate the result." : ""
+      } Tell me what matters most (city comfort, family use, off-roading, safety, or value), and I will narrow it down.`
     : missingEvidence.length || hasUnavailableRows
-      ? "The feature/spec comparison is partial because one compared variant did not resolve to indexed rows yet."
-      : "No indexed feature/spec differences were found for these exact compared variants.";
+      ? "A few details are still incomplete for these exact variants, so I will keep the verdict open."
+      : "These exact variants do not show a meaningful feature or spec difference in the current data.";
 
   return renderLanguage(
     "comparison_summary",
@@ -1054,6 +1076,22 @@ const attachAciProvenanceEnvelope = (response = {}) => {
 
 export const composeAciAnswer = (response = {}) => {
   if (!response || typeof response !== "object") return response;
+
+  const conditionalDecisionGuidance =
+    response.conditionalDecisionGuidance ||
+    response.data?.conditionalDecisionGuidance ||
+    response.meta?.conditionalDecisionGuidance ||
+    null;
+  if (conditionalDecisionGuidance?.activated === true && response.answer) {
+    return attachAciProvenanceEnvelope({
+      ...response,
+      data: {
+        ...(response.data || {}),
+        answer: response.answer,
+        conditionalDecisionGuidance,
+      },
+    });
+  }
 
   const responseForEnvelope = applyRequestedColorFamilyRows(response);
   const intent = getIntent(responseForEnvelope);

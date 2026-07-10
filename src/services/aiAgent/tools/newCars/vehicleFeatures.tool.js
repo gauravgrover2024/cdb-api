@@ -131,6 +131,9 @@ const getModel = ({ toolPlan = {}, context = {}, userMessage = "" } = {}) => {
 
 const KNOWN_FEATURE_TERMS = [
   "ADAS",
+  "ABS",
+  "anti-lock braking system",
+  "anti lock braking system",
   "sunroof",
   "panoramic sunroof",
   "single pane sunroof",
@@ -193,6 +196,22 @@ const KNOWN_FEATURE_TERMS = [
   "height",
   "wheelbase",
 ];
+
+const isFeatureVariantCollision = ({ variant = "", feature = "" } = {}) => {
+  const variantKey = normalizeText(variant);
+  const featureKey = normalizeText(feature);
+  if (!variantKey || !featureKey) return false;
+  if (variantKey === featureKey) return true;
+
+  const featureAcronyms = [
+    ...String(feature || "").matchAll(/\(([A-Za-z0-9]{2,8})\)/g),
+  ].map((match) => normalizeText(match[1]));
+
+  if (featureAcronyms.includes(variantKey)) return true;
+  if (variantKey === "abs" && /\babs\b|anti\s+lock\s+brak/i.test(featureKey)) return true;
+
+  return false;
+};
 
 
 const FEATURE_QUERY_ALIASES = [
@@ -694,6 +713,9 @@ const normalizeCustomerCopy = (value = "") => {
 const lowerFirst = (value = "") => {
   const text = cleanText(value);
   if (!text) return "";
+  if (/^anti-lock braking system \(abs\)$/i.test(text)) {
+    return "anti-lock braking system (ABS)";
+  }
   if (/^[A-Z0-9]{2,}$/.test(text)) return text;
   return text.charAt(0).toLowerCase() + text.slice(1);
 };
@@ -1597,7 +1619,7 @@ export const runVehicleFeaturesTool = async (args = {
     context,
     userMessage,
     model,
-  });
+  }).filter((variant) => !isFeatureVariantCollision({ variant, feature }));
   const contextFeatureSummary =
     /\b(this|it|its|same|current|selected)\b/i.test(userMessage || "") &&
     /\bfeatures?\b/i.test(userMessage || "");

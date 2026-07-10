@@ -1516,6 +1516,19 @@ const loadComparisonFeatureCatalogByKey = async () => {
   return catalogByKey;
 };
 
+export const prewarmAciComparisonReadModelCache = async () => {
+  const startedAt = Date.now();
+  const catalogByKey = await loadComparisonFeatureCatalogByKey();
+
+  return {
+    ok: catalogByKey instanceof Map && catalogByKey.size > 0,
+    durationMs: Date.now() - startedAt,
+    cache: {
+      featureCatalogRows: catalogByKey.size,
+    },
+  };
+};
+
 const getComparisonTargetModelKeyForms = (target = {}) =>
   getComparisonKeyForms(
     target.modelKey,

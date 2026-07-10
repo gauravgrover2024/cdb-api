@@ -15,6 +15,7 @@ import {
 
 const sealDiagnosticShortlistComposerAtRoot = (response = {}) => {
   if (!response || typeof response !== "object") return response;
+  if (response.conditionalDecisionGuidance?.activated === true) return response;
 
   const composer =
     response.diagnosticShortlistComposer ||
