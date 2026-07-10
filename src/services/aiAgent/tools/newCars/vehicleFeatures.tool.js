@@ -11,6 +11,11 @@ import {
   buildAciLanguageSeed,
   renderAciTemplate,
 } from "../../../aciCore/language/aciAnswerLanguageComposer.js";
+import {
+  ACI_FEATURE_EXPLAINER_COLLECTION,
+  composeAciFeatureExplanation,
+  resolveAciFeatureExplainer,
+} from "../../../aciCore/features/aciFeatureExplainer.service.js";
 
 const TOOL_NAME = "vehicle_features";
 const DEFAULT_CITY = "new-delhi";
@@ -1217,14 +1222,56 @@ const toPublicResponse = async ({
             city,
           });
 
-  const answer = buildCustomerFeatureAnswer({
+  let answer = buildCustomerFeatureAnswer({
     result,
     data,
     model: responseModel,
     variant: responseVariant,
     userMessage,
   });
+  const shouldAttachFeatureExplanation = result.intent === "vehicle_feature_answer";
+  const featureExplanation = shouldAttachFeatureExplanation
+    ? await resolveAciFeatureExplainer({
+        canonicalKey: firstText(
+          data.featureKey,
+          data.resolvedFeature?.canonicalKey,
+          result.featureKey,
+        ),
+        featureName: firstText(
+          data.featureName,
+          data.resolvedFeature?.displayName,
+          data.feature,
+          result.feature,
+        ),
+      })
+    : null;
+  const featureExplanationText = composeAciFeatureExplanation(featureExplanation || {});
+
+  if (featureExplanation && featureExplanationText) {
+    data.featureExplanation = featureExplanation;
+    answer = cleanText(`${answer} ${featureExplanationText}`);
+  }
   const title = normalizeCustomerCopy(result.title);
+  const baseSourceTransparency = result.sourceTransparency || {
+    modulesChecked: [
+      "vehicle_feature_catalog_v2",
+      "vehicle_variant_feature_matrix_v2",
+    ],
+    recordCount:
+      Number(data.rows?.length || 0) ||
+      Number(data.features?.length || 0) ||
+      Number(data.variants?.length || 0),
+  };
+  const sourceTransparency = featureExplanation
+    ? {
+        ...baseSourceTransparency,
+        modulesChecked: [...new Set([
+          ...asArray(baseSourceTransparency.modulesChecked),
+          ACI_FEATURE_EXPLAINER_COLLECTION,
+        ])],
+        featureExplanationRecordCount: 1,
+      }
+    : baseSourceTransparency;
 
   const widget = {
     type: TOOL_NAME,
@@ -1253,6 +1300,9 @@ const toPublicResponse = async ({
     meta: {
       ...(result.meta || {}),
       resolver: "featureResolverV2",
+      ...(featureExplanation
+        ? { featureExplainerCollection: ACI_FEATURE_EXPLAINER_COLLECTION }
+        : {}),
     },
   };
 
@@ -1285,21 +1335,16 @@ const toPublicResponse = async ({
       anchorVariant: selectedVehicle.variant || "",
       anchorCity: city,
     },
-    sourceTransparency: result.sourceTransparency || {
-      modulesChecked: [
-        "vehicle_feature_catalog_v2",
-        "vehicle_variant_feature_matrix_v2",
-      ],
-      recordCount:
-        Number(data.rows?.length || 0) ||
-        Number(data.features?.length || 0) ||
-        Number(data.variants?.length || 0),
-    },
+    ...(featureExplanation ? { featureExplanation } : {}),
+    sourceTransparency,
     meta: {
       ...(result.meta || {}),
       resolver: "featureResolverV2",
       inactiveVariant,
       modelLevelExplorer,
+      ...(featureExplanation
+        ? { featureExplainerCollection: ACI_FEATURE_EXPLAINER_COLLECTION }
+        : {}),
     },
   };
 };

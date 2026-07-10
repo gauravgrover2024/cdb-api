@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "aci_feature_explainer_v1",
+  "contentVersion": "2026-07-10.1",
+  "entries": [
+    {
+      "canonicalKey": "anti_lock_braking_system_abs",
+      "aliases": [
+        "ABS",
+        "anti-lock braking system",
+        "anti lock braking system"
+      ],
+      "status": "published",
+      "buyerSummary": "ABS helps keep the vehicle steerable during hard braking by preventing the wheels from locking.",
+      "howItWorks": "Wheel-speed sensors detect an approaching lock-up and the system repeatedly adjusts brake pressure so the tyres can keep rotating and responding to steering input.",
+      "whenItMattersSummary": "It matters most during emergency stops and when the road is wet or slippery.",
+      "whenItMatters": [
+        "emergency braking",
+        "wet or slippery roads",
+        "braking while steering around an obstacle"
+      ],
+      "limitationsSummary": "ABS cannot create extra tyre grip; braking distance still depends on speed, tyres and the road surface.",
+      "buyerAdvice": "Treat ABS as a core safety feature, not as a premium convenience add-on.",
+      "importance": {
+        "safetyCritical": true,
+        "cityUse": "high",
+        "highwayUse": "high",
+        "familyUse": "high",
+        "offRoadUse": "high"
+      },
+      "reviewedAt": "2026-07-10T00:00:00.000Z",
+      "sourceRefs": [
+        {
+          "title": "Bosch Mobility - Antilock braking system",
+          "url": "https://www.bosch-mobility.com/en/solutions/driving-safety/antilock-braking-system/",
+          "sourceType": "primary_technical_source",
+          "verifiedAt": "2026-07-10T00:00:00.000Z"
+        },
+        {
+          "title": "NHTSA Light Vehicle ABS Research Program",
+          "url": "https://www.nhtsa.gov/sites/nhtsa.gov/files/absperformancefinalreport.pdf",
+          "sourceType": "government_research",
+          "verifiedAt": "2026-07-10T00:00:00.000Z"
+        }
+      ]
+    }
+  ]
+}

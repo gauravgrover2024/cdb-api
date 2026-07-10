@@ -8,6 +8,7 @@ import { getVehicleEntityIndex } from "./aiAgent.vehicleEntityIndex.js";
 import { loadAciFeatureRequestCatalog } from "./aiAgent.featureRequestParser.js";
 import { refreshVehicleHintsFromDb } from "./aiAgent.intentParser.js";
 import { prewarmFeatureResolverV2 } from "./aiAgent.featureResolverV2.js";
+import { prewarmAciFeatureExplainers } from "../aciCore/features/aciFeatureExplainer.service.js";
 
 const DEFAULT_PREWARM_TTL_MS = Number(
   process.env.ACI_RUNTIME_PREWARM_TTL_MS || 10 * 60 * 1000,
@@ -71,6 +72,7 @@ export const prewarmAciAssistRuntime = async ({ force = false } = {}) => {
       ["vehicle_entity_index", getVehicleEntityIndex({ forceRefresh: force })],
       ["feature_request_catalog", loadAciFeatureRequestCatalog({ forceRefresh: force })],
       ["feature_answer_resolver", prewarmFeatureResolverV2()],
+      ["feature_explainer_catalog", prewarmAciFeatureExplainers({ force })],
       ["vehicle_hints", refreshVehicleHintsFromDb()],
     ];
 

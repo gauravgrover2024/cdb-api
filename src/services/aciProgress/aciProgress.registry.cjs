@@ -260,20 +260,24 @@ const ACI_PROGRESS_MODULES = [
     id: "feature_explainer",
     title: "Feature Explainer & Buyer Education",
     area: "Backend Intelligence",
-    status: "planned",
+    status: "partial",
     priority: "P0",
-    progress: 0,
+    progress: 15,
     summary: "DB-backed feature explainer engine that explains what each feature means, when it matters, when it does not matter, and whether it is worth paying for.",
     whatWillWork: "Explain features like ESC, ADAS, DCT, IVT, AMT, TPMS, ISOFIX, 360 camera, ventilated seats and sunroof in buyer-friendly language. Compare features, explain gained/lost features between variants, and feed feature importance into scoring/recommendations.",
-    done: "Feature catalog and variant feature matrix exist. Feature availability can already be answered from DB-backed data.",
-    pending: "Create feature explainer KB, feature comparison explainer, feature importance mapping by buyer context, feature delta explainer, and ACI Assist tools for explainFeature, compareFeatures, explainVariantFeatures and explainFeatureDelta.",
+    done: "Feature catalog and variant feature matrix exist. The first source-reviewed explainer is now published in MongoDB for ABS, resolved through the canonical feature catalog, cached at startup, attached as structured provenance, and rendered after DB-backed vehicle availability. The runtime contains no vehicle-specific feature facts.",
+    pending: "Expand source-reviewed coverage beyond the first ABS entry, then build feature-vs-feature explanation, buyer-context importance mapping, feature delta explanation and dedicated explainFeature/compareFeatures/explainVariantFeatures/explainFeatureDelta operations.",
     eta: "7-12 working days, overlapping with score profiles and recommendation engine.",
     milestones: [
-      { key: "feature_explainer_kb", name: "Feature explainer knowledge base", status: "planned" },
+      { key: "feature_explainer_kb", name: "Feature explainer knowledge base", status: "partial" },
       { key: "feature_comparison_explainer", name: "Feature-vs-feature explainer", status: "planned" },
       { key: "buyer_context_feature_importance", name: "Buyer-context feature importance mapping", status: "planned" },
       { key: "feature_delta_explainer", name: "Variant gained/lost feature explainer", status: "planned" },
-      { key: "feature_explainer_tools", name: "ACI Assist feature explainer tools", status: "planned" }
+      { key: "feature_explainer_tools", name: "ACI Assist feature explainer tools", status: "partial" },
+      { key: "feature_explainer_runtime_mvp", name: "Mongo-backed feature explainer runtime MVP", status: "ready" },
+      { key: "feature_explainer_source_provenance", name: "Primary-source provenance on explainer records", status: "ready" },
+      { key: "feature_explainer_prewarm", name: "Feature explainer startup cache", status: "ready" },
+      { key: "chatgpt_six_turn_benchmark_v1", name: "Six-turn ACI vs ChatGPT quality benchmark", status: "ready" }
     ]
   },
 

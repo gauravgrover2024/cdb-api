@@ -41,6 +41,7 @@ Done means:
 | 4 | src/services/aiAgent/aiAgent.responseSanitizer.js | NOT_STARTED | DONE | Security/privacy output audit |
 | 5 | src/services/aiAgent/tools/newCars/vehiclePricelist.tool.js | NOT_STARTED | DONE | Read-model/source audit |
 | 5 | src/services/aiAgent/tools/newCars/vehicleFeatures.tool.js | GREEN | DONE | ABS feature truth and feature/variant collision regression pass |
+| 5 | src/services/aciCore/features/aciFeatureExplainer.service.js | GREEN | DONE | Mongo-backed canonical resolver, source provenance and prewarm smoke pass; content coverage remains a separate backlog |
 | 5 | src/services/aiAgent/tools/newCars/vehicleColors.tool.js | NOT_STARTED | DONE | Hardcoded brand/conflict rules found |
 | 5 | src/services/aiAgent/tools/vehiclePricelist.tool.js | NOT_STARTED | DONE | Duplicate/new-vs-old path audit |
 | 5 | src/services/aiAgent/tools/shared/* | NOT_STARTED | DONE | Shared matching/pricing/db audit |
@@ -58,6 +59,7 @@ Done means:
 - `aci:context-manager:stress` passed.
 - `aci:decision:gate:phase0` passed with all 41 tasks, including conditional comparison guidance.
 - Progress registry guard passed with 30 modules, no duplicates, no missing required modules and no fallback registry.
+- Feature Explainer smoke passed against `aci_feature_explainers_v1`; the no-hardcoded audit now scans 134 runtime files with zero banned findings.
 
 This is a repository-wide static and gate verification, not a claim that every file has received a line-by-line semantic audit. The phase table remains the honest semantic-audit backlog.
 

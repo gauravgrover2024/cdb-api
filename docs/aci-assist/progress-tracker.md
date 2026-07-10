@@ -1187,3 +1187,42 @@ The Decision Policy module is `mostly_ready`. Conditional guidance is active, bu
 The controlled ACI Learning Engine remains `planned`. It was not silently activated because production learning requires consent, retention policy, versioned offline training/evaluation and rollback controls. Autosuggest, visible context controls, shortlist persistence, lead/CRM workflows, offers freshness, feature explainer, fair-deal assistance and broader language coverage also remain incomplete.
 
 The backend should not be labelled globally launch-ready yet. The reported six-turn ABS/context failure is fixed and regression-gated, but the remaining modules above are real product blockers rather than code-cleanup leftovers.
+
+---
+
+## 2026-07-10 - Pending Module 1 Started: Feature Explainer
+
+Status: **Partial - runtime MVP live, broad coverage pending**
+
+### Data-driven implementation
+
+- Added MongoDB collection `aci_feature_explainers_v1`.
+- Runtime resolution uses canonical keys and aliases from `vehicle_feature_catalog_v2`.
+- Feature availability still comes exclusively from `vehicle_variant_feature_matrix_v2`.
+- Explainer prose, buyer relevance, limitations, importance and source references are stored as versioned data records, not runtime answer branches.
+- Published the first source-reviewed ABS explainer with Bosch Mobility and NHTSA provenance.
+- Added startup cache/prewarm so published explainers do not add a database round trip to warm answers.
+- Added structured `featureExplanation` and source-transparency metadata to feature answers.
+
+### Buyer-facing result
+
+`thar abs` now returns the DB-backed 7/7 availability result and then explains that ABS helps keep the vehicle steerable during hard braking and matters during emergency stops or on wet/slippery roads.
+
+### Verification
+
+- Feature Explainer build dry run: passed.
+- Atlas write/upsert: passed; one published canonical explainer.
+- Feature Explainer smoke: 1/1 passed; warm query 1,006 ms in the focused smoke.
+- 13-turn context roller-coaster: passed after integration.
+- No-hardcoded vehicle facts audit: zero banned findings across 134 runtime files.
+- Safety fast gate: passed with Feature Explainer smoke included.
+
+### Still pending in this module
+
+- Expand source-reviewed explainer coverage beyond ABS.
+- Add feature-vs-feature explanation.
+- Add buyer-context feature importance mapping.
+- Add feature-delta and gained/lost-feature explanation.
+- Add dedicated explain/compare operations and multilingual rendering.
+
+The module remains `partial`; the infrastructure is ready but one published explainer is not broad production coverage.
