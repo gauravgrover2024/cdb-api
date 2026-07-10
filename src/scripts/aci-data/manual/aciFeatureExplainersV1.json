@@ -1,6 +1,6 @@
 {
   "schemaVersion": "aci_feature_explainer_v1",
-  "contentVersion": "2026-07-10.1",
+  "contentVersion": "2026-07-10.2",
   "entries": [
     {
       "canonicalKey": "anti_lock_braking_system_abs",
@@ -20,13 +20,27 @@
       ],
       "limitationsSummary": "ABS cannot create extra tyre grip; braking distance still depends on speed, tyres and the road surface.",
       "buyerAdvice": "Treat ABS as a core safety feature, not as a premium convenience add-on.",
+      "featureType": "active_safety",
+      "decisionCategory": "must_have_safety",
+      "decisionSignals": [
+        "emergency braking control",
+        "steering response under braking",
+        "wet-road braking"
+      ],
       "importance": {
         "safetyCritical": true,
+        "safety": "critical",
         "cityUse": "high",
         "highwayUse": "high",
         "familyUse": "high",
-        "offRoadUse": "high"
+        "offRoadUse": "high",
+        "chauffeurUse": "high",
+        "firstTimeBuyer": "critical"
       },
+      "qualityScore": 1,
+      "qualityStatus": "source_reviewed",
+      "publishable": true,
+      "contentOrigin": "manually_curated_primary_sources",
       "reviewedAt": "2026-07-10T00:00:00.000Z",
       "sourceRefs": [
         {
@@ -39,6 +53,67 @@
           "title": "NHTSA Light Vehicle ABS Research Program",
           "url": "https://www.nhtsa.gov/sites/nhtsa.gov/files/absperformancefinalreport.pdf",
           "sourceType": "government_research",
+          "verifiedAt": "2026-07-10T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "canonicalKey": "sunroof",
+      "aliases": [
+        "sunroof",
+        "electric sunroof"
+      ],
+      "status": "published",
+      "buyerSummary": "A sunroof adds natural light and an open-air feel to the cabin, but it is a preference-led comfort feature rather than a safety or everyday-use necessity.",
+      "howItWorks": "Depending on the design, a roof panel may tilt or slide to open and may use a manual or powered sunshade. The word sunroof does not by itself mean panoramic glass, a large opening or a powered shade, so check the exact variant operation.",
+      "whenItMattersSummary": "It is most worthwhile when the people using the car genuinely value a brighter cabin and occasional open-roof driving.",
+      "whenItMatters": [
+        "buyers who value a brighter, airier cabin",
+        "occasional open-roof driving in suitable weather",
+        "families who have checked rear-seat light, shade coverage and headroom"
+      ],
+      "limitationsSummary": "Glass can add heat load in strong sun, the roof assembly may reduce headroom, and rails, seals and drains need care. Wind noise, water ingress and repair cost are ownership trade-offs to inspect, not reasons to assume every sunroof will have a problem.",
+      "buyerAdvice": "For a family city car, prioritise core safety, rear-seat comfort and parking visibility before paying extra only for a sunroof. If you still want one, inspect the shade, usable opening, front and rear headroom, wind noise, anti-pinch operation and maintenance guidance during the test drive.",
+      "featureType": "comfort",
+      "decisionCategory": "cosmetic_preference",
+      "decisionSignals": [
+        "cabin ambience",
+        "shade coverage",
+        "headroom",
+        "heat load",
+        "maintenance"
+      ],
+      "importance": {
+        "safety": "not_applicable",
+        "cityUse": "low",
+        "highwayUse": "low",
+        "familyUse": "medium",
+        "offRoadUse": "low",
+        "chauffeurUse": "medium",
+        "firstTimeBuyer": "low"
+      },
+      "qualityScore": 1,
+      "qualityStatus": "source_reviewed",
+      "publishable": true,
+      "contentOrigin": "manually_curated_primary_sources",
+      "reviewedAt": "2026-07-10T00:00:00.000Z",
+      "sourceRefs": [
+        {
+          "title": "Webasto Roof Systems for Passenger Cars",
+          "url": "https://webasto-group.com/en-int/choose-vehicle-solution/passenger-car.html",
+          "sourceType": "primary_technical_source",
+          "verifiedAt": "2026-07-10T00:00:00.000Z"
+        },
+        {
+          "title": "Hyundai Owner Manual - Sunroof Operation and Safety",
+          "url": "https://ownersmanual.hyundai.com/full_webhelp/LX3/2026/en_US/idb1a4e91c6d3.html",
+          "sourceType": "manufacturer_owner_guidance",
+          "verifiedAt": "2026-07-10T00:00:00.000Z"
+        },
+        {
+          "title": "Hyundai Owner Manual - Owner Maintenance Schedule",
+          "url": "https://ownersmanual.hyundai.com/full_webhelp/NE1N/2026/en_UK/id973c045daf5.html",
+          "sourceType": "manufacturer_owner_guidance",
           "verifiedAt": "2026-07-10T00:00:00.000Z"
         }
       ]

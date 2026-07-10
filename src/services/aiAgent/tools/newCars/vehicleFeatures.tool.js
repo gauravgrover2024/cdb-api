@@ -1104,6 +1104,65 @@ const isInactiveVariantResult = (result = {}) => {
   );
 };
 
+const FEATURE_IMPORTANCE_RANK = Object.freeze({
+  critical: 5,
+  high: 4,
+  medium: 3,
+  low: 2,
+  not_applicable: 0,
+});
+
+const scoreFeatureDecisionImpact = (explainer = {}) => {
+  if (explainer.importance?.safetyCritical === true) return 6;
+  return Math.max(
+    0,
+    ...Object.values(explainer.importance || {}).map((value) =>
+      FEATURE_IMPORTANCE_RANK[normalizeText(value)] || 0),
+  );
+};
+
+const enrichFeatureComparisonDecisionContext = async ({ data = {} } = {}) => {
+  const differenceRows = asArray(data.differenceRows);
+  if (!differenceRows.length) return [];
+
+  const enriched = [];
+  for (const row of differenceRows.slice(0, 80)) {
+    const explainer = await resolveAciFeatureExplainer({
+      canonicalKey: row.featureKey,
+      featureName: row.displayName,
+    });
+    if (!explainer) {
+      enriched.push(row);
+      continue;
+    }
+
+    enriched.push({
+      ...row,
+      decisionImpact: {
+        canonicalKey: explainer.canonicalKey,
+        buyerSummary: explainer.buyerSummary,
+        whenItMattersSummary: explainer.whenItMattersSummary,
+        buyerAdvice: explainer.buyerAdvice,
+        featureType: explainer.featureType,
+        decisionCategory: explainer.decisionCategory,
+        importance: explainer.importance,
+        impactScore: scoreFeatureDecisionImpact(explainer),
+        sourceCollection: ACI_FEATURE_EXPLAINER_COLLECTION,
+      },
+    });
+  }
+
+  data.differenceRows = enriched;
+  data.featureExplanationRecordCount = enriched.filter((row) => row.decisionImpact).length;
+  data.decisionRelevantDifferences = enriched
+    .filter((row) => row.decisionImpact)
+    .sort((left, right) =>
+      Number(right.decisionImpact?.impactScore || 0) -
+      Number(left.decisionImpact?.impactScore || 0))
+    .slice(0, 10);
+  return data.decisionRelevantDifferences;
+};
+
 const toPublicResponse = async ({
   result = {},
   model = "",
@@ -1222,6 +1281,10 @@ const toPublicResponse = async ({
             city,
           });
 
+  const decisionRelevantDifferences =
+    result.intent === "vehicle_feature_comparison"
+      ? await enrichFeatureComparisonDecisionContext({ data })
+      : [];
   let answer = buildCustomerFeatureAnswer({
     result,
     data,
@@ -1229,6 +1292,17 @@ const toPublicResponse = async ({
     variant: responseVariant,
     userMessage,
   });
+  if (decisionRelevantDifferences.length) {
+    const priorityNames = decisionRelevantDifferences
+      .slice(0, 3)
+      .map((row) => cleanText(row.displayName))
+      .filter(Boolean);
+    if (priorityNames.length) {
+      answer = cleanText(
+        `${answer} Start by checking how ${priorityNames.join(", ")} differ, then weigh the remaining equipment against the price gap and your regular use.`,
+      );
+    }
+  }
   const shouldAttachFeatureExplanation = result.intent === "vehicle_feature_answer";
   const featureExplanation = shouldAttachFeatureExplanation
     ? await resolveAciFeatureExplainer({
@@ -1271,7 +1345,16 @@ const toPublicResponse = async ({
         ])],
         featureExplanationRecordCount: 1,
       }
-    : baseSourceTransparency;
+    : decisionRelevantDifferences.length
+      ? {
+          ...baseSourceTransparency,
+          modulesChecked: [...new Set([
+            ...asArray(baseSourceTransparency.modulesChecked),
+            ACI_FEATURE_EXPLAINER_COLLECTION,
+          ])],
+          featureExplanationRecordCount: Number(data.featureExplanationRecordCount || 0),
+        }
+      : baseSourceTransparency;
 
   const widget = {
     type: TOOL_NAME,
@@ -1302,6 +1385,9 @@ const toPublicResponse = async ({
       resolver: "featureResolverV2",
       ...(featureExplanation
         ? { featureExplainerCollection: ACI_FEATURE_EXPLAINER_COLLECTION }
+        : {}),
+      ...(decisionRelevantDifferences.length
+        ? { featureDecisionImpactCollection: ACI_FEATURE_EXPLAINER_COLLECTION }
         : {}),
     },
   };
@@ -1344,6 +1430,9 @@ const toPublicResponse = async ({
       modelLevelExplorer,
       ...(featureExplanation
         ? { featureExplainerCollection: ACI_FEATURE_EXPLAINER_COLLECTION }
+        : {}),
+      ...(decisionRelevantDifferences.length
+        ? { featureDecisionImpactCollection: ACI_FEATURE_EXPLAINER_COLLECTION }
         : {}),
     },
   };

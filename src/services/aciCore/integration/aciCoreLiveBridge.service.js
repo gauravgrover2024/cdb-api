@@ -44,6 +44,12 @@ import {
 import {
   resolveModelScopedVariantFromMessage,
 } from "../variants/modelScopedVariantResolver.service.js";
+import {
+  ACI_FEATURE_EXPLAINER_COLLECTION,
+  composeAciFeatureDecisionExplanation,
+  resolveAciFeatureExplainerFromText,
+  resolveAciFeatureExplainersFromText,
+} from "../features/aciFeatureExplainer.service.js";
 
 
 const require = createRequire(import.meta.url);
@@ -2256,6 +2262,210 @@ const maybeReturnBatch4ExplainerFastPath = async ({
   }
 
   return null;
+};
+
+const hasStandaloneFeatureExplanationIntent = (message = "") =>
+  /\b(?:what\s+(?:is|are|does)|explain|how\s+(?:does|do)|meaning\s+of|tell\s+me\s+about|is\s+.+\s+worth(?:\s+it)?|worth\s+it|why\s+(?:is|does)|do\s+i\s+need|should\s+i\s+(?:prioriti[sz]e|look\s+for)|how\s+important)\b/i.test(
+    String(message || ""),
+  );
+
+const maybeReturnStandaloneFeatureExplainerFastPath = async ({
+  message = "",
+  context = {},
+  originalMessage = "",
+  effectiveMessage = "",
+  startedAt = 0,
+} = {}) => {
+  const text = effectiveMessage || message;
+  const explicitExplanationIntent = hasStandaloneFeatureExplanationIntent(text);
+  const selectedVehicle =
+    context?.selectedVehicle ||
+    context?.contextState?.selectedVehicle ||
+    context?.aciContextState?.selectedVehicle ||
+    {};
+  const hasVehicleContext = Boolean(
+    selectedVehicle.model ||
+    selectedVehicle.fullModel ||
+    context?.anchorModel ||
+    context?.contextState?.anchors?.primaryVehicle?.model ||
+    context?.aciContextState?.anchors?.primaryVehicle?.model,
+  );
+  if (!explicitExplanationIntent && hasVehicleContext) return null;
+
+  const explainer = await resolveAciFeatureExplainerFromText(text);
+  if (!explainer) return null;
+  if (
+    !explicitExplanationIntent &&
+    keyify(text) !== keyify(explainer.matchedAlias)
+  ) {
+    return null;
+  }
+
+  const buyerContext =
+    context?.contextState?.buyerContext ||
+    context?.aciContextState?.buyerContext ||
+    context?.buyerContext ||
+    {};
+  const composed = composeAciFeatureDecisionExplanation({
+    explainer,
+    message: text,
+    buyerContext,
+  });
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "deterministic",
+    usedGemini: false,
+    primaryTask: "feature_explanation",
+    tool: "feature_explainer",
+    planMode: "single_tool",
+    contextIsolation: "standalone_feature_explainer_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: text,
+    routingReason: "explicit_feature_explanation_request",
+  };
+  const publicFeature = {
+    ...explainer,
+  };
+  delete publicFeature.matchedAlias;
+
+  return {
+    intent: "vehicle_feature_explanation",
+    tool: "feature_explainer",
+    displayMode: "inline",
+    canvasType: "",
+    inlineType: "feature_explainer",
+    title: explainer.displayName,
+    answer: composed.answer,
+    matched: 1,
+    count: 1,
+    rows: [],
+    items: [],
+    featureExplanation: publicFeature,
+    data: {
+      title: explainer.displayName,
+      answer: composed.answer,
+      rows: [],
+      items: [],
+      featureExplanation: publicFeature,
+      contextAdvice: composed.contextAdvice,
+      matchedAlias: explainer.matchedAlias,
+    },
+    sourceTransparency: {
+      modulesChecked: ["feature_explainer"],
+      matched: 1,
+      dataSource: ACI_FEATURE_EXPLAINER_COLLECTION,
+      recordCount: 1,
+      sourceRefs: explainer.sourceRefs || [],
+    },
+    aciCoreBridge: bridge,
+    meta: {
+      aciCoreBridge: bridge,
+    },
+  };
+};
+
+const maybeReturnFeatureComparisonExplainerFastPath = async ({
+  message = "",
+  context = {},
+  originalMessage = "",
+  effectiveMessage = "",
+  startedAt = 0,
+} = {}) => {
+  const text = effectiveMessage || message;
+  if (!hasComparisonLanguage(text)) return null;
+
+  const explainers = await resolveAciFeatureExplainersFromText(text, { limit: 4 });
+  if (explainers.length < 2) return null;
+
+  const selected = explainers.slice(0, 2);
+  const buyerContext =
+    context?.contextState?.buyerContext ||
+    context?.aciContextState?.buyerContext ||
+    context?.buyerContext ||
+    {};
+  const contextualAdvice = selected
+    .map((explainer) => {
+      const advice = composeAciFeatureDecisionExplanation({
+        explainer,
+        message: text,
+        buyerContext,
+      }).contextAdvice;
+      return advice ? { displayName: explainer.displayName, advice } : null;
+    })
+    .filter(Boolean);
+  const sharedAdvice = contextualAdvice.length === 2 &&
+    contextualAdvice[0].advice === contextualAdvice[1].advice
+    ? contextualAdvice[0].advice
+        .replace("this is worth treating as a top-priority feature", "both are worth treating as top-priority features")
+        .replace("this is worth prioritising", "both are worth prioritising")
+        .replace("this is useful, but it need not decide the purchase on its own", "both are useful, but neither should decide the purchase on its own")
+        .replace("this is usually a lower priority", "both are usually lower priorities")
+    : "";
+  const contextAdvice = sharedAdvice
+    ? [sharedAdvice]
+    : contextualAdvice.map(({ displayName, advice }) => `${displayName}: ${advice}`);
+  const [first, second] = selected;
+  const answer = uniqueKeys([
+    `${first.displayName}: ${first.buyerSummary}`,
+    `${second.displayName}: ${second.buyerSummary}`,
+    `${first.displayName} in practice: ${first.whenItMattersSummary}`,
+    `${second.displayName} in practice: ${second.whenItMattersSummary}`,
+    ...contextAdvice,
+    `When comparing variants, check the exact implementation and limitations of both features. Use their different roles to spot a meaningful omission; do not treat similar-sounding features as interchangeable.`,
+  ]).join(" ");
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "deterministic",
+    usedGemini: false,
+    primaryTask: "feature_comparison_explanation",
+    tool: "feature_explainer",
+    planMode: "single_tool",
+    contextIsolation: "feature_comparison_explainer_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: text,
+    routingReason: "two_catalogued_features_with_comparison_language",
+  };
+  const publicFeatures = selected.map((explainer) => {
+    const value = { ...explainer };
+    delete value.matchedAlias;
+    return value;
+  });
+
+  return {
+    intent: "vehicle_feature_comparison_explanation",
+    tool: "feature_explainer",
+    displayMode: "inline",
+    canvasType: "",
+    inlineType: "feature_comparison_explainer",
+    title: `${first.displayName} vs ${second.displayName}`,
+    answer,
+    matched: 2,
+    count: 2,
+    rows: [],
+    items: publicFeatures,
+    featureExplanations: publicFeatures,
+    data: {
+      title: `${first.displayName} vs ${second.displayName}`,
+      answer,
+      rows: [],
+      items: publicFeatures,
+      featureExplanations: publicFeatures,
+      contextAdvice,
+    },
+    sourceTransparency: {
+      modulesChecked: ["feature_explainer"],
+      matched: 2,
+      dataSource: ACI_FEATURE_EXPLAINER_COLLECTION,
+      recordCount: 2,
+      sourceRefs: publicFeatures.flatMap((feature) => feature.sourceRefs || []),
+    },
+    aciCoreBridge: bridge,
+    meta: {
+      aciCoreBridge: bridge,
+    },
+  };
 };
 
 const hasBroadVehicleLanguage = (message = "") =>
@@ -7176,6 +7386,30 @@ const runAciCoreLiveBridgeInternal = async ({
 
   if (explicitComparisonFastPath) {
     return explicitComparisonFastPath;
+  }
+
+  const featureComparisonExplainerFastPath = await maybeReturnFeatureComparisonExplainerFastPath({
+    message,
+    context,
+    originalMessage,
+    effectiveMessage,
+    startedAt,
+  });
+
+  if (featureComparisonExplainerFastPath) {
+    return featureComparisonExplainerFastPath;
+  }
+
+  const standaloneFeatureExplainerFastPath = await maybeReturnStandaloneFeatureExplainerFastPath({
+    message,
+    context,
+    originalMessage,
+    effectiveMessage,
+    startedAt,
+  });
+
+  if (standaloneFeatureExplainerFastPath) {
+    return standaloneFeatureExplainerFastPath;
   }
 
   const batch4BareClarificationFastPath = maybeReturnBatch4BareClarificationFastPath({

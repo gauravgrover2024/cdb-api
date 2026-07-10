@@ -21,7 +21,7 @@ ACI was tested through the frontend context transport contract and live backend 
 |---|---|---|---|
 | `thar colors` | Listed current-looking colors but also mixed in older/model-year possibilities and unverified variant labels. | Returned the DB-backed current model and six-color result with color payload, but the prose only stated the count. | ChatGPT for prose; ACI for controlled truth |
 | `abs` | Correctly reused Thar context, answered yes, and explained what ABS does. It cited a Mahindra source, although the visible source was a Thar Roxx manual while the active subject was Thar. | Correctly reused Thar, proved ABS on all 7 current indexed variants, and did not treat ABS as a variant. After Feature Explainer v1, it also explains steering control and emergency/slippery-road relevance from a Mongo-backed source-reviewed record. | ACI after explainer integration |
-| `sunroof` | Correctly kept Thar context, distinguished 3-door Thar from Thar Roxx, and added aftermarket caution. | Correctly kept Thar context and stated that sunroof is not listed on current Thar variants. It did not yet provide the related Thar Roxx alternative or ownership advice. | ChatGPT for buyer education; ACI for strict scope |
+| `sunroof` | Correctly kept Thar context, distinguished 3-door Thar from Thar Roxx, and added aftermarket caution. | Correctly kept Thar context and stated that sunroof is not listed on current Thar variants. The completed explainer now adds curated value, heat/headroom/maintenance trade-offs and test-drive checks, but related-model recovery is still absent. | ACI for grounded decision advice; ChatGPT for related-model recovery |
 | `vs creta` | Produced a useful practical table and clear use-case split: Thar for off-road use, Creta for family/city use. Several claims were not visibly sourced or variant-scoped. | Used exact DB-backed representative variants and an on-road price delta, preserved comparison state, and avoided technical/internal wording. The first answer still lacks a rich practical summary unless buyer priorities are supplied. | ChatGPT for immediate usefulness; ACI for evidence control |
 | `creta sunroof` | Correctly switched to Creta and described higher/lower trim availability, but used broad trim examples rather than a complete current count. | Correctly switched to Creta, cleared comparison state, and reported panoramic sunroof on 43 of 50 current indexed variants. | ACI |
 | final `abs` | Correctly stayed on Creta, explained ABS, and added several related safety claims that were not visibly sourced in that answer. | Correctly stayed on Creta and proved ABS on all 50 current indexed variants. Feature Explainer v1 adds the generic ABS explanation without inventing Creta-specific safety equipment. | ACI for factual answer; ChatGPT for breadth |
@@ -32,7 +32,7 @@ ACI was tested through the frontend context transport contract and live backend 
 |---|---:|---:|---|
 | Context continuity in this sequence | Strong | Strong | ACI regression is now fixed |
 | Current vehicle-data grounding | Mixed/opaque | Strong and auditable | ACI advantage |
-| Feature meaning and buyer education | Strong | Partial | Feature Explainer is now started; coverage must expand |
+| Feature meaning and buyer education | Strong | Strong | ACI now covers all 397 canonical features and is stronger on vehicle-data separation; primary-source coverage is still selective |
 | Immediate comparison usefulness | Strong | Partial | ACI needs a richer DB-backed comparison narrative |
 | Variant-level precision | Mixed | Strong where read models are complete | ACI advantage |
 | Hallucination resistance | Variable | Strong by policy | ACI advantage |
@@ -40,13 +40,13 @@ ACI was tested through the frontend context transport contract and live backend 
 
 ## Product Conclusion
 
-ACI is no longer failing at conversational context in this flow. Its factual discipline and variant coverage are stronger than the observed ChatGPT answers. ChatGPT still feels more helpful when it explains why a feature matters, offers adjacent advice, and turns a comparison into practical buyer guidance immediately.
+ACI is no longer failing at conversational context in this flow. Its factual discipline and variant coverage are stronger than the observed ChatGPT answers. The completed Feature Explainer closes the largest education gap: ACI can now explain every canonical feature, its operation, use cases, limitations and buying relevance without asking a runtime model to improvise. High-frequency ABS and sunroof answers are curated and source-backed; the remaining records use offline structured generation, a separate adversarial review pass and deterministic safety checks.
 
 The next quality work should therefore preserve ACI's DB grounding while adding:
 
-1. Source-reviewed feature explanations.
-2. DB-backed practical comparison narratives from actual difference rows.
-3. Related-model recovery where it is useful and explicit.
-4. Buyer-context guidance without unsupported absolute verdicts.
+1. Broaden primary-source review beyond the curated high-frequency records.
+2. Add related-model recovery where it is useful and explicit.
+3. Feed calibrated feature importance into the still-disabled final recommendation engine.
+4. Continue improving practical vehicle-comparison narratives from actual difference rows.
 
-Feature Explainer v1 is the first implementation step from this benchmark.
+Feature Explainer v1 now passes 397/397 coverage, standalone explanation, contextual availability, feature-vs-feature and buyer-context runtime gates. This does not mean the whole recommendation backend is complete; final recommendation scoring remains separately guarded and disabled.
