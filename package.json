@@ -198,6 +198,11 @@
     "aci:feature-explainer:generate:all": "node src/scripts/aci-builds/buildCodexAciFeatureExplainersV2.js --write",
     "aci:feature-explainer:coverage": "node src/scripts/aci-audits/auditAciFeatureExplainerCoverageV1.cjs",
     "aci:feature-explainer:smoke": "node src/scripts/aci-audits/smokeAciFeatureExplainerV1.cjs",
+    "aci:runtime-indexes": "node src/scripts/aci-maintenance/ensureAciRuntimeIndexes.js",
+    "aci:runtime-index-audit": "node src/scripts/aci-audits/auditAciRuntimeIndexCoverageV1.js",
+    "aci:home-snapshot:build": "node src/scripts/aci-builds/buildAciHomePopularCarsSnapshotV1.js",
+    "aci:images:cache-control:audit": "node src/scripts/aci-maintenance/setAciImageCacheControl.js",
+    "aci:images:cache-control:write": "node src/scripts/aci-maintenance/setAciImageCacheControl.js --write",
     "aci:context-manager:phase1co2": "npm run -s aci:progress-registry:guard && npm run -s aci:context-manager:mixed-flow:smoke && npm run -s aci:context-manager:relative-reference:smoke && npm run -s aci:context-manager:no-stale-comparison:smoke && npm run -s aci:context-manager:audit && npm run -s aci:context-manager:stress && npm run -s aci:context-manager:public-smoke && npm run -s aci:decision:context-carry-colors:smoke && npm run -s aci:buyer-journey:backend:audit:fast"
   },
   "dependencies": {

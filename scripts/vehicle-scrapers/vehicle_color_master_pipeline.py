@@ -1364,7 +1364,15 @@ def upload_to_r2(local_path, skip_upload=False):
         return False
 
     remote_path = f"{R2_REMOTE}/{os.path.basename(local_path)}"
-    command = ["rclone", "copyto", local_path, remote_path, "--s3-no-check-bucket"]
+    command = [
+        "rclone",
+        "copyto",
+        local_path,
+        remote_path,
+        "--s3-no-check-bucket",
+        "--metadata-set",
+        "cache-control=public, max-age=31536000, immutable",
+    ]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
         log(f"R2 UPLOAD FAILED: {local_path} -> {remote_path}")

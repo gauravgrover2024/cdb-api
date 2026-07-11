@@ -197,6 +197,16 @@ if (!decisionOnly) {
         "src/scripts/aci-maintenance/createAciRecommendationIndexes.js",
       ]),
     );
+    steps.push(
+      command("C. Ensure ACI runtime indexes", "node", [
+        "src/scripts/aci-maintenance/ensureAciRuntimeIndexes.js",
+      ]),
+    );
+    steps.push(
+      command("C1. Build ACI home popular-cars snapshot", "node", [
+        "src/scripts/aci-builds/buildAciHomePopularCarsSnapshotV1.js",
+      ]),
+    );
   } else {
     steps.push(
       command("C. Audit core read-model/index health", "node", [

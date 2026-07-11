@@ -74,7 +74,12 @@ export const buildR2PublicUrl = (key) => {
   return `${String(env.endpoint || "").replace(/\/$/, "")}/${env.bucket}/${safeKey}`;
 };
 
-export const uploadBufferToR2 = async ({ key, body, contentType }) => {
+export const uploadBufferToR2 = async ({
+  key,
+  body,
+  contentType,
+  cacheControl,
+}) => {
   const { client, env } = getR2Client();
 
   if (!client) {
@@ -87,6 +92,7 @@ export const uploadBufferToR2 = async ({ key, body, contentType }) => {
       Key: key,
       Body: body,
       ContentType: contentType || "application/octet-stream",
+      CacheControl: cacheControl || undefined,
     }),
   );
 

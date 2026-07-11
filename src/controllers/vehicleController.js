@@ -962,6 +962,17 @@ const writeCache = (cacheMap, prefix, params = {}, data = []) => {
   cacheMap.set(key, { ts: Date.now(), data });
 };
 
+const setVehiclePublicCacheHeaders = (
+  res,
+  { browserSeconds = 300, edgeSeconds = 600, staleSeconds = 86400 } = {},
+) => {
+  const browserValue = `public, max-age=${browserSeconds}, s-maxage=${edgeSeconds}, stale-while-revalidate=${staleSeconds}`;
+  const edgeValue = `public, max-age=${edgeSeconds}, stale-while-revalidate=${staleSeconds}`;
+  res.set("Cache-Control", browserValue);
+  res.set("CDN-Cache-Control", edgeValue);
+  res.set("Vercel-CDN-Cache-Control", edgeValue);
+};
+
 const readDistinctCache = (scope, params = {}) => {
   return readCache(DISTINCT_CACHE, DISTINCT_CACHE_TTL_MS, scope, params);
 };
@@ -986,6 +997,16 @@ const VEHICLE_MEDIA_CACHE = new Map();
 const POPULAR_CARS_CACHE_TTL_MS = 10 * 60 * 1000;
 const POPULAR_CARS_CACHE = new Map();
 const POPULAR_CARS_IN_FLIGHT = new Map();
+const POPULAR_CARS_SNAPSHOT_COLLECTION = "aci_home_popular_cars_v1";
+const POPULAR_CARS_SNAPSHOT_VERSION = "aci_home_popular_cars_v1";
+const configuredPopularCarsSnapshotTtlMs = Number(
+  process.env.ACI_HOME_SNAPSHOT_TTL_MS || 7 * 24 * 60 * 60 * 1000,
+);
+const POPULAR_CARS_SNAPSHOT_TTL_MS = Number.isFinite(
+  configuredPopularCarsSnapshotTtlMs,
+)
+  ? Math.max(POPULAR_CARS_CACHE_TTL_MS, configuredPopularCarsSnapshotTtlMs)
+  : 7 * 24 * 60 * 60 * 1000;
 const VEHICLE_COLORS_COLLECTION = "vehicle_colors_v2";
 const R2_PUBLIC_IMAGE_PREFIX =
   "https://pub-8504a10fc1c04f02ac8760cb90462ae3.r2.dev/";
@@ -2054,6 +2075,7 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
     { make, model, variant },
   );
   if (cached) {
+    setVehiclePublicCacheHeaders(res, { edgeSeconds: 3600 });
     return res.json({ ...cached, fromCache: true });
   }
 
@@ -2143,6 +2165,7 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
     data: dedupeMediaRowsByHexLatest(fallbackRows),
   };
   writeCache(VEHICLE_MEDIA_CACHE, "media", { make, model, variant }, payload);
+  setVehiclePublicCacheHeaders(res, { edgeSeconds: 3600 });
   res.json(payload);
 });
 
@@ -2988,9 +3011,89 @@ const buildPopularCarsPayload = async ({
   return payload;
 };
 
+const getPopularCarsSnapshotKey = ({ city, limit }) =>
+  `${POPULAR_CARS_SNAPSHOT_VERSION}:${city}:${limit}`;
+
+const readPopularCarsSnapshot = async ({ city, limit }) => {
+  const startedAt = Date.now();
+  const snapshot = await mongoose.connection.db
+    .collection(POPULAR_CARS_SNAPSHOT_COLLECTION)
+    .findOne({
+      cacheKey: getPopularCarsSnapshotKey({ city, limit }),
+      snapshotVersion: POPULAR_CARS_SNAPSHOT_VERSION,
+    });
+
+  if (!snapshot?.payload || !snapshot?.builtAt) return null;
+  const ageMs = Date.now() - new Date(snapshot.builtAt).getTime();
+  if (!Number.isFinite(ageMs) || ageMs > POPULAR_CARS_SNAPSHOT_TTL_MS) {
+    return null;
+  }
+
+  return {
+    ...snapshot.payload,
+    meta: {
+      ...(snapshot.payload.meta || {}),
+      queryMs: Date.now() - startedAt,
+      sourceQueryMs: snapshot.payload.meta?.queryMs ?? null,
+      snapshot: true,
+      snapshotBuiltAt: snapshot.builtAt,
+      snapshotAgeMs: Math.max(0, ageMs),
+    },
+  };
+};
+
+const persistPopularCarsSnapshot = async ({ city, limit, payload }) => {
+  const builtAt = new Date();
+  await mongoose.connection.db
+    .collection(POPULAR_CARS_SNAPSHOT_COLLECTION)
+    .updateOne(
+      { cacheKey: getPopularCarsSnapshotKey({ city, limit }) },
+      {
+        $set: {
+          snapshotVersion: POPULAR_CARS_SNAPSHOT_VERSION,
+          city,
+          limit,
+          payload,
+          builtAt,
+          updatedAt: builtAt,
+        },
+        $setOnInsert: { createdAt: builtAt },
+      },
+      { upsert: true },
+    );
+};
+
+const refreshPopularCarsSnapshot = async ({
+  city = "new-delhi",
+  limit = 25,
+} = {}) => {
+  if (!mongoose.connection?.db) {
+    throw new Error("MongoDB connection is not ready for snapshot refresh");
+  }
+  const normalizedCity = toCityToken(city || "new-delhi") || "new-delhi";
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 25, 1), 25);
+  const payload = await buildPopularCarsPayload({
+    city: normalizedCity,
+    limit: normalizedLimit,
+  });
+  await persistPopularCarsSnapshot({
+    city: normalizedCity,
+    limit: normalizedLimit,
+    payload,
+  });
+  writeCache(
+    POPULAR_CARS_CACHE,
+    "popular-cars",
+    { city: normalizedCity, limit: normalizedLimit },
+    payload,
+  );
+  return payload;
+};
+
 const warmPopularCarsCache = async ({
   city = "new-delhi",
   limit = 25,
+  forceRefresh = false,
 } = {}) => {
   if (!mongoose.connection?.db) {
     throw new Error(
@@ -3004,25 +3107,39 @@ const warmPopularCarsCache = async ({
     city: normalizedCity,
     limit: normalizedLimit,
   });
-  const cached = readCache(
-    POPULAR_CARS_CACHE,
-    POPULAR_CARS_CACHE_TTL_MS,
-    "popular-cars",
-    {
-      city: normalizedCity,
-      limit: normalizedLimit,
-    },
-  );
+  const cached = forceRefresh
+    ? null
+    : readCache(
+        POPULAR_CARS_CACHE,
+        POPULAR_CARS_CACHE_TTL_MS,
+        "popular-cars",
+        {
+          city: normalizedCity,
+          limit: normalizedLimit,
+        },
+      );
   if (cached) return cached;
 
   if (POPULAR_CARS_IN_FLIGHT.has(cacheKey)) {
     return POPULAR_CARS_IN_FLIGHT.get(cacheKey);
   }
 
-  const warmPromise = buildPopularCarsPayload({
-    city: normalizedCity,
-    limit: normalizedLimit,
-  })
+  const warmPromise = (forceRefresh
+    ? refreshPopularCarsSnapshot({
+        city: normalizedCity,
+        limit: normalizedLimit,
+      })
+    : readPopularCarsSnapshot({
+        city: normalizedCity,
+        limit: normalizedLimit,
+      }).then(
+        (snapshot) =>
+          snapshot ||
+          refreshPopularCarsSnapshot({
+            city: normalizedCity,
+            limit: normalizedLimit,
+          }),
+      ))
     .then((payload) => {
       writeCache(
         POPULAR_CARS_CACHE,
@@ -3058,12 +3175,12 @@ const getPopularCars = asyncHandler(async (req, res) => {
     },
   );
   if (cached) {
-    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+    setVehiclePublicCacheHeaders(res);
     return res.json({ ...cached, cached: true });
   }
 
   const payload = await warmPopularCarsCache({ city, limit });
-  res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+  setVehiclePublicCacheHeaders(res);
   return res.json(payload);
 });
 
@@ -3243,7 +3360,9 @@ const warmVehicleCachesWhenConnected = (attempt = 0) => {
 };
 
 // Warm vehicle discovery caches in background so first UI open is fast once Mongo is ready.
-setTimeout(() => warmVehicleCachesWhenConnected(), 500);
+if (process.env.ACI_DISABLE_VEHICLE_CACHE_AUTOWARM !== "1") {
+  setTimeout(() => warmVehicleCachesWhenConnected(), 500);
+}
 
 export {
   getVehicles,
@@ -3261,6 +3380,7 @@ export {
   getVehicleByDetails,
   getVehicleMedia,
   getPopularCars,
+  refreshPopularCarsSnapshot,
   getSimilarModels,
   addVehicleSuggestionTerm,
   reconcileVehicleSuggestionTerms,
