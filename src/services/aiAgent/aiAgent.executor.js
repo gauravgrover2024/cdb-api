@@ -2619,6 +2619,23 @@ const normalizeBudgetDiscoveryRow = (row = {}) => {
   };
 };
 
+const normalizeBudgetPriceBasis = (filters = {}) =>
+  [filters.budgetBasis, filters.priceBasis].some((value) =>
+    ["on_road", "on-road", "on road"].includes(String(value || "").toLowerCase()),
+  )
+    ? "on_road"
+    : "ex_showroom";
+
+const getBudgetPriceField = (priceBasis = "ex_showroom") =>
+  priceBasis === "on_road" ? "onRoadPrice" : "exShowroomPrice";
+
+const getBudgetRowPrice = (row = {}, priceBasis = "ex_showroom") =>
+  Number(row[getBudgetPriceField(priceBasis)] || 0);
+
+const getBudgetRowPriceLabel = (row = {}, priceBasis = "ex_showroom") =>
+  row[priceBasis === "on_road" ? "onRoadPriceLabel" : "exShowroomPriceLabel"] ||
+  (getBudgetRowPrice(row, priceBasis) ? formatMoney(getBudgetRowPrice(row, priceBasis)) : "");
+
 
 const BUDGET_DISCOVERY_CACHE_TTL_MS = Number(
   process.env.ACI_BUDGET_DISCOVERY_CACHE_TTL_MS || 5 * 60 * 1000,
@@ -2664,6 +2681,8 @@ const getBudgetDiscoveryResultCacheKey = ({
     bodyType: slugForReadModel(filters.bodyType || ""),
     transmission: slugForReadModel(filters.transmission || ""),
     fuelType: slugForReadModel(filters.fuelType || ""),
+    budgetBasis: normalizeBudgetPriceBasis(filters),
+    requireExactVariants: filters.requireExactVariants === true,
     mustHaveFeatures: asArray(filters.mustHaveFeatures).map((feature) =>
       slugForReadModel(feature),
     ),
@@ -2822,6 +2841,8 @@ const getBudgetDiscoveryProjection = () => ({
   exShowroomPriceLabel: 1,
   onRoadPrice: 1,
   onRoadPriceLabel: 1,
+  builtAt: 1,
+  updatedAt: 1,
 });
 
 const getScopedBudgetDiscoveryRows = async ({
@@ -2834,6 +2855,8 @@ const getScopedBudgetDiscoveryRows = async ({
   filters = {},
 } = {}) => {
   const normalizedCitySlug = slugForReadModel(citySlug || DEFAULT_CITY) || "new-delhi";
+  const priceBasis = normalizeBudgetPriceBasis(filters);
+  const priceField = getBudgetPriceField(priceBasis);
   const cached = budgetDiscoveryRowCacheByCity.get(normalizedCitySlug);
 
   if (
@@ -2857,7 +2880,7 @@ const getScopedBudgetDiscoveryRows = async ({
 
   const query = {
     citySlug: normalizedCitySlug,
-    exShowroomPrice: priceQuery,
+    [priceField]: priceQuery,
   };
 
   const makeKey = slugForReadModel(make);
@@ -2884,12 +2907,12 @@ const getScopedBudgetDiscoveryRows = async ({
   const startedAt = Date.now();
   const cursor = collection
     .find(query, { projection })
-    .sort({ citySlug: 1, exShowroomPrice: 1 })
+    .sort({ citySlug: 1, [priceField]: 1 })
     .limit(2500)
     .batchSize(750);
 
   try {
-    cursor.hint({ citySlug: 1, exShowroomPrice: 1 });
+    if (priceBasis === "ex_showroom") cursor.hint({ citySlug: 1, exShowroomPrice: 1 });
   } catch {
     // Keep local/dev DBs without this read-model index working.
   }
@@ -2900,9 +2923,9 @@ const getScopedBudgetDiscoveryRows = async ({
   const normalizeStartedAt = Date.now();
   const rows = rawRows
     .map(normalizeBudgetDiscoveryRow)
-    .filter((row) => Number(row.exShowroomPrice || 0) > 0)
+    .filter((row) => getBudgetRowPrice(row, priceBasis) > 0)
     .sort((a, b) => {
-      const priceDelta = Number(a.exShowroomPrice || 0) - Number(b.exShowroomPrice || 0);
+      const priceDelta = getBudgetRowPrice(a, priceBasis) - getBudgetRowPrice(b, priceBasis);
       if (priceDelta) return priceDelta;
       return String(a.displayName || a.fullModel || a.model || "").localeCompare(
         String(b.displayName || b.fullModel || b.model || ""),
@@ -3205,15 +3228,20 @@ const attachFeatureMatchMetadata = ({
   const match = getFeatureVariantMatch(row, featureVariantKeys);
   if (!match) return row;
 
-  const feature = asArray(featureResolution.resolvedFeatures)[0] || {};
-  const featureKey = feature.featureKey || asArray(featureResolution.featureKeys)[0] || "";
-  const featureName = feature.displayName || featureKey.replace(/_/g, " ");
+  const matchedFeatures = asArray(featureResolution.resolvedFeatures).map((feature) => ({
+    featureKey: feature.featureKey,
+    featureName: feature.displayName || String(feature.featureKey || "").replace(/_/g, " "),
+    available: true,
+  }));
+  const feature = matchedFeatures[0] || {};
 
   return {
     ...row,
-    featureKey,
-    featureName,
-    matchedFeature: featureName,
+    featureKey: feature.featureKey || "",
+    featureName: feature.featureName || "",
+    matchedFeature: feature.featureName || "",
+    matchedFeatures,
+    matchedFeatureKeys: matchedFeatures.map((item) => item.featureKey).filter(Boolean),
     foundMatrixRows: 1,
     featureAvailability: {
       available: true,
@@ -3388,6 +3416,7 @@ const buildBudgetDiscoveryModelGroups = ({
   rows = [],
   budgetMax = 0,
   variantLimit = BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
+  priceBasis = "ex_showroom",
 } = {}) => {
   const groups = new Map();
 
@@ -3421,8 +3450,8 @@ const buildBudgetDiscoveryModelGroups = ({
     .map((group) => {
       const variants = uniqueBy(
         group.rows
-        .filter((row) => row.exShowroomPrice > 0 && (!budgetMax || row.exShowroomPrice <= budgetMax))
-        .sort((left, right) => left.exShowroomPrice - right.exShowroomPrice),
+        .filter((row) => getBudgetRowPrice(row, priceBasis) > 0 && (!budgetMax || getBudgetRowPrice(row, priceBasis) <= budgetMax))
+        .sort((left, right) => getBudgetRowPrice(left, priceBasis) - getBudgetRowPrice(right, priceBasis)),
         getBudgetVariantUniqueKey,
       );
 
@@ -3445,19 +3474,19 @@ const buildBudgetDiscoveryModelGroups = ({
         city: group.city,
         citySlug: group.citySlug,
         startsFromVariant: startsFrom.variant,
-        startsFromPrice: startsFrom.exShowroomPrice,
-        startsFromPriceLabel: startsFrom.exShowroomPriceLabel,
+        startsFromPrice: getBudgetRowPrice(startsFrom, priceBasis),
+        startsFromPriceLabel: getBudgetRowPriceLabel(startsFrom, priceBasis),
         bestUnderBudgetVariant: bestUnderBudget.variant,
-        bestUnderBudgetPrice: bestUnderBudget.exShowroomPrice,
-        bestUnderBudgetPriceLabel: bestUnderBudget.exShowroomPriceLabel,
+        bestUnderBudgetPrice: getBudgetRowPrice(bestUnderBudget, priceBasis),
+        bestUnderBudgetPriceLabel: getBudgetRowPriceLabel(bestUnderBudget, priceBasis),
         qualifyingVariantCount: variants.length,
         fuelTypes,
         transmissions,
         priceRangeLabel:
-          startsFrom.exShowroomPriceLabel && bestUnderBudget.exShowroomPriceLabel
-            ? startsFrom.exShowroomPrice === bestUnderBudget.exShowroomPrice
-              ? startsFrom.exShowroomPriceLabel
-              : `${startsFrom.exShowroomPriceLabel} – ${bestUnderBudget.exShowroomPriceLabel}`
+          getBudgetRowPriceLabel(startsFrom, priceBasis) && getBudgetRowPriceLabel(bestUnderBudget, priceBasis)
+            ? getBudgetRowPrice(startsFrom, priceBasis) === getBudgetRowPrice(bestUnderBudget, priceBasis)
+              ? getBudgetRowPriceLabel(startsFrom, priceBasis)
+              : `${getBudgetRowPriceLabel(startsFrom, priceBasis)} – ${getBudgetRowPriceLabel(bestUnderBudget, priceBasis)}`
             : "",
         qualifyingVariants: variants.slice(0, variantLimit).map((row) => compactObject({
           make: row.make,
@@ -3478,12 +3507,17 @@ const buildBudgetDiscoveryModelGroups = ({
           featureKey: row.featureKey,
           featureName: row.featureName,
           matchedFeature: row.matchedFeature,
+          matchedFeatures: row.matchedFeatures,
+          matchedFeatureKeys: row.matchedFeatureKeys,
           foundMatrixRows: row.foundMatrixRows,
           featureAvailability: row.featureAvailability,
           featureMatchSource: row.featureMatchSource,
           dataSource: row.dataSource,
+          builtAt: row.builtAt,
+          updatedAt: row.updatedAt,
         })),
         dataSource: "aci_vehicle_price_rows",
+        priceBasis,
       });
     })
     .filter((group) => group.qualifyingVariantCount > 0)
@@ -3495,9 +3529,9 @@ const buildBudgetDiscoveryModelGroups = ({
     });
 };
 
-const buildBudgetDiscoveryFacets = ({ rows = [] } = {}) => {
+const buildBudgetDiscoveryFacets = ({ rows = [], priceBasis = "ex_showroom" } = {}) => {
   const prices = rows
-    .map((row) => Number(row.exShowroomPrice || 0))
+    .map((row) => getBudgetRowPrice(row, priceBasis))
     .filter((price) => Number.isFinite(price) && price > 0);
 
   const uniqueFacet = (values = []) =>
@@ -3526,6 +3560,8 @@ const buildBudgetPriceRowQuery = ({
   filters = {},
   modelKeys = [],
 } = {}) => {
+  const priceBasis = normalizeBudgetPriceBasis(filters);
+  const priceField = getBudgetPriceField(priceBasis);
   const priceQuery = {
     $gt: budgetMin > 0 ? budgetMin : 0,
   };
@@ -3533,7 +3569,7 @@ const buildBudgetPriceRowQuery = ({
 
   const query = {
     citySlug: slugForReadModel(citySlug || DEFAULT_CITY) || "new-delhi",
-    exShowroomPrice: priceQuery,
+    [priceField]: priceQuery,
   };
 
   const makeKey = slugForReadModel(make);
@@ -4047,6 +4083,7 @@ export const runtimeBudgetVehicleDiscovery = async ({
   }
 
   const filters = toolPlan.filters || {};
+  const priceBasis = normalizeBudgetPriceBasis(filters);
   const budgetMin = Number(filters.budgetMin || 0) || 0;
   const budgetMax = Number(filters.budgetMax || 0);
   const city = getCity(toolPlan, context);
@@ -4074,7 +4111,7 @@ export const runtimeBudgetVehicleDiscovery = async ({
   });
   const isFeatureDiscovery = mustHaveFeatures.length > 0;
 
-  if (!isFeatureDiscovery) {
+  if (!isFeatureDiscovery && priceBasis === "ex_showroom" && filters.requireExactVariants !== true) {
     const summaryResult = await runtimeBudgetVehicleDiscoveryFromSummaries({
       db,
       collection,
@@ -4127,8 +4164,8 @@ export const runtimeBudgetVehicleDiscovery = async ({
         isFeatureDiscovery: true,
         budgetMin,
         budgetMax,
-        priceBasis: "ex_showroom",
-        budgetBasis: "ex_showroom",
+        priceBasis,
+        budgetBasis: priceBasis,
         strictBudget: true,
         totalQualifyingModels: 0,
         totalUniqueQualifyingVariants: 0,
@@ -4170,9 +4207,9 @@ export const runtimeBudgetVehicleDiscovery = async ({
     : new Set();
 
   const filteredRows = normalizedRows
-    .filter((row) => row.exShowroomPrice > 0)
-    .filter((row) => !budgetMin || row.exShowroomPrice > budgetMin)
-    .filter((row) => !budgetMax || row.exShowroomPrice <= budgetMax)
+    .filter((row) => getBudgetRowPrice(row, priceBasis) > 0)
+    .filter((row) => !budgetMin || getBudgetRowPrice(row, priceBasis) > budgetMin)
+    .filter((row) => !budgetMax || getBudgetRowPrice(row, priceBasis) <= budgetMax)
     .filter((row) => !makeKey || row.makeKey === makeKey)
     .filter((row) => bodyTypeMatchesBudgetFilter(row, filters.bodyType))
     .filter((row) => transmissionMatchesBudgetFilter(row, filters.transmission))
@@ -4196,7 +4233,11 @@ export const runtimeBudgetVehicleDiscovery = async ({
   const allModelGroups = buildBudgetDiscoveryModelGroups({
     rows: uniqueVariantRows,
     budgetMax,
-    variantLimit: isFeatureDiscovery ? 200 : BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
+    variantLimit:
+      isFeatureDiscovery || filters.requireExactVariants === true
+        ? 200
+        : BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
+    priceBasis,
   });
   const fullModelGroups = allModelGroups.slice(0, BUDGET_DISCOVERY_FULL_GROUP_LIMIT);
   const previewModelGroups = buildDiverseBudgetPreviewGroups({
@@ -4222,7 +4263,7 @@ export const runtimeBudgetVehicleDiscovery = async ({
   );
   const totalQualifyingVariants = totalUniqueQualifyingVariants;
   const hasMore = totalQualifyingModels > previewModelGroups.length;
-  const facets = buildBudgetDiscoveryFacets({ rows: uniqueVariantRows });
+  const facets = buildBudgetDiscoveryFacets({ rows: uniqueVariantRows, priceBasis });
   const noResultRecovery =
     isFeatureDiscovery && totalQualifyingModels === 0
       ? buildBudgetDiscoveryNoResultRecovery({
@@ -4274,8 +4315,8 @@ export const runtimeBudgetVehicleDiscovery = async ({
       isFeatureDiscovery,
       budgetMin,
       budgetMax,
-      priceBasis: "ex_showroom",
-      budgetBasis: "ex_showroom",
+      priceBasis,
+      budgetBasis: priceBasis,
       strictBudget: true,
       totalQualifyingModels,
       totalUniqueQualifyingVariants,
@@ -5327,7 +5368,7 @@ export const ACI_RUNTIME_DATA_TOOLS = {
 
   // V2 scaffold tool routes (for upcoming modular newCars rollout).
   vehicle_overview: runtimeModularTool,
-  vehicle_recommendation: runtimeModularTool,
+  vehicle_recommendation: runtimeVehicleRecommend,
   vehicle_variant_advisor: runtimeModularTool,
   vehicle_features: runtimeModularTool,
   vehicle_ownership_cost: runtimeModularTool,

@@ -40,13 +40,13 @@ ACI was tested through the frontend context transport contract and live backend 
 
 ## Product Conclusion
 
-ACI is no longer failing at conversational context in this flow. Its factual discipline and variant coverage are stronger than the observed ChatGPT answers. The completed Feature Explainer closes the largest education gap: ACI can now explain every canonical feature, its operation, use cases, limitations and buying relevance without asking a runtime model to improvise. High-frequency ABS and sunroof answers are curated and source-backed; the remaining records use offline structured generation, a separate adversarial review pass and deterministic safety checks.
+ACI is no longer failing at conversational context in this flow. Its factual discipline and variant coverage are stronger than the observed ChatGPT answers. The completed Feature Explainer closes the largest education gap: ACI can now explain every canonical feature, its operation, use cases, limitations and buying relevance without asking a runtime model to improvise. All 397 records now come from the Codex-authored deterministic editorial taxonomy; Gemini generation has been removed.
 
 The next quality work should therefore preserve ACI's DB grounding while adding:
 
 1. Broaden primary-source review beyond the curated high-frequency records.
 2. Add related-model recovery where it is useful and explicit.
-3. Feed calibrated feature importance into the still-disabled final recommendation engine.
-4. Continue improving practical vehicle-comparison narratives from actual difference rows.
+3. Continue improving practical vehicle-comparison narratives from actual difference rows.
+4. Expand exact crash-test applicability, service, resale and ownership evidence used by recommendation caveats.
 
-Feature Explainer v1 now passes 397/397 coverage, standalone explanation, contextual availability, feature-vs-feature and buyer-context runtime gates. This does not mean the whole recommendation backend is complete; final recommendation scoring remains separately guarded and disabled.
+Feature Explainer v1 now passes 397/397 coverage, standalone explanation, contextual availability, feature-vs-feature and buyer-context runtime gates. The dedicated recommendation module can now give a verdict only when all nine buyer inputs plus exact-variant price, feature, score, freshness and provenance gates pass; incomplete, stale and unsupported-city requests remain blocked.

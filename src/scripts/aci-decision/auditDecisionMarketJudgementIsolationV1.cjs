@@ -179,6 +179,17 @@ function getAllowedReason({ file, line, window, rule }) {
   }
 
   if (
+    file === 'src/services/aciCore/decisionPolicy/aciFinalRecommendationEligibility.service.cjs' &&
+    (
+      /\bFINAL_RECOMMENDATION_ALLOWED\b/.test(line) ||
+      /\bcanUseForFinalRecommendation\s*:\s*finalRecommendationReady\b/.test(line) ||
+      /\bfinalRecommendationEnabled\s*:\s*finalRecommendationReady\b/.test(line)
+    )
+  ) {
+    return 'evidence_gated_final_policy';
+  }
+
+  if (
     file === 'src/services/aciCore/decisionPolicy/aciDecisionModulePolicyProfiles.service.cjs' &&
     (
       /\bFINAL_RECOMMENDATION_ALLOWED\b/.test(line) ||

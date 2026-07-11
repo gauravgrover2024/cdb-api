@@ -1,9 +1,22 @@
-import { createNewCarsToolStub } from "./_toolStub.js";
-import { NEW_CAR_CANVAS_TYPES } from "./shared/canvasContracts.js";
+export const runVehicleRecommendationTool = async (args = {}) => {
+  const { runtimeVehicleRecommend } = await import("../../aiAgent.executor.js");
+  const result = await runtimeVehicleRecommend(args);
 
-export const runVehicleRecommendationTool = createNewCarsToolStub({
-  toolName: "vehicle_recommendation",
-  canvasType: NEW_CAR_CANVAS_TYPES.RECOMMENDATION,
-});
+  return {
+    ...result,
+    tool: "vehicle_recommendation",
+    modulesChecked: [
+      ...new Set([
+        ...(Array.isArray(result.modulesChecked) ? result.modulesChecked : []),
+        "vehicle_recommendation",
+      ]),
+    ],
+    meta: {
+      ...(result.meta || {}),
+      status: result.rows?.length ? "ready" : "no_matches",
+      implementation: "runtime_vehicle_recommend",
+    },
+  };
+};
 
 export default runVehicleRecommendationTool;

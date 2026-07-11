@@ -64,13 +64,12 @@ add('internal-map-is-explicitly-internal-only',
   buyerClarification.includes("internalOnlyPurpose: 'policy_debug_composer_only'")
 );
 
-add('final-readiness-stays-disabled',
-  finalReadiness.includes('canActivateFinalRecommendation: false') &&
-    finalReadiness.includes("activationMode: 'disabled_dry_run'") &&
-    finalReadiness.includes('finalRecommendationPolicyReady: false') &&
-    finalReadiness.includes('finalComposerReady: false') &&
-    finalReadiness.includes('recommendationActivationEnabled: false') &&
-    finalReadiness.includes('recommendation_activation_disabled')
+add('final-readiness-is-evidence-gated',
+  finalReadiness.includes('buyerContextComplete') &&
+    finalReadiness.includes('evidenceThresholdMet') &&
+    finalReadiness.includes('finalRecommendationReady') &&
+    finalReadiness.includes("activationMode: canActivateFinalRecommendation ? 'evidence_gated_live' : 'disabled'") &&
+    finalReadiness.includes("nextAllowedStep: canActivateFinalRecommendation")
 );
 
 add('final-eligibility-attaches-readiness',
@@ -78,11 +77,13 @@ add('final-eligibility-attaches-readiness',
     finalEligibility.includes('finalPolicyReadiness: requestedFinalRecommendation ? finalPolicyReadiness : null')
 );
 
-add('final-eligibility-remains-dry-run',
-  finalEligibility.includes('dryRun: true') &&
-    finalEligibility.includes('canUseForFinalRecommendation: false') &&
-    finalEligibility.includes('finalRecommendationEnabled: false') &&
-    finalEligibility.includes('composerReady: false')
+add('final-eligibility-uses-live-gates',
+  finalEligibility.includes('dryRun: false') &&
+    finalEligibility.includes("finalRecommendation.status === 'final_ready'") &&
+    finalEligibility.includes('moduleName === DECISION_MODULES.RECOMMENDATION') &&
+    finalEligibility.includes('missingMandatoryInputs.length === 0') &&
+    finalEligibility.includes('evidenceGate.hasUsefulEvidence') &&
+    finalEligibility.includes('canUseForFinalRecommendation: finalRecommendationReady')
 );
 
 add('phase0-has-buyer-input-contract-smoke', gateRunner.includes('buyer-decision-input-contract-smoke'));

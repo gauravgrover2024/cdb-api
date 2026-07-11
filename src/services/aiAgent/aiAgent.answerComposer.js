@@ -1077,6 +1077,32 @@ const attachAciProvenanceEnvelope = (response = {}) => {
 export const composeAciAnswer = (response = {}) => {
   if (!response || typeof response !== "object") return response;
 
+  const finalRecommendation =
+    response.finalRecommendation ||
+    response.data?.finalRecommendation ||
+    response.meta?.finalRecommendation ||
+    null;
+  if (
+    finalRecommendation?.finalRecommendationEnabled === true &&
+    finalRecommendation?.answer
+  ) {
+    return attachAciProvenanceEnvelope({
+      ...response,
+      title: finalRecommendation.title || response.title,
+      answer: finalRecommendation.answer,
+      finalRecommendationEnabled: true,
+      canUseForFinalRecommendation: true,
+      data: {
+        ...(response.data || {}),
+        title: finalRecommendation.title || response.data?.title || response.title,
+        answer: finalRecommendation.answer,
+        finalRecommendation,
+        finalRecommendationEnabled: true,
+        canUseForFinalRecommendation: true,
+      },
+    });
+  }
+
   const conditionalDecisionGuidance =
     response.conditionalDecisionGuidance ||
     response.data?.conditionalDecisionGuidance ||

@@ -81,22 +81,36 @@ async function main() {
       }
       if (asArray(row.whenItMatters).length < 2) issues.push("when_it_matters_too_thin");
       if (!row.importance || typeof row.importance !== "object") issues.push("importance_missing");
-      if (row.contentOrigin === "offline_structured_generation") {
-        if (row.publishable !== true) issues.push("generated_not_publishable");
-        if (Number(row.qualityScore || 0) < 0.88) issues.push("generated_quality_below_0_88");
-        if (clean(row.qualityStatus) !== "offline_model_reviewed") issues.push("generated_quality_status_invalid");
-        if (!clean(row.featureType)) issues.push("generated_feature_type_missing");
-        if (!clean(row.decisionCategory)) issues.push("generated_decision_category_missing");
-        if (!asArray(row.decisionSignals).length) issues.push("generated_decision_signals_missing");
-        for (const field of requiredImportanceFields) {
-          if (!clean(row.importance?.[field])) issues.push(`generated_importance_${field}_missing`);
-        }
-        if (!clean(row.generation?.writerModel) || !clean(row.generation?.reviewerModel)) {
-          issues.push("generated_two_pass_provenance_missing");
-        }
-        if (clean(row.sourceCatalogCollection) !== CATALOG_COLLECTION) {
-          issues.push("generated_catalog_provenance_missing");
-        }
+      if (clean(row.contentOrigin) !== "codex_curated_taxonomy") {
+        issues.push("non_codex_content_origin");
+      }
+      if (row.publishable !== true) issues.push("codex_entry_not_publishable");
+      if (Number(row.qualityScore || 0) < 0.9) issues.push("codex_quality_below_0_90");
+      if (!["codex_feature_reviewed", "codex_taxonomy_validated"].includes(clean(row.qualityStatus))) {
+        issues.push("codex_quality_status_invalid");
+      }
+      if (!clean(row.featureType)) issues.push("codex_feature_type_missing");
+      if (!clean(row.decisionCategory)) issues.push("codex_decision_category_missing");
+      if (!asArray(row.decisionSignals).length) issues.push("codex_decision_signals_missing");
+      if (!asArray(row.sourceRefs).length) issues.push("codex_source_refs_missing");
+      for (const field of requiredImportanceFields) {
+        if (!clean(row.importance?.[field])) issues.push(`codex_importance_${field}_missing`);
+      }
+      if (row.editorial?.geminiUsed !== false) {
+        issues.push("gemini_generation_not_excluded");
+      }
+      if (
+        row.editorial?.modelGenerated !== true ||
+        clean(row.editorial?.generationProvider) !== "openai_codex" ||
+        row.editorial?.runtimeModelGenerated !== false
+      ) {
+        issues.push("codex_generation_provenance_invalid");
+      }
+      if (/gemini/i.test(JSON.stringify(row.generation || {}))) {
+        issues.push("legacy_gemini_generation_provenance_present");
+      }
+      if (clean(row.sourceCatalogCollection) !== CATALOG_COLLECTION) {
+        issues.push("codex_catalog_provenance_missing");
       }
       const text = requiredTextFields.map((field) => clean(row[field])).join(" ");
       if (/\b(always prevents|guarantees|zero risk|will prevent every)\b/i.test(text)) {
@@ -104,6 +118,9 @@ async function main() {
       }
       if (/\b(this car|this model|this variant|all variants|standard on)\b/i.test(text)) {
         issues.push("vehicle_availability_claim");
+      }
+      if (/\bfunction named by\b/i.test(text)) {
+        issues.push("tautological_feature_explanation");
       }
       if (
         key === "lane_keep_assist" &&

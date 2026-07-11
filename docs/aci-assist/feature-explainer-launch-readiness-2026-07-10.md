@@ -4,7 +4,7 @@ Date: 2026-07-10
 
 ## Status
 
-The Feature Explainer knowledge and chat runtime are ready for the current canonical new-car feature scope.
+The Feature Explainer runtime and canonical coverage are ready for the current new-car feature scope. Editorial depth is strong for the 39 feature-specific rules and structurally complete, but less detailed, for the remaining taxonomy-driven records.
 
 - Atlas collection: `aci_feature_explainers_v1`
 - Canonical catalog: `vehicle_feature_catalog_v2`
@@ -16,9 +16,11 @@ The Feature Explainer knowledge and chat runtime are ready for the current canon
 
 ## Content Quality
 
-- 395 records were generated offline with structured fields, then passed through a separate adversarial review and deterministic safety audit.
-- Generated quality scores range from 0.89 to 0.98, with a 0.942 mean.
-- ABS and sunroof are manually curated, source-backed high-frequency records.
+- All 397 records are now rebuilt by the Codex-authored deterministic editorial taxonomy. Gemini is not used by the build or runtime.
+- Every Atlas record declares `contentOrigin: codex_curated_taxonomy`, either `qualityStatus: codex_feature_reviewed` or `codex_taxonomy_validated`, `editorial.modelGenerated: true`, `editorial.generationProvider: openai_codex`, `editorial.runtimeModelGenerated: false` and `editorial.geminiUsed: false`. This keeps authoring provenance honest while confirming there is no Gemini or runtime generation dependency.
+- Legacy generated source references are not reused. ABS carries explicitly curated Bosch and NHTSA references; other records receive deterministic authoritative group context or canonical-catalog provenance until feature-specific source review is completed.
+- 39 high-frequency or high-risk concepts use feature-specific editorial rules; the remaining records use measurement-, safety-, powertrain- or equipment-group rules driven by the canonical catalog.
+- The legacy Gemini generator and the obsolete two-record seed builder were removed so they cannot overwrite production explainers later.
 - ADAS scope guards prevent ACC/stop-go, high-beam/matrix-light and lane-keep/lane-centring capability inflation.
 - Safety guards cover warning-vs-intervention language, airbag coverage, curtain-airbag rollover claims and crash-rating protocol context.
 
@@ -27,7 +29,7 @@ The Feature Explainer knowledge and chat runtime are ready for the current canon
 - `ABS` without vehicle context returns a standalone explanation.
 - `ABS` after selecting Thar remains a DB-backed availability answer and adds decision-useful education.
 - `what is ADAS?` resolves the ADAS package rather than a random ADAS sub-feature.
-- `is a sunroof worth it for family city use?` explains value, heat, headroom, maintenance and test-drive checks.
+- `is a sunroof worth it for family city use?` explains cabin light, heat, added complexity, safe use and exact-variant checks.
 - `ABS vs EBD` compares both roles without treating similar names as interchangeable.
 - Variant feature comparisons attach buyer-impact summaries to real gained/lost difference rows.
 
@@ -42,7 +44,6 @@ The Feature Explainer knowledge and chat runtime are ready for the current canon
 
 These items do not block the explainer runtime, but remain outside a claim that the whole advisory backend is complete:
 
-- Expand primary-source review beyond ABS and sunroof.
-- Calibrate feature importance for final recommendation scoring.
+- Expand feature-specific primary-source review beyond ABS.
 - Finish the dedicated gained/lost-feature narrative operation.
-- Keep final recommendation activation disabled until its separate policy gates pass.
+- Continue replacing broad taxonomy explanations with feature-specific editorial rules where buyer traffic or audits show a material quality gain.

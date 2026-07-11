@@ -131,6 +131,9 @@ const hasContextReference = (message = "") =>
 const hasComparisonLanguage = (message = "") =>
   /\b(vs|v\/s|versus|compare|comparison|compared|better|better than|difference between|price difference|show price difference|which is cheaper|cheaper|costlier|more expensive|which one|which should|choose|pick|recommend|verdict)\b/i.test(message);
 
+const hasExplicitFeatureComparisonLanguage = (message = "") =>
+  /\b(vs|v\/s|versus|compare|comparison|compared|difference between)\b/i.test(message);
+
 const isDirectNonComparisonTask = (message = "") =>
   /\b(colors?|colours?|sunroof|airbags?|features?|mileage|range|boot space|ground clearance|engine cc|power|price|on road|on-road|ex showroom|ex-showroom)\b/i.test(message) &&
   !/\b(price difference|show price difference|which is cheaper|compare|vs|v\/s|versus|difference between)\b/i.test(message);
@@ -1625,22 +1628,43 @@ const detectBatch4BroadDiscoveryRequest = (message = "") => {
   const hasBroadCar = /\b(cars?|vehicles?|models?|options?|suvs?|sedans?|hatchbacks?|mpvs?|muvs?)\b/i.test(normalized);
   const wantsFamily = /\bfamily\b|\bpractical\b|\bspacious\b|\bspace\b/i.test(normalized);
   const wantsElectric = /\belectric\b|\bev\b/i.test(normalized);
+  const wantsPetrol = /\bpetrol\b/i.test(normalized);
+  const wantsDiesel = /\bdiesel\b/i.test(normalized);
+  const wantsCng = /\bcng\b/i.test(normalized);
+  const wantsHybrid = /\bhybrid\b/i.test(normalized);
   const wantsSuv = /\bsuvs?\b/i.test(normalized);
-  const wantsAutomatic = /\bautomatic\b|\bauto\b|\bat\b|\bdct\b|\bcvt\b|\bamt\b/i.test(normalized);
+  const wantsAutomatic = /\bautomatic\b|\bauto\b|\bdct\b|\bcvt\b|\bamt\b|\bivt\b|\bdsg\b|\btorque[\s-]*converter\b/i.test(normalized);
   const wantsTurbo = /\bturbo(?:\s*charged|charged)?\b|\bturbo\s+charger\b/i.test(normalized);
 
   if (!hasBudget || (!hasBroadCar && !wantsFamily && !wantsElectric && !wantsSuv && !wantsAutomatic && !wantsTurbo)) {
     return null;
   }
 
-  if (/\b(price|on road|on-road|insurance|service cost|service|offer|discount)\b/i.test(normalized)) {
+  const recommendationRequest = /\b(recommend|best|options?|cars?|vehicles?|models?|suvs?|sedans?|hatchbacks?|mpvs?|muvs?)\b/i.test(normalized);
+  if (/\b(insurance|service cost|service|offer|discount)\b/i.test(normalized)) {
+    return null;
+  }
+  if (/\bprice\b/i.test(normalized) && !recommendationRequest) {
     return null;
   }
 
+  const fuelType = wantsElectric
+    ? "electric"
+    : wantsCng
+      ? "cng"
+      : wantsHybrid
+        ? "hybrid"
+        : wantsDiesel
+          ? "diesel"
+          : wantsPetrol
+            ? "petrol"
+            : "";
+
   return {
     budgetMax,
+    budgetBasis: /\bon[\s-]*road\b/i.test(normalized) ? "on_road" : "ex_showroom",
     bodyType: wantsSuv ? "suv" : "",
-    fuelType: wantsElectric ? "electric" : "",
+    fuelType,
     transmission: wantsAutomatic ? "automatic" : "",
     buyerUseCase: wantsFamily ? "family" : "",
     mustHaveFeatures: wantsTurbo ? ["turbo charger"] : [],
@@ -2050,12 +2074,27 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
 
   const evRequested = discovery.fuelType === "electric";
   const fuelKey = evRequested ? "ev" : discovery.fuelType;
+  const requestedFeatureExplainers = /\b(must\s+have|need|want|require|with|priority)\b/i.test(effectiveMessage || message)
+    ? await resolveAciFeatureExplainersFromText(effectiveMessage || message, { limit: 8 })
+    : [];
+  const requestedFeatures = uniqueKeys([
+    ...(discovery.mustHaveFeatures || []),
+    ...requestedFeatureExplainers.map((feature) => feature.displayName || feature.canonicalKey),
+  ]);
+  const budgetBasis = discovery.budgetBasis === "on_road" ? "on_road" : "ex_showroom";
 
   const filters = {
     budgetMax: discovery.budgetMax,
     maxBudget: discovery.budgetMax,
     maxPrice: discovery.budgetMax,
-    maxExShowroomPrice: discovery.budgetMax,
+    ...(budgetBasis === "on_road"
+      ? { maxOnRoadPrice: discovery.budgetMax }
+      : { maxExShowroomPrice: discovery.budgetMax }),
+    budgetBasis,
+    priceBasis: budgetBasis,
+    requireExactVariants: /\b(recommend|best|decide|which\s+(?:car|one|model|variant)\s+should)\b/i.test(
+      effectiveMessage || message,
+    ),
     budgetMaxLakh: Math.round(discovery.budgetMax / 100000),
     ...(discovery.transmission ? {
       transmission: discovery.transmission,
@@ -2079,10 +2118,10 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
       useCase: discovery.buyerUseCase,
       buyerIntent: discovery.buyerUseCase,
     } : {}),
-    ...(Array.isArray(discovery.mustHaveFeatures) && discovery.mustHaveFeatures.length ? {
-      mustHaveFeatures: discovery.mustHaveFeatures,
-      compareFeatures: discovery.mustHaveFeatures,
-      feature: discovery.mustHaveFeatures[0],
+    ...(requestedFeatures.length ? {
+      mustHaveFeatures: requestedFeatures,
+      compareFeatures: requestedFeatures,
+      feature: requestedFeatures[0],
       ranking: "feature_match",
     } : {}),
   };
@@ -2183,7 +2222,8 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
 
   const composed = composeAciAnswer({
     ...normalized,
-    intent: normalized.intent || "vehicle_recommendation",
+    intent: "vehicle_recommendation",
+    tool: "vehicle_recommend",
     aciCoreBridge: bridge,
     meta: {
       ...(normalized.meta || {}),
@@ -2373,7 +2413,7 @@ const maybeReturnFeatureComparisonExplainerFastPath = async ({
   startedAt = 0,
 } = {}) => {
   const text = effectiveMessage || message;
-  if (!hasComparisonLanguage(text)) return null;
+  if (!hasExplicitFeatureComparisonLanguage(text)) return null;
 
   const explainers = await resolveAciFeatureExplainersFromText(text, { limit: 4 });
   if (explainers.length < 2) return null;
@@ -4347,7 +4387,14 @@ const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, respons
 
   if (scope === "make_scope") return cleanText(subject.make || extractMakeLabelFromBuyerMessage(bridge.effectiveMessage || bridge.originalMessage || "") || facts.make || facts.brand || "this make");
   if (scope === "discovery_scope" && messageComparisonLabel) return messageComparisonLabel;
-  if (scope === "discovery_scope") return cleanText(subject.discoveryLabel || response.title || "your car search");
+  if (scope === "discovery_scope") {
+    const responseTitle = /^(?:need one detail|practical guidance|diagnostic shortlist)$/i.test(
+      cleanText(response.title),
+    )
+      ? ""
+      : cleanText(response.title);
+    return cleanText(subject.discoveryLabel || responseTitle || "your car search");
+  }
   if (scope === "variant_scope" && (facts.variant || subject.variant)) {
     return cleanText(
       [facts.make || facts.brand || subject.make, facts.model || subject.model, facts.variant || subject.variant].filter(Boolean).join(" "),
@@ -4483,7 +4530,7 @@ const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
     return `For ${cleanBuyerGuidanceFinalIntentSubject(model) || "these options"}, treat this as a trade-off check, not a single winner yet.`;
   }
   if (scope === "discovery_scope") {
-    return `For ${cleanBuyerGuidanceFinalIntentSubject(model) || "your car search"}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
+    return "I can narrow this down, but I need a little more context before naming one car.";
   }
   return `For ${model}, I would not treat this as a final yes/no yet.`;
 };
@@ -4498,7 +4545,7 @@ const buildBuyerGuidanceUsefulViewLine = ({ factsLine = "", buyerContextLine = "
   }
 
   if (scope === "discovery_scope") {
-    return "The next step is to compare shortlisted options on safety, features, value, running cost, and family practicality once those signals are available.";
+    return "Once I have that, I'll compare the shortlist on safety, features, value, running costs, and family practicality.";
   }
 
   if (buyerContextLine) {
@@ -5171,7 +5218,9 @@ const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}
   const guidanceTitle = hasDiagnosticShortlistComposer
     ? diagnosticShortlistComposer.title
     : guidanceMode
-      ? "Practical guidance"
+      ? decisionScope === "discovery_scope"
+        ? "Let's narrow it down"
+        : "Practical guidance"
       : "Need one detail";
 
   const finalBlockedUx = {
@@ -5931,6 +5980,16 @@ const getDecisionRuntimeRows = (response = {}) => {
   return candidates.find((value) => Array.isArray(value) && value.length > 0) || [];
 };
 
+const getRecommendationRuntimeRows = (response = {}) =>
+  [
+    response.data?.allModelGroups,
+    response.allModelGroups,
+    response.data?.modelGroups,
+    response.modelGroups,
+  ]
+    .find((value) => Array.isArray(value) && value.length > 0) ||
+  getDecisionRuntimeRows(response);
+
 const getDecisionRuntimeSourceCollections = (response = {}) => {
   const collections = [
     ...listFrom(response.sourceCollections),
@@ -5948,7 +6007,9 @@ const buildDecisionRuntimeEnvelope = ({ response = {}, bridge = {} } = {}) => {
   const moduleName = getDecisionRuntimeModule({ bridge, response });
   if (!moduleName) return null;
 
-  const rows = getDecisionRuntimeRows(response);
+  const rows = moduleName === DECISION_MODULES.RECOMMENDATION
+    ? getRecommendationRuntimeRows(response)
+    : getDecisionRuntimeRows(response);
   const sourceCollections = getDecisionRuntimeSourceCollections(response);
   const dataStatus = response.dataStatus || response.data?.dataStatus || response.meta?.dataStatus || "";
   const hasUsefulRows =
@@ -6424,7 +6485,7 @@ const isRecommendationCandidateResolverEligible = (response = {}, bridge = {}) =
   if (!looksLikeRecommendation) return false;
   if (dataStatus && dataStatus !== "available") return false;
 
-  const rows = getDecisionRuntimeRows(response);
+  const rows = getRecommendationRuntimeRows(response);
   return rows.length > 0;
 };
 
@@ -6433,7 +6494,7 @@ const unionList = (...lists) => [...new Set(lists.flatMap((list) => Array.isArra
 const attachRecommendationCandidateResolverEvidence = async (response = {}, { bridge = {}, context = {} } = {}) => {
   if (!isRecommendationCandidateResolverEligible(response, bridge)) return response;
 
-  const rows = getDecisionRuntimeRows(response);
+  const rows = getRecommendationRuntimeRows(response);
   if (!rows.length) return response;
 
   const { buildRecommendationCandidateResolver } = await import("../candidates/aciRecommendationCandidateResolver.service.js");
@@ -6446,6 +6507,95 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     context.buyerContext ||
     context.contextState?.buyerContext ||
     {};
+
+  const { buildAciFinalRecommendation } = await import(
+    "../recommendations/aciFinalRecommendation.service.js"
+  );
+  const fastFinalRecommendation = await buildAciFinalRecommendation({
+    response,
+    rows,
+    buyerContext,
+    bridge,
+  });
+
+  if (fastFinalRecommendation?.finalRecommendationEnabled === true) {
+    const sourceCollections = unionList(
+      response.sourceCollections,
+      response.data?.sourceCollections,
+      response.meta?.sourceCollections,
+      response.sourceTransparency?.modulesChecked,
+      fastFinalRecommendation.evidence?.sourceCollections,
+    );
+    const sourceTransparency = {
+      ...(response.sourceTransparency || {}),
+      modulesChecked: sourceCollections,
+      matched: fastFinalRecommendation.evidence?.eligibleModelCount || fastFinalRecommendation.rows.length,
+      dataSource: "aci_vehicle_read_models",
+      finalRecommendation: fastFinalRecommendation.version,
+    };
+    const evidence = {
+      ...(response.evidence || {}),
+      evidenceStatus: "complete",
+      confidence: "high",
+      usableEvidenceCount: fastFinalRecommendation.evidence.evaluatedVariantCount,
+      requiredEvidenceCount: fastFinalRecommendation.evidence.evaluatedVariantCount,
+      sourceTransparency,
+    };
+
+    return {
+      ...response,
+      title: fastFinalRecommendation.title,
+      answer: fastFinalRecommendation.answer,
+      rows: fastFinalRecommendation.rows,
+      items: fastFinalRecommendation.rows,
+      modelGroups: fastFinalRecommendation.rows,
+      previewModelGroups: fastFinalRecommendation.rows,
+      finalRecommendation: fastFinalRecommendation,
+      finalRecommendationEnabled: true,
+      canUseForFinalRecommendation: true,
+      sourceCollections,
+      sourceTransparency,
+      evidence,
+      contextPatch: {
+        ...(response.contextPatch || {}),
+        finalRecommendation: fastFinalRecommendation,
+      },
+      data: {
+        ...(response.data || {}),
+        title: fastFinalRecommendation.title,
+        answer: fastFinalRecommendation.answer,
+        rows: fastFinalRecommendation.rows,
+        items: fastFinalRecommendation.rows,
+        modelGroups: fastFinalRecommendation.rows,
+        previewModelGroups: fastFinalRecommendation.rows,
+        finalRecommendation: fastFinalRecommendation,
+        finalRecommendationEnabled: true,
+        canUseForFinalRecommendation: true,
+        sourceCollections,
+        sourceTransparency,
+        evidence,
+      },
+      meta: {
+        ...(response.meta || {}),
+        finalRecommendation: {
+          version: fastFinalRecommendation.version,
+          status: fastFinalRecommendation.status,
+          finalRecommendationEnabled: true,
+        },
+        finalRecommendationEnabled: true,
+        canUseForFinalRecommendation: true,
+        sourceCollections,
+      },
+      trace: {
+        ...(response.trace || {}),
+        finalRecommendation: {
+          version: fastFinalRecommendation.version,
+          status: fastFinalRecommendation.status,
+          finalRecommendationEnabled: true,
+        },
+      },
+    };
+  }
 
   const resolved = await buildRecommendationCandidateResolver({
     rows,
@@ -6538,6 +6688,15 @@ const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance
       : rankedRows;
   const candidateEvidenceReadinessSummary = summarizeCandidateEvidenceReadiness(candidateEvidenceReadiness);
 
+  const finalRecommendation = await buildAciFinalRecommendation({
+    response,
+    rows: readinessRows,
+    buyerContext,
+    bridge,
+  });
+  const finalRecommendationReady = finalRecommendation?.finalRecommendationEnabled === true;
+  const buyerRows = finalRecommendationReady ? finalRecommendation.rows : readinessRows;
+
   const finalEligibilityForComposer =
     response.finalRecommendationEligibility ||
     response.meta?.finalRecommendationEligibility ||
@@ -6572,6 +6731,7 @@ const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance
     response.meta?.sourceCollections,
     response.sourceTransparency?.modulesChecked,
     resolved.sourceCollections,
+    finalRecommendation?.evidence?.sourceCollections,
   );
 
   const sourceTransparency = {
@@ -6585,6 +6745,7 @@ const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary.version,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary.version,
     diagnosticShortlistComposer: diagnosticShortlistComposer.version,
+    finalRecommendation: finalRecommendation.version,
   };
 
   const contextPatch = {
@@ -6594,7 +6755,7 @@ const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance
       evidenceStatus: resolved.evidenceStatus,
       enrichedCount: resolved.enrichedCount,
       totalCandidates: resolved.totalCandidates,
-      finalRecommendationEnabled: false,
+      finalRecommendationEnabled: finalRecommendationReady,
     },
     candidateMarketConfidence: candidateMarketConfidenceSummary,
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
@@ -6602,56 +6763,79 @@ const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     diagnosticShortlistComposer,
+    finalRecommendation,
   };
 
   return {
     ...response,
-    title: diagnosticShortlistComposer.title || response.title,
-    answer: diagnosticShortlistComposer.answer || response.answer,
+    title: finalRecommendationReady
+      ? finalRecommendation.title
+      : diagnosticShortlistComposer.title || response.title,
+    answer: finalRecommendationReady
+      ? finalRecommendation.answer
+      : diagnosticShortlistComposer.answer || response.answer,
     candidateMarketConfidence: candidateMarketConfidenceSummary,
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
     candidateSourceProvenance: candidateSourceProvenanceSummary,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
     diagnosticShortlistComposer,
-    rows: readinessRows,
-    items: readinessRows,
-    modelGroups: Array.isArray(response.modelGroups) ? readinessRows : response.modelGroups,
-    previewModelGroups: Array.isArray(response.previewModelGroups) ? readinessRows : response.previewModelGroups,
+    finalRecommendation,
+    finalRecommendationEnabled: finalRecommendationReady,
+    canUseForFinalRecommendation: finalRecommendationReady,
+    rows: buyerRows,
+    items: buyerRows,
+    modelGroups: Array.isArray(response.modelGroups) ? buyerRows : response.modelGroups,
+    previewModelGroups: Array.isArray(response.previewModelGroups) ? buyerRows : response.previewModelGroups,
     sourceCollections,
     sourceTransparency,
     contextPatch,
     evidence: {
       ...(response.evidence || {}),
-      evidenceStatus: resolved.evidenceStatus,
-      confidence: response.evidence?.confidence || "medium",
-      usableEvidenceCount: resolved.enrichedCount,
-      requiredEvidenceCount: Math.max(1, resolved.totalCandidates || resolved.rows.length),
+      evidenceStatus: finalRecommendationReady ? "complete" : resolved.evidenceStatus,
+      confidence: finalRecommendationReady ? "high" : response.evidence?.confidence || "medium",
+      usableEvidenceCount: finalRecommendationReady
+        ? finalRecommendation.evidence.evaluatedVariantCount
+        : resolved.enrichedCount,
+      requiredEvidenceCount: finalRecommendationReady
+        ? finalRecommendation.evidence.evaluatedVariantCount
+        : Math.max(1, resolved.totalCandidates || resolved.rows.length),
       sourceTransparency,
     },
     data: {
       ...(response.data || {}),
-      rows: readinessRows,
-      items: readinessRows,
-      modelGroups: Array.isArray(response.data?.modelGroups) ? readinessRows : response.data?.modelGroups,
-      previewModelGroups: Array.isArray(response.data?.previewModelGroups) ? readinessRows : response.data?.previewModelGroups,
+      rows: buyerRows,
+      items: buyerRows,
+      modelGroups: Array.isArray(response.data?.modelGroups) ? buyerRows : response.data?.modelGroups,
+      previewModelGroups: Array.isArray(response.data?.previewModelGroups) ? buyerRows : response.data?.previewModelGroups,
       sourceCollections,
       sourceTransparency,
-      title: diagnosticShortlistComposer.title || response.data?.title || response.title,
-      answer: diagnosticShortlistComposer.answer || response.data?.answer || response.answer,
+      title: finalRecommendationReady
+        ? finalRecommendation.title
+        : diagnosticShortlistComposer.title || response.data?.title || response.title,
+      answer: finalRecommendationReady
+        ? finalRecommendation.answer
+        : diagnosticShortlistComposer.answer || response.data?.answer || response.answer,
       recommendationCandidateResolver: resolved,
       candidateMarketConfidence: candidateMarketConfidenceSummary,
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
       candidateSourceProvenance: candidateSourceProvenanceSummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
-    diagnosticShortlistComposer,
+      diagnosticShortlistComposer,
+      finalRecommendation,
+      finalRecommendationEnabled: finalRecommendationReady,
+      canUseForFinalRecommendation: finalRecommendationReady,
       evidence: {
         ...(response.data?.evidence || {}),
-        evidenceStatus: resolved.evidenceStatus,
-        confidence: response.data?.evidence?.confidence || "medium",
-        usableEvidenceCount: resolved.enrichedCount,
-        requiredEvidenceCount: Math.max(1, resolved.totalCandidates || resolved.rows.length),
+        evidenceStatus: finalRecommendationReady ? "complete" : resolved.evidenceStatus,
+        confidence: finalRecommendationReady ? "high" : response.data?.evidence?.confidence || "medium",
+        usableEvidenceCount: finalRecommendationReady
+          ? finalRecommendation.evidence.evaluatedVariantCount
+          : resolved.enrichedCount,
+        requiredEvidenceCount: finalRecommendationReady
+          ? finalRecommendation.evidence.evaluatedVariantCount
+          : Math.max(1, resolved.totalCandidates || resolved.rows.length),
         sourceTransparency,
       },
     },
@@ -6665,14 +6849,17 @@ const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance
         totalCandidates: resolved.totalCandidates,
         scoreProfileCount: resolved.scoreProfileCount,
         featureSummaryCount: resolved.featureSummaryCount,
-        finalRecommendationEnabled: false,
+        finalRecommendationEnabled: finalRecommendationReady,
       },
       candidateMarketConfidence: candidateMarketConfidenceSummary,
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
       candidateSourceProvenance: candidateSourceProvenanceSummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
-    diagnosticShortlistComposer,
+      diagnosticShortlistComposer,
+      finalRecommendation,
+      finalRecommendationEnabled: finalRecommendationReady,
+      canUseForFinalRecommendation: finalRecommendationReady,
     },
     trace: {
       ...(response.trace || {}),
@@ -6687,7 +6874,12 @@ const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance
       candidateSourceProvenance: candidateSourceProvenanceSummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
-    diagnosticShortlistComposer,
+      diagnosticShortlistComposer,
+      finalRecommendation: {
+        version: finalRecommendation.version,
+        status: finalRecommendation.status,
+        finalRecommendationEnabled: finalRecommendationReady,
+      },
     },
   };
 };
@@ -6885,6 +7077,11 @@ const buildEligibilityContextWithExtractedBuyerContext = async ({
 
 
 const sealDiagnosticShortlistComposerForBuyer = (response = {}) => {
+  if (
+    response.finalRecommendationEnabled === true ||
+    response.finalRecommendation?.finalRecommendationEnabled === true ||
+    response.data?.finalRecommendationEnabled === true
+  ) return response;
   if (response.conditionalDecisionGuidance?.activated === true) return response;
 
   const composer =
@@ -6961,10 +7158,12 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
   if (!envelope) {
     if (!shouldAttachFinalRecommendationEligibility) return sealDiagnosticShortlistComposerForBuyer(responseForEligibility);
 
-    const responseWithFinalBlockedAnswer = applyFinalRecommendationBlockedAnswer(responseForEligibility, {
-      eligibility: finalRecommendationEligibility,
-      bridge,
-    });
+    const responseWithFinalBlockedAnswer = finalRecommendationEligibility.canUseForFinalRecommendation
+      ? responseForEligibility
+      : applyFinalRecommendationBlockedAnswer(responseForEligibility, {
+          eligibility: finalRecommendationEligibility,
+          bridge,
+        });
 
     return sealDiagnosticShortlistComposerForBuyer({
       ...responseWithFinalBlockedAnswer,
@@ -6980,8 +7179,21 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
     });
   }
 
-  const decisionPolicy = envelope.decisionPolicy;
-  const responseWithFinalBlockedAnswer = shouldAttachFinalRecommendationEligibility
+  const finalRecommendationReady = finalRecommendationEligibility.canUseForFinalRecommendation === true;
+  const decisionPolicy = finalRecommendationReady
+    ? {
+        ...envelope.decisionPolicy,
+        canUseForFinalRecommendation: true,
+        allowedAnswerType: ALLOWED_ANSWER_TYPES.FINAL_RECOMMENDATION_ALLOWED,
+        blockedReasons: [],
+        missingMandatoryInputs: [],
+        degradedMode: null,
+        claimType: CLAIM_TYPES.OPINION,
+        evidenceStatus: EVIDENCE_STATUS.COMPLETE,
+        confidence: CONFIDENCE_LEVELS.HIGH,
+      }
+    : envelope.decisionPolicy;
+  const responseWithFinalBlockedAnswer = shouldAttachFinalRecommendationEligibility && !finalRecommendationReady
     ? applyFinalRecommendationBlockedAnswer(responseForEligibility, {
         eligibility: finalRecommendationEligibility,
         bridge,
@@ -6989,16 +7201,29 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
     : responseForEligibility;
 
   const enrichedBuyerContext = responseForEligibility.buyerContext || responseForEligibility.data?.buyerContext || {};
-  const enrichedBuyerGuidanceContext = responseForEligibility.buyerGuidanceContext || responseForEligibility.data?.buyerGuidanceContext || {};
+  const enrichedBuyerGuidanceContext =
+    finalRecommendationEligibility.buyerGuidanceContext ||
+    responseForEligibility.buyerGuidanceContext ||
+    responseForEligibility.data?.buyerGuidanceContext ||
+    {};
   const enrichedContextPatch = responseForEligibility.contextPatch || response.contextPatch || {};
+  const effectiveEvidence = finalRecommendationReady
+    ? {
+        ...envelope.evidence,
+        ...(responseForEligibility.evidence || {}),
+        evidenceStatus: EVIDENCE_STATUS.COMPLETE,
+        confidence: CONFIDENCE_LEVELS.HIGH,
+      }
+    : envelope.evidence;
+  const effectiveDegradedMode = finalRecommendationReady ? null : envelope.degradedMode;
 
   const data = {
     ...(responseWithFinalBlockedAnswer.data || {}),
     decisionPolicy,
-    evidence: envelope.evidence,
+    evidence: effectiveEvidence,
     provenance: envelope.provenance,
-    degradedMode: envelope.degradedMode,
-    canUseForFinalRecommendation: false,
+    degradedMode: effectiveDegradedMode,
+    canUseForFinalRecommendation: finalRecommendationReady,
     ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
   };
 
@@ -7009,9 +7234,9 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
     contextPatch: enrichedContextPatch,
     module: responseWithFinalBlockedAnswer.module || envelope.module,
     decisionPolicy,
-    evidence: envelope.evidence,
+    evidence: effectiveEvidence,
     provenance: envelope.provenance,
-    degradedMode: envelope.degradedMode,
+    degradedMode: effectiveDegradedMode,
     ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
     sourceCollections: envelope.sourceCollections.length
       ? envelope.sourceCollections
@@ -7030,10 +7255,10 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
       buyerContext: enrichedBuyerContext,
       buyerGuidanceContext: enrichedBuyerGuidanceContext,
       decisionPolicy,
-      evidenceStatus: envelope.evidence.evidenceStatus,
-      evidenceConfidence: envelope.evidence.confidence,
+      evidenceStatus: effectiveEvidence.evidenceStatus,
+      evidenceConfidence: effectiveEvidence.confidence,
       provenance: envelope.provenance,
-      degradedMode: envelope.degradedMode,
+      degradedMode: effectiveDegradedMode,
       ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
     },
   });

@@ -64,6 +64,8 @@ const REQUIRED_SAFE_FINAL_INTENT_PATTERNS = [
   /trade-off check/i,
   /trade-off comparison/i,
   /buy-now verdict/i,
+  /need a little more context before naming one car/i,
+  /let's narrow it down/i,
 ];
 
 const getText = (value) => String(value || '').trim();

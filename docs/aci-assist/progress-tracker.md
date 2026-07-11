@@ -1226,3 +1226,43 @@ Status: **Partial - runtime MVP live, broad coverage pending**
 - Add dedicated explain/compare operations and multilingual rendering.
 
 The module remains `partial`; the infrastructure is ready but one published explainer is not broad production coverage.
+
+---
+
+## 2026-07-10 - Feature Explainer and Evidence-Gated Final Verdict
+
+Status: **Feature Explainer ready for canonical scope; Recommendation final verdict live behind strict gates; whole backend still not globally launch-complete**
+
+### Completed
+
+- Replaced the Gemini feature-explainer generator with a Codex-authored deterministic editorial build.
+- Rebuilt and published all 397 canonical explainers across 14 groups in `aci_feature_explainers_v1`.
+- Every record now carries `codex_curated_taxonomy` provenance, an honest feature-reviewed or taxonomy-validated quality status, and explicit `modelGenerated: true`, `generationProvider: openai_codex`, `runtimeModelGenerated: false`, and `geminiUsed: false` markers.
+- Legacy generated source references are no longer reused; ABS keeps explicitly curated Bosch/NHTSA references and all other records use deterministic authoritative group or catalog provenance pending feature-specific source review.
+- Removed the obsolete Gemini generator, the old two-record seed builder and its seed file.
+- Fixed recommendation prompts with multiple must-have features being hijacked as feature-vs-feature comparisons.
+- Added strict on-road budget discovery; on-road requests are no longer filtered using ex-showroom price.
+- Must-have feature filters retain AND semantics and expose every matched canonical feature.
+- Activated the dedicated recommendation module for exact-variant final verdicts when all nine buyer inputs are present.
+- Added versioned buyer-context weights, exact price/feature/decision/score joins, freshness and raw-source checks, a different-brand runner-up, and buyer-safe final language.
+- Added startup prewarm for recommendation evidence. Focused smoke latency is about 1.1 seconds for the first warmed verdict and tens of milliseconds for an identical repeat.
+- Incomplete buyer context, unsupported cities, stale evidence, missing source proof and non-recommendation modules remain blocked from final-verdict language.
+
+### Verified
+
+- Codex Feature Explainer build: 397/397 generated, Gemini unused.
+- Feature Explainer coverage: 397/397, zero invalid, missing, orphaned or duplicate records.
+- Feature Explainer runtime smoke: 9/9 passed.
+- Final recommendation runtime smoke: 5/5 passed; 23 models and 76 exact variants cleared the stricter city, price, fuel, transmission, feature, score, decision, source and per-artifact freshness gates in the complete reference brief. The fifth case verifies exact manual-transmission matching.
+- Exact winner proof: petrol automatic, under the Delhi on-road cap, with both six airbags and sunroof present in the exact variant matrix.
+- Public logged-out comparison completed against ChatGPT and Gemini Flash; details are in `public-chat-quality-benchmark-2026-07-10.md`.
+
+### Honest remaining work
+
+- Exact tested-version crash-rating applicability is still incomplete. The verdict composer discloses this and must not say `safest` from airbag count or internal rating rows alone.
+- Service-network quality, resale and full ownership-cost evidence are not yet strong enough for universal ownership claims.
+- The controlled learning engine remains planned pending consent, retention, offline evaluation and rollback controls.
+- The final verdict currently covers broad data-backed recommendation discovery. Comparison-only, score-only, similar-car and upgrade modules remain diagnostic by policy.
+- Frontend rendering, deployed multi-instance/session soak, autosuggest, shortlist persistence, lead/CRM flows, offer freshness and broader language coverage remain separate launch work.
+
+The backend must still not be labelled globally launch-ready. The Feature Explainer canonical scope and the guarded recommendation-verdict path are ready; the remaining evidence and product modules above are real gaps.
