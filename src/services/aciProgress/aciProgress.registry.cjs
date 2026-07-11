@@ -8,7 +8,7 @@ const ACI_PROGRESS_MODULES = [
     status: "mostly_ready",
     summary: "Permanent meaning-frame brain that turns customer language into validated DB-backed tool plans, structured answer contracts, and buyer-facing composed answers.",
     whatWillWork: "Candidate retrieval, deterministic parser, Gemini fallback, module registry, context graph, tool execution, answer composer, trace logs, eval compatibility.",
-    currentState: "Hybrid meaning-frame routing, DB-backed candidate retrieval, guarded live bridge, comparison context, Answer Composer v1, variant decision enrichment, feature discovery, fuel-filtered feature comparison, and read-model budget discovery are implemented. The deterministic turn ledger survives every live-bridge response path, records explicit vehicle switches with provenance, keeps Thar distinct from Thar Roxx, resolves last / previous / above references, clears stale comparisons on explicit single-vehicle facts, and emits an auditable context trace. The frontend transport now preserves the context ledger, buyer context and buyer-guidance state. ABS is protected from feature/variant collisions at routing, tool and resolver layers. The 13-turn frontend-contract roller-coaster, context Phase1Co2 gate, context stress audit, safety-fast gate and focused buyer-context gates pass.",
+    currentState: "Hybrid meaning-frame routing, DB-backed candidate retrieval, guarded live bridge, comparison context, Answer Composer v1, variant decision enrichment, feature discovery, fuel-filtered feature comparison, and read-model budget discovery are implemented. The deterministic turn ledger survives every live-bridge response path, records explicit vehicle switches with provenance, keeps Thar distinct from Thar Roxx, resolves last / previous / above references, clears stale comparisons on explicit single-vehicle facts, and emits an auditable context trace. Model comparisons now preserve an explicitly selected anchor variant, match fuel and transmission for the peer where possible, expose a structured fallback-confirmation contract when no matching powertrain exists, and keep exact variants in feature follow-ups. Public answer language is guarded against implementation-facing terms. The frontend transport preserves the context ledger, buyer context and buyer-guidance state. ABS is protected from feature/variant collisions at routing, tool and resolver layers. The 17-turn frontend-contract roller-coaster, context Phase1Co2 gate, context stress audit, safety-fast gate and focused buyer-context gates pass.",
     pending: "Verify persistence across deployed multi-instance/session infrastructure, finish the capability registry and full trace/audit contract, reduce the roughly five-second cold prewarm cost without regressing warm response latency, automate the first 40-customer corpus, and expand final-answer and adversarial multilingual evals.",
     items: [
       { key: "candidate_retrieval", name: "DB-backed candidate retrieval", status: "ready" },
@@ -34,6 +34,10 @@ const ACI_PROGRESS_MODULES = [
       { key: "context_roller_coaster_regression", name: "13-turn frontend-contract context roller-coaster regression", status: "ready" },
       { key: "conversation_fast_path_prewarm", name: "Conversation feature and comparison fast-path prewarm", status: "ready" },
       { key: "variant_decision_comparison_enrichment", name: "Variant decision comparison enrichment", status: "ready" },
+      { key: "matched_powertrain_comparison", name: "Fuel/transmission-matched comparison pairing", status: "ready" },
+      { key: "comparison_fallback_confirmation", name: "No-match fallback honesty and confirmation choices", status: "ready" },
+      { key: "exact_variant_comparison_followups", name: "Exact selected variants survive feature follow-ups", status: "ready" },
+      { key: "customer_voice_hygiene", name: "Customer-facing language hygiene guard", status: "ready" },
       { key: "answer_composer_v1", name: "ACI Answer Composer v1", status: "ready" },
       { key: "budget_explorer_preview_contract", name: "Budget explorer preview contract", status: "ready" },
       { key: "budget_facets_contract", name: "Budget facets and slider metadata contract", status: "ready" },
@@ -43,7 +47,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "budget_discovery_read_model", name: "Read-model budget discovery", status: "ready" },
       { key: "meaning_frame_contract", name: "Stable meaning-frame contract", status: "mostly_ready" },
       { key: "capability_registry", name: "Capability/module registry", status: "planned" },
-      { key: "answer_composer", name: "Answer composer", status: "partial" },
+      { key: "answer_composer", name: "Answer composer", status: "mostly_ready" },
       { key: "trace_contract", name: "Trace/debug contract", status: "partial" }
     ]
   },
@@ -56,8 +60,8 @@ const ACI_PROGRESS_MODULES = [
     status: "partial",
     summary: "Main customer experience where users ask natural questions and receive answers plus embedded canvases/cards.",
     whatWillWork: "Natural-language chat, context persistence, follow-ups, explicit car switching, multi-intent cards, clarification only when needed, safe response streaming.",
-    currentState: "Chat-first direction is locked. Backend context isolation, active-comparison handling, explicit vehicle switching, relative references, session buyer-context extraction and the frontend context transport contract are implemented and regression-gated. Comparison and conditional-decision language are now buyer-facing rather than implementation-facing. Final portal rendering and richer multilingual UX still need work.",
-    pending: "Run a deployed portal/session soak test, add streaming status, standardize embedded canvas behavior, add the visible context chip, build DB-backed chat autosuggest and clarification cards, add the recently compared/shortlist tray, and finish multilingual answer quality.",
+    currentState: "Chat-first direction is locked. Backend context isolation, active-comparison handling, explicit vehicle switching, relative references, session buyer-context extraction and the frontend context transport contract are implemented and regression-gated. Comparison pairing now follows fuel and transmission context, exact-variant follow-ups stay scoped, no-match fallbacks expose confirmation choices, and customer-facing answers are guarded against database/internal wording. The public autosuggest backend now returns prewarmed brand, model, variant and feature entities plus selected-car actions without generic question templates. Frontend rendering and richer multilingual UX still need work.",
+    pending: "Run a deployed portal/session soak test, add safe streaming status, standardize embedded canvas behavior, connect the public autosuggest API to the chat bar, render fallback clarification choices, add the visible context chip and recently compared/shortlist tray, and finish multilingual answer quality.",
     items: [
       { key: "chat_first_direction", name: "Chat-first direction", status: "ready" },
       { key: "context_persistence", name: "Context persistence", status: "mostly_ready" },
@@ -66,13 +70,16 @@ const ACI_PROGRESS_MODULES = [
       { key: "aci_core_live_bridge_default_on", name: "ACI Core live bridge default-on chat path", status: "partial" },
       { key: "multi_intent_responses", name: "Multi-intent responses", status: "partial" },
       { key: "safe_streaming", name: "Safe first response streaming", status: "planned" },
-      { key: "clarification_policy", name: "Clarifying question policy", status: "partial" },
-      { key: "answer_variations", name: "Premium answer variations", status: "partial" },
+      { key: "clarification_policy", name: "Clarifying question policy", status: "mostly_ready" },
+      { key: "answer_variations", name: "Premium answer variations", status: "mostly_ready" },
+      { key: "matched_powertrain_comparison", name: "Matched-powertrain comparison defaults", status: "ready" },
+      { key: "comparison_fallback_choices", name: "Structured comparison fallback choices", status: "ready" },
+      { key: "customer_voice_hygiene", name: "No database/internal language in public answer templates", status: "ready" },
       { key: "context_chip", name: "Visible context chip near chat bar", status: "planned" },
-      { key: "smart_disambiguation_cards", name: "Smart disambiguation cards", status: "planned" },
-      { key: "chat_autosuggest", name: "DB-backed chat autosuggest", status: "planned" },
+      { key: "smart_disambiguation_cards", name: "Smart disambiguation cards", status: "partial" },
+      { key: "chat_autosuggest", name: "DB-backed chat autosuggest", status: "mostly_ready" },
       { key: "frontend_debug_renderer_decision", name: "Temporary frontend debug renderer decision", status: "pending" },
-      { key: "contextual_next_actions", name: "Contextual next-best actions", status: "planned" },
+      { key: "contextual_next_actions", name: "Contextual next-best actions", status: "partial" },
       { key: "recently_compared_shortlist", name: "Recently compared / shortlist tray", status: "planned" },
     ]
   },
@@ -165,7 +172,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "feature_variant_collision_guard", name: "Feature names and acronyms cannot become variant filters", status: "ready" },
       { key: "db_feature_catalog", name: "DB-backed feature catalog", status: "mostly_ready" },
       { key: "feature_explorer_ui", name: "Feature explorer UI", status: "mostly_ready" },
-      { key: "feature_explanation", name: "Feature explanation/advice", status: "pending" }
+      { key: "feature_explanation", name: "Feature explanation/advice", status: "ready" }
     ]
   },
   {
@@ -177,8 +184,8 @@ const ACI_PROGRESS_MODULES = [
     status: "mostly_ready",
     summary: "Model-vs-model and variant-vs-variant comparison across price, feature differences, common highlights, context, and follow-up routing.",
     whatWillWork: "Verna vs City, Verna SX IVT vs City ZX CVT, Creta S(O) IVT vs Seltos HTX IVT, feature-specific comparisons.",
-    currentState: "Feature-specific comparison, fuel-filtered feature comparison, exact variant matching, comparison context preservation, feature follow-up routing, relative comparison references and structured decision enrichment are implemented. Direct and contextual comparisons use the DB-backed comparison read model and friendly language. A complete buyer context can now receive evidence-bounded conditional guidance.",
-    pending: "Render comparisonSummary, differenceSummary, featureDifferences and commonHighlights in the frontend; add matched-powertrain safety/EMI comparison; strengthen missing-evidence explanations; and build the polished comparison canvas.",
+    currentState: "Feature-specific comparison, fuel-filtered feature comparison, exact variant matching, comparison context preservation, feature follow-up routing, relative comparison references and structured decision enrichment are implemented. Direct and contextual comparisons now preserve the selected anchor variant, match peer fuel and transmission, carry the exact pair into feature follow-ups, and expose an explicit fallback contract when no matching powertrain exists. A complete buyer context can receive evidence-bounded conditional guidance.",
+    pending: "Render comparisonSummary, differenceSummary, featureDifferences, commonHighlights and fallback choices in the frontend; add EMI comparison; strengthen missing-evidence explanations; and build the polished comparison canvas.",
     items: [
       { key: "model_comparison", name: "Model-vs-model comparison", status: "mostly_ready" },
       { key: "variant_comparison", name: "Variant-vs-variant comparison", status: "mostly_ready" },
@@ -186,6 +193,9 @@ const ACI_PROGRESS_MODULES = [
       { key: "price_comparison", name: "Price comparison", status: "mostly_ready" },
       { key: "feature_difference_enrichment", name: "Feature/spec difference enrichment", status: "ready" },
       { key: "comparison_followups", name: "Comparison follow-up routing", status: "ready" },
+      { key: "matched_powertrain_pairing", name: "Matched fuel/transmission variant pairing", status: "ready" },
+      { key: "comparison_pairing_fallback_contract", name: "No-match pairing fallback contract", status: "ready" },
+      { key: "exact_variant_feature_followups", name: "Exact-variant feature follow-ups", status: "ready" },
       { key: "emi_comparison", name: "EMI comparison", status: "planned" },
       { key: "conditional_buyer_guidance", name: "Evidence-bounded conditional buyer guidance", status: "ready" },
       { key: "value_conclusion", name: "Value conclusion", status: "partial" }
@@ -200,8 +210,8 @@ const ACI_PROGRESS_MODULES = [
     status: "partial",
     summary: "Premium color browsing with accurate swatches, normalized images, staged frames and smooth transitions.",
     whatWillWork: "Show colors, color studio, swatches, car image by color, image framing, inline color answers, quote for selected color.",
-    currentState: "Color Studio is functional and image pipeline exists. Coverage, animation, frame usage and CDN delivery need final polishing.",
-    pending: "Use frame metadata everywhere, prevent image jumping, complete image coverage, finalize R2/CDN delivery and inline color answer card.",
+    currentState: "Color Studio is functional and the image pipeline exists. Vehicle media responses now carry edge-cache headers, all referenced normalized R2 images have immutable one-year browser caching, and future scraper uploads preserve that policy. Coverage, animation and frame usage still need final polishing.",
+    pending: "Use frame metadata everywhere, prevent image jumping, complete image coverage and finish the inline color answer card.",
     items: [
       { key: "color_list", name: "Color list", status: "mostly_ready" },
       { key: "color_studio", name: "Color Studio", status: "mostly_ready" },
@@ -209,7 +219,7 @@ const ACI_PROGRESS_MODULES = [
       { key: "car_image_per_color", name: "Car image per color", status: "partial" },
       { key: "frame_metadata", name: "Frame metadata", status: "partial" },
       { key: "inline_color_answer", name: "Inline color answer", status: "partial" },
-      { key: "cdn_r2_delivery", name: "CDN/R2 delivery", status: "planned" }
+      { key: "cdn_r2_delivery", name: "CDN/R2 delivery", status: "ready" }
     ]
   },
   {
@@ -587,17 +597,17 @@ const ACI_PROGRESS_MODULES = [
     status: "partial",
     summary: "Fast DB-backed chat-bar intelligence that helps users type car names, variants, features and next actions without turning the product into a form-heavy chatbot.",
     whatWillWork: "Brand/model/variant/feature autosuggest, visible selected context chip, clear/change context action, contextual next actions, session buyer memory, recently compared and shortlist state.",
-    currentState: "The backend session context ledger, buyer-context extraction and frontend context transport contract are implemented. Generic question-template suggestions remain excluded. The suggestion index/API, chat-bar dropdown and visible context controls have not started.",
-    pending: "Build the DB/read-model suggestion index and fast API, prewarm/cache suggestions, add the chat-bar dropdown, context chip and clear/change action, then connect personalized suggestions to consented session memory.",
+    currentState: "The backend session context ledger, buyer-context extraction and frontend context transport contract are implemented. Generic question-template suggestions remain excluded. A prewarmed public autosuggest API now returns ranked brand, model, variant and feature entities plus selected-car price, feature, colour, variant and EMI actions. Warm service queries are regression-gated below 75 ms. The chat-bar dropdown and visible context controls have not started.",
+    pending: "Connect the public autosuggest API to the chat-bar dropdown, add the context chip and clear/change action, then connect personalized suggestions to consented session memory and the recently compared/shortlist state.",
     items: [
       { key: "exclude_question_templates", name: "Exclude generic question-template suggestions", status: "ready" },
-      { key: "brand_suggestions", name: "DB-backed brand suggestions", status: "planned" },
-      { key: "model_suggestions", name: "DB-backed model suggestions", status: "planned" },
-      { key: "variant_suggestions", name: "DB-backed variant suggestions", status: "planned" },
-      { key: "feature_suggestions", name: "DB-backed feature suggestions", status: "planned" },
-      { key: "context_action_suggestions", name: "Contextual next-action suggestions", status: "planned" },
-      { key: "suggestion_api", name: "Fast autosuggest API", status: "planned" },
-      { key: "suggestion_prewarm_cache", name: "Prewarmed/cached suggestion index", status: "planned" },
+      { key: "brand_suggestions", name: "DB-backed brand suggestions", status: "ready" },
+      { key: "model_suggestions", name: "DB-backed model suggestions", status: "ready" },
+      { key: "variant_suggestions", name: "DB-backed variant suggestions", status: "ready" },
+      { key: "feature_suggestions", name: "DB-backed feature suggestions", status: "ready" },
+      { key: "context_action_suggestions", name: "Contextual next-action suggestions", status: "ready" },
+      { key: "suggestion_api", name: "Fast autosuggest API", status: "ready" },
+      { key: "suggestion_prewarm_cache", name: "Prewarmed/cached suggestion index", status: "ready" },
       { key: "chatbar_dropdown", name: "Frontend chat-bar autosuggest dropdown", status: "planned" },
       { key: "context_chip", name: "Visible selected context chip", status: "planned" },
       { key: "clear_change_context", name: "Clear/change context action", status: "planned" },

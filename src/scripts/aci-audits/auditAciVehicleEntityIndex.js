@@ -197,7 +197,7 @@ addCase("color-black-does-not-match-without-model-scope-as-selected-car", async 
   };
 });
 
-addCase("autocomplete-verna-returns-model-and-query-suggestions", async () => {
+addCase("autocomplete-verna-returns-model-without-generic-query-templates", async () => {
   const matches = await getAutocompleteEntityMatches({
     query: "verna",
     limit: 8,
@@ -209,8 +209,8 @@ addCase("autocomplete-verna-returns-model-and-query-suggestions", async () => {
     failures.push("Expected model suggestion for Verna");
   }
 
-  if (!matches.some((item) => item.type === "query" && includesClean(item.label, "price"))) {
-    failures.push("Expected price query suggestion");
+  if (matches.some((item) => item.type === "query")) {
+    failures.push("Generic query-template suggestions must stay excluded");
   }
 
   return {

@@ -1572,6 +1572,155 @@ const normalizeDirectComparisonRow = ({ row = {}, target = {} } = {}) => {
   };
 };
 
+const getComparisonFuelKey = (vehicle = {}) =>
+  compareSlug(
+    compareFirstText(vehicle.fuelKey, vehicle.fuelType, vehicle.fuel),
+  );
+
+const getComparisonTransmissionKey = (vehicle = {}) =>
+  compareSlug(
+    compareFirstText(
+      vehicle.transmissionKey,
+      vehicle.transmission,
+      vehicle.gearboxKey,
+      vehicle.gearbox,
+    ),
+  );
+
+const chooseNearestComparisonCandidate = (rows = [], anchorPrice = null) => {
+  if (!rows.length) return null;
+  if (!Number.isFinite(anchorPrice)) return rows[0];
+
+  return [...rows].sort((left, right) => {
+    const leftPrice = getComparablePriceValue(left);
+    const rightPrice = getComparablePriceValue(right);
+    const leftDelta = Number.isFinite(leftPrice)
+      ? Math.abs(leftPrice - anchorPrice)
+      : Number.POSITIVE_INFINITY;
+    const rightDelta = Number.isFinite(rightPrice)
+      ? Math.abs(rightPrice - anchorPrice)
+      : Number.POSITIVE_INFINITY;
+    return leftDelta - rightDelta;
+  })[0];
+};
+
+const selectComparisonCandidate = ({
+  rows = [],
+  target = {},
+  role = "comparison",
+  preferredFuel = "",
+  preferredTransmission = "",
+  anchorPrice = null,
+} = {}) => {
+  const requestedVariantForms = getComparisonTargetVariantKeyForms(target);
+  const requestedFuel = getComparisonFuelKey(target);
+  const requestedTransmission = getComparisonTransmissionKey(target);
+  const desiredFuel = requestedFuel || preferredFuel;
+  const desiredTransmission = requestedTransmission || preferredTransmission;
+
+  if (requestedVariantForms.length) {
+    const exactVariantRows = rows.filter((row) =>
+      getComparisonKeyForms(row.variantKey, row.variant, row.variantName).some(
+        (form) => requestedVariantForms.includes(form),
+      ),
+    );
+    if (!exactVariantRows.length) return null;
+
+    const row = chooseNearestComparisonCandidate(exactVariantRows, anchorPrice);
+    return {
+      row,
+      selectionMode: "explicit_variant",
+      fallbackReason: "",
+      requestedFuel,
+      requestedTransmission,
+      desiredFuel,
+      desiredTransmission,
+      role,
+    };
+  }
+
+  const fuelMatches = desiredFuel
+    ? rows.filter((row) => getComparisonFuelKey(row) === desiredFuel)
+    : rows;
+  const powertrainMatches = desiredTransmission
+    ? fuelMatches.filter(
+        (row) =>
+          getComparisonTransmissionKey(row) === desiredTransmission,
+      )
+    : fuelMatches;
+
+  let pool = powertrainMatches;
+  let selectionMode = role === "anchor" ? "representative_anchor" : "matched_powertrain";
+  let fallbackReason = "";
+
+  if (!pool.length && fuelMatches.length) {
+    pool = fuelMatches;
+    selectionMode = "fuel_matched_fallback";
+    fallbackReason = "no_matching_transmission_with_fuel";
+  }
+
+  if (!pool.length) {
+    const transmissionMatches = desiredTransmission
+      ? rows.filter(
+          (row) =>
+            getComparisonTransmissionKey(row) === desiredTransmission,
+        )
+      : [];
+    pool = transmissionMatches.length ? transmissionMatches : rows;
+    selectionMode = "nearest_available_fallback";
+    fallbackReason = desiredFuel
+      ? "no_matching_fuel_variant"
+      : "no_matching_powertrain_variant";
+  }
+
+  return {
+    row: chooseNearestComparisonCandidate(pool, anchorPrice),
+    selectionMode,
+    fallbackReason,
+    requestedFuel,
+    requestedTransmission,
+    desiredFuel,
+    desiredTransmission,
+    role,
+  };
+};
+
+const buildComparisonVariantSelection = ({ selection = {}, target = {} } = {}) => {
+  const row = selection.row || {};
+  const selectedFuel = getComparisonFuelKey(row);
+  const selectedTransmission = getComparisonTransmissionKey(row);
+  const preferredFuel = selection.desiredFuel || "";
+  const preferredTransmission = selection.desiredTransmission || "";
+
+  return {
+    role: selection.role || "comparison",
+    targetLabel: compareFirstText(
+      target.fullModel,
+      [target.make || target.brand, target.model].filter(Boolean).join(" "),
+      target.model,
+    ),
+    requestedVariant: compareFirstText(
+      target.variant,
+      target.variantName,
+      target.selectedVariant,
+    ),
+    selectedVariant: compareFirstText(row.variant, row.variantName),
+    selectedVehicleLabel: getComparisonVehicleLabel(row, target),
+    selectedFuel: compareFirstText(row.fuelType, row.fuel, row.fuelKey),
+    selectedTransmission: compareFirstText(
+      row.transmission,
+      row.transmissionKey,
+    ),
+    preferredFuel,
+    preferredTransmission,
+    fuelMatched: !preferredFuel || selectedFuel === preferredFuel,
+    transmissionMatched:
+      !preferredTransmission || selectedTransmission === preferredTransmission,
+    selectionMode: selection.selectionMode || "representative_default",
+    fallbackReason: selection.fallbackReason || "",
+  };
+};
+
 const findMatrixDocForComparisonRow = ({ row = {}, matrixDocs = [] } = {}) => {
   const modelForms = getComparisonKeyForms(row.modelKey, row.model, row.fullModel);
   const variantForms = getComparisonKeyForms(row.variantKey, row.variant, row.variantName);
@@ -1608,7 +1757,9 @@ const resolveDirectComparisonRows = async ({
     citySlug: 1,
     fuelType: 1,
     fuel: 1,
+    fuelKey: 1,
     transmission: 1,
+    transmissionKey: 1,
     exShowroomPrice: 1,
     onRoadPrice: 1,
     exShowroomPriceLabel: 1,
@@ -1619,40 +1770,66 @@ const resolveDirectComparisonRows = async ({
   };
 
   const directTargets = targets.slice(0, 2);
-  const hasExplicitVariantTarget = directTargets.some((target = {}) =>
-    getComparisonTargetVariantKeyForms(target).length,
-  );
-
-  const priceRows = await Promise.all(
+  const candidateRowsByTarget = await Promise.all(
     directTargets.map((target = {}) => {
       const modelKeyForms = getComparisonTargetModelKeyForms(target);
-      const variantKeyForms = getComparisonTargetVariantKeyForms(target);
 
-      if (!modelKeyForms.length) return Promise.resolve(null);
+      if (!modelKeyForms.length) return Promise.resolve([]);
 
       const query = {
         citySlug: normalizedCitySlug,
         modelKey: { $in: modelKeyForms },
       };
 
-      if (isVariantComparison && hasExplicitVariantTarget) {
-        if (!variantKeyForms.length) return Promise.resolve(null);
-        query.variantKey = { $in: variantKeyForms };
-      }
-
       return db
         .collection("aci_vehicle_price_rows")
         .find(query)
         .project(priceProjection)
         .sort({ sortOrder: 1, exShowroomPrice: 1, variantKey: 1 })
-        // No hard hint here: Atlas free-tier/storage cleanup may remove old named index.
-        // The collection is small enough for Mongo planner to choose the available plan safely.
-        .limit(1)
-        .next();
+        .limit(100)
+        .toArray();
     }),
   );
 
-  if (priceRows.some((row) => !row)) return null;
+  if (candidateRowsByTarget.some((rows) => !rows.length)) return null;
+
+  const anchorSelection = selectComparisonCandidate({
+    rows: candidateRowsByTarget[0],
+    target: directTargets[0],
+    role: "anchor",
+  });
+  if (!anchorSelection?.row) return null;
+
+  const anchorFuel = getComparisonFuelKey(anchorSelection.row);
+  const anchorTransmission = getComparisonTransmissionKey(anchorSelection.row);
+  const anchorPrice = getComparablePriceValue(anchorSelection.row);
+  const peerSelection = selectComparisonCandidate({
+    rows: candidateRowsByTarget[1],
+    target: directTargets[1],
+    role: "comparison",
+    preferredFuel: anchorFuel,
+    preferredTransmission: anchorTransmission,
+    anchorPrice,
+  });
+  if (!peerSelection?.row) return null;
+
+  if (
+    isVariantComparison &&
+    directTargets.some(
+      (target) => !getComparisonTargetVariantKeyForms(target).length,
+    )
+  ) {
+    return null;
+  }
+
+  const selections = [anchorSelection, peerSelection];
+  const priceRows = selections.map((selection) => selection.row);
+  const variantSelection = selections.map((selection, index) =>
+    buildComparisonVariantSelection({
+      selection,
+      target: directTargets[index],
+    }),
+  );
 
   const allModelForms = compareUnique(
     priceRows.flatMap((row = {}) =>
@@ -1701,6 +1878,7 @@ const resolveDirectComparisonRows = async ({
     ),
     matrixDocs: orderedMatrixDocs,
     catalogByKey,
+    variantSelection,
     citySlug: normalizedCitySlug,
     resolutionMode: "direct_comparison_read_model",
   };
@@ -1761,6 +1939,7 @@ const buildVehicleComparisonEnrichment = async ({
   city = "new-delhi",
   matrixDocs: matrixDocsOverride = null,
   catalogByKey: catalogByKeyOverride = null,
+  variantSelection = [],
 } = {}) => {
   if (!Array.isArray(rows) || rows.length < 2) {
     return {
@@ -1801,22 +1980,37 @@ const buildVehicleComparisonEnrichment = async ({
     const catalog = catalogByKey.get(featureKey) || {};
     const values = {};
     const availability = {};
+    const evidencePresent = {};
 
     compared.forEach((item, index) => {
       values[item.label] = getFeatureEntryValue(entries[index]);
       availability[item.label] = isFeatureEntryAvailable(entries[index]);
+      evidencePresent[item.label] = Boolean(entries[index]);
     });
 
     const valueSet = new Set(Object.values(values).map((value) => compareCleanText(value).toLowerCase()));
     const availabilitySet = new Set(Object.values(availability));
+    const evidenceComplete = Object.values(evidencePresent).every(Boolean);
+    const firstEntry = entries.find(Boolean) || {};
 
     return {
       featureKey,
-      feature: getFeatureDisplayName(featureKey, entries.find(Boolean) || {}, catalog),
-      category: compareFirstText(catalog.category, catalog.group),
+      feature: getFeatureDisplayName(featureKey, firstEntry, catalog),
+      category: compareFirstText(
+        catalog.category,
+        catalog.groupLabel,
+        catalog.group,
+        firstEntry.groupLabel,
+        firstEntry.groupKey,
+        firstEntry.section,
+      ),
       values,
       availability,
-      differs: valueSet.size > 1 || availabilitySet.size > 1,
+      evidencePresent,
+      evidenceComplete,
+      differs:
+        evidenceComplete &&
+        (valueSet.size > 1 || availabilitySet.size > 1),
       anyAvailable: Object.values(availability).some(Boolean),
       allAvailable: Object.values(availability).every(Boolean),
       priority: Number.isFinite(Number(catalog.priority)) ? Number(catalog.priority) : 999,
@@ -1833,16 +2027,22 @@ const buildVehicleComparisonEnrichment = async ({
       return a.feature.localeCompare(b.feature);
     })
     .slice(0, 24)
-    .map(({ differs, anyAvailable, allAvailable, priority, ...item }) => item);
+    .map(
+      ({ differs, anyAvailable, allAvailable, priority, evidenceComplete, ...item }) =>
+        item,
+    );
 
   const commonHighlights = featureComparisons
-    .filter((item) => !item.differs && item.allAvailable)
+    .filter((item) => item.evidenceComplete && !item.differs && item.allAvailable)
     .sort((a, b) => {
       if (a.priority !== b.priority) return a.priority - b.priority;
       return a.feature.localeCompare(b.feature);
     })
     .slice(0, 16)
-    .map(({ differs, anyAvailable, allAvailable, priority, ...item }) => item);
+    .map(
+      ({ differs, anyAvailable, allAvailable, priority, evidenceComplete, ...item }) =>
+        item,
+    );
 
   const priceA = compared[0]?.priceValue;
   const priceB = compared[1]?.priceValue;
@@ -1885,6 +2085,9 @@ const buildVehicleComparisonEnrichment = async ({
     evidenceSource: allFeatureKeys.length ? "vehicle_variant_feature_matrix_v2" : "",
     matrixEvidenceComplete: matrixDocs.every(Boolean),
     matrixFeatureKeyCount: allFeatureKeys.length,
+    incompleteFeatureEvidenceCount: featureComparisons.filter(
+      (item) => !item.evidenceComplete,
+    ).length,
   };
 
   const missingOrUnavailableEvidence = compared
@@ -1941,6 +2144,14 @@ const buildVehicleComparisonEnrichment = async ({
       cheaperVehicle: cheaperIndex !== null ? compared[cheaperIndex].label : "",
       featureDifferenceCount: featureDifferences.length,
       commonHighlightCount: commonHighlights.length,
+      variantSelection,
+      powertrainAligned:
+        variantSelection.length >= 2 &&
+        variantSelection.slice(1).every(
+          (selection) =>
+            selection.fuelMatched === true &&
+            selection.transmissionMatched === true,
+        ),
     },
     differenceSummary,
     featureDifferences,
@@ -2247,6 +2458,7 @@ export const runtimeVehicleCompare = async ({
   let rows = directComparisonRows?.rows || [];
   let comparisonMatrixDocs = directComparisonRows?.matrixDocs || null;
   let comparisonCatalogByKey = directComparisonRows?.catalogByKey || null;
+  let comparisonVariantSelection = directComparisonRows?.variantSelection || [];
 
   if (!rows.length) {
     rows = await Promise.all(
@@ -2326,6 +2538,7 @@ export const runtimeVehicleCompare = async ({
         city: comparisonCitySlug,
         matrixDocs: comparisonMatrixDocs,
         catalogByKey: comparisonCatalogByKey,
+        variantSelection: comparisonVariantSelection,
       })
     : {
         comparisonSummary: {},
@@ -2335,6 +2548,80 @@ export const runtimeVehicleCompare = async ({
         decisionHighlights: [],
         matrixCoverage: [],
       };
+
+  const resolvedComparisonVehicles = rows.map((row, index) => {
+    const target = targets[index] || {};
+    if (row?.unavailable) return target;
+    const make = text(row.make, row.brand, target.make, target.brand);
+    const model = text(row.model, target.model, target.fullModel);
+    return {
+      ...target,
+      make,
+      brand: text(row.brand, make, target.brand),
+      model,
+      fullModel: text(
+        row.fullModel,
+        row.displayName,
+        [make, model].filter(Boolean).join(" "),
+      ),
+      variant: text(row.variant, row.variantName, target.variant),
+      variantName: text(row.variantName, row.variant, target.variantName),
+      fuel: text(row.fuelType, row.fuel, target.fuel),
+      fuelType: text(row.fuelType, row.fuel, target.fuelType),
+      transmission: text(row.transmission, target.transmission),
+      city: text(row.city, row.citySlug, target.city, comparisonCitySlug),
+    };
+  });
+  const fallbackSelection = comparisonVariantSelection.find(
+    (selection) => selection.fallbackReason,
+  );
+  const powertrainMismatchSelection = comparisonVariantSelection
+    .slice(1)
+    .find(
+      (selection) =>
+        selection.fuelMatched === false ||
+        selection.transmissionMatched === false,
+    );
+  const resolvedVehicleLabels = resolvedComparisonVehicles
+    .map((vehicle) =>
+      [vehicle.fullModel || vehicle.model, vehicle.variant || vehicle.variantName]
+        .filter(Boolean)
+        .join(" "),
+    )
+    .filter(Boolean);
+  const comparisonPairing = {
+    status: fallbackSelection
+      ? "fallback_needs_confirmation"
+      : powertrainMismatchSelection
+        ? "explicit_powertrain_mismatch"
+        : comparisonVariantSelection.length >= 2
+          ? "matched_powertrain"
+          : "representative_default",
+    requiresConfirmation: Boolean(fallbackSelection),
+    reasonCode:
+      fallbackSelection?.fallbackReason ||
+      (powertrainMismatchSelection
+        ? "explicit_variant_powertrain_mismatch"
+        : ""),
+    preferredFuel: fallbackSelection?.preferredFuel || "",
+    preferredTransmission: fallbackSelection?.preferredTransmission || "",
+    selectedFallbackVehicle: fallbackSelection?.selectedVehicleLabel || "",
+    variantSelection: comparisonVariantSelection,
+    choices: fallbackSelection
+      ? [
+          {
+            id: "accept-comparison-fallback",
+            label: `Use ${fallbackSelection.selectedVehicleLabel || "this variant"}`,
+            query: `Compare ${resolvedVehicleLabels.join(" vs ")}`,
+          },
+          {
+            id: "change-comparison-variants",
+            label: "Choose another variant",
+            query: `Change variants for ${resolvedVehicleLabels.join(" vs ")}`,
+          },
+        ]
+      : [],
+  };
 
   return {
     rows,
@@ -2347,21 +2634,37 @@ export const runtimeVehicleCompare = async ({
     missingOrUnavailableEvidence: comparisonEnrichment.missingOrUnavailableEvidence,
     decisionHighlights: comparisonEnrichment.decisionHighlights,
     matrixCoverage: comparisonEnrichment.matrixCoverage,
+    variantSelection: comparisonVariantSelection,
+    comparisonPairing,
     selectedComparisonSet: {
-      vehicles: targets,
-      models: targets.map((target) => text(target.fullModel, target.model)).filter(Boolean),
+      vehicles: resolvedComparisonVehicles,
+      requestedVehicles: targets,
+      models: resolvedComparisonVehicles
+        .map((target) => text(target.fullModel, target.model))
+        .filter(Boolean),
       variantSelectionMode:
         toolPlan.resolution?.variantSelectionMode ||
-        (isVariantComparison ? "exact" : "representative_default"),
+        (isVariantComparison
+          ? "exact"
+          : comparisonVariantSelection.length
+            ? "matched_powertrain"
+            : "representative_default"),
+      variantSelection: comparisonVariantSelection,
     },
     contextPatch: {
       activeComparison: {
         type: "vehicle_compare",
-        vehicles: targets,
+        vehicles: resolvedComparisonVehicles,
+        requestedVehicles: targets,
+        variantSelection: comparisonVariantSelection,
+        comparisonPairing,
         city: text(toolPlan.filters?.city, context?.anchorCity, "new-delhi"),
       },
       selectedComparisonSet: {
-        vehicles: targets,
+        vehicles: resolvedComparisonVehicles,
+        requestedVehicles: targets,
+        variantSelection: comparisonVariantSelection,
+        comparisonPairing,
       },
       anchorCity: text(toolPlan.filters?.city, context?.anchorCity, "new-delhi"),
     },

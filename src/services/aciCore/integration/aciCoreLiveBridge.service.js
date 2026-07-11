@@ -1399,6 +1399,43 @@ const parseExplicitComparisonTargetsFromMessage = (message = "") => {
   return [];
 };
 
+const resolveExplicitComparisonVehicle = async ({
+  label = "",
+  city = "new-delhi",
+} = {}) => {
+  const resolved = await resolveStandaloneModelMentionFromSummary(label).catch(
+    () => null,
+  );
+  if (!resolved?.model) return resolved;
+
+  const make = cleanText(resolved.make || resolved.brand || "");
+  const model = cleanText(resolved.model || "");
+  const fullModel = cleanText(
+    resolved.fullModel || [make, model].filter(Boolean).join(" "),
+  );
+  const variantResolution = await resolveModelScopedVariantFromMessage({
+    message: label,
+    make,
+    model,
+    fullModel,
+    modelKey: resolved.modelKey || "",
+    citySlug: city,
+  });
+
+  if (variantResolution?.status !== "exact" || !variantResolution.selected) {
+    return resolved;
+  }
+
+  return {
+    ...resolved,
+    variant: variantResolution.selected.variant,
+    variantName: variantResolution.selected.variant,
+    variantKey: variantResolution.selected.variantKey,
+    fullVariant: variantResolution.selected.fullVariant,
+    variantResolutionStatus: "exact",
+  };
+};
+
 const maybeReturnExplicitComparisonFastPath = async ({
   message = "",
   context = {},
@@ -1451,7 +1488,7 @@ const maybeReturnExplicitComparisonFastPath = async ({
     ? contextualTargetVehicles
     : await Promise.all(
         parsedTargets.slice(0, 2).map((label) =>
-          resolveStandaloneModelMentionFromSummary(label).catch(() => null),
+          resolveExplicitComparisonVehicle({ label, city }),
         ),
       );
   let targets = parsedTargets.slice(0, 2).map((label, index) => {
@@ -1511,9 +1548,18 @@ const maybeReturnExplicitComparisonFastPath = async ({
       inlineType: "",
     },
     resolution: {
-      comparisonLevel: "model",
-      variantSelectionMode: "not_required",
-      selectedVariants: [],
+      comparisonLevel: comparisonVehicles.every((vehicle) => vehicle.variant)
+        ? "variant"
+        : "model",
+      variantSelectionMode: comparisonVehicles.every((vehicle) => vehicle.variant)
+        ? "exact"
+        : "not_required",
+      selectedVariants: comparisonVehicles
+        .filter((vehicle) => vehicle.variant)
+        .map((vehicle) => ({
+          model: vehicle.model || vehicle.fullModel,
+          variant: vehicle.variant,
+        })),
       selectedModels: comparisonVehicles.map((target) => ({
         model: target.model || target.fullModel,
       })),
@@ -3640,7 +3686,7 @@ const buildExactUnavailableVariantFastPathResponse = ({
 } = {}) => {
   const requestedVariant = resolution.requestedVariantText || "that exact variant";
   const fullModel = [resolved.make, resolved.model].filter(Boolean).join(" ") || resolved.model || "";
-  const answer = renderAciLanguageText("decision_exact_variant_unavailable_recovery", { modelLabel: fullModel || "this model", requestedVariant }, { seed: buildAciLanguageSeed("decision_exact_variant_unavailable_recovery", fullModel, requestedVariant, message) }) || `I found ${fullModel || "this model"}, but ${requestedVariant} does not match an exact current variant in the DB-backed catalog. I can continue with listed variants, model-level price, and features.`;
+  const answer = renderAciLanguageText("decision_exact_variant_unavailable_recovery", { modelLabel: fullModel || "this model", requestedVariant }, { seed: buildAciLanguageSeed("decision_exact_variant_unavailable_recovery", fullModel, requestedVariant, message) }) || `I found ${fullModel || "this model"}, but I could not match ${requestedVariant} to a current variant I can verify. I can continue with available variants, model-level price, and features.`;
   const selectedVehicle = {
     make: resolved.make || "",
     brand: resolved.make || "",

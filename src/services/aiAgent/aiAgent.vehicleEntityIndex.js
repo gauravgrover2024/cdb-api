@@ -243,6 +243,7 @@ export const getAutocompleteEntityMatches = async ({
   query = "",
   context = {},
   limit = 8,
+  featureCatalog = {},
 } = {}) => {
   const index = await getVehicleEntityIndex();
 
@@ -251,6 +252,7 @@ export const getAutocompleteEntityMatches = async ({
     query,
     context,
     limit,
+    featureCatalog,
   });
 };
 

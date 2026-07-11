@@ -2,6 +2,17 @@
 
 import mongoose from 'mongoose';
 
+const ALIAS_CATALOG_TTL_MS = Number(
+  process.env.ACI_VEHICLE_ALIAS_CATALOG_TTL_MS || 10 * 60 * 1000,
+);
+
+let modelSummaryCatalogCache = {
+  rows: [],
+  expiresAt: 0,
+  promise: null,
+};
+const collectionExistenceCache = new Map();
+
 const cleanText = (value = '') =>
   String(value || '')
     .replace(/\s+/g, ' ')
@@ -192,11 +203,76 @@ const compactAliasProjection = {
 };
 
 const collectionExists = async (db, name) => {
+  const cacheKey = `${db?.databaseName || 'default'}:${name}`;
+  const cached = collectionExistenceCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.exists;
   try {
-    return Boolean(await db.listCollections({ name }).hasNext());
+    const exists = Boolean(await db.listCollections({ name }).hasNext());
+    collectionExistenceCache.set(cacheKey, {
+      exists,
+      expiresAt: Date.now() + ALIAS_CATALOG_TTL_MS,
+    });
+    return exists;
   } catch {
     return false;
   }
+};
+
+const loadVehicleModelSummaryCatalog = async ({ db, force = false } = {}) => {
+  if (!db) return [];
+  if (!force && modelSummaryCatalogCache.rows.length && modelSummaryCatalogCache.expiresAt > Date.now()) {
+    return modelSummaryCatalogCache.rows;
+  }
+  if (!force && modelSummaryCatalogCache.promise) return modelSummaryCatalogCache.promise;
+
+  const promise = db.collection('aci_vehicle_model_summary')
+    .find(
+      {},
+      {
+        projection: {
+          make: 1,
+          brand: 1,
+          model: 1,
+          fullModel: 1,
+          makeKey: 1,
+          modelKey: 1,
+          shortModelKey: 1,
+          fuelTypes: 1,
+          transmissions: 1,
+        },
+      },
+    )
+    .limit(3000)
+    .toArray();
+
+  modelSummaryCatalogCache.promise = promise;
+  try {
+    const rows = await promise;
+    modelSummaryCatalogCache = {
+      rows,
+      expiresAt: Date.now() + ALIAS_CATALOG_TTL_MS,
+      promise: null,
+    };
+    return rows;
+  } catch (error) {
+    modelSummaryCatalogCache.promise = null;
+    throw error;
+  }
+};
+
+const warmVehicleAliasRegistry = async ({ force = false } = {}) => {
+  const db = getDb();
+  if (!db) return { ok: false, error: 'mongoose_not_connected' };
+  const startedAt = Date.now();
+  const [rows] = await Promise.all([
+    loadVehicleModelSummaryCatalog({ db, force }),
+    ...COMPACT_ALIAS_COLLECTIONS.map(({ name }) => collectionExists(db, name)),
+  ]);
+  return {
+    ok: true,
+    durationMs: Date.now() - startedAt,
+    cache: { rows: rows.length, ttlMs: ALIAS_CATALOG_TTL_MS },
+  };
 };
 
 
@@ -370,25 +446,7 @@ const findExplicitMakeForFuzzyRecovery = ({ rows = [], message = '' } = {}) => {
 async function resolveFuzzyModelTypoAlias({ message = '', db = null } = {}) {
   if (!db) return null;
 
-  const rows = await db.collection('aci_vehicle_model_summary')
-    .find(
-      {},
-      {
-        projection: {
-          make: 1,
-          brand: 1,
-          model: 1,
-          fullModel: 1,
-          makeKey: 1,
-          modelKey: 1,
-          shortModelKey: 1,
-          fuelTypes: 1,
-          transmissions: 1,
-        },
-      },
-    )
-    .limit(3000)
-    .toArray();
+  const rows = await loadVehicleModelSummaryCatalog({ db });
 
   const explicitMake = findExplicitMakeForFuzzyRecovery({ rows, message });
   if (!explicitMake?.make && !explicitMake?.brand) return null;
@@ -554,6 +612,7 @@ async function resolveVehicleAlias({ message = '' } = {}) {
 export {
   ALIAS_RULES,
   resolveVehicleAlias,
+  warmVehicleAliasRegistry,
 };
 
 export default resolveVehicleAlias;

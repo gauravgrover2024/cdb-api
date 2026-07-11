@@ -70,9 +70,20 @@ export const logAiSuggestionInteraction = asyncHandler(async (req, res) => {
 });
 
 export const autocompleteAiAgent = asyncHandler(async (req, res) => {
-  const { q = "", limit = 8 } = req.query || {};
-
-  const context = req.body?.context || {};
+  const { q = "", limit = 8, make = "", model = "", variant = "" } =
+    req.query || {};
+  const context =
+    req.body?.context ||
+    (model
+      ? {
+          selectedVehicle: {
+            make,
+            brand: make,
+            model,
+            variant,
+          },
+        }
+      : {});
 
   const response = await getAiAutocompleteSuggestions({
     q,
@@ -80,5 +91,51 @@ export const autocompleteAiAgent = asyncHandler(async (req, res) => {
     limit: Number(limit) || 8,
   });
 
+  res.set(
+    "Cache-Control",
+    "public, max-age=60, s-maxage=300, stale-while-revalidate=3600",
+  );
+  res.json(response);
+});
+
+export const autocompleteAiAgentPublic = asyncHandler(async (req, res) => {
+  const payload = req.method === "POST" ? req.body || {} : req.query || {};
+  const {
+    q = "",
+    limit = 8,
+    context: suppliedContext = {},
+    make = "",
+    model = "",
+    variant = "",
+  } = payload;
+  const context =
+    suppliedContext && typeof suppliedContext === "object" &&
+    Object.keys(suppliedContext).length
+      ? suppliedContext
+      : model
+        ? {
+            selectedVehicle: {
+              make,
+              brand: make,
+              model,
+              variant,
+            },
+          }
+        : {};
+
+  const response = await getAiAutocompleteSuggestions({
+    q,
+    context,
+    limit: Number(limit) || 8,
+  });
+
+  if (req.method === "GET") {
+    res.set(
+      "Cache-Control",
+      "public, max-age=60, s-maxage=300, stale-while-revalidate=3600",
+    );
+  } else {
+    res.set("Cache-Control", "no-store");
+  }
   res.json(response);
 });

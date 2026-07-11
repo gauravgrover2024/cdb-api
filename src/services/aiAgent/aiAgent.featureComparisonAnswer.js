@@ -14,6 +14,12 @@ const cleanText = (value = "") =>
     .replace(/\s+/g, " ")
     .trim();
 
+const asArray = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (value === undefined || value === null || value === "") return [];
+  return [value];
+};
+
 const slugKey = (value = "") =>
   normalizeAciContextText(value).replace(/\s+/g, "_");
 
@@ -101,6 +107,14 @@ const buildComparisonModelEntity = (entry = {}) => {
     fullModel,
     modelKey: slugKey(entry.shortModelKey || model),
     brandModelKey: brand ? `${slugKey(brand)}_${slugKey(model)}` : slugKey(fullModel),
+    variant: cleanText(
+      entry.variant || entry.variantName || entry.selectedVariant || "",
+    ),
+    variantKey: slugKey(
+      entry.variantKey || entry.variant || entry.variantName || "",
+    ),
+    fuel: cleanText(entry.fuel || entry.fuelType || ""),
+    transmission: cleanText(entry.transmission || ""),
   };
 };
 
@@ -208,6 +222,8 @@ const summarizeModelFeature = ({ modelEntity = {}, feature = {}, rows = [] } = {
     make: modelEntity.make || modelEntity.brand || "",
     model: modelEntity.model || "",
     fullModel: modelEntity.fullModel || modelEntity.model || "",
+    variant: modelEntity.variant || "",
+    label: [modelEntity.model, modelEntity.variant].filter(Boolean).join(" "),
     featureKey: key,
     feature: displayName,
     displayName,
@@ -275,10 +291,20 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
 
   const index = await getVehicleEntityIndex();
 
+  const plannedComparisonTargets = asArray(
+    toolPlan.entities?.comparisonVehicles ||
+      context?.activeComparison?.vehicles ||
+      context?.selectedComparisonSet?.vehicles,
+  )
+    .map(buildComparisonModelEntity)
+    .filter(Boolean)
+    .slice(0, 2);
   const directlyMentionedModels = findMentionedComparisonModelsFromIndex(index, message, 2);
   const modelMatches = directlyMentionedModels.length >= 2 ? [] : findModelMatches(index, message);
   const models =
-    directlyMentionedModels.length >= 2
+    plannedComparisonTargets.length >= 2
+      ? plannedComparisonTargets
+      : directlyMentionedModels.length >= 2
       ? directlyMentionedModels
       : uniqueModelsFromMatches(modelMatches, 2);
 
@@ -357,7 +383,20 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
         (modelEntity.modelKey && rowModelKey === modelEntity.modelKey)
       );
 
-      return modelMatches && rowMatchesFuelFilter(row, fuelFilter);
+      const requestedVariantKey = slugKey(
+        modelEntity.variantKey || modelEntity.variant || "",
+      );
+      const rowVariantKey = slugKey(
+        row.variantKey || row.variant || row.variantFull || "",
+      );
+      const variantMatches =
+        !requestedVariantKey || rowVariantKey === requestedVariantKey;
+
+      return (
+        modelMatches &&
+        variantMatches &&
+        rowMatchesFuelFilter(row, fuelFilter)
+      );
     });
 
     rowsByModel.set(key, matchingRows);
@@ -376,9 +415,9 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
     model: firstModel.model || "",
     fullModel: firstModel.fullModel || firstModel.model || "",
     displayName: firstModel.fullModel || firstModel.model || "",
-    variant: "",
-    variantName: "",
-    selectedVariant: "",
+    variant: firstModel.variant || "",
+    variantName: firstModel.variant || "",
+    selectedVariant: firstModel.variant || "",
     city: context?.anchorCity || context?.selectedVehicle?.city || DEFAULT_CITY,
     citySlug: context?.anchorCity || context?.selectedVehicle?.citySlug || DEFAULT_CITY,
   };
@@ -415,8 +454,10 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
           fullModel: model.fullModel || model.model || "",
           modelKey: model.modelKey || "",
           brandModelKey: model.brandModelKey || "",
-          variant: "",
-          variantName: "",
+          variant: model.variant || "",
+          variantName: model.variant || "",
+          fuel: model.fuel || "",
+          transmission: model.transmission || "",
           city: context?.anchorCity || context?.selectedVehicle?.city || DEFAULT_CITY,
         })),
         fuelFilter: fuelFilter || "",
@@ -433,8 +474,10 @@ export const maybeRunAciFeatureComparisonAnswer = async ({
           fullModel: model.fullModel || model.model || "",
           modelKey: model.modelKey || "",
           brandModelKey: model.brandModelKey || "",
-          variant: "",
-          variantName: "",
+          variant: model.variant || "",
+          variantName: model.variant || "",
+          fuel: model.fuel || "",
+          transmission: model.transmission || "",
           city: context?.anchorCity || context?.selectedVehicle?.city || DEFAULT_CITY,
         })),
       },

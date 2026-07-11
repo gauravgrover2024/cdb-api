@@ -30,6 +30,9 @@ const comparisonVehicles = (response = {}) =>
       response.contextPatch?.contextState?.activeComparison?.vehicles,
   );
 
+const comparisonRows = (response = {}) =>
+  asArray(response.data?.rows || response.rows);
+
 const selectedVehicle = (response = {}) =>
   response.contextPatch?.selectedVehicle ||
   response.contextPatch?.contextState?.selectedVehicle ||
@@ -164,6 +167,61 @@ async function main() {
         assert(!/anti-lock Braking/.test(response.answer || ""));
         assert(!/older .* variant/i.test(response.answer || ""));
         assert(!/\babs\b/.test(lower(selectedVehicle(response).variant || "")));
+      },
+    },
+    {
+      id: "creta-vs-thar-matched-powertrain",
+      message: "vs thar",
+      check(response) {
+        const rows = comparisonRows(response);
+        const vehicles = comparisonVehicles(response);
+        assert.strictEqual(rows.length, 2);
+        assert(hasModel(vehicles, /\bcreta\b/));
+        assert(hasModel(vehicles, /\bthar\b(?! roxx)/));
+        assert(rows.every((row) => /petrol/i.test(row.fuel || row.fuelType || "")));
+        assert(rows.every((row) => /manual/i.test(row.transmission || "")));
+        assert(!/AXT RWD Diesel/i.test(response.answer || ""));
+        assert(/like-for-like|both are petrol manual/i.test(response.answer || ""));
+        assert(!/DB-backed|indexed|current structured data|variants shown/i.test(response.answer || ""));
+      },
+    },
+    {
+      id: "explicit-cross-fuel-variant-honesty",
+      message: "compare Hyundai Creta E vs Mahindra Thar AXT RWD Diesel",
+      check(response) {
+        assert.strictEqual(
+          response.data?.comparisonPairing?.status,
+          "explicit_powertrain_mismatch",
+        );
+        assert(/powertrains differ/i.test(response.answer || ""));
+        assert(/petrol manual/i.test(response.answer || ""));
+        assert(/diesel manual/i.test(response.answer || ""));
+        assert(/like-for-like pair/i.test(response.answer || ""));
+      },
+    },
+    {
+      id: "switch-punch-ev-colors",
+      message: "tata punch ev colors",
+      check(response) {
+        assert(/\bpunch ev\b/.test(vehicleLabel(selectedVehicle(response))));
+        assert.strictEqual(comparisonVehicles(response).length, 0);
+      },
+    },
+    {
+      id: "punch-ev-vs-thar-fallback-honesty",
+      message: "vs thar",
+      check(response) {
+        const fallback = asArray(response.data?.variantSelection).find(
+          (selection) => selection.fallbackReason === "no_matching_fuel_variant",
+        );
+        assert(fallback);
+        assert(/could not find an? electric .*Thar variant/i.test(response.answer || ""));
+        assert(/nearest available option/i.test(response.answer || ""));
+        assert(/does not work for you|switch it/i.test(response.answer || ""));
+        assert.strictEqual(response.data?.comparisonPairing?.requiresConfirmation, true);
+        assert.strictEqual(response.data?.comparisonPairing?.choices?.length, 2);
+        assert(asArray(response.actions).some((action) => action.id === "accept-comparison-fallback"));
+        assert(asArray(response.actions).some((action) => action.id === "change-comparison-variants"));
       },
     },
     {

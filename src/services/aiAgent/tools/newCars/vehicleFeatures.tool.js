@@ -873,7 +873,7 @@ const buildCustomerFeatureAnswer = ({
           : `Here are ${target}'s available features`;
       const suffix = sample ? `: ${sample}.` : ` — ${evidenceCount} indexed ${scope}.`;
       const limitation = /lose|lost|miss|missing|without/i.test(userMessage || "")
-        ? " I can show the indexed feature rows, but this view does not yet calculate a complete upgrade-loss ladder."
+        ? " I can show the confirmed feature differences, but this view does not yet calculate a complete upgrade-loss ladder."
         : isModelLevelFeatureSummary
           ? " Features vary by variant."
           : " Equipment can differ by fuel/transmission sub-variant.";
@@ -897,7 +897,7 @@ const buildCustomerFeatureAnswer = ({
     }
 
     const scope = isSafetyFeatureQuery ? "safety feature list" : "feature list";
-    return `I found ${target}, but a full ${scope} is not available in the indexed feature records yet. I will not guess features without matching data.`;
+    return `I found ${target}, but I cannot verify the full ${scope} yet. I would rather leave a feature open than guess.`;
   }
 
   if (result.intent === "vehicle_feature_answer" && featureLabel) {
@@ -1556,7 +1556,7 @@ const buildModelFeatureSummaryAnswer = ({
   if (infotainment.length) parts.push(`Tech features include ${infotainment.join(", ")}`);
 
   if (!parts.length) {
-    return `I found indexed feature coverage for ${modelLabel}, but the model summary does not yet have enough clean highlights to present confidently.`;
+    return `I found feature information for ${modelLabel}, but there are not enough clear highlights to present it confidently yet.`;
   }
 
   return `${modelLabel}: ${parts.join(". ")}. Features vary by variant, so check the exact trim before finalizing.`;

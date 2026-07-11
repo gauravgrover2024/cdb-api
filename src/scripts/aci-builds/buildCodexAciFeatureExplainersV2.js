@@ -119,7 +119,7 @@ const convenienceEntry = (feature, { benefit = "reduces effort in everyday use",
   makeEntry({
     buyerSummary: `${feature.displayName} is a convenience feature that ${benefit}.`,
     howItWorks: howItWorks || `The vehicle uses its fitted controls, hardware or software to deliver this function. The control method, operating range and exact behaviour can vary by implementation.`,
-    whenItMattersSummary: `It is most useful for ${contexts.join(" and ")}, especially when the same task is repeated often.`,
+    whenItMattersSummary: `It is most useful for ${contexts.join(" and ")}.`,
     whenItMatters: contexts,
     limitationsSummary: `${limitation} It should not displace core safety, seating, visibility or running-cost needs.`,
     buyerAdvice: `Give it more weight if you will use it regularly; otherwise treat it as a useful extra and verify the exact variant in person.`,

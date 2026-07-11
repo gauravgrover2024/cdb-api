@@ -1011,7 +1011,7 @@ const buildSameFamilyValueLine = (result = {}, params = {}) => {
   const modelLabel = variants[0]?.variantFullName?.split(" ").slice(0, 2).join(" ") || params.modelKey || "this model";
 
   if (!variants.length) {
-    return `I could not find enough same-family value data for ${modelLabel}. I can still help with listed variants, model-level price/features, or a basic comparison if you share city and requirements.`;
+    return `I do not have enough information to judge value across the ${modelLabel} range confidently. I can still help with its available variants, model-level price and features, or a direct comparison if you share your city and requirements.`;
   }
 
   const top = variants[0];
@@ -1220,7 +1220,7 @@ const buildModelScoreSummaryLine = (result = {}, params = {}) => {
   const scopeLabel = buildScopeLabel(params);
 
   if (!variants.length) {
-    return `I could not find enough diagnostic data for ${modelLabel}. I can still help with price, features, variants, similar cars, or comparison from the DB-backed catalogue.`;
+    return `I do not have enough information to assess ${modelLabel} confidently yet. I can still help with its price, features, variants, similar cars, or a direct comparison.`;
   }
 
   const bestValue = getBestModelVariantByModule(variants, "value");

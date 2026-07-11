@@ -124,6 +124,12 @@ const SAMPLE_INPUTS = Object.freeze({
 
 const FORBIDDEN_RENDERED_PATTERNS = [
   /indexed spec value/i,
+  /\bDB-backed\b/i,
+  /\bindexed\b/i,
+  /\bcurrent (?:structured )?data\b/i,
+  /\bfeature records\b/i,
+  /\bprice rows\b/i,
+  /\bcatalog(?:ue)?\b/i,
   /buy this/i,
   /clear winner/i,
   /best choice/i,

@@ -1101,7 +1101,7 @@ export const buildVehiclePricelistResponse = ({
       canvasType: "",
       inlineType: "variant_ambiguity_card",
       title: `Choose exact ${model} variant`,
-      answer: `I found ${model}, but ${variantResolution.requestedVariant || variant} does not match an exact current DB-backed variant. I can continue with listed variants, model-level price/features, or you can choose the closest available DB variant.`,
+      answer: `I found ${model}, but I could not match ${variantResolution.requestedVariant || variant} to a current variant I can verify. Choose one of the available variants, or I can continue with model-level price and features.`,
       data: {
         model,
         requestedVariant: variantResolution.requestedVariant || variant,
@@ -1326,7 +1326,7 @@ export const buildVehicleColorsResponse = ({
     ? color
       ? `I found model-level colour information for ${model}. Exact variant-wise ${color} stock availability needs confirmation.`
       : `Here are the available model-level colours for ${model || "this car"}.`
-    : `I do not have confirmed colour records for ${model || "this car"} yet.`;
+    : `I cannot confirm the colour range for ${model || "this car"} yet.`;
 
   return baseResponse({
     toolPlan,
@@ -1395,8 +1395,8 @@ export const buildVehicleFeatureLookupResponse = ({
   const carLabel = cleanText(`${model}${variant ? ` ${variant}` : ""}`) || "this car";
   const hasMatch = rows.length > 0 || runtimeData.matched > 0;
   const summaryAnswer = hasMatch
-    ? `I found feature records for ${carLabel}. Use the feature card to review the available feature list because equipment can differ by fuel/transmission sub-variant.`
-    : `I found ${carLabel}, but a full feature-list summary is not available in the indexed feature records yet. I will not guess features without matching data.`;
+    ? `Here are the confirmed features for ${carLabel}. Check the exact fuel and transmission in the feature card, because equipment can vary within the same trim.`
+    : `I found ${carLabel}, but I cannot verify its full feature list yet. I would rather leave a feature open than guess.`;
 
   return baseResponse({
     toolPlan,
@@ -1410,8 +1410,8 @@ export const buildVehicleFeatureLookupResponse = ({
     answer: isFeatureSummaryRequest
       ? summaryAnswer
       : hasMatch
-        ? `Yes — ${carLabel} appears in the matching ${feature} feature records. Please confirm exact fuel/transmission sub-variant in the feature card, because features can differ within the same trim family.`
-        : `I could not confirm ${feature} for ${carLabel} from the available feature records.`,
+        ? `Yes — ${feature} is confirmed for ${carLabel}. Check the exact fuel and transmission in the feature card, because equipment can vary within the same trim.`
+        : `I could not confirm ${feature} for ${carLabel}.`,
     data: {
       model,
       variant,
@@ -1572,6 +1572,8 @@ export const buildVehicleCompareResponse = ({
       missingOrUnavailableEvidence: runtimeData.missingOrUnavailableEvidence || [],
       decisionHighlights: runtimeData.decisionHighlights || [],
       matrixCoverage: runtimeData.matrixCoverage || [],
+      variantSelection: runtimeData.variantSelection || [],
+      comparisonPairing: runtimeData.comparisonPairing || {},
     },
     comparisonSummary: runtimeData.comparisonSummary || {},
     differenceSummary: runtimeData.differenceSummary || {},
@@ -1580,7 +1582,20 @@ export const buildVehicleCompareResponse = ({
     missingOrUnavailableEvidence: runtimeData.missingOrUnavailableEvidence || [],
     decisionHighlights: runtimeData.decisionHighlights || [],
     matrixCoverage: runtimeData.matrixCoverage || [],
+    variantSelection: runtimeData.variantSelection || [],
+    comparisonPairing: runtimeData.comparisonPairing || {},
     actions: [
+      ...asArray(runtimeData.comparisonPairing?.choices).map((choice, index) =>
+        makeAction({
+          id: choice.id || `comparison-pairing-choice-${index + 1}`,
+          label: choice.label || "Use this pairing",
+          query: choice.query || compareLabel,
+          intent: "vehicle_comparison",
+          canvasType: "comparison_canvas",
+          filters: { city },
+          priority: 98 - index,
+        }),
+      ),
       makeAction({
         id: "change-variants",
         label: "Change variants",
@@ -1992,7 +2007,7 @@ export const buildVehicleEmiResponse = ({
       canvasType: "",
       inlineType: "variant_ambiguity_card",
       title: `Choose exact ${model} variant for EMI`,
-      answer: `I found ${model}, but ${variantResolution.requestedVariant || variant} does not match an exact current DB-backed variant. I should not calculate EMI using a random model-level price; choose a listed DB variant first, or ask for model-level price/features.`,
+      answer: `I found ${model}, but I could not match ${variantResolution.requestedVariant || variant} to a current variant I can verify. I should not calculate EMI from the wrong price, so choose an available variant first or ask for model-level pricing.`,
       data: {
         model,
         requestedVariant: variantResolution.requestedVariant || variant,
@@ -2703,7 +2718,7 @@ export const buildVehicleSpecAttributeResponse = ({
     title: removeDuplicateMakePrefixFromText(runtimeData.title || "Vehicle specification"),
     answer:
       removeDuplicateMakePrefixFromText(runtimeData.answer || "") ||
-      "I found the model, but the exact requested specification is not available in the indexed data yet.",
+      "I found the model, but I cannot verify that exact specification yet.",
     data: cleanData,
     actions: runtimeData.actions || runtimeData.data?.nextActions || [],
     leadingQuestions:
@@ -2741,7 +2756,7 @@ export const buildInternalPassthroughResponse = ({
     answer:
       runtimeData.answer ||
       runtimeData.message ||
-      "I found internal CDrive records for this request.",
+      "I found a result for this request.",
     data: runtimeData.data || runtimeData,
     actions: runtimeData.actions || [],
     leadingQuestions: [],

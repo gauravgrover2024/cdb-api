@@ -8,6 +8,12 @@ function hasUnsafeRecommendationLanguage(value = "") {
   return /\b(must buy|buy this|clear winner|recommended buy)\b/i.test(String(value || ""));
 }
 
+function hasImplementationFacingLanguage(value = "") {
+  return /\b(DB-backed|indexed(?: data| records?)?|feature records?|price rows?|current structured data|current data set|catalog(?:ue)? entries|source collection)\b/i.test(
+    String(value || ""),
+  );
+}
+
 async function main() {
   const mod = await import("../../services/aciCore/integration/aciCoreLiveBridge.service.js");
   const dbMod = await import("../../config/db.js");
@@ -163,6 +169,10 @@ async function main() {
         meta: { source: "auditAciBuyerAnswerQualityV1" },
       });
 
+      assert(
+        !hasImplementationFacingLanguage(output?.answer || ""),
+        `implementation-facing language leaked: ${output?.answer || ""}`,
+      );
       testCase.assertResult(output);
 
       results.push({

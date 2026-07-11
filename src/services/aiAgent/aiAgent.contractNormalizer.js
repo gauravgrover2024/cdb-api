@@ -622,8 +622,8 @@ const applyFeatureIntentCorrections = ({ response = {}, message = "", widget = n
         : `${firstText(corrected.data?.feature, "Feature")} matches`;
     corrected.answer =
       rows.length > 0
-        ? `I found ${rows.length} matching feature records.`
-        : corrected.answer || "I checked stored feature records for matching variants.";
+        ? `I found ${rows.length} matching feature result${rows.length === 1 ? "" : "s"}.`
+        : corrected.answer || "I checked the available variants for that feature.";
 
     corrected.widget = {
       ...(widget || {}),
