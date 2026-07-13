@@ -5660,6 +5660,7 @@ export const ACI_RUNTIME_DATA_TOOLS = {
   vehicle_recommend: runtimeVehicleRecommend,
   vehicle_price_breakup: runtimeVehiclePriceBreakup,
   vehicle_emi: runtimeVehicleEmi,
+  vehicle_finance_knowledge: runtimeModularTool,
   vehicle_price_history: runtimeVehiclePriceHistory,
   vehicle_explainer: runtimeVehicleExplainer,
   aci_lead_capture: runtimeAciLeadCapture,

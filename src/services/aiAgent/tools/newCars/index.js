@@ -7,6 +7,7 @@ export { runVehicleRecommendationTool } from "./vehicleRecommendation.tool.js";
 export { runVehicleVariantAdvisorTool } from "./vehicleVariantAdvisor.tool.js";
 export { runVehicleCompareTool } from "./vehicleCompare.tool.js";
 export { runVehicleEmiTool } from "./vehicleEmi.tool.js";
+export { runVehicleFinanceKnowledgeTool } from "./vehicleFinanceKnowledge.tool.js";
 export { runVehicleFeaturesTool } from "./vehicleFeatures.tool.js";
 export { runVehicleOwnershipCostTool } from "./vehicleOwnershipCost.tool.js";
 export { runVehicleOffersTool } from "./vehicleOffers.tool.js";

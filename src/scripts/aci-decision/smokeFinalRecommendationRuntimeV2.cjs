@@ -48,7 +48,7 @@ async function main() {
     assert(/\bmy pick\b/i.test(complete.answer || ""));
     assert(/six airbags|6 airbags/i.test(complete.answer || ""));
     assert(/sunroof/i.test(complete.answer || ""));
-    assert(/crash-test applicability|crash evidence/i.test(complete.answer || ""));
+    assert(/crash-test (?:applicability|result)|crash evidence/i.test(complete.answer || ""));
     assert(!INTERNAL_LANGUAGE.test(complete.answer || ""), "buyer answer leaked internal decision language");
 
     for (const row of finalRecommendation.rows || []) {

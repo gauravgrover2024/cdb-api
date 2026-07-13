@@ -80,6 +80,7 @@ export const PLANNER_TOOLS = [
   "vehicle_score_insight",
   "vehicle_price_breakup",
   "vehicle_emi",
+  "vehicle_finance_knowledge",
   "vehicle_price_history",
   "vehicle_explainer",
 
@@ -106,6 +107,7 @@ export const PLANNER_TOOLS = [
   "vehicle_score_insight",
   "vehicle_price_breakup",
   "vehicle_emi",
+  "vehicle_finance_knowledge",
   "vehicle_price_history",
   "vehicle_explainer",
   "aci_lead_capture",
@@ -247,6 +249,7 @@ export const INLINE_TYPES = [
   "score_insight_summary",
   "clarification_card",
   "explainer_card",
+  "finance_faq_card",
 ];
 
 export const EXPLAINER_TOPICS = [

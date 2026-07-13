@@ -50,6 +50,7 @@ export const ACI_RESPONSE_TOOL_IDS = [
   "vehicle_similar",
   "vehicle_price_breakup",
   "vehicle_emi",
+  "vehicle_finance_knowledge",
   "vehicle_price_history",
   "vehicle_explainer",
   "aci_lead_capture",
@@ -74,6 +75,7 @@ export const RESPONSE_INTENTS = {
   vehicle_similar: "vehicle_similar",
   vehicle_price_breakup: "vehicle_price_breakup",
   vehicle_emi: "vehicle_emi_calculator",
+  vehicle_finance_knowledge: "new_car_finance_faq",
   vehicle_price_history: "vehicle_price_history",
   vehicle_explainer: "vehicle_explainer",
   aci_lead_capture: "aci_new_car_quotation",
@@ -94,6 +96,7 @@ export const RESPONSE_CANVAS_TYPES = {
   vehicle_similar: "similar_cars_canvas",
   vehicle_price_breakup: "price_breakup_canvas",
   vehicle_emi: "emi_calculator_canvas",
+  vehicle_finance_knowledge: "",
   vehicle_price_history: "price_history_canvas",
   vehicle_explainer: "explainer_canvas",
   aci_lead_capture: "aci_quotation_canvas",
@@ -114,6 +117,7 @@ export const RESPONSE_INLINE_TYPES = {
   vehicle_similar: "similar_cars_summary",
   vehicle_price_breakup: "",
   vehicle_emi: "",
+  vehicle_finance_knowledge: "finance_faq_card",
   vehicle_price_history: "",
   vehicle_explainer: "explainer_card",
   aci_lead_capture: "",
@@ -2125,6 +2129,117 @@ export const buildVehicleEmiResponse = ({
   });
 };
 
+export const buildVehicleFinanceKnowledgeResponse = ({
+  toolPlan = {},
+  runtimeData = {},
+  context = {},
+} = {}) => {
+  const records = asArray(runtimeData.records);
+  const checklist = uniqueBy(
+    records.flatMap((record) => asArray(record.checklist)),
+    (item) => item,
+  ).slice(0, 10);
+  const caveats = uniqueBy(
+    records.flatMap((record) => asArray(record.caveats)),
+    (item) => item,
+  ).slice(0, 5);
+  const summaries = records.map((record) => cleanText(record.summary)).filter(Boolean);
+  const applicantType = runtimeData.applicantType || "general";
+
+  if (!records.length) {
+    return baseResponse({
+      toolPlan,
+      context,
+      runtimeData,
+      intent: "new_car_finance_faq",
+      displayMode: "inline",
+      canvasType: "",
+      inlineType: "finance_faq_card",
+      title: "Car loan guidance",
+      answer:
+        "I can help with car-loan eligibility, documents, down payment and EMI, but the reviewed finance guide is unavailable right now. I would rather not guess lender rules. You can still calculate an EMI, or try the finance question again shortly.",
+      data: { topics: runtimeData.topics || [], checklist: [], caveats: [] },
+      actions: [
+        makeAction({
+          id: "finance-calculate-emi",
+          label: "Calculate EMI",
+          query: "Calculate car loan EMI",
+          intent: "vehicle_emi_calculator",
+          canvasType: "emi_calculator_canvas",
+          priority: 90,
+        }),
+      ],
+    });
+  }
+
+  const answer = summaries.join(" ");
+  const applicantPrompt = applicantType === "general"
+    ? "Tell me whether you are salaried or self-employed and I’ll narrow the document list."
+    : "Share the car and expected down payment when you want an EMI estimate.";
+
+  return baseResponse({
+    toolPlan,
+    context,
+    runtimeData,
+    intent: "new_car_finance_faq",
+    displayMode: "inline",
+    canvasType: "",
+    inlineType: "finance_faq_card",
+    title: records.length === 1 ? records[0].title : "Car loan guidance",
+    answer: `${answer} ${applicantPrompt}`,
+    data: {
+      topics: runtimeData.topics || [],
+      applicantType,
+      sections: records.map((record) => ({
+        key: record.key,
+        title: record.title,
+        summary: record.summary,
+        checklist: asArray(record.checklist),
+        caveats: asArray(record.caveats),
+      })),
+      checklist,
+      caveats,
+      approvalGuaranteed: false,
+      liveLenderOfferUsed: false,
+    },
+    actions: [
+      ...(applicantType === "general"
+        ? [
+            makeAction({
+              id: "finance-salaried-documents",
+              label: "I’m salaried",
+              query: "Car loan documents and eligibility for a salaried applicant",
+              intent: "new_car_finance_faq",
+              inlineType: "finance_faq_card",
+              priority: 98,
+            }),
+            makeAction({
+              id: "finance-self-employed-documents",
+              label: "I’m self-employed",
+              query: "Car loan documents and eligibility for a self-employed applicant",
+              intent: "new_car_finance_faq",
+              inlineType: "finance_faq_card",
+              priority: 97,
+            }),
+          ]
+        : []),
+      makeAction({
+        id: "finance-calculate-emi",
+        label: "Calculate EMI",
+        query: "Calculate car loan EMI for the car I am considering",
+        intent: "vehicle_emi_calculator",
+        canvasType: "emi_calculator_canvas",
+        priority: 92,
+      }),
+    ],
+    sourceTransparency: runtimeData.sourceTransparency || {},
+    meta: {
+      financeKnowledgeVersion: records.map((record) => record.version).filter(Boolean).at(-1) || "",
+      liveLenderOfferUsed: false,
+    },
+  });
+};
+
 export const buildVehiclePriceHistoryResponse = ({
   toolPlan = {},
   runtimeData = {},
@@ -3140,6 +3255,10 @@ export const ACI_RESPONSE_TOOLS = {
     id: "vehicle_emi",
     run: buildVehicleEmiResponse,
   },
+  vehicle_finance_knowledge: {
+    id: "vehicle_finance_knowledge",
+    run: buildVehicleFinanceKnowledgeResponse,
+  },
   vehicle_price_history: {
     id: "vehicle_price_history",
     run: buildVehiclePriceHistoryResponse,
@@ -3311,6 +3430,11 @@ export const buildMultiToolResponse = ({
             noun: "EMI",
             query: `Calculate EMI for ${model}`,
             canvasType: "emi_calculator_canvas",
+          },
+          new_car_finance_faq: {
+            noun: "finance guide",
+            query: "Show car loan eligibility and documents",
+            canvasType: "",
           },
           vehicle_spec_attribute_answer: {
             noun: response.data?.attributeLabel || response.data?.attributeKey || "specification",

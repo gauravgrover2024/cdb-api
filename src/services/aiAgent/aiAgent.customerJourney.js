@@ -400,6 +400,7 @@ export const applyAciCustomerJourneyGuidance = ({
       priceHistory: "price history",
       variants: "variants",
       emi: "EMI",
+      finance: "loan eligibility and documents",
       similar: "alternatives",
       score: "score insights",
     };
@@ -409,7 +410,11 @@ export const applyAciCustomerJourneyGuidance = ({
     const coverageText = covered.length
       ? covered.join(", ").replace(/, ([^,]*)$/, " and $1")
       : "the related parts";
-    response.answer = `${cleanText(response.answer)} I also checked ${coverageText} for the other cars in your question; each result is available in the related options.`;
+    const modelCount = Number(compoundRequest.modelCount || 0);
+    const coverageNote = modelCount > 1
+      ? `I’ve also checked ${coverageText} for each car, and kept every part in the related options so you can compare them without repeating yourself.`
+      : `I’ve also kept ${coverageText} in the related options, so you can move through every part without asking again.`;
+    response.answer = `${cleanText(response.answer)} ${coverageNote}`;
   }
 
   if (response.data && typeof response.data === "object") {

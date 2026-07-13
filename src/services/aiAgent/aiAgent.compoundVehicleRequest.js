@@ -5,6 +5,7 @@ import {
   getVehicleEntityIndex,
 } from "./aiAgent.vehicleEntityIndex.js";
 import { normalizeSearchKey } from "./aiAgent.planSchema.js";
+import { detectFinanceKnowledgeTopics } from "./tools/newCars/vehicleFinanceKnowledge.tool.js";
 
 const MAX_COMPOUND_MODELS = 5;
 
@@ -109,6 +110,12 @@ const resolveMentionedModels = async (message = "", context = {}) => {
 
 const detectRequestedFacts = (message = "") => {
   const text = normalizeSearchKey(message);
+  const financeTopics = detectFinanceKnowledgeTopics(message);
+  const hasFinanceContext = /\b(car loan|vehicle loan|auto loan|loan|finance|financing|bank|nbfc|cibil|credit score|down payment|foreclos|prepay|interest rate|loan tenure)\b/.test(text);
+  const finance = hasFinanceContext && (
+    financeTopics.some((topic) => topic !== "overview") ||
+    /\b(car loan|vehicle loan|auto loan|loan documents?|finance eligibility)\b/.test(text)
+  );
   const priceBreakup = /\b(price breakup|on road breakup|onroad breakup|charges|rto and insurance)\b/.test(text);
   const priceHistory = /\b(price history|old price|previous price|price trend|launch price)\b/.test(text);
   const prices = /\b(prices?|pricelist|price list|on road prices?|onroad prices?|ex showroom prices?)\b/.test(text) &&
@@ -122,6 +129,8 @@ const detectRequestedFacts = (message = "") => {
     priceHistory,
     variants: /\b(variants?|trims?|automatic variants?|petrol variants?|diesel variants?)\b/.test(text),
     emi: /\b(emi|loan instalment|loan installment|monthly payment|down payment)\b/.test(text),
+    finance,
+    financeTopics,
     similar: /\b(similar cars?|alternatives?|rivals?|other options?)\b/.test(text),
     score: /\b(scores?|ratings?|ranks?|rankings?)\b/.test(text),
   };
@@ -181,11 +190,11 @@ export const buildAciCompoundVehiclePlan = async ({
 } = {}) => {
   const facts = detectRequestedFacts(message);
   const models = await resolveMentionedModels(message, context);
-  if (!models.length) return null;
+  if (!models.length && !facts.finance) return null;
 
   const parsedFeatures = await parseAciFeatureRequestFromMessage({
     message,
-    modelEntity: models[0],
+    modelEntity: models[0] || {},
   });
   const specAttributes = resolveSpecAttributesFromText({ message });
   const specAttributeKeys = new Set(
@@ -199,6 +208,7 @@ export const buildAciCompoundVehiclePlan = async ({
     featureKeys.length ? "features" : "",
     specAttributes.length ? "specifications" : "",
     ...Object.entries(facts)
+      .filter(([name]) => name !== "financeTopics")
       .filter(([, requested]) => requested)
       .map(([name]) => name),
   ].filter(Boolean);
@@ -210,6 +220,7 @@ export const buildAciCompoundVehiclePlan = async ({
     facts.priceHistory,
     facts.variants,
     facts.emi,
+    facts.finance,
     facts.similar,
     facts.score,
   ].some(Boolean);
@@ -217,7 +228,7 @@ export const buildAciCompoundVehiclePlan = async ({
     ? requestedCapabilities.length >= 1
     : hasDistinctSurfaceIntent && requestedCapabilities.length >= 2;
 
-  if (!isCompound) return null;
+  if (!isCompound && !facts.finance) return null;
 
   const city = getCity(message, context);
   const modelNames = models.map(modelLabel).filter(Boolean);
@@ -326,6 +337,20 @@ export const buildAciCompoundVehiclePlan = async ({
     });
   }
 
+  if (facts.finance) {
+    tools.push(
+      makeTool({
+        tool: "vehicle_finance_knowledge",
+        entities: {
+          topics: facts.financeTopics,
+          ...(modelNames[0] ? { primaryModel: modelNames[0] } : {}),
+        },
+        filters: modelNames[0] ? { city, activeOnly: true } : {},
+        resolution: makeResolution({ models: modelNames.slice(0, 1) }),
+      }),
+    );
+  }
+
   for (const attribute of specAttributes) {
     addPerModelTools({
       tools,
@@ -351,7 +376,7 @@ export const buildAciCompoundVehiclePlan = async ({
     addPerModelTools({ tools, modelNames, city, tool: "vehicle_score_insight" });
   }
 
-  if (tools.length < 2) return null;
+  if (tools.length < 2 && !facts.finance) return null;
 
   const selectedComparisonVehicles = models.map((model) => ({
     make: model.brand || model.make || "",
@@ -370,27 +395,35 @@ export const buildAciCompoundVehiclePlan = async ({
           variantSelectionMode: "representative_default",
         },
       }
-    : {
+    : models.length
+      ? {
         anchorMake: models[0].brand || models[0].make || "",
         anchorModel: models[0].model || "",
         anchorFullModel: modelNames[0],
         anchorCity: city,
         selectedVehicle: selectedComparisonVehicles[0],
-      };
+      }
+      : {};
 
   return {
-    mode: "multi_tool",
+    mode: tools.length > 1 ? "multi_tool" : "single_tool",
     domain: "new_car",
-    conversationMode: isMultiVehicle ? "comparison" : "research",
+    conversationMode: isMultiVehicle ? "comparison" : "education",
     customerStage: isMultiVehicle ? "evaluation" : "exploration",
     tools,
     nextSteps: [
       {
-        label: isMultiVehicle ? "Choose comparable variants" : "Choose the right variant",
+        label: isMultiVehicle
+          ? "Choose comparable variants"
+          : modelNames[0]
+            ? "Choose the right variant"
+            : "Calculate an EMI",
         query: isMultiVehicle
           ? `Help me choose comparable variants of ${modelNames.join(" and ")}`
-          : `Help me choose the right ${modelNames[0]} variant`,
-        tool: isMultiVehicle ? "vehicle_compare" : "vehicle_pricelist",
+          : modelNames[0]
+            ? `Help me choose the right ${modelNames[0]} variant`
+            : "Calculate car loan EMI",
+        tool: isMultiVehicle ? "vehicle_compare" : modelNames[0] ? "vehicle_pricelist" : "vehicle_emi",
         priority: 95,
         displayStyle: "pill",
         icon: "compare",
@@ -409,7 +442,7 @@ export const buildAciCompoundVehiclePlan = async ({
     contextPatch: {
       ...contextPatch,
       customerStage: isMultiVehicle ? "evaluation" : "exploration",
-      conversationMode: isMultiVehicle ? "comparison" : "research",
+      conversationMode: isMultiVehicle ? "comparison" : facts.finance ? "education" : "guided_advisor",
       compoundRequest: {
         version: "aci_compound_request_v2",
         modelCount: modelNames.length,

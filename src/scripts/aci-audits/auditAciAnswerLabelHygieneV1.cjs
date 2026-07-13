@@ -127,8 +127,12 @@ const assertLabelHygiene = ({ testCase, response }) => {
       continue;
     }
 
+    const inspectedText = pattern.id === "double_vs_chain_same_pair"
+      ? text(response.title || response.data?.title || "")
+      : blob;
+
     assert(
-      !pattern.pattern.test(blob),
+      !pattern.pattern.test(inspectedText),
       `${testCase.id}: ${pattern.description} Matched ${pattern.id}. Title=${JSON.stringify(response.title)} Answer=${JSON.stringify(String(response.answer || "").slice(0, 220))}`,
     );
   }

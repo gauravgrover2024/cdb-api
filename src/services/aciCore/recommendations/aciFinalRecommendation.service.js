@@ -400,17 +400,17 @@ const scoreVariant = ({ variant, profile, decision, row, directEvidence, weights
 };
 
 const DIMENSION_LABELS = {
-  safety: "safety equipment and evidence",
+  safety: "safety kit",
   practicality: "family practicality",
   cityUse: "city usability",
   highwayUse: "highway suitability",
-  runningCost: "running-cost fit",
-  features: "useful equipment",
+  runningCost: "running costs",
+  features: "useful everyday features",
   comfort: "comfort features",
   performance: "performance",
   affordability: "budget headroom",
   regretResistance: "lower trade-off risk",
-  evidenceQuality: "evidence quality",
+  evidenceQuality: "how confidently its details could be verified",
 };
 
 const strongestDimensions = (candidate = {}, weights = {}, limit = 3) =>
@@ -489,7 +489,7 @@ const buildAnswer = ({ winner, runnerUp, buyerContext, response, weights, eligib
     .filter(Boolean);
   const reasons = strongestDimensions(winner, weights);
   const featureSentence = features.length
-    ? `The indexed variant data confirms ${features.join(" and ")}.`
+    ? `This exact variant includes ${features.join(" and ")}.`
     : "";
   const runnerSentence = runnerUp
     ? (() => {
@@ -503,10 +503,10 @@ const buildAnswer = ({ winner, runnerUp, buyerContext, response, weights, eligib
         const tradeoff = tradeoffs.length ? tradeoffs.join(" and ") : weakestDimension(runnerUp, weights);
         return `The closest alternative is ${runnerLabel} at about ${money(runnerUp.price)} ${priceBasis}; choose it instead if you prefer ${advantage}, while accepting weaker ${tradeoff}.`;
       })()
-    : "No second model cleared every evidence and requirement gate, so I would not invent a runner-up.";
+    : "No other model met every requirement with enough verified information, so I would rather not force a runner-up.";
   const safetyCaveat = winner.crashApplicabilityVerified
-    ? "Its exact-variant crash evidence is present in the indexed profile, but you should still confirm the latest tested-version applicability before booking."
-    : "One important caveat: this safety judgement uses indexed safety equipment and score evidence; independent crash-test applicability is not verified for this exact variant, so confirm the latest rating and dealer quote before booking.";
+    ? "I found a crash result that applies to this version, but it is still worth confirming the latest tested-version details before booking."
+    : "One important caveat: I could verify the safety kit, but not an independent crash-test result for this exact version. Confirm the latest applicable rating and dealer quote before booking.";
   const verdictLine = runnerUp && winner.score - runnerUp.score < 2
     ? `My pick is the ${winnerLabel}, but it is a close call.`
     : `My pick is the ${winnerLabel}.`;
@@ -515,7 +515,7 @@ const buildAnswer = ({ winner, runnerUp, buyerContext, response, weights, eligib
     verdictLine,
     `At about ${money(winner.price)} ${priceBasis} in ${city}, it stays inside your stated cap.`,
     featureSentence,
-    `For your brief, the main factors in its fit are ${reasons.join(", ")}. I checked ${eligibleVariantCount} exact variants that met your filters before making the call.`,
+    `For your brief, it stood out for ${reasons.join(", ")}. I compared it with ${eligibleVariantCount} exact variants that matched your filters before making the call.`,
     runnerSentence,
     safetyCaveat,
   ].filter(Boolean).join(" ");
