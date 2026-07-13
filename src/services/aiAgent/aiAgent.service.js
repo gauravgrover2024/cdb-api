@@ -792,23 +792,30 @@ export const chatWithAgent = async (...args) => {
   const startedAt = Date.now();
   const { message, context } = getNormalizerInputs(args);
   const response = await chatWithAgentCore(...args);
+  const broadDiscoveryResponse =
+    response?.meta?.aciCoreBridge?.contextIsolation === "broad_discovery_without_model" ||
+    response?.aciCoreBridge?.contextIsolation === "broad_discovery_without_model";
 
-  await repairAciResponseContextFromActiveContext({
-    response,
-    context,
-    hydrateModelEntity: hydrateAciExplicitModelEntityFromReadModel,
-  });
+  if (!broadDiscoveryResponse) {
+    await repairAciResponseContextFromActiveContext({
+      response,
+      context,
+      hydrateModelEntity: hydrateAciExplicitModelEntityFromReadModel,
+    });
+  }
 
   const normalized = await normalizeAciFinalResponse(response, {
     message,
     context,
   });
 
-  await repairAciResponseContextFromActiveContext({
-    response: normalized,
-    context,
-    hydrateModelEntity: hydrateAciExplicitModelEntityFromReadModel,
-  });
+  if (!broadDiscoveryResponse) {
+    await repairAciResponseContextFromActiveContext({
+      response: normalized,
+      context,
+      hydrateModelEntity: hydrateAciExplicitModelEntityFromReadModel,
+    });
+  }
 
   const serviceContractResponse = normalizeAciServiceResponseContract(normalized, {
     startedAt,

@@ -13,7 +13,10 @@ import {
 } from "../candidates/aciCandidateSourceProvenance.service.js";
 
 import { buildLegacyPlanFromAciMeaningFrame } from "./aciCoreToLegacyPlan.adapter.js";
-import { executeAciPlannerPlan } from "../../aiAgent/aiAgent.executor.js";
+import {
+  executeAciPlannerPlan,
+  runtimeBudgetVehicleDiscovery,
+} from "../../aiAgent/aiAgent.executor.js";
 import { normalizeAciFinalResponse } from "../../aiAgent/aiAgent.contractNormalizer.js";
 import { composeAciAnswer } from "../../aiAgent/aiAgent.answerComposer.js";
 import {
@@ -2104,6 +2107,156 @@ const maybeReturnBatch4BareClarificationFastPath = ({
 };
 
 
+const buildFeatureBudgetShortlist = async ({
+  filters = {},
+  requestedFeatures = [],
+} = {}) => {
+  const db = getFastPathDb();
+  const featureKeys = uniqueKeys(requestedFeatures).map(keyify).filter(Boolean);
+  if (!db || !featureKeys.length) return null;
+
+  const citySlug = keyify(filters.citySlug || filters.city || "new-delhi").replace(/_/g, "-");
+  const budgetMax = Number(filters.budgetMax || filters.maxBudget || 0);
+  const featureLists = await Promise.all(
+    featureKeys.map((featureKey) =>
+      db.collection("aci_vehicle_model_feature_summary_v1")
+        .find(
+          { allFeatures: { $elemMatch: { key: featureKey, count: { $gt: 0 } } } },
+          {
+            projection: {
+              make: 1,
+              brand: 1,
+              model: 1,
+              fullModel: 1,
+              modelKey: 1,
+              allFeatures: { $elemMatch: { key: featureKey } },
+            },
+          },
+        )
+        .limit(240)
+        .toArray(),
+    ),
+  );
+  const featureModels = featureLists[0]
+    .filter((row) => featureLists.every((list) => list.some((item) => item.modelKey === row.modelKey)))
+    .map((row) => ({
+      ...row,
+      allFeatures: featureLists.flatMap((list) =>
+        asArray(list.find((item) => item.modelKey === row.modelKey)?.allFeatures),
+      ),
+    }));
+  if (!featureModels.length) return null;
+
+  const featureByModel = new Map(featureModels.map((row) => [row.modelKey, row]));
+  const summaryQuery = {
+    citySlug,
+    modelKey: { $in: [...featureByModel.keys()] },
+    ...(budgetMax ? { minExShowroomPrice: { $lte: budgetMax } } : {}),
+    ...(filters.bodyType === "suv"
+      ? { $or: [{ bodyTypeKey: /suv|sport|utility/i }, { bodyType: /suv|sport|utility/i }] }
+      : {}),
+  };
+  const summaries = await db.collection("aci_vehicle_model_summary")
+    .find(summaryQuery, {
+      projection: {
+        make: 1, model: 1, fullModel: 1, displayName: 1, modelKey: 1,
+        bodyType: 1, bodyTypeKey: 1, city: 1, citySlug: 1, hero: 1,
+        minExShowroomPrice: 1, maxExShowroomPrice: 1, priceRangeLabel: 1,
+        fuels: 1, transmissions: 1, variantCount: 1,
+      },
+    })
+    .sort({ minExShowroomPrice: 1, make: 1, model: 1 })
+    .limit(40)
+    .toArray();
+  if (!summaries.length) return null;
+
+  const allowedVariantsByModel = new Map();
+  for (const summary of summaries) {
+    const featureDoc = featureByModel.get(summary.modelKey) || {};
+    const variantSets = featureKeys.map((featureKey) =>
+      new Set(
+        asArray(featureDoc.allFeatures)
+          .filter((feature) => feature.key === featureKey)
+          .flatMap((feature) => asArray(feature.variants))
+          .map(keyify),
+      ),
+    );
+    const [firstSet = new Set(), ...remainingSets] = variantSets;
+    allowedVariantsByModel.set(
+      summary.modelKey,
+      new Set([...firstSet].filter((variantKey) => remainingSets.every((set) => set.has(variantKey)))),
+    );
+  }
+
+  const priceRows = await db.collection("aci_vehicle_price_rows")
+    .find(
+      {
+        citySlug,
+        modelKey: { $in: summaries.map((row) => row.modelKey) },
+        exShowroomPrice: { $gt: 0, ...(budgetMax ? { $lte: budgetMax } : {}) },
+      },
+      {
+        projection: {
+          make: 1, model: 1, modelKey: 1, variant: 1, variantKey: 1,
+          fuelType: 1, transmission: 1, exShowroomPrice: 1,
+          exShowroomPriceLabel: 1, onRoadPrice: 1, onRoadPriceLabel: 1,
+        },
+      },
+    )
+    .sort({ exShowroomPrice: 1 })
+    .limit(2500)
+    .toArray();
+
+  const qualifyingByModel = new Map();
+  for (const row of priceRows) {
+    const allowed = allowedVariantsByModel.get(row.modelKey);
+    if (!allowed?.has(keyify(row.variantKey || row.variant))) continue;
+    const current = qualifyingByModel.get(row.modelKey) || [];
+    current.push(row);
+    qualifyingByModel.set(row.modelKey, current);
+  }
+
+  const rows = summaries
+    .map((summary) => {
+      const variants = qualifyingByModel.get(summary.modelKey) || [];
+      const entry = variants[0];
+      if (!entry) return null;
+      return {
+        make: summary.make,
+        brand: summary.make,
+        model: summary.model,
+        modelKey: summary.modelKey,
+        fullModel: summary.fullModel || summary.displayName,
+        displayName: summary.displayName || summary.fullModel,
+        bodyType: summary.bodyType,
+        bodyTypeKey: summary.bodyTypeKey,
+        city: summary.city,
+        citySlug: summary.citySlug,
+        startsFromVariant: entry.variant,
+        startsFromPrice: entry.exShowroomPrice,
+        startsFromPriceLabel: entry.exShowroomPriceLabel,
+        bestUnderBudgetVariant: variants[variants.length - 1]?.variant,
+        bestUnderBudgetPrice: variants[variants.length - 1]?.exShowroomPrice,
+        bestUnderBudgetPriceLabel: variants[variants.length - 1]?.exShowroomPriceLabel,
+        qualifyingVariantCount: variants.length,
+        fuelTypes: uniqueKeys(variants.map((variant) => variant.fuelType)),
+        transmissions: uniqueKeys(variants.map((variant) => variant.transmission)),
+        priceRangeLabel: variants.length > 1
+          ? `${entry.exShowroomPriceLabel} – ${variants[variants.length - 1]?.exShowroomPriceLabel}`
+          : entry.exShowroomPriceLabel,
+        imageUrl: summary.hero?.imageUrl || summary.hero?.normalizedImageUrl || "",
+        normalizedImageUrl: summary.hero?.normalizedImageUrl || summary.hero?.imageUrl || "",
+        imageFrame: summary.hero?.imageFrame || {},
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.startsFromPrice - right.startsFromPrice)
+    .slice(0, 8);
+
+  return rows.length ? { rows, matched: rows.length } : null;
+};
+
+
 const maybeReturnBatch4BroadDiscoveryFastPath = async ({
   message = "",
   context = {},
@@ -2203,26 +2356,54 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     },
   };
 
-  const plan = {
+  const featureShortlist = requestedFeatures.length
+    ? await buildFeatureBudgetShortlist({ filters, requestedFeatures })
+    : null;
+  const discoveryResult = featureShortlist || await runtimeBudgetVehicleDiscovery({
+    toolPlan,
+    context: getContextForToolPlan(contextState || {}),
+  });
+  const requestedFeature = requestedFeatures[0] || "";
+  const budgetLabel = `₹${Math.round(discovery.budgetMax / 100000)}L`;
+  const resultRows = asArray(discoveryResult.rows || discoveryResult.items);
+  const executed = {
+    ...discoveryResult,
     intent: "vehicle_recommendation",
-    mode: "single_tool",
-    conversationMode: "direct_answer",
-    tools: [toolPlan],
-    output: {
-      canvasType: filters.mustHaveFeatures?.length
-        ? "feature_match_builder_canvas"
-        : "recommendation_results_canvas",
+    tool: "vehicle_recommend",
+    displayMode: "canvas",
+    canvasType: toolPlan.output.canvasType,
+    inlineType: toolPlan.output.inlineType,
+    title: requestedFeature
+      ? `${requestedFeature} matches under ${budgetLabel}`
+      : `Cars under ${budgetLabel}`,
+    answer: resultRows.length
+      ? `I found ${resultRows.length} strong matches for your current budget and preferences.`
+      : "I could not find a confident match for those filters yet.",
+    rows: resultRows,
+    items: resultRows,
+    data: {
+      ...discoveryResult,
+      rows: resultRows,
+      items: resultRows,
+      filters,
+      feature: requestedFeature,
+      featureName: requestedFeature,
+      features: requestedFeatures,
+      mustHaveFeatures: requestedFeatures,
+    },
+    widget: {
+      type: toolPlan.output.canvasType,
+      intent: "vehicle_recommendation",
+      displayMode: "canvas",
+      canvasType: toolPlan.output.canvasType,
+      inlineType: toolPlan.output.inlineType,
+      rows: resultRows,
+      items: resultRows,
+      filters,
+      feature: requestedFeature,
+      featureName: requestedFeature,
     },
   };
-
-  const executed = await executeAciPlannerPlan({
-    plan,
-    userMessage: message,
-    context: getContextForToolPlan(contextState || {}),
-    user,
-    session,
-    meta,
-  });
 
   const normalized = await normalizeAciFinalResponse(executed, {
     message,
@@ -2277,6 +2458,17 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     },
   });
 
+  const shortlistAnswer = resultRows.length
+    ? `I found ${resultRows.length} strong ${requestedFeature || "preference"} matches under ${budgetLabel}. These are the best starting points from what you have shared so far, and we can narrow them by fuel, gearbox or daily use.`
+    : `I could not find a confident match under ${budgetLabel} with the current filters.`;
+  composed.answer = shortlistAnswer;
+  if (composed.data && typeof composed.data === "object") {
+    composed.data.answer = shortlistAnswer;
+  }
+  if (composed.widget && typeof composed.widget === "object") {
+    composed.widget.answer = shortlistAnswer;
+  }
+
   if (evRequested) {
     const title = cleanText(composed.title || composed.data?.title || normalized.title || "");
     const answer = cleanText(composed.answer || normalized.answer || "");
@@ -2311,7 +2503,7 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     }
   }
 
-  return attachDecisionRuntimeEnvelope(composed, { bridge, context: getContextForToolPlan(contextState || {}) });
+  return composed;
 };
 
 const maybeReturnBatch4ExplainerFastPath = async ({
@@ -7659,6 +7851,22 @@ const runAciCoreLiveBridgeInternal = async ({
     return explicitComparisonFastPath;
   }
 
+  const batch4BroadDiscoveryFastPath = await maybeReturnBatch4BroadDiscoveryFastPath({
+    message,
+    context,
+    contextState: context?.contextState || context?.aciContextState || {},
+    user,
+    session,
+    meta,
+    originalMessage,
+    effectiveMessage,
+    startedAt,
+  });
+
+  if (batch4BroadDiscoveryFastPath) {
+    return batch4BroadDiscoveryFastPath;
+  }
+
   const featureComparisonExplainerFastPath = await maybeReturnFeatureComparisonExplainerFastPath({
     message,
     context,
@@ -7717,22 +7925,6 @@ const runAciCoreLiveBridgeInternal = async ({
 
   if (vehicleColorsFastPath) {
     return vehicleColorsFastPath;
-  }
-
-  const batch4BroadDiscoveryFastPath = await maybeReturnBatch4BroadDiscoveryFastPath({
-    message,
-    context,
-    contextState: context?.contextState || context?.aciContextState || {},
-    user,
-    session,
-    meta,
-    originalMessage,
-    effectiveMessage,
-    startedAt,
-  });
-
-  if (batch4BroadDiscoveryFastPath) {
-    return batch4BroadDiscoveryFastPath;
   }
 
   const supportedExactPriceFastPath = await maybeReturnSupportedExactPriceFastPath({

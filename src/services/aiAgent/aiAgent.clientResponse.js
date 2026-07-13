@@ -151,6 +151,11 @@ const compactRow = (row = {}) => {
       "variantFullName", "referenceExShowroomPrice", "priceSegment", "strengths",
       "watchouts", "scoreReadiness", "scoreSummary", "usageGuardrail",
       "colorName", "hex", "deep", "hexCodes", "description",
+      "bodyType", "bodyTypeKey", "segment", "city", "citySlug",
+      "startsFromVariant", "startsFromPrice", "startsFromPriceLabel",
+      "bestUnderBudgetVariant", "bestUnderBudgetPrice", "bestUnderBudgetPriceLabel",
+      "qualifyingVariantCount", "fuelTypes", "transmissions", "priceRangeLabel",
+      "matchedFeature", "matchedFeatureKeys", "featureName",
     ]),
     imageUrl: text(row.imageUrl || row.normalizedImageUrl || row.cleanImageUrl, 600),
     normalizedImageUrl: text(
@@ -249,6 +254,14 @@ const compactAction = (action = {}) => ({
   ),
 });
 
+const compactFilters = (filters = {}) =>
+  pick(filters, [
+    "budgetMin", "budgetMax", "maxBudget", "maxPrice", "priceBasis",
+    "budgetBasis", "bodyType", "bodyStyle", "fuelType", "fuelKey",
+    "transmission", "city", "citySlug", "feature", "ranking",
+    "mustHaveFeatures", "compareFeatures",
+  ]);
+
 const getWidget = (response = {}) =>
   response.widget || asArray(response.widgets)[0] || {};
 
@@ -291,6 +304,7 @@ const compactWidget = (response = {}) => {
     colors,
     features,
     featureList: features,
+    filters: compactFilters(widget.filters || response.filters || response.data?.filters || {}),
     vehicle,
     selectedColor: widget.selectedColor ? compactColor(widget.selectedColor) : undefined,
     contextPatch,
@@ -299,6 +313,7 @@ const compactWidget = (response = {}) => {
     data: {
       vehicle,
       contextPatch,
+      filters: compactFilters(widget.filters || response.filters || response.data?.filters || {}),
     },
   };
 };
