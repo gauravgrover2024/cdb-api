@@ -32,6 +32,51 @@ const getSelectedVehicle = (context = {}) =>
   context.aciContextState?.selectedVehicle ||
   {};
 
+const includesWholePhrase = (text = "", phrase = "") => {
+  const haystack = ` ${normalizeSearchKey(text)} `;
+  const needle = normalizeSearchKey(phrase);
+  return Boolean(needle && haystack.includes(` ${needle} `));
+};
+
+const draftChangesSelectedModel = ({ index = {}, context = {} } = {}) => {
+  const draftText = clean(context.draftText);
+  const selectedVehicle = getSelectedVehicle(context);
+  const selectedModel = normalizeSearchKey(selectedVehicle.model || "");
+  if (!draftText || !selectedModel) return false;
+
+  const mentionedModels = uniqueBy(
+    (index.models || [])
+      .filter((model) =>
+        [model.displayName, model.model].some((name) =>
+          includesWholePhrase(draftText, name),
+        ),
+      )
+      .map((model) => ({
+        model: normalizeSearchKey(model.model || ""),
+        brand: normalizeSearchKey(model.brand || model.make || ""),
+      })),
+    (model) => `${model.brand}:${model.model}`,
+  );
+
+  return mentionedModels.some((model) => model.model !== selectedModel);
+};
+
+const getDraftActionAffinity = ({ draftText = "", autotypeText = "" } = {}) => {
+  const draftTokens = normalizeSearchKey(draftText).split(" ").filter(Boolean);
+  const actionTokens = normalizeSearchKey(autotypeText).split(" ").filter(Boolean);
+  const size = Math.min(draftTokens.length, actionTokens.length);
+  if (size < 2) return 0;
+
+  const draftSuffix = draftTokens.slice(-size);
+  const actionPrefix = actionTokens.slice(0, size);
+  const matches = draftSuffix.every((token, index) =>
+    index === size - 1
+      ? actionPrefix[index].startsWith(token)
+      : actionPrefix[index] === token,
+  );
+  return matches ? 48 : 0;
+};
+
 const sameSelectedModel = (variant = {}, selectedVehicle = {}) => {
   const selectedModel = normalizeSearchKey(selectedVehicle.model || "");
   const selectedMake = normalizeSearchKey(
@@ -45,6 +90,150 @@ const sameSelectedModel = (variant = {}, selectedVehicle = {}) => {
       normalizeSearchKey(variant.brand || variant.make || "") === selectedMake)
   );
 };
+
+const AUTOCOMPLETE_ACTIONS = [
+  {
+    key: "colors",
+    terms: "color colors colour colours paint shade shades colour options color options",
+    label: "Colours",
+    autotypeText: "colours",
+    subLabel: "Show exterior colour options",
+    tool: "vehicle_colors",
+    icon: "paintbrush",
+  },
+  {
+    key: "price-list",
+    terms: "price prices pricelist price list ex showroom ex-showroom cost costs",
+    label: "Price list",
+    autotypeText: "price list",
+    subLabel: "See current variant prices",
+    tool: "vehicle_pricelist",
+    icon: "tag",
+  },
+  {
+    key: "on-road-price",
+    terms: "on road on-road price breakup charges registration insurance",
+    label: "On-road price",
+    autotypeText: "on-road price",
+    subLabel: "Check the city-wise price breakup",
+    tool: "vehicle_price_breakup",
+    icon: "receipt-indian-rupee",
+  },
+  {
+    key: "features",
+    terms: "feature features equipment feature list",
+    label: "Features",
+    autotypeText: "features",
+    subLabel: "Check equipment by variant",
+    tool: "vehicle_model_features_explorer",
+    icon: "list-checks",
+  },
+  {
+    key: "specifications",
+    terms: "spec specification specifications specs dimensions engine performance",
+    label: "Specifications",
+    autotypeText: "specifications",
+    subLabel: "Check dimensions and technical details",
+    tool: "vehicle_spec_attribute_lookup",
+    icon: "ruler",
+  },
+  {
+    key: "variants",
+    terms: "variant variants trim trims variant list",
+    label: "Variants",
+    autotypeText: "variants",
+    subLabel: "Browse available trims",
+    tool: "vehicle_pricelist",
+    icon: "rows-3",
+  },
+  {
+    key: "compare",
+    terms: "compare comparison versus vs difference differences",
+    label: "Compare",
+    autotypeText: "compare",
+    subLabel: "Compare cars or variants",
+    tool: "vehicle_compare",
+    icon: "columns-3",
+  },
+  {
+    key: "emi",
+    terms: "emi monthly payment installment instalment",
+    label: "EMI",
+    autotypeText: "EMI",
+    subLabel: "Estimate a monthly payment",
+    tool: "vehicle_emi",
+    icon: "calculator",
+  },
+  {
+    key: "finance",
+    terms: "finance loan eligibility documents document down payment tenure",
+    label: "Finance options",
+    autotypeText: "finance options",
+    subLabel: "Check eligibility, documents and loan choices",
+    tool: "vehicle_finance_knowledge",
+    icon: "landmark",
+  },
+  {
+    key: "offers",
+    terms: "offer offers discount discounts deal deals scheme schemes",
+    label: "Offers",
+    autotypeText: "offers",
+    subLabel: "Check available buying offers",
+    tool: "vehicle_offers",
+    icon: "badge-percent",
+  },
+  {
+    key: "quotation",
+    terms: "quote quotation enquiry inquiry callback contact dealer",
+    label: "Quotation",
+    autotypeText: "quotation",
+    subLabel: "Ask for an exact buying quote",
+    tool: "aci_new_car_quotation",
+    icon: "file-text",
+  },
+  {
+    key: "recommendation",
+    terms: "recommend recommendation suggest suggestion best choose choice verdict",
+    label: "Recommendation",
+    autotypeText: "recommendation",
+    subLabel: "Narrow down the best fit",
+    tool: "vehicle_recommendation",
+    icon: "badge-check",
+  },
+  {
+    key: "alternatives",
+    terms: "alternative alternatives similar rivals options competitor competitors",
+    label: "Alternatives",
+    autotypeText: "alternatives",
+    subLabel: "Find similar cars worth considering",
+    tool: "vehicle_similar",
+    icon: "shuffle",
+  },
+];
+
+const buildGlobalActionSuggestions = ({ query = "", context = {} } = {}) =>
+  AUTOCOMPLETE_ACTIONS.map((action) => ({
+    ...action,
+    score: matchScore(action.terms, query),
+    draftAffinity: getDraftActionAffinity({
+      draftText: context.draftText,
+      autotypeText: action.autotypeText,
+    }),
+  }))
+    .filter((action) => action.score > 0)
+    .map((action) => ({
+      id: `action-${action.key}`,
+      type: "action",
+      label: action.label,
+      subLabel: action.subLabel,
+      icon: action.icon,
+      autotypeText: action.autotypeText,
+      sendOnClick: false,
+      priority: 430 + action.score + action.draftAffinity,
+      tool: action.tool,
+      entity: { action: action.key },
+      score: action.score,
+    }));
 
 const buildContextActionSuggestions = ({ query = "", context = {} } = {}) => {
   const vehicle = getSelectedVehicle(context);
@@ -236,10 +425,20 @@ export const buildAutocompleteEntityMatchesFromIndex = ({
     })
     .filter((item) => item.score > 0);
 
-  const contextActions = buildContextActionSuggestions({ query: q, context });
+  const contextActions = draftChangesSelectedModel({ index, context })
+    ? []
+    : buildContextActionSuggestions({ query: q, context });
+  const globalActions = buildGlobalActionSuggestions({ query: q, context });
 
   return uniqueBy(
-    [...contextActions, ...variants, ...models, ...features, ...brands].sort(
+    [
+      ...contextActions,
+      ...globalActions,
+      ...variants,
+      ...models,
+      ...features,
+      ...brands,
+    ].sort(
       (left, right) =>
         (right.priority || 0) - (left.priority || 0) ||
         left.label.localeCompare(right.label),

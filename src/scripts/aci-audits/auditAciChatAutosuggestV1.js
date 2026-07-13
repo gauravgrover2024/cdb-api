@@ -67,6 +67,37 @@ try {
     }
   });
 
+  const actionCases = [
+    ["colour-action", "col", "vehicle_colors", /^colou?rs$/i],
+    ["price-list-action", "pricelist", "vehicle_pricelist", /price list/i],
+    ["comparison-action", "comp", "vehicle_compare", /compare/i],
+    ["emi-action", "emi", "vehicle_emi", /^emi$/i],
+    ["offers-action", "offe", "vehicle_offers", /offers/i],
+    ["quotation-action", "quot", "aci_new_car_quotation", /quotation/i],
+  ];
+
+  for (const [id, q, tool, labelPattern] of actionCases) {
+    await runCase(id, { q, limit: 8 }, ({ suggestions, failures: found }) => {
+      const action = suggestions.find(
+        (item) => item.type === "action" && item.tool === tool,
+      );
+      if (!action || !labelPattern.test(action.label)) {
+        found.push(`Expected global ${tool} action suggestion`);
+      }
+    });
+  }
+
+  await runCase(
+    "price-list-second-word",
+    { q: "list", limit: 8, context: { draftText: "Kia Seltos price list" } },
+    ({ suggestions, failures: found }) => {
+      const first = suggestions[0];
+      if (first?.type !== "action" || first?.id !== "action-price-list") {
+        found.push("Expected Price list to be the top action for the full draft phrase");
+      }
+    },
+  );
+
   await runCase(
     "context-action",
     {
@@ -80,6 +111,30 @@ try {
       );
       if (!action || !/creta/i.test(action.label)) {
         found.push("Expected context-aware Creta price action");
+      }
+    },
+  );
+
+  await runCase(
+    "explicit-draft-overrides-stale-context",
+    {
+      q: "price",
+      limit: 8,
+      context: {
+        draftText: "Kia Seltos price",
+        selectedVehicle: {
+          make: "Force",
+          model: "Gurkha 5 Door",
+          fullModel: "Force Gurkha 5 Door",
+        },
+      },
+    },
+    ({ suggestions, failures: found }) => {
+      if (suggestions.some((item) => item.type === "context_action")) {
+        found.push("A stale selected-car action must not override an explicit draft model");
+      }
+      if (!suggestions.some((item) => item.type === "action" && item.tool === "vehicle_pricelist")) {
+        found.push("Expected the neutral price-list action for the explicit draft model");
       }
     },
   );
