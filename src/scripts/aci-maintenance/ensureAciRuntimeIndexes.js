@@ -9,6 +9,12 @@ const sameKey = (left = {}, right = {}) =>
 
 const INDEXES = [
   {
+    collection: "aci_vehicle_model_feature_summary_v1",
+    keys: { "allFeatures.key": 1, "allFeatures.count": 1, modelKey: 1 },
+    options: { name: "model_feature_summary_feature_availability" },
+    purpose: "Feature-constrained model discovery without scanning every model summary.",
+  },
+  {
     collection: "aci_vehicle_price_rows",
     keys: { citySlug: 1, onRoadPrice: 1, modelKey: 1, variantKey: 1 },
     options: { name: "aci_runtime_price_city_onroad_model_variant" },

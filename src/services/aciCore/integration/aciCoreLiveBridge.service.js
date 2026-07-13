@@ -2107,6 +2107,22 @@ const maybeReturnBatch4BareClarificationFastPath = ({
 };
 
 
+const FEATURE_BUDGET_SHORTLIST_CACHE_TTL_MS = 5 * 60 * 1000;
+const FEATURE_BUDGET_SHORTLIST_CACHE_MAX = 120;
+const featureBudgetShortlistCache = new Map();
+
+const cloneFeatureBudgetShortlist = (value) => ({
+  ...value,
+  rows: asArray(value?.rows).map((row) => ({
+    ...row,
+    fuelTypes: [...asArray(row.fuelTypes)],
+    transmissions: [...asArray(row.transmissions)],
+    imageFrame: row.imageFrame && typeof row.imageFrame === "object"
+      ? { ...row.imageFrame }
+      : {},
+  })),
+});
+
 const buildFeatureBudgetShortlist = async ({
   filters = {},
   requestedFeatures = [],
@@ -2117,6 +2133,18 @@ const buildFeatureBudgetShortlist = async ({
 
   const citySlug = keyify(filters.citySlug || filters.city || "new-delhi").replace(/_/g, "-");
   const budgetMax = Number(filters.budgetMax || filters.maxBudget || 0);
+  const cacheKey = JSON.stringify({
+    citySlug,
+    budgetMax,
+    bodyType: keyify(filters.bodyType || filters.bodyStyle),
+    featureKeys: [...featureKeys].sort(),
+  });
+  const cached = featureBudgetShortlistCache.get(cacheKey);
+  if (cached?.expiresAt > Date.now()) {
+    return cloneFeatureBudgetShortlist(cached.value);
+  }
+  if (cached) featureBudgetShortlistCache.delete(cacheKey);
+
   const featureLists = await Promise.all(
     featureKeys.map((featureKey) =>
       db.collection("aci_vehicle_model_feature_summary_v1")
@@ -2253,7 +2281,18 @@ const buildFeatureBudgetShortlist = async ({
     .sort((left, right) => left.startsFromPrice - right.startsFromPrice)
     .slice(0, 8);
 
-  return rows.length ? { rows, matched: rows.length } : null;
+  if (!rows.length) return null;
+
+  const value = { rows, matched: rows.length };
+  featureBudgetShortlistCache.set(cacheKey, {
+    expiresAt: Date.now() + FEATURE_BUDGET_SHORTLIST_CACHE_TTL_MS,
+    value,
+  });
+  if (featureBudgetShortlistCache.size > FEATURE_BUDGET_SHORTLIST_CACHE_MAX) {
+    featureBudgetShortlistCache.delete(featureBudgetShortlistCache.keys().next().value);
+  }
+
+  return cloneFeatureBudgetShortlist(value);
 };
 
 
