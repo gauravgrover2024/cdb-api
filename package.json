@@ -204,6 +204,7 @@
     "aci:runtime-indexes": "node src/scripts/aci-maintenance/ensureAciRuntimeIndexes.js",
     "aci:runtime-index-audit": "node src/scripts/aci-audits/auditAciRuntimeIndexCoverageV1.js",
     "aci:chat-autosuggest:audit": "node src/scripts/aci-audits/auditAciChatAutosuggestV1.js",
+    "aci:client-response:audit": "node src/scripts/aci-audits/auditAciClientResponseContractV1.js",
     "aci:home-snapshot:build": "node src/scripts/aci-builds/buildAciHomePopularCarsSnapshotV1.js",
     "aci:images:cache-control:audit": "node src/scripts/aci-maintenance/setAciImageCacheControl.js",
     "aci:images:cache-control:write": "node src/scripts/aci-maintenance/setAciImageCacheControl.js --write",

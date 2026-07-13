@@ -2659,7 +2659,7 @@ const hasExplicitUncoveredComparisonMention = ({ messageTokens = [], candidatePa
 
 const pruneSubstringComparisonTargets = ({ vehicles = [], message = "" } = {}) => {
   const list = asArray(vehicles).filter(Boolean);
-  if (list.length <= 2) return list;
+  if (list.length <= 1) return list;
 
   const messageTokens = normalizeComparisonModelText(message).split(/\s+/).filter(Boolean);
   if (!messageTokens.length) return list;

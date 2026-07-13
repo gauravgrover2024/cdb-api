@@ -64,6 +64,52 @@ const getMentionPosition = (message = "", model = {}) => {
   return position;
 };
 
+const getModelMentionSpans = (message = "", model = {}) => {
+  const text = normalizeSearchKey(message);
+  const aliases = [
+    model.matchedAlias,
+    model.fullModel,
+    model.displayName,
+    model.brand && model.model ? `${model.brand} ${model.model}` : "",
+    model.model,
+  ]
+    .map(normalizeSearchKey)
+    .filter(Boolean);
+  const spans = [];
+
+  for (const alias of new Set(aliases)) {
+    const pattern = new RegExp(`(^|\\s)${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\ /g, "\\s+")}($|\\s)`, "gi");
+    let match;
+    while ((match = pattern.exec(text))) {
+      const leadingSpace = match[1] ? 1 : 0;
+      const start = match.index + leadingSpace;
+      spans.push({ start, end: start + alias.length, length: alias.length });
+      pattern.lastIndex = Math.max(pattern.lastIndex, start + alias.length);
+    }
+  }
+
+  return spans;
+};
+
+const pruneCoveredModelMentions = (models = [], message = "") => {
+  if (models.length <= 1) return models;
+  const spansByIndex = models.map((model) => getModelMentionSpans(message, model));
+
+  return models.filter((model, index) => {
+    const spans = spansByIndex[index];
+    if (!spans.length) return true;
+
+    return spans.some((span) =>
+      !spansByIndex.some((otherSpans, otherIndex) =>
+        otherIndex !== index &&
+        otherSpans.some((other) =>
+          other.length > span.length && other.start <= span.start && other.end >= span.end,
+        ),
+      ),
+    );
+  });
+};
+
 const contextModel = (context = {}) => {
   const vehicle = context.selectedVehicle || {};
   const model = cleanText(vehicle.model || context.anchorModel || "");
@@ -90,7 +136,10 @@ const contextModel = (context = {}) => {
 const resolveMentionedModels = async (message = "", context = {}) => {
   const index = await getVehicleEntityIndex();
   const seen = new Set();
-  const matches = findModelMatches(index, message).sort(
+  const matches = pruneCoveredModelMentions(
+    findModelMatches(index, message),
+    message,
+  ).sort(
     (left, right) =>
       getMentionPosition(message, left) - getMentionPosition(message, right),
   );
@@ -419,7 +468,7 @@ export const buildAciCompoundVehiclePlan = async ({
             ? "Choose the right variant"
             : "Calculate an EMI",
         query: isMultiVehicle
-          ? `Help me choose comparable variants of ${modelNames.join(" and ")}`
+          ? `Compare ${modelNames.join(" vs ")}`
           : modelNames[0]
             ? `Help me choose the right ${modelNames[0]} variant`
             : "Calculate car loan EMI",

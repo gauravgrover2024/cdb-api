@@ -3,9 +3,15 @@ import { chatWithAgent } from "../services/aiAgent/aiAgent.service.js";
 import { logInteraction } from "../services/aiAgent/aiAgent.learningEngine.js";
 import { getAiAutocompleteSuggestions } from "../services/aiAgent/aiAgent.autocomplete.js";
 import { getAvailablePricingCities } from "../services/aiAgent/tools/newCars/vehiclePricelist.tool.js";
+import { compactAciClientResponse } from "../services/aiAgent/aiAgent.clientResponse.js";
+
+const clientResponseFor = (response, source = "") =>
+  source === "aci_assist_v2_frontend"
+    ? compactAciClientResponse(response)
+    : response;
 
 export const chatWithAiAgent = asyncHandler(async (req, res) => {
-  const { message, sessionId, context, selectedEntity, filters, debug } =
+  const { message, sessionId, context, selectedEntity, filters, debug, source } =
     req.body || {};
 
   if (!message || typeof message !== "string") {
@@ -23,11 +29,11 @@ export const chatWithAiAgent = asyncHandler(async (req, res) => {
     user: req.user,
   });
 
-  res.json(response);
+  res.json(clientResponseFor(response, source));
 });
 
 export const chatWithAiAgentPublic = asyncHandler(async (req, res) => {
-  const { message, sessionId, context, selectedEntity, filters, debug } =
+  const { message, sessionId, context, selectedEntity, filters, debug, source } =
     req.body || {};
 
   if (!message || typeof message !== "string") {
@@ -45,7 +51,7 @@ export const chatWithAiAgentPublic = asyncHandler(async (req, res) => {
     user: null,
   });
 
-  res.json(response);
+  res.json(clientResponseFor(response, source));
 });
 
 export const logAiSuggestionInteraction = asyncHandler(async (req, res) => {

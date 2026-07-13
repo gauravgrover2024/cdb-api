@@ -158,6 +158,7 @@ const pickNextBestAction = ({
   const model = getVehicleLabel(vehicle);
   const comparisonLabels = comparisonVehicles.map(getVehicleLabel).filter(Boolean).slice(0, 2);
   const comparisonText = comparisonLabels.join(" and ");
+  const comparisonQuery = comparisonLabels.join(" vs ");
 
   if (stage === "enquiry" || stage === "enquiry_ready") {
     return {
@@ -178,7 +179,7 @@ const pickNextBestAction = ({
       return makeAction({
         id: "journey-match-variants",
         label: "Compare equivalent variants",
-        query: `Help me choose comparable variants of ${comparisonText}`,
+        query: `Compare ${comparisonQuery}`,
         intent: "vehicle_comparison",
         canvasType: "comparison_canvas",
       });
