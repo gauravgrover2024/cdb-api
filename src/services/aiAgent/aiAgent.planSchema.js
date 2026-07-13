@@ -311,6 +311,7 @@ export const ALLOWED_ENTITY_KEYS = [
   "primaryModel",
   "primaryVariant",
   "comparisonModels",
+  "comparisonVehicles",
   "comparisonVariants",
   "city",
   "color",
@@ -596,6 +597,10 @@ export const PlannerEntitiesSchema = z
       "Primary/anchor variant for multi-intent planning",
     ),
     comparisonModels: optionalStringArray("Models used for comparison"),
+    comparisonVehicles: z
+      .array(z.record(z.any()))
+      .optional()
+      .describe("Resolved vehicle objects for pairwise comparison routing"),
     comparisonVariants: optionalStringArray("Variants used for comparison"),
     city: optionalString("City for price/availability, default new-delhi"),
     color: optionalString("Exterior color name mentioned by the user"),
@@ -753,6 +758,7 @@ export const PlannerContextPatchSchema = z
     selectedComparisonSet: z.record(z.any()).optional().default({}),
     userPreferences: z.record(z.any()).optional().default({}),
     leadContext: z.record(z.any()).optional().default({}),
+    compoundRequest: z.record(z.any()).optional().default({}),
     customerStage: z.enum(CUSTOMER_STAGES).optional(),
     conversationMode: z.enum(CONVERSATION_MODES).optional(),
   })
@@ -1799,6 +1805,9 @@ export const normalizePlannerContextPatch = (contextPatch = {}) => {
       : {},
     leadContext: isPlainObject(contextPatch.leadContext)
       ? contextPatch.leadContext
+      : {},
+    compoundRequest: isPlainObject(contextPatch.compoundRequest)
+      ? contextPatch.compoundRequest
       : {},
     customerStage: CUSTOMER_STAGES.includes(contextPatch.customerStage)
       ? contextPatch.customerStage

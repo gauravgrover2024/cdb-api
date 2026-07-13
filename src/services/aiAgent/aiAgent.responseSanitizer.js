@@ -890,11 +890,16 @@ export const sanitizeAiAgentResponse = (response = {}, { message = "", context =
   const removeAvailability =
     next.inlineType === "unavailable_notice" ||
     next.intent === "vehicle_color_gallery";
+  const actionLimit =
+    Number(next.meta?.toolCount || 0) > 2 ||
+    asArray(next.secondaryResponses).length > 1
+      ? 40
+      : 5;
 
   next.actions = sanitizeList(next.actions || [], {
     removeVehicleCtas,
     removeAvailability,
-    max: 5,
+    max: actionLimit,
   });
 
   next.leadingQuestions = sanitizeList(next.leadingQuestions || [], {

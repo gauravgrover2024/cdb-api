@@ -12,6 +12,8 @@ import {
   maybeRunAciEarlyFeatureGate,
   maybeRunAciPreBridgeMultiFeatureAnswer,
 } from "./aiAgent.earlyFeatureGate.js";
+import { buildAciCompoundVehiclePlan } from "./aiAgent.compoundVehicleRequest.js";
+import { applyAciCustomerJourneyGuidance } from "./aiAgent.customerJourney.js";
 
 const sealDiagnosticShortlistComposerAtRoot = (response = {}) => {
   if (!response || typeof response !== "object") return response;
@@ -544,6 +546,20 @@ const chatWithAgentCore = async (...args) => {
     };
   }
 
+  const compoundVehiclePlan = await buildAciCompoundVehiclePlan({
+    message,
+    context,
+  });
+
+  if (compoundVehiclePlan) {
+    return executeAciPlannerPlan({
+      plan: compoundVehiclePlan,
+      userMessage: message,
+      context,
+      runtimeHints: { rawInput },
+    });
+  }
+
   const preBridgeMultiFeatureResponse = await maybeRunAciPreBridgeMultiFeatureAnswer({
     message,
     context,
@@ -798,7 +814,13 @@ export const chatWithAgent = async (...args) => {
     startedAt,
   });
 
-  return sealDiagnosticShortlistComposerAtRoot(serviceContractResponse);
+  const sealedResponse = sealDiagnosticShortlistComposerAtRoot(serviceContractResponse);
+
+  return applyAciCustomerJourneyGuidance({
+    response: sealedResponse,
+    message,
+    context,
+  });
 };
 
 export const chatWithAciAssist = chatWithAgent;

@@ -41,7 +41,10 @@ export const containsAlias = (textKey = "", aliasKey = "") => {
 export const isGenericCityUse = (textKey = "", aliasKey = "") => {
   if (aliasKey !== "city") return false;
 
-  return /\b(in|my|your|current|this)\s+city\b/.test(textKey);
+  return (
+    /\b(in|my|your|current|this)\s+city\b/.test(textKey) ||
+    /\b(change|choose|select|switch|update|set)\s+(?:the\s+)?city\b/.test(textKey)
+  );
 };
 
 export const findModelMatches = (

@@ -529,7 +529,10 @@ const composeFeatureComparisonAnswer = (response = {}) => {
     activeComparison.fuelFilter,
   );
 
-  const featureLines = rows.slice(0, 4).map((row) => {
+  // A requested feature comparison should answer every requested item instead
+  // of silently dropping the fifth one. Keep a generous UI-safe ceiling for
+  // unusually long bundles while preserving the user's requested order.
+  const featureLines = rows.slice(0, 10).map((row) => {
     const featureName = humanizeFeatureKey(
       firstText(row.feature, row.displayName, row.name, row.featureKey, row.key),
     );
@@ -559,7 +562,7 @@ const composeFeatureComparisonAnswer = (response = {}) => {
       ? "This answer is for the exact variants selected."
       : "Open the comparison for the exact variant breakdown.";
 
-  return renderLanguage(
+  const comparisonAnswer = renderLanguage(
     "comparison_summary",
     {
       vehicleA: vehicleLabels[0],
@@ -569,6 +572,26 @@ const composeFeatureComparisonAnswer = (response = {}) => {
     },
     response,
   ).text;
+
+  const relatedResponses = asArray(response.secondaryResponses);
+  const hasRelatedColors = relatedResponses.some(
+    (item) => getIntent(item) === "vehicle_colors",
+  );
+  const hasRelatedPrices = relatedResponses.some(
+    (item) => getIntent(item) === "vehicle_pricelist",
+  );
+
+  if (hasRelatedColors && hasRelatedPrices) {
+    const city = firstText(
+      response.contextPatch?.anchorCity,
+      response.contextSnapshot?.anchorCity,
+      "your city",
+    ).replace(/-/g, " ");
+    const cityLabel = city.charAt(0).toUpperCase() + city.slice(1);
+    return `${comparisonAnswer} I have also prepared both colour galleries and the ${cityLabel} price lists in the related options.`;
+  }
+
+  return comparisonAnswer;
 };
 
 

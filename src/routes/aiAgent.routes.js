@@ -5,6 +5,7 @@ import {
   autocompleteAiAgentPublic,
   chatWithAiAgent,
   chatWithAiAgentPublic,
+  getAiAgentPricingCitiesPublic,
   logAiSuggestionInteraction,
 } from "../controllers/aiAgent.controller.js";
 
@@ -15,6 +16,7 @@ router.post("/public-chat", chatWithAiAgentPublic);
 router.get("/autocomplete", protect, autocompleteAiAgent);
 router.get("/public-autocomplete", autocompleteAiAgentPublic);
 router.post("/public-autocomplete", autocompleteAiAgentPublic);
+router.get("/public-pricing-cities", getAiAgentPricingCitiesPublic);
 router.post("/suggestion-interaction", protect, logAiSuggestionInteraction);
 
 export default router;

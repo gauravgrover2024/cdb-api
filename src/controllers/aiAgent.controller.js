@@ -2,6 +2,7 @@ import asyncHandler from "express-async-handler";
 import { chatWithAgent } from "../services/aiAgent/aiAgent.service.js";
 import { logInteraction } from "../services/aiAgent/aiAgent.learningEngine.js";
 import { getAiAutocompleteSuggestions } from "../services/aiAgent/aiAgent.autocomplete.js";
+import { getAvailablePricingCities } from "../services/aiAgent/tools/newCars/vehiclePricelist.tool.js";
 
 export const chatWithAiAgent = asyncHandler(async (req, res) => {
   const { message, sessionId, context, selectedEntity, filters, debug } =
@@ -138,4 +139,17 @@ export const autocompleteAiAgentPublic = asyncHandler(async (req, res) => {
     res.set("Cache-Control", "no-store");
   }
   res.json(response);
+});
+
+export const getAiAgentPricingCitiesPublic = asyncHandler(async (_req, res) => {
+  const rows = await getAvailablePricingCities();
+  res.set(
+    "Cache-Control",
+    "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400",
+  );
+  res.json({
+    ok: true,
+    count: rows.length,
+    rows,
+  });
 });

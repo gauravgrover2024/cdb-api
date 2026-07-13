@@ -633,7 +633,7 @@ export const makeAction = ({
   tone,
 });
 
-export const normalizeActions = (actions = []) =>
+export const normalizeActions = (actions = [], { max = 6 } = {}) =>
   uniqueBy(
     asArray(actions)
       .filter((action) => action && action.label && action.query)
@@ -642,7 +642,7 @@ export const normalizeActions = (actions = []) =>
         id: action.id || searchKey(`${action.label} ${action.query}`).replace(/\s+/g, "-"),
       })),
     (action) => `${action.label} ${action.query} ${action.intent}`,
-  ).slice(0, 6);
+  ).slice(0, max);
 
 export const makeContextPatch = (toolPlan = {}, context = {}) => {
   // Internal CDrive answers must not overwrite selected car context.
@@ -1466,6 +1466,32 @@ export const buildVehicleFeatureLookupResponse = ({
     ],
   });
 };
+
+export const buildVehicleFeatureComparisonResponse = ({
+  toolPlan = {},
+  runtimeData = {},
+  context = {},
+} = {}) =>
+  baseResponse({
+    toolPlan,
+    context,
+    runtimeData,
+    intent: "vehicle_feature_comparison",
+    displayMode: "canvas",
+    canvasType: "feature_comparison_canvas",
+    inlineType: "feature_comparison_summary",
+    title: runtimeData.title || "Feature comparison",
+    answer:
+      runtimeData.answer ||
+      "I compared the requested features across both cars.",
+    data: {
+      ...(runtimeData.data || {}),
+      models: runtimeData.models || runtimeData.data?.models || [],
+      features: runtimeData.features || runtimeData.data?.features || [],
+      rows: getRuntimeRows(runtimeData),
+    },
+    actions: runtimeData.actions || [],
+  });
 
 export const buildVehicleCompareResponse = ({
   toolPlan = {},
@@ -3066,6 +3092,10 @@ export const ACI_RESPONSE_TOOLS = {
     id: "vehicle_feature_lookup",
     run: buildVehicleFeatureLookupResponse,
   },
+  vehicle_feature_comparison: {
+    id: "vehicle_feature_comparison",
+    run: buildVehicleFeatureComparisonResponse,
+  },
   vehicle_spec_attribute_lookup: {
     id: "vehicle_spec_attribute_lookup",
     run: buildVehicleSpecAttributeResponse,
@@ -3222,10 +3252,120 @@ export const buildMultiToolResponse = ({
   const primary = responses[0] || {};
   const secondaryResponses = responses.slice(1);
 
-  const mergedActions = normalizeActions([
+  let mergedActions = normalizeActions([
     ...asArray(primary.actions),
     ...secondaryResponses.flatMap((response) => asArray(response.actions).slice(0, 2)),
   ]);
+
+  const isCompoundResearchResult = Boolean(
+    plan.contextPatch?.compoundRequest?.version || asArray(plan.tools).length > 2,
+  );
+
+  if (isCompoundResearchResult) {
+    const openRelatedResults = secondaryResponses
+      .map((response, secondaryIndex) => {
+        const relatedToolPlan = asArray(plan.tools)[secondaryIndex + 1] || {};
+        const model = firstMeaningful(
+          asArray(response.data?.models)
+            .map((item) => item.fullModel || item.model || item)
+            .filter(Boolean)
+            .join(" vs "),
+          relatedToolPlan.entities?.primaryModel,
+          relatedToolPlan.entities?.model,
+          response.data?.model,
+          response.data?.anchorFullModel,
+          response.contextPatch?.selectedVehicle?.fullModel,
+          response.data?.rows?.[0]?.fullModel,
+          response.data?.rows?.[0]?.model,
+          response.vehicle?.fullModel,
+          response.vehicle?.model,
+        );
+        const intent = response.intent || "";
+        const config = {
+          vehicle_colors: {
+            noun: "colours",
+            query: `Show colours of ${model}`,
+            canvasType: "color_studio_canvas",
+          },
+          vehicle_pricelist: {
+            noun: "price list",
+            query: `Show price list of ${model}`,
+            canvasType: "pricelist_canvas",
+          },
+          vehicle_price_breakup: {
+            noun: "price breakup",
+            query: `Show on-road price breakup of ${model}`,
+            canvasType: "price_breakup_canvas",
+          },
+          vehicle_price_history: {
+            noun: "price history",
+            query: `Show price history of ${model}`,
+            canvasType: "price_history_canvas",
+          },
+          vehicle_emi: {
+            noun: "EMI",
+            query: `Calculate EMI for ${model}`,
+            canvasType: "emi_calculator_canvas",
+          },
+          vehicle_emi_calculator: {
+            noun: "EMI",
+            query: `Calculate EMI for ${model}`,
+            canvasType: "emi_calculator_canvas",
+          },
+          vehicle_spec_attribute_answer: {
+            noun: response.data?.attributeLabel || response.data?.attributeKey || "specification",
+            query: `Show ${response.data?.attributeLabel || response.data?.attributeKey || "specification"} of ${model}`,
+            canvasType: "",
+          },
+          vehicle_feature_answer: {
+            noun: response.data?.feature || "feature details",
+            query: `Check ${response.data?.feature || "features"} in ${model}`,
+            canvasType: "",
+          },
+          vehicle_feature_comparison: {
+            noun: "feature comparison",
+            query: `Compare requested features of ${model}`,
+            canvasType: "feature_comparison_canvas",
+          },
+          vehicle_comparison: {
+            noun: "comparison",
+            query: response.actions?.[0]?.query || `Compare ${model}`,
+            canvasType: "comparison_canvas",
+          },
+          vehicle_similar: {
+            noun: "alternatives",
+            query: `Show alternatives to ${model}`,
+            canvasType: "recommendation_results_canvas",
+          },
+          vehicle_score_insight: {
+            noun: "score insights",
+            query: `Show score insights for ${model}`,
+            canvasType: "score_insight_canvas",
+          },
+        }[intent];
+
+        if (!config) return null;
+        return {
+          ...makeAction({
+          id: `compound-open-${normalizeSearchKey(config.noun)}-${normalizeSearchKey(model)}`,
+          label: `Open ${model || "car"} ${config.noun}`,
+          query: config.query,
+          intent,
+          canvasType: config.canvasType,
+          entities: { model },
+          priority: 90,
+          contextPatch: response.contextPatch || {},
+          }),
+          widget: response.widget || null,
+          payload: response.widget
+            ? { widget: response.widget, __fromBackend: true }
+            : {},
+        };
+      })
+      .filter(Boolean);
+
+    mergedActions = normalizeActions(openRelatedResults, { max: 40 });
+  }
 
   const mergedSuggestions = normalizeActions([
     ...asArray(primary.conversationSuggestions),
@@ -3276,6 +3416,23 @@ export const buildMultiToolResponse = ({
 
 export const buildMultiToolAnswer = ({ plan = {}, responses = [] } = {}) => {
   const tools = asArray(plan.tools).map((item) => item.tool);
+
+  if (
+    tools.includes("vehicle_feature_comparison") &&
+    tools.includes("vehicle_colors") &&
+    tools.includes("vehicle_pricelist")
+  ) {
+    const featureResponse = responses.find(
+      (response) => response.intent === "vehicle_feature_comparison",
+    );
+    const modelNames = asArray(featureResponse?.data?.models)
+      .map((model) => model.fullModel || model.model)
+      .filter(Boolean);
+    const featureCount = asArray(featureResponse?.data?.features).length;
+    const cars = modelNames.length ? modelNames.join(" and ") : "both cars";
+
+    return `I compared ${cars} on the ${featureCount || "requested"} features. I also checked each car's current model-level colours and ${getCity(plan.tools?.[0] || {}, {})} price list; use the related options to open either one without repeating your question.`;
+  }
 
   if (
     tools.includes("vehicle_pricelist") &&

@@ -61,6 +61,36 @@ const cases = [
     ],
     maxFeatureCount: 8,
   },
+  {
+    id: "seltos-three-features-no-nested-acronym-duplicate",
+    message:
+      "Sunroof, Anti-lock Braking System (ABS) and Electronic Brakeforce Distribution (EBD)",
+    context: {
+      selectedVehicle: {
+        make: "Kia",
+        brand: "Kia",
+        model: "Seltos",
+        fullModel: "Kia Seltos",
+        city: "Noida",
+        citySlug: "noida",
+      },
+      anchorMake: "Kia",
+      anchorModel: "Seltos",
+      anchorCity: "noida",
+    },
+    expectMake: "Kia",
+    expectModel: "Seltos",
+    forbiddenVariantParts: ["sunroof", "abs", "ebd"],
+    expectedMentionParts: ["sunroof", "anti-lock", "brakeforce distribution"],
+    requiredFeatureKeyParts: [
+      "sunroof",
+      "anti_lock_braking_system_abs",
+      "electronic_brakeforce_distribution_ebd",
+    ],
+    forbiddenFeatureKeyParts: ["voice_assisted_sunroof"],
+    expectedFeatureCount: 3,
+    maxFeatureCount: 3,
+  },
 ];
 
 const hasText = (value = "", part = "") => clean(value).includes(clean(part));
@@ -96,7 +126,7 @@ const main = async () => {
     try {
       response = await chatWithAgent({
         message: testCase.message,
-        context: {},
+        context: testCase.context || {},
         conversationId: `audit-multi-feature-${testCase.id}`,
         userId: "audit",
       });
@@ -128,6 +158,15 @@ const main = async () => {
     ) {
       failures.push(
         `Expected at most ${testCase.maxFeatureCount} returned features, got ${uniqueReturnedFeatureKeys.length}: ${uniqueReturnedFeatureKeys.join(", ")}`,
+      );
+    }
+
+    if (
+      Number(testCase.expectedFeatureCount || 0) > 0 &&
+      uniqueReturnedFeatureKeys.length !== testCase.expectedFeatureCount
+    ) {
+      failures.push(
+        `Expected exactly ${testCase.expectedFeatureCount} returned features, got ${uniqueReturnedFeatureKeys.length}: ${uniqueReturnedFeatureKeys.join(", ")}`,
       );
     }
 

@@ -5403,10 +5403,10 @@ const isFeatureV2RuntimeRequest = ({ toolPlan = {}, userMessage = "" } = {}) => 
     );
   }
 
-  // Any new-car model query with a concrete feature word must go through Feature Resolver V2,
-  // even if the planner incorrectly chose pricelist/unavailable.
+  // Recover only unresolved/general feature plans. Explicit compound tools such
+  // as specifications, pricing and alternatives must keep their own runtime.
   if (
-    /\b(creta|verna|seltos|sonet|venue|exter|alcazar|city|elevate|nexon|harrier|safari|punch|thar|xuv700|scorpio|thar)\b/i.test(userMessage || "") &&
+    ["unavailable", "general_response"].includes(tool) &&
     FEATURE_QUERY_HINTS.some((hint) => text.includes(normalizeExecutorText(hint)))
   ) {
     return true;
@@ -5951,43 +5951,44 @@ export const executeAciPlannerPlan = async ({
   });
   const tools = asArray(executablePlan.tools);
 
-  const runtimeResults = [];
+  // Planner tools do not consume one another's runtime output; they all read
+  // the same immutable turn context. Running them concurrently keeps compound
+  // multi-vehicle questions responsive while preserving result order.
+  const runtimeResults = await Promise.all(
+    tools.map(async (toolPlan, index) => {
+      try {
+        const runtimeData = await runAciRuntimeDataTool({
+          toolPlan,
+          plan: executablePlan,
+          context,
+          userMessage,
+          runtimeHints,
+          adapters,
+          index,
+        });
 
-  for (let index = 0; index < tools.length; index += 1) {
-    const toolPlan = tools[index];
-
-    try {
-      const runtimeData = await runAciRuntimeDataTool({
-        toolPlan,
-        plan: executablePlan,
-        context,
-        userMessage,
-        runtimeHints,
-        adapters,
-        index,
-      });
-
-      runtimeResults[index] = {
-        ...(runtimeData || {}),
-        executorTool: toolPlan.tool,
-        executorIndex: index,
-      };
-    } catch (error) {
-      runtimeResults[index] = {
-        executorTool: toolPlan.tool,
-        executorIndex: index,
-        error: error?.message || "Runtime tool failed",
-        rows: [],
-        matched: 0,
-        modulesChecked: [toolPlan.tool, "runtime_error"],
-        dataSource: "runtime_error",
-      };
-    }
-  }
+        return {
+          ...(runtimeData || {}),
+          executorTool: toolPlan.tool,
+          executorIndex: index,
+        };
+      } catch (error) {
+        return {
+          executorTool: toolPlan.tool,
+          executorIndex: index,
+          error: error?.message || "Runtime tool failed",
+          rows: [],
+          matched: 0,
+          modulesChecked: [toolPlan.tool, "runtime_error"],
+          dataSource: "runtime_error",
+        };
+      }
+    }),
+  );
 
   const v2FeatureRuntimeResult = runtimeResults.find(isV2FeatureRuntimeResult);
 
-  let response = v2FeatureRuntimeResult
+  let response = v2FeatureRuntimeResult && tools.length === 1
     ? buildV2FeatureRuntimePassthrough({
         runtimeData: v2FeatureRuntimeResult,
         executablePlan,

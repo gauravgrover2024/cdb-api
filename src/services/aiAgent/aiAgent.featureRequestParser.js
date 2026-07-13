@@ -557,7 +557,7 @@ export const parseAciFeatureRequestFromMessage = async ({
   }
 
   const seen = new Set();
-  const requestedFeatures = matches
+  const canonicalMatches = matches
     // Validate the original DB/catalog alias, not the lower-cased message match.
     // Example: catalog alias "ADAS" is valid, while matched text becomes "adas".
     .filter((item) => isUsefulFeatureAlias(item.rawText || item.matchedText))
@@ -567,6 +567,22 @@ export const parseAciFeatureRequestFromMessage = async ({
       seen.add(item.canonicalKey);
       return true;
     });
+
+  const requestedFeatures = canonicalMatches.filter((item, index, list) => {
+    const itemStart = Number(item.matchIndex || 0);
+    const itemEnd = itemStart + Number(item.matchLength || 0);
+
+    return !list.some((other, otherIndex) => {
+      if (index === otherIndex) return false;
+      const otherStart = Number(other.matchIndex || 0);
+      const otherEnd = otherStart + Number(other.matchLength || 0);
+      return (
+        other.matchLength > item.matchLength &&
+        otherStart <= itemStart &&
+        otherEnd >= itemEnd
+      );
+    });
+  });
 
   let featureStrippedMessage = ` ${messageKey} `;
   for (const item of requestedFeatures) {

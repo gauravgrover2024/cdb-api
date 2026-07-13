@@ -1464,6 +1464,17 @@ const getPriceCityCatalog = async () => {
   return priceCityCatalogPromise;
 };
 
+export const getAvailablePricingCities = async () => {
+  const rows = await getPriceCityCatalog();
+  return rows
+    .map((row) => ({
+      city: row.city || displayCity(row.citySlug),
+      citySlug: row.citySlug,
+    }))
+    .filter((row) => row.city && row.citySlug)
+    .sort((left, right) => left.city.localeCompare(right.city));
+};
+
 const resolveRequestedCityFromMessage = async ({
   requestedCity = DEFAULT_CITY,
   userMessage = "",
@@ -3229,6 +3240,8 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     anchorCity: vehicle.city || displayCity(requestedCity),
   };
 
+  const availableCities = await getAvailablePricingCities();
+
   const widget = {
     type: "vehicle_pricelist",
     widgetType: "vehicle_pricelist",
@@ -3254,6 +3267,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
       : `I could not find live price rows for ${requestedModel || "this model"} in ${displayCity(requestedCity)}.`,
     city: vehicle.city || displayCity(requestedCity),
     citySlug: vehicle.citySlug || slugify(requestedCity || DEFAULT_CITY),
+    availableCities,
     vehicle,
     visualGallery,
     selectedColor: selectedVisual,
@@ -3308,6 +3322,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     rows,
     records: rows,
     variants: rows,
+    availableCities,
     totalVariants: rows.length,
     count: rows.length,
     matched: rows.length,
