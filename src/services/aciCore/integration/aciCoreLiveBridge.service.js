@@ -2497,8 +2497,39 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     },
   });
 
+  const broadContextPatch = composed.contextPatch || {};
+  composed.contextPatch = {
+    ...broadContextPatch,
+    selectedVehicle: null,
+    anchorMake: "",
+    anchorModel: "",
+    anchorFullModel: "",
+    anchorVariant: "",
+    clearSelectedVehicle: true,
+    contextState: {
+      ...(broadContextPatch.contextState || {}),
+      selectedVehicle: null,
+      anchors: {
+        ...(broadContextPatch.contextState?.anchors || {}),
+        primaryVehicle: null,
+      },
+    },
+    aciContextState: {
+      ...(broadContextPatch.aciContextState || broadContextPatch.contextState || {}),
+      selectedVehicle: null,
+      anchors: {
+        ...(broadContextPatch.aciContextState?.anchors || broadContextPatch.contextState?.anchors || {}),
+        primaryVehicle: null,
+      },
+    },
+  };
+
+  const bodyLabel = discovery.bodyType === "suv" ? "SUVs" : "cars";
+  const shortlistScope = requestedFeature
+    ? `${bodyLabel} with ${requestedFeature}`
+    : bodyLabel;
   const shortlistAnswer = resultRows.length
-    ? `I found ${resultRows.length} strong ${requestedFeature || "preference"} matches under ${budgetLabel}. These are the best starting points from what you have shared so far, and we can narrow them by fuel, gearbox or daily use.`
+    ? `I found ${resultRows.length} ${shortlistScope} under ${budgetLabel}. These are the best starting points from what you have shared so far, and we can narrow them by fuel, gearbox or daily use.`
     : `I could not find a confident match under ${budgetLabel} with the current filters.`;
   composed.answer = shortlistAnswer;
   if (composed.data && typeof composed.data === "object") {
@@ -7826,6 +7857,22 @@ const runAciCoreLiveBridgeInternal = async ({
     context,
   });
   const effectiveMessage = message;
+  const batch4BroadDiscoveryFastPath = await maybeReturnBatch4BroadDiscoveryFastPath({
+    message,
+    context,
+    contextState: context?.contextState || context?.aciContextState || {},
+    user,
+    session,
+    meta,
+    originalMessage,
+    effectiveMessage,
+    startedAt,
+  });
+
+  if (batch4BroadDiscoveryFastPath) {
+    return batch4BroadDiscoveryFastPath;
+  }
+
   const contextDirectFactFastPath = await maybeReturnContextDirectFactFastPath({
     message,
     context,
@@ -7888,22 +7935,6 @@ const runAciCoreLiveBridgeInternal = async ({
 
   if (explicitComparisonFastPath) {
     return explicitComparisonFastPath;
-  }
-
-  const batch4BroadDiscoveryFastPath = await maybeReturnBatch4BroadDiscoveryFastPath({
-    message,
-    context,
-    contextState: context?.contextState || context?.aciContextState || {},
-    user,
-    session,
-    meta,
-    originalMessage,
-    effectiveMessage,
-    startedAt,
-  });
-
-  if (batch4BroadDiscoveryFastPath) {
-    return batch4BroadDiscoveryFastPath;
   }
 
   const featureComparisonExplainerFastPath = await maybeReturnFeatureComparisonExplainerFastPath({

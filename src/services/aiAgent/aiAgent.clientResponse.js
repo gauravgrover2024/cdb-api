@@ -186,8 +186,10 @@ const compactComparisonVehicle = (vehicle = {}) =>
 const compactContextState = (state = {}, comparisonMode = false) => ({
   schemaVersion: state.schemaVersion || "aci_context_state_v1",
   selectedVehicle: comparisonMode
-    ? {}
-    : compactVehicle(state.selectedVehicle || {}, { includeGallery: false }) || {},
+    ? null
+    : hasOwn(state, "selectedVehicle") && state.selectedVehicle === null
+      ? null
+      : compactVehicle(state.selectedVehicle || {}, { includeGallery: false }) || {},
   activeComparison: {
     vehicles: asArray(state.activeComparison?.vehicles).map(compactComparisonVehicle),
     features: asArray(state.activeComparison?.features).slice(0, 20),
@@ -209,7 +211,7 @@ const compactContextPatch = (patch = {}) => {
     ...pick(patch, [
       "anchorMake", "anchorModel", "anchorFullModel", "anchorVariant",
       "anchorCity", "customerStage", "customerJourney", "leadContext",
-      "compoundRequest", "conversationMode",
+      "compoundRequest", "conversationMode", "clearSelectedVehicle",
     ]),
     selectedVehicle: comparisonMode
       ? null

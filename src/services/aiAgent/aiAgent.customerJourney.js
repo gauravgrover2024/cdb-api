@@ -46,11 +46,21 @@ const makeAction = ({ id, label, query, intent, canvasType = "" }) => ({
   contextPatch: {},
 });
 
-const getVehicle = (response = {}, context = {}) =>
-  response.contextPatch?.selectedVehicle ||
-  response.vehicle ||
-  context.selectedVehicle ||
-  {};
+const responseClearsSelectedVehicle = (response = {}) =>
+  Object.prototype.hasOwnProperty.call(response.contextPatch || {}, "selectedVehicle") &&
+  response.contextPatch?.selectedVehicle === null &&
+  response.contextPatch?.clearSelectedVehicle === true;
+
+const getVehicle = (response = {}, context = {}) => {
+  if (responseClearsSelectedVehicle(response)) return {};
+
+  return (
+    response.contextPatch?.selectedVehicle ||
+    response.vehicle ||
+    context.selectedVehicle ||
+    {}
+  );
+};
 
 const getComparisonVehicles = (response = {}, context = {}) => {
   const vehicles = [
@@ -82,6 +92,13 @@ const getVehicleLabel = (vehicle = {}) =>
       [vehicle.make || vehicle.brand, vehicle.model].filter(Boolean).join(" ") ||
       vehicle.model,
   );
+
+const getRecommendationModels = (response = {}) =>
+  unique(
+    asArray(response.rows || response.data?.rows || response.widget?.rows)
+      .map((row = {}) => getVehicleLabel(row.vehicle || row))
+      .filter(Boolean),
+  ).slice(0, 8);
 
 const detectTopics = ({ message = "", response = {} } = {}) => {
   const text = `${message} ${response.intent || ""} ${response.canvasType || ""}`.toLowerCase();
@@ -154,6 +171,7 @@ const pickNextBestAction = ({
   exploredTopics = [],
   vehicle = {},
   comparisonVehicles = [],
+  recommendationModels = [],
 } = {}) => {
   const model = getVehicleLabel(vehicle);
   const comparisonLabels = comparisonVehicles.map(getVehicleLabel).filter(Boolean).slice(0, 2);
@@ -196,6 +214,16 @@ const pickNextBestAction = ({
   }
 
   if (!model) {
+    if (recommendationModels.length >= 2) {
+      return makeAction({
+        id: "journey-compare-shortlist",
+        label: "Compare top matches",
+        query: `Compare ${recommendationModels.slice(0, 2).join(" vs ")}`,
+        intent: "vehicle_comparison",
+        canvasType: "comparison_canvas",
+      });
+    }
+
     return makeAction({
       id: "journey-pick-car",
       label: "Find cars for me",
@@ -292,9 +320,11 @@ export const applyAciCustomerJourneyGuidance = ({
   if (response.intent === "internal_passthrough") return response;
 
   const previous = context.customerJourney || {};
+  const clearsSelectedVehicle = responseClearsSelectedVehicle(response);
   const topics = detectTopics({ message, response });
   const vehicle = getVehicle(response, context);
   const comparisonVehicles = getComparisonVehicles(response, context);
+  const recommendationModels = getRecommendationModels(response);
   const turnStage = inferTurnStage({ topics, message, response });
   const readiness = buildReadiness({
     previous,
@@ -324,6 +354,7 @@ export const applyAciCustomerJourneyGuidance = ({
     exploredTopics: readiness.exploredTopics,
     vehicle,
     comparisonVehicles,
+    recommendationModels,
   });
 
   const existingActions = asArray(response.actions);
@@ -338,12 +369,13 @@ export const applyAciCustomerJourneyGuidance = ({
     leadMode,
     turnCount: Number(previous.turnCount || 0) + 1,
     exploredTopics: readiness.exploredTopics,
-    selectedModel: vehicle.model || previous.selectedModel || "",
+    selectedModel:
+      vehicle.model || (clearsSelectedVehicle ? "" : previous.selectedModel) || "",
     selectedVariant:
       vehicle.variant ||
       vehicle.variantName ||
       vehicle.selectedVariant ||
-      previous.selectedVariant ||
+      (clearsSelectedVehicle ? "" : previous.selectedVariant) ||
       "",
     comparisonCount: Math.max(
       Number(previous.comparisonCount || 0),
