@@ -160,8 +160,12 @@ export function flatToDoc(flat) {
         totalIncome: f.co_totalIncome,
         totalTurnoverGST: f.co_totalTurnoverGST,
         yearsAtCurrentResidence: f.co_yearsAtCurrentResidence,
+        relationWithFirm: f.co_relationWithFirm,
       }
     : undefined;
+
+  // ── Additional Co-Applicants (Firm applicants only) ─────────────────────
+  const coApplicants = Array.isArray(f.coApplicants) ? f.coApplicants : undefined;
 
   // ── Guarantor (gu_ prefix) ──────────────────────────────────────────────
   const guarantor = f.hasGuarantor
@@ -323,6 +327,12 @@ export function flatToDoc(flat) {
     address: f.showroomDealerAddress,
   };
 
+  // ── References ────────────────────────────────────────────────────────────
+  const reference1 =
+    f.reference1 && typeof f.reference1 === "object" ? f.reference1 : undefined;
+  const reference2 =
+    f.reference2 && typeof f.reference2 === "object" ? f.reference2 : undefined;
+
   // ── Lead / Sourcing ──────────────────────────────────────────────────────
   const lead = {
     sourcingChannel: f.sourcingChannel,
@@ -380,6 +390,8 @@ export function flatToDoc(flat) {
     customerType: f.customerType,
     customerName: f.customerName,
     typeOfLoan: f.typeOfLoan,
+    unsecuredLoanAmount: f.unsecuredLoanAmount,
+    unsecuredLoanBreakup: Array.isArray(f.unsecuredLoanBreakup) ? f.unsecuredLoanBreakup : undefined,
     currentStep: f.currentStep,
     completedSteps: f.completedSteps,
     customerId: f.customerId,
@@ -389,11 +401,14 @@ export function flatToDoc(flat) {
     lead,
     applicant,
     coApplicant,
+    coApplicants,
     guarantor,
     authorisedSignatory,
     vehicle,
     pricing,
     dealer,
+    reference1,
+    reference2,
     approval,
     postFile,
     disbursement,
@@ -451,9 +466,13 @@ export function docToFlat(doc) {
     caseType: d.caseType,
     customerType: d.customerType,
     typeOfLoan: d.typeOfLoan,
+    unsecuredLoanAmount: d.unsecuredLoanAmount,
+    unsecuredLoanBreakup: d.unsecuredLoanBreakup,
     approxClosureDate: d.approxClosureDate,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
+    isBulk: d.isBulk,
+    bulkCount: d.bulkCount,
 
     // Lead
     sourcingChannel: le.sourcingChannel,
@@ -583,6 +602,8 @@ export function docToFlat(doc) {
     co_totalIncome: co.totalIncome,
     co_totalTurnoverGST: co.totalTurnoverGST,
     co_yearsAtCurrentResidence: co.yearsAtCurrentResidence,
+    co_relationWithFirm: co.relationWithFirm,
+    coApplicants: d.coApplicants,
 
     // Guarantor (gu_ prefix)
     hasGuarantor: !!gu.customerName,
@@ -645,6 +666,10 @@ export function docToFlat(doc) {
     showroomDealerContactPerson: dl.contactPerson,
     showroomDealerContactNumber: dl.contactNumber,
     showroomDealerAddress: dl.address,
+
+    // References
+    reference1: d.reference1 || undefined,
+    reference2: d.reference2 || undefined,
 
     // Approval
     approval_status: ap.status,
@@ -741,6 +766,71 @@ export async function createHomeLoan(flatPayload, userId) {
   }
   const loan = await HomeLoan.create(docData);
   return docToFlat(loan);
+}
+
+// Splits one submitted form into `count` independent loan files for the same
+// customer (Bulk Loan Creation). Each split file gets its own application
+// number and its own document uploads, but the bank comparison list
+// (approval.banks) is carried over from the source payload so users don't
+// have to re-add every bank for comparison on each split file. All other
+// stage-progression data (post-file, disbursement, delivery, payout,
+// pendencies, workflow history) is reset so every split starts fresh at the
+// Profile step.
+export async function createHomeLoanBulk(flatPayload, userId, count) {
+  const isSameVehicle = flatPayload.isSameVehicle !== false;
+  const baseDoc = flatToDoc(flatPayload);
+  const preservedBanks = Array.isArray(baseDoc.approval?.banks)
+    ? baseDoc.approval.banks
+    : [];
+
+  const createdLoans = [];
+  for (let i = 0; i < count; i++) {
+    try {
+      const applicationNumber = await HomeLoan.generateApplicationNumber();
+      const docData = JSON.parse(JSON.stringify(baseDoc));
+
+      docData.applicationNumber = applicationNumber;
+      docData.loanId = applicationNumber;
+
+      // Each split file needs its own fresh document uploads.
+      docData.documents = [];
+
+      // Vehicle/pricing are only cloned when every split shares the same
+      // vehicle; otherwise each split needs to be filled in separately.
+      if (!isSameVehicle) {
+        docData.vehicle = {};
+        docData.pricing = {};
+      }
+
+      // Reset stage-progression state so every split starts fresh, while
+      // preserving the bank comparison list.
+      docData.approval = { banks: preservedBanks };
+      docData.postFile = { instruments: [] };
+      docData.disbursement = {};
+      docData.delivery = {};
+      docData.payout = {};
+      docData.pendencies = [];
+      docData.workflowHistory = [];
+      docData.auditLog = [];
+      docData.status = "draft";
+      docData.currentStep = "profile";
+      docData.completedSteps = [];
+      docData.isBulk = true;
+      docData.bulkCount = count;
+
+      if (userId) {
+        docData.createdBy = userId;
+        docData.updatedBy = userId;
+      }
+
+      const loan = await HomeLoan.create(docData);
+      createdLoans.push(docToFlat(loan));
+    } catch (e) {
+      console.error("Failed to create bulk home loan item", e);
+    }
+  }
+
+  return createdLoans;
 }
 
 export async function updateHomeLoan(id, flatPayload, userId) {
