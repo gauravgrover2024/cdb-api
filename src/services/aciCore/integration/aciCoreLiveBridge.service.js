@@ -48,6 +48,9 @@ import {
   resolveModelScopedVariantFromMessage,
 } from "../variants/modelScopedVariantResolver.service.js";
 import {
+  resolveAciExplicitMessageModelEntity,
+} from "../../aiAgent/aiAgent.modelContextResolver.js";
+import {
   ACI_FEATURE_EXPLAINER_COLLECTION,
   composeAciFeatureDecisionExplanation,
   resolveAciFeatureExplainerFromText,
@@ -2309,6 +2312,20 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
 } = {}) => {
   const discovery = detectBatch4BroadDiscoveryRequest(effectiveMessage || message);
   if (!discovery) return null;
+
+  const discoveryMessage = cleanText(effectiveMessage || message)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const explicitModel = await resolveAciExplicitMessageModelEntity(effectiveMessage || message);
+  const explicitModelName = cleanText(explicitModel?.model)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (
+    explicitModelName &&
+    ` ${discoveryMessage} `.includes(` ${explicitModelName} `)
+  ) return null;
 
   const evRequested = discovery.fuelType === "electric";
   const fuelKey = evRequested ? "ev" : discovery.fuelType;

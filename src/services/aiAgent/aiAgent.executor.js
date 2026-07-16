@@ -27,6 +27,7 @@ import { mergeContextPatches } from "../aciCore/context/aciContextManager.servic
 import { runVehicleSpecAttributeLookup } from "../aciCore/specs/aciVehicleSpecAttributeResolver.service.js";
 import mongoose from "mongoose";
 import { runVehicleScoreInsightTool } from "./tools/newCars/vehicleScoreInsight.tool.js";
+import { resolveVehicleEntities } from "./aiAgent.vehicleEntityIndex.js";
 
 /**
  * ACI Assist Executor
@@ -2677,12 +2678,41 @@ export const runtimeVehicleCompare = async ({
 export const runtimeVehicleRecommend = async ({
   toolPlan = {},
   context = {},
+  userMessage = "",
 } = {}) => {
-  const filters = toolPlan.filters || {};
+  let effectiveToolPlan = toolPlan;
+  if (userMessage) {
+    let resolvedEntities = await resolveVehicleEntities({
+      message: userMessage,
+      context: {},
+    });
+    if (!resolvedEntities.modelMatches?.length && !Number(resolvedEntities.counts?.models || 0)) {
+      resolvedEntities = await resolveVehicleEntities({
+        message: userMessage,
+        context: {},
+        forceRefresh: true,
+      });
+    }
+    const explicitModel = resolvedEntities.modelMatches?.[0];
+    if (explicitModel?.model) {
+      effectiveToolPlan = {
+        ...toolPlan,
+        entities: {
+          ...(toolPlan.entities || {}),
+          make: explicitModel.brand || toolPlan.entities?.make || "",
+          brand: explicitModel.brand || toolPlan.entities?.brand || "",
+          model: explicitModel.model,
+          fullModel: explicitModel.fullModel || explicitModel.displayName || "",
+        },
+      };
+    }
+  }
+
+  const filters = effectiveToolPlan.filters || {};
   const mustHaveFeatures = asArray(filters.mustHaveFeatures);
   const hasBroadBudgetDiscoveryFilters =
-    !getModel(toolPlan, context) &&
-    !getVariant(toolPlan, context) &&
+    !getModel(effectiveToolPlan, context) &&
+    !getVariant(effectiveToolPlan, context) &&
     Boolean(
       mustHaveFeatures.length ||
         filters.budgetMax ||
@@ -2695,7 +2725,7 @@ export const runtimeVehicleRecommend = async ({
 
   if (hasBroadBudgetDiscoveryFilters) {
     const budgetDiscovery = await runtimeBudgetVehicleDiscovery({
-      toolPlan,
+      toolPlan: effectiveToolPlan,
       context,
     });
 
@@ -2708,10 +2738,22 @@ export const runtimeVehicleRecommend = async ({
     }
   }
 
-  const data = await runtimeVehiclePricelist({ toolPlan, context });
+  const data = await runtimeVehiclePricelist({ toolPlan: effectiveToolPlan, context });
+  const scopedRows = asArray(data.rows).filter((row) => {
+    if (!transmissionMatchesBudgetFilter(row, filters.transmission)) return false;
+    if (!fuelTypeMatchesBudgetFilter(row, filters.fuelType)) return false;
+
+    const budgetMax = Number(filters.budgetMax || filters.maxBudget || filters.maxPrice || 0);
+    if (!budgetMax) return true;
+    const priceBasis = normalizeBudgetPriceBasis(filters);
+    const price = priceBasis === "on_road"
+      ? Number(row.onRoadPrice || row.onRoadPriceWithoutOptional || row.price || 0)
+      : Number(row.exShowroomPrice || row.exShowroom || row.price || 0);
+    return price > 0 && price <= budgetMax;
+  });
 
   const grouped = uniqueBy(
-    data.rows,
+    scopedRows,
     (row) => row.model || row.variant || row.id,
   ).slice(0, 12);
 
@@ -2721,7 +2763,7 @@ export const runtimeVehicleRecommend = async ({
     cars: grouped,
     count: grouped.length,
     matched: grouped.length,
-    ranking: toolPlan.ranking || "value",
+    ranking: effectiveToolPlan.ranking || "value",
   };
 };
 

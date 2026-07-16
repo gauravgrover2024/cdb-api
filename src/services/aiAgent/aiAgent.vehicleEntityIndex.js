@@ -97,12 +97,20 @@ export const buildVehicleEntityIndex = async () => {
 
 export const getVehicleEntityIndex = async ({ forceRefresh = false } = {}) => {
   const now = Date.now();
+  const cachedModelCount = Number(cache.index?.counts?.models || 0);
+  const databaseReady = mongoose.connection.readyState === 1;
+  const staleEmptyIndex = Boolean(cache.index && databaseReady && cachedModelCount === 0);
 
-  if (!forceRefresh && cache.index && now - cache.builtAt < DEFAULT_TTL_MS) {
+  if (
+    !forceRefresh &&
+    !staleEmptyIndex &&
+    cache.index &&
+    now - cache.builtAt < DEFAULT_TTL_MS
+  ) {
     return cache.index;
   }
 
-  if (!forceRefresh && cache.promise) return cache.promise;
+  if (!forceRefresh && !staleEmptyIndex && cache.promise) return cache.promise;
 
   cache.promise = buildVehicleEntityIndex()
     .then((index) => {

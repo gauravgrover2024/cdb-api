@@ -179,6 +179,43 @@ const compactRow = (row = {}) => {
   return result;
 };
 
+const compactModelGroup = (group = {}) => {
+  const fuelBuckets = new Map();
+  for (const variant of asArray(group.qualifyingVariants)) {
+    const fuelType = text(variant.fuelType || variant.fuel, 40);
+    const fuelKey = fuelType.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    if (!fuelKey) continue;
+    const price = Number(
+      variant.exShowroomPrice || variant.exShowroom || variant.price || 0,
+    ) || 0;
+    const current = fuelBuckets.get(fuelKey) || {
+      fuelType,
+      startsFromVariant: "",
+      startsFromPrice: 0,
+      startsFromPriceLabel: "",
+      bestUnderBudgetVariant: "",
+      bestUnderBudgetPrice: 0,
+      bestUnderBudgetPriceLabel: "",
+    };
+    if (!current.startsFromPrice || (price > 0 && price < current.startsFromPrice)) {
+      current.startsFromVariant = text(variant.variant || variant.variantName, 120);
+      current.startsFromPrice = price;
+      current.startsFromPriceLabel = text(variant.exShowroomPriceLabel, 40);
+    }
+    if (price >= current.bestUnderBudgetPrice) {
+      current.bestUnderBudgetVariant = text(variant.variant || variant.variantName, 120);
+      current.bestUnderBudgetPrice = price;
+      current.bestUnderBudgetPriceLabel = text(variant.exShowroomPriceLabel, 40);
+    }
+    fuelBuckets.set(fuelKey, current);
+  }
+
+  return {
+    ...compactRow(group),
+    fuelOptions: [...fuelBuckets.values()],
+  };
+};
+
 const compactComparisonVehicle = (vehicle = {}) =>
   compactVehicle(vehicle, { includeGallery: false }) ||
   pick(vehicle, ["make", "brand", "model", "fullModel", "variant"]);
@@ -276,6 +313,12 @@ const compactWidget = (response = {}) => {
   const features = asArray(
     widget.features || widget.featureList || response.features || response.data?.features,
   ).map(compactRow);
+  const modelGroups = asArray(
+    response.modelGroups ||
+      response.data?.modelGroups ||
+      widget.modelGroups ||
+      widget.data?.modelGroups,
+  ).slice(0, 200).map(compactModelGroup);
   const contextPatch = compactContextPatch({
     ...(widget.contextPatch || {}),
     ...(response.contextPatch || {}),
@@ -303,6 +346,7 @@ const compactWidget = (response = {}) => {
     canvasType: response.canvasType || widget.canvasType || "",
     inlineType: response.inlineType || widget.inlineType || "",
     rows,
+    modelGroups,
     colors,
     features,
     featureList: features,
@@ -316,6 +360,7 @@ const compactWidget = (response = {}) => {
       vehicle,
       contextPatch,
       filters: compactFilters(widget.filters || response.filters || response.data?.filters || {}),
+      modelGroups,
     },
   };
 };

@@ -160,9 +160,22 @@ const choosePrimaryTask = ({ candidateTasks = [], modelCount = 0, featureCount =
     ACI_TASKS.LEAD_CAPTURE,
   ];
 
-  return priority.find((task) => taskSet.has(task)) ||
-    candidateTasks.map(validTask).find(Boolean) ||
-    ACI_TASKS.CLARIFICATION;
+  const explicitTask =
+    priority.find((task) => taskSet.has(task)) ||
+    candidateTasks.map(validTask).find(Boolean);
+
+  if (explicitTask && explicitTask !== ACI_TASKS.CLARIFICATION) {
+    return explicitTask;
+  }
+
+  // A uniquely resolved model name is already a complete overview request.
+  // This keeps model-only prompts data-driven instead of requiring phrasing
+  // such as "show me" or a model-specific frontend shortcut.
+  if (modelCount === 1) {
+    return ACI_TASKS.VEHICLE_OVERVIEW;
+  }
+
+  return explicitTask || ACI_TASKS.CLARIFICATION;
 };
 
 const inferRequestedFacts = ({ primaryTask, secondaryTasks = [], featureKeys = [], hasBudget = false } = {}) => {
