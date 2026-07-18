@@ -197,6 +197,19 @@ const hasPriceIntent = (message = "") =>
     normalizeSearchKey(message),
   );
 
+const hasVariantListIntent = (message = "") => {
+  const text = normalizeSearchKey(message);
+  const hasListLanguage =
+    /\b(show|list|see|all|available|current|which|what)\b/.test(text);
+  const hasPluralVariant = /\b(variants|trims)\b/.test(text);
+  const hasPowertrainScopedVariant =
+    /\b(petrol|diesel|cng|electric|ev|hybrid|automatic|manual|amt|cvt|dct|ivt)\s+(variants|trims)\b/.test(
+      text,
+    );
+
+  return (hasListLanguage && hasPluralVariant) || hasPowertrainScopedVariant;
+};
+
 const hasEmiIntent = (message = "") =>
   /\b(emi|loan|finance|down payment|dp)\b/.test(normalizeSearchKey(message));
 
@@ -832,6 +845,84 @@ export const compileSemanticPlan = async ({
       variant: cleanVariant,
       city: explicitCity,
     });
+  }
+
+  // A plural variant request is a catalogue query, even when it only names a
+  // fuel or transmission. Do not let entity resolution narrow it to one trim.
+  if (model && hasVariantListIntent(cleanMessage)) {
+    const scopedFilters = {
+      city: explicitCity,
+      priceBasis: "on_road",
+      activeOnly: true,
+      ...(fuelType ? { fuelType } : {}),
+      ...(transmission ? { transmission } : {}),
+    };
+    const scopeLabel = [fuelType, transmission].filter(Boolean).join(" ");
+    const rawPlan = {
+      mode: "single_tool",
+      domain: "new_car",
+      conversationMode: "direct_answer",
+      customerStage: "exploration",
+      tools: [
+        baseTool({
+          tool: "vehicle_pricelist",
+          model,
+          city: explicitCity,
+          filters: scopedFilters,
+          output: {
+            canvasType: "pricelist_canvas",
+            groupBy: "variant",
+          },
+          resolution: {
+            variantSelectionMode: "not_required",
+            selectedModels: [{ model }],
+            selectedVariants: [],
+            changeAllowed: true,
+            note: scopeLabel
+              ? `Show all current ${scopeLabel} variants for the model.`
+              : "Show all current variants for the model.",
+          },
+        }),
+      ],
+      nextSteps: [
+        {
+          label: "Compare variants",
+          query: `Which ${model} variant is best value?`,
+          tool: "vehicle_variant_advisor",
+          entities: { model },
+          filters: scopedFilters,
+          priority: 84,
+          displayStyle: "pill",
+          icon: "sliders",
+        },
+        {
+          label: "Calculate EMI",
+          query: `Calculate EMI for ${model}`,
+          tool: "vehicle_emi",
+          entities: { model },
+          filters: scopedFilters,
+          priority: 78,
+          displayStyle: "pill",
+          icon: "calculator",
+        },
+      ],
+      ambiguity: { level: "none", type: "none", message: "" },
+      contextPatch: contextPatch({
+        model,
+        variant: "",
+        city: explicitCity,
+        userPreferences: {
+          ...(fuelType ? { fuelType } : {}),
+          ...(transmission ? { transmission } : {}),
+        },
+        customerStage: "exploration",
+        conversationMode: "direct_answer",
+      }),
+      confidence: 0.99,
+      reasoningSummary: "User asked for a model-level variant list.",
+    };
+
+    return buildResult({ rawPlan, message: cleanMessage, startedAt });
   }
 
   // Price-breakup must win over generic price/pricelist.

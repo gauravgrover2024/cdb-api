@@ -40,6 +40,11 @@ import {
   hydrateContextFromCandidates,
   mergeContextPatches,
 } from "../context/aciContextManager.service.js";
+import { applyBuyerContextToContextState } from "../context/aciBuyerContextExtractor.service.js";
+import {
+  createEmptyAciContextState,
+  createEmptySelectedVehicleState,
+} from "../context/aciContextState.contract.js";
 import {
   enrichAciContextPatchWithTurnLedger,
   resolveRelativeComparisonFromLedger,
@@ -1673,10 +1678,178 @@ const parseBudgetRupeesFromBuyerMessage = (message = "") => {
   return 0;
 };
 
+const contextualDiscoveryFeatureTerms = (message = "") => {
+  const normalized = cleanText(message).toLowerCase();
+  const features = [];
+  if (/\bpanoramic\s+sunroof\b/.test(normalized)) features.push("panoramic sunroof");
+  else if (/\bsunroof\b/.test(normalized)) features.push("sunroof");
+  if (/\badas\b/.test(normalized)) features.push("ADAS");
+  if (/\b6\s*airbags?\b|\bsix\s+airbags?\b/.test(normalized)) features.push("6 airbags");
+  else if (/\bairbags?\b/.test(normalized)) features.push("airbags");
+  if (/\b360\s*(?:degree)?\s*camera\b|\b360\s+camera\b/.test(normalized)) features.push("360 camera");
+  if (/\bventilated\s+seats?\b/.test(normalized)) features.push("ventilated seats");
+  if (/\bwireless\s+charging\b/.test(normalized)) features.push("wireless charging");
+  if (/\bcruise\s+control\b/.test(normalized)) features.push("cruise control");
+  if (/\bturbo(?:\s*charged|charged)?\b/.test(normalized)) features.push("turbo charger");
+  return uniqueKeys(features);
+};
+
+const getContextualDiscoveryState = (context = {}) => {
+  const state = context?.contextState || context?.aciContextState || {};
+  const buyerContext = state?.buyerContext || state?.buyerIntent || context?.buyerContext || {};
+  const requested = state?.requested || {};
+  const budget = Number(
+    buyerContext.budgetTarget ||
+      buyerContext.statedBudget ||
+      requested?.budget?.target ||
+      requested?.budget?.stated ||
+      buyerContext.maxBudget ||
+      buyerContext.budgetOrPriceCeiling ||
+      requested?.budget?.max ||
+      requested?.budget?.budgetMax ||
+      context?.filters?.budgetMax ||
+      0,
+  );
+
+  return {
+    state,
+    buyerContext,
+    requested,
+    budget: Number.isFinite(budget) && budget > 0 ? budget : 0,
+  };
+};
+
+const buildRecommendationBudgetWindow = (budgetTarget = 0) => {
+  const target = Number(budgetTarget || 0);
+  if (!Number.isFinite(target) || target <= 0) {
+    return { target: 0, previewMin: 0, resultMax: 0 };
+  }
+
+  const roundTo = 5000;
+  const rounded = (value) => Math.round(value / roundTo) * roundTo;
+  return {
+    target: Math.round(target),
+    previewMin: rounded(target * 0.7),
+    resultMax: rounded(target * 1.1),
+  };
+};
+
+const getExplicitContextualRefinement = (message = "") => {
+  const normalized = cleanText(message).toLowerCase();
+  const transmission = /\bmanual\b|\bmt\b/.test(normalized)
+    ? "manual"
+    : /\bautomatic\b|\bauto\b|\bamt\b|\bcvt\b|\bdct\b|\bivt\b|\bat\b|\bdsg\b/.test(normalized)
+      ? "automatic"
+      : "";
+  const fuelType = /\belectric\b|\bev\b/.test(normalized)
+    ? "electric"
+    : /\bcng\b/.test(normalized)
+      ? "cng"
+      : /\bhybrid\b/.test(normalized)
+        ? "hybrid"
+        : /\bdiesel\b/.test(normalized)
+          ? "diesel"
+          : /\bpetrol\b/.test(normalized)
+            ? "petrol"
+            : "";
+  const bodyType = /\bsuvs?\b/.test(normalized)
+    ? "suv"
+    : /\bsedans?\b/.test(normalized)
+      ? "sedan"
+      : /\bhatchbacks?\b/.test(normalized)
+        ? "hatchback"
+        : /\b(?:mpvs?|muvs?)\b/.test(normalized)
+          ? "mpv"
+          : "";
+  return {
+    transmission,
+    fuelType,
+    bodyType,
+    features: contextualDiscoveryFeatureTerms(normalized),
+  };
+};
+
+const isStandaloneDiscoveryRefinement = (message = "") => {
+  const normalized = cleanText(message).toLowerCase();
+  if (!normalized || normalized.length > 90) return false;
+
+  const refinement = getExplicitContextualRefinement(normalized);
+  if (!refinement.transmission && !refinement.fuelType && !refinement.bodyType && !refinement.features.length) {
+    return false;
+  }
+
+  const residue = normalized
+    .replace(/\bpanoramic\s+sunroof\b|\b360\s*(?:degree)?\s*camera\b|\bventilated\s+seats?\b|\bwireless\s+charging\b|\bcruise\s+control\b|\bturbo\s*charger\b/g, " ")
+    .replace(/\bautomatic\b|\bmanual\b|\bauto\b|\bamt\b|\bcvt\b|\bdct\b|\bivt\b|\bdsg\b|\bat\b|\bmt\b/g, " ")
+    .replace(/\bpetrol\b|\bdiesel\b|\bcng\b|\belectric\b|\bev\b|\bhybrid\b/g, " ")
+    .replace(/\bsuvs?\b|\bsedans?\b|\bhatchbacks?\b|\bmpvs?\b|\bmuvs?\b/g, " ")
+    .replace(/\bsunroof\b|\badas\b|\bsix\b|\b6\b|\bairbags?\b|\bturbo\b/g, " ")
+    .replace(/\b(?:what|how|about|show|find|give|me|only|option|options|car|cars|vehicle|vehicles|model|models|please|now|also|and|with|in|the|same|budget|ones?)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  return !residue;
+};
+
+const expandContextualBroadDiscoveryRefinement = ({ message = "", context = {} } = {}) => {
+  const original = cleanText(message);
+  if (!original || parseBudgetRupeesFromBuyerMessage(original) > 0) {
+    return { message: original, inherited: false };
+  }
+
+  const { state, buyerContext, requested, budget } = getContextualDiscoveryState(context);
+  if (!budget || state?.selectedVehicle?.model || !isStandaloneDiscoveryRefinement(original)) {
+    return { message: original, inherited: false };
+  }
+
+  const explicit = getExplicitContextualRefinement(original);
+  const previousScope = cleanText(buyerContext.shortlistedModelsOrDiscoveryScope).toLowerCase();
+  const previousBody = cleanText(buyerContext.bodyPreferenceOrPrimaryUseCase).toLowerCase();
+  const bodyType = explicit.bodyType ||
+    (/\bsuv\b/.test(`${previousBody} ${previousScope}`) ? "suv" :
+      /\bsedan\b/.test(`${previousBody} ${previousScope}`) ? "sedan" :
+        /\bhatchback\b/.test(`${previousBody} ${previousScope}`) ? "hatchback" :
+          /\b(?:mpv|muv)\b/.test(`${previousBody} ${previousScope}`) ? "mpv" : "");
+  const previousTransmission = cleanText(buyerContext.transmissionPreference).toLowerCase();
+  const previousFuel = cleanText(buyerContext.fuelPreference).toLowerCase();
+  const transmission = explicit.transmission || (/automatic/.test(previousTransmission) ? "automatic" : /manual/.test(previousTransmission) ? "manual" : "");
+  const fuelType = explicit.fuelType || (/electric|\bev\b/.test(previousFuel) ? "electric" : /cng/.test(previousFuel) ? "cng" : /hybrid/.test(previousFuel) ? "hybrid" : /diesel/.test(previousFuel) ? "diesel" : /petrol/.test(previousFuel) ? "petrol" : "");
+  const features = uniqueKeys([
+    ...asArray(buyerContext.featurePriority),
+    ...asArray(requested.features),
+    ...explicit.features,
+  ]);
+  const budgetLakh = Number((budget / 100000).toFixed(2));
+  const vehicleScope = bodyType === "suv"
+    ? "SUVs"
+    : bodyType === "sedan"
+      ? "sedans"
+      : bodyType === "hatchback"
+        ? "hatchbacks"
+        : bodyType === "mpv"
+          ? "MPVs"
+          : "cars";
+  const filterTerms = uniqueKeys([fuelType, transmission]);
+  const expanded = [
+    filterTerms.join(" "),
+    vehicleScope,
+    `under ${budgetLakh} lakh`,
+    features.length ? `with ${features.join(" and ")}` : "",
+  ].filter(Boolean).join(" ");
+
+  return {
+    message: expanded,
+    inherited: true,
+    originalMessage: original,
+    inheritedBudget: budget,
+  };
+};
+
 const detectBatch4BroadDiscoveryRequest = (message = "") => {
   const normalized = String(message || "").toLowerCase();
-  const budgetMax = parseBudgetRupeesFromBuyerMessage(message);
-  const hasBudget = budgetMax > 0;
+  const statedBudget = parseBudgetRupeesFromBuyerMessage(message);
+  const budgetWindow = buildRecommendationBudgetWindow(statedBudget);
+  const hasBudget = statedBudget > 0;
   const hasBroadCar = /\b(cars?|vehicles?|models?|options?|suvs?|sedans?|hatchbacks?|mpvs?|muvs?)\b/i.test(normalized);
   const wantsFamily = /\bfamily\b|\bpractical\b|\bspacious\b|\bspace\b/i.test(normalized);
   const wantsElectric = /\belectric\b|\bev\b/i.test(normalized);
@@ -1713,7 +1886,12 @@ const detectBatch4BroadDiscoveryRequest = (message = "") => {
             : "";
 
   return {
-    budgetMax,
+    budgetTarget: budgetWindow.target,
+    statedBudget: budgetWindow.target,
+    previewBudgetMin: budgetWindow.previewMin,
+    budgetMin: 0,
+    budgetMax: budgetWindow.resultMax,
+    budgetWindowMode: "target_band",
     budgetBasis: /\bon[\s-]*road\b/i.test(normalized) ? "on_road" : "ex_showroom",
     bodyType: wantsSuv ? "suv" : "",
     fuelType,
@@ -2308,6 +2486,7 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
   meta = {},
   originalMessage = "",
   effectiveMessage = "",
+  contextualDiscoveryRefinement = {},
   startedAt = 0,
 } = {}) => {
   const discovery = detectBatch4BroadDiscoveryRequest(effectiveMessage || message);
@@ -2339,6 +2518,10 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
   const budgetBasis = discovery.budgetBasis === "on_road" ? "on_road" : "ex_showroom";
 
   const filters = {
+    budgetTarget: discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax,
+    statedBudget: discovery.statedBudget || discovery.budgetTarget || discovery.budgetMax,
+    previewBudgetMin: discovery.previewBudgetMin || 0,
+    budgetMin: discovery.budgetMin || 0,
     budgetMax: discovery.budgetMax,
     maxBudget: discovery.budgetMax,
     maxPrice: discovery.budgetMax,
@@ -2351,6 +2534,9 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
       effectiveMessage || message,
     ),
     budgetMaxLakh: Math.round(discovery.budgetMax / 100000),
+    budgetWindowMode: discovery.budgetWindowMode || "strict_ceiling",
+    sortDirection: "desc",
+    previewFuelType: discovery.fuelType || "petrol",
     ...(discovery.transmission ? {
       transmission: discovery.transmission,
       transmissionType: discovery.transmission,
@@ -2380,6 +2566,87 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
       ranking: "feature_match",
     } : {}),
   };
+  const baseDiscoveryContextState = createEmptyAciContextState(
+    contextState && typeof contextState === "object" ? contextState : {},
+  );
+  const extractedDiscoveryContextState = applyBuyerContextToContextState({
+    message: effectiveMessage || message,
+    contextState: baseDiscoveryContextState,
+  });
+  const previousBuyerContext = extractedDiscoveryContextState.buyerContext || {};
+  const discoveryScopeLabel = [
+    discovery.bodyType || "cars",
+    discovery.fuelType,
+    discovery.transmission,
+    requestedFeatures.length ? `with ${requestedFeatures.join(", ")}` : "",
+    discovery.budgetWindowMode === "target_band"
+      ? `around ${discovery.budgetTarget || discovery.statedBudget}`
+      : `under ${discovery.budgetMax}`,
+  ].filter(Boolean).join(", ");
+  const durableDiscoveryContextState = createEmptyAciContextState({
+    ...extractedDiscoveryContextState,
+    selectedVehicle: createEmptySelectedVehicleState({
+      city: baseDiscoveryContextState.selectedVehicle?.city || "",
+      citySlug: baseDiscoveryContextState.selectedVehicle?.citySlug || "",
+    }),
+    activeComparison: {},
+    requested: {
+      ...(extractedDiscoveryContextState.requested || {}),
+      features: requestedFeatures,
+      topic: requestedFeatures[0] || "",
+      budget: {
+        min: discovery.previewBudgetMin || 0,
+        max: discovery.budgetMax,
+        target: discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax,
+        stated: discovery.statedBudget || discovery.budgetTarget || discovery.budgetMax,
+        budgetMax: discovery.budgetMax,
+        previewMin: discovery.previewBudgetMin || 0,
+        resultMax: discovery.budgetMax,
+        mode: discovery.budgetWindowMode || "strict_ceiling",
+        basis: budgetBasis,
+        currency: "INR",
+      },
+    },
+    buyerContext: {
+      ...previousBuyerContext,
+      budgetTarget: discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax,
+      statedBudget: discovery.statedBudget || discovery.budgetTarget || discovery.budgetMax,
+      budgetOrPriceCeiling: discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax,
+      maxBudget: discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax,
+      ...(discovery.bodyType ? {
+        bodyPreferenceOrPrimaryUseCase: discovery.bodyType,
+        primaryUseCase: discovery.bodyType,
+      } : {}),
+      ...(discovery.fuelType ? {
+        fuelPreferenceOrMonthlyRunning: discovery.fuelType,
+        fuelPreference: discovery.fuelType,
+      } : {}),
+      ...(discovery.transmission ? {
+        transmissionPreference: discovery.transmission,
+      } : {}),
+      featurePriority: requestedFeatures,
+      shortlistedModelsOrDiscoveryScope: discoveryScopeLabel,
+      source: contextualDiscoveryRefinement?.inherited
+        ? "contextual_discovery_refinement_v1"
+        : "broad_discovery_fast_path_v1",
+      confidence: contextualDiscoveryRefinement?.inherited ? 0.93 : 0.9,
+      extractedAt: new Date().toISOString(),
+    },
+    provenance: {
+      ...(extractedDiscoveryContextState.provenance || {}),
+      sources: uniqueKeys([
+        ...asArray(extractedDiscoveryContextState.provenance?.sources),
+        "broad_discovery_fast_path_v1",
+        contextualDiscoveryRefinement?.inherited
+          ? "contextual_discovery_refinement_v1"
+          : "",
+      ]),
+      isolation: contextualDiscoveryRefinement?.inherited
+        ? "contextual_discovery_refinement"
+        : "broad_discovery_without_model",
+      updatedBy: "broad_discovery_fast_path_v1",
+    },
+  });
 
   const toolPlan = {
     tool: "vehicle_recommend",
@@ -2417,10 +2684,11 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     : null;
   const discoveryResult = featureShortlist || await runtimeBudgetVehicleDiscovery({
     toolPlan,
-    context: getContextForToolPlan(contextState || {}),
+    context: getContextForToolPlan(durableDiscoveryContextState),
   });
   const requestedFeature = requestedFeatures[0] || "";
-  const budgetLabel = `₹${Math.round(discovery.budgetMax / 100000)}L`;
+  const budgetTarget = discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax;
+  const budgetLabel = `₹${Math.round(budgetTarget / 100000)}L`;
   const resultRows = asArray(discoveryResult.rows || discoveryResult.items);
   const executed = {
     ...discoveryResult,
@@ -2430,8 +2698,8 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     canvasType: toolPlan.output.canvasType,
     inlineType: toolPlan.output.inlineType,
     title: requestedFeature
-      ? `${requestedFeature} matches under ${budgetLabel}`
-      : `Cars under ${budgetLabel}`,
+      ? `${requestedFeature} matches around ${budgetLabel}`
+      : `${discovery.buyerUseCase === "family" ? "Family cars" : "Cars"} around ${budgetLabel}`,
     answer: resultRows.length
       ? `I found ${resultRows.length} strong matches for your current budget and preferences.`
       : "I could not find a confident match for those filters yet.",
@@ -2463,7 +2731,7 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
 
   const normalized = await normalizeAciFinalResponse(executed, {
     message,
-    context: getContextForToolPlan(contextState || {}),
+    context: getContextForToolPlan(durableDiscoveryContextState),
   });
 
   if (evRequested) {
@@ -2497,10 +2765,14 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     primaryTask: "vehicle_recommendation",
     tool: "vehicle_recommend",
     planMode: "single_tool",
-    contextIsolation: "broad_discovery_without_model",
+    contextIsolation: contextualDiscoveryRefinement?.inherited
+      ? "contextual_discovery_refinement"
+      : "broad_discovery_without_model",
     originalMessage: originalMessage || message,
     effectiveMessage: effectiveMessage || message,
-    routingReason: discovery.reason,
+    routingReason: contextualDiscoveryRefinement?.inherited
+      ? "contextual_shortlist_refinement"
+      : discovery.reason,
   };
 
   const composed = composeAciAnswer({
@@ -2524,19 +2796,45 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     anchorVariant: "",
     clearSelectedVehicle: true,
     contextState: {
+      ...durableDiscoveryContextState,
       ...(broadContextPatch.contextState || {}),
-      selectedVehicle: null,
+      requested: {
+        ...(broadContextPatch.contextState?.requested || {}),
+        ...(durableDiscoveryContextState.requested || {}),
+      },
+      buyerContext: {
+        ...(broadContextPatch.contextState?.buyerContext || {}),
+        ...(durableDiscoveryContextState.buyerContext || {}),
+      },
+      selectedVehicle: createEmptySelectedVehicleState({
+        city: durableDiscoveryContextState.selectedVehicle?.city || "",
+        citySlug: durableDiscoveryContextState.selectedVehicle?.citySlug || "",
+      }),
       anchors: {
+        ...(durableDiscoveryContextState.anchors || {}),
         ...(broadContextPatch.contextState?.anchors || {}),
-        primaryVehicle: null,
+        primaryVehicle: {},
       },
     },
     aciContextState: {
+      ...durableDiscoveryContextState,
       ...(broadContextPatch.aciContextState || broadContextPatch.contextState || {}),
-      selectedVehicle: null,
+      requested: {
+        ...(broadContextPatch.aciContextState?.requested || broadContextPatch.contextState?.requested || {}),
+        ...(durableDiscoveryContextState.requested || {}),
+      },
+      buyerContext: {
+        ...(broadContextPatch.aciContextState?.buyerContext || broadContextPatch.contextState?.buyerContext || {}),
+        ...(durableDiscoveryContextState.buyerContext || {}),
+      },
+      selectedVehicle: createEmptySelectedVehicleState({
+        city: durableDiscoveryContextState.selectedVehicle?.city || "",
+        citySlug: durableDiscoveryContextState.selectedVehicle?.citySlug || "",
+      }),
       anchors: {
+        ...(durableDiscoveryContextState.anchors || {}),
         ...(broadContextPatch.aciContextState?.anchors || broadContextPatch.contextState?.anchors || {}),
-        primaryVehicle: null,
+        primaryVehicle: {},
       },
     },
   };
@@ -5843,8 +6141,44 @@ const isExplicitDirectPriceLookupRequest = (message = "", primaryTask = "") => {
   return normalized.length > 0;
 };
 
+const getExplicitVariantListScope = (message = "") => {
+  const raw = String(message || "");
+  const normalized = cleanText(raw);
+  const hasListLanguage =
+    /\b(show|list|see|all|available|current|which|what)\b/i.test(raw);
+  const hasPluralVariant = /\b(variants|trims)\b/i.test(raw);
+  const scopedVariant =
+    /\b(petrol|diesel|cng|electric|ev|hybrid|automatic|manual|amt|cvt|dct|ivt)\s+(variants|trims)\b/i.test(
+      raw,
+    );
+
+  if (!normalized || (!(hasListLanguage && hasPluralVariant) && !scopedVariant)) {
+    return null;
+  }
+  if (/\b(compare|comparison|vs|versus|between|difference|diff)\b/i.test(raw)) {
+    return null;
+  }
+
+  const fuel =
+    raw.match(/\b(petrol|diesel|cng|electric|ev|hybrid)\b/i)?.[1]?.toLowerCase() ||
+    "";
+  const transmission =
+    raw
+      .match(/\b(automatic|manual|amt|cvt|dct|ivt)\b/i)?.[1]
+      ?.toLowerCase() || "";
+
+  return {
+    fuelType: fuel === "ev" ? "electric" : fuel,
+    transmission,
+  };
+};
+
 const buildDirectPriceLookupOverride = ({ message = "", meaningFrame = {}, contextState = {} } = {}) => {
-  if (!isExplicitDirectPriceLookupRequest(message, meaningFrame?.primaryTask)) return null;
+  const variantListScope = getExplicitVariantListScope(message);
+  if (
+    !variantListScope &&
+    !isExplicitDirectPriceLookupRequest(message, meaningFrame?.primaryTask)
+  ) return null;
   if (
     meaningFrame?.clarification?.reason === "exact_variant_unavailable" ||
     meaningFrame?.trace?.variantResolution?.status === "exact_unavailable"
@@ -5869,12 +6203,18 @@ const buildDirectPriceLookupOverride = ({ message = "", meaningFrame = {}, conte
   return {
     tool: "vehicle_pricelist",
     intent: "vehicle_pricelist",
-    routingReason: "direct_price_lookup_overrides_comparison_context",
+    routingReason: variantListScope
+      ? "direct_variant_list_overrides_explainer_routing"
+      : "direct_price_lookup_overrides_comparison_context",
     model,
     make: vehicle.make || vehicle.brand || "",
     fullModel: vehicle.fullModel || vehicle.model || model,
-    variant: vehicle.variant || vehicle.variantName || "",
+    variant: variantListScope
+      ? ""
+      : vehicle.variant || vehicle.variantName || "",
     city: vehicle.citySlug || vehicle.city || "new-delhi",
+    fuelType: variantListScope?.fuelType || "",
+    transmission: variantListScope?.transmission || "",
   };
 };
 
@@ -5925,6 +6265,11 @@ const applyDirectPriceLookupOverride = ({ plan = {}, override = null } = {}) => 
         filters: {
           ...(baseTool.filters || {}),
           city: override.city,
+          activeOnly: true,
+          ...(override.fuelType ? { fuelType: override.fuelType } : {}),
+          ...(override.transmission
+            ? { transmission: override.transmission }
+            : {}),
         },
       },
     ],
@@ -7873,6 +8218,11 @@ const runAciCoreLiveBridgeInternal = async ({
     message,
     context,
   });
+  const contextualDiscoveryRefinement = expandContextualBroadDiscoveryRefinement({
+    message,
+    context,
+  });
+  message = contextualDiscoveryRefinement.message || message;
   const effectiveMessage = message;
   const batch4BroadDiscoveryFastPath = await maybeReturnBatch4BroadDiscoveryFastPath({
     message,
@@ -7883,6 +8233,7 @@ const runAciCoreLiveBridgeInternal = async ({
     meta,
     originalMessage,
     effectiveMessage,
+    contextualDiscoveryRefinement,
     startedAt,
   });
 

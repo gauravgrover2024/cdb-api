@@ -11,6 +11,15 @@ const FOLLOWUP_MAX_DURATION_MS = Number(process.env.ACI_VARIANT_RESOLVER_FOLLOWU
 
 const cases = [
   {
+    id: "creta-diesel-variant-list",
+    messages: ["Show Creta diesel variants"],
+    expectedModel: "creta",
+    expectedIntent: "vehicle_pricelist",
+    expectedRowCountMin: 2,
+    expectSelectedVariantEmpty: true,
+    expectedFuel: "diesel",
+  },
+  {
     id: "creta-sx-price",
     messages: ["Creta SX on-road price Delhi"],
     expectedModel: "creta",
@@ -201,6 +210,8 @@ const summarizeStep = ({ message, response, durationMs }) => {
       make: row.make || row.brand || "",
       model: row.model || row.fullModel || row.displayName || "",
       variant: row.variant || row.variantName || row.selectedVariant || "",
+      fuel: row.fuelType || row.fuel || row.fuelKey || "",
+      transmission: row.transmission || row.transmissionType || "",
       city: row.city || row.citySlug || "",
     })),
     answerPreview: String(response.answer || "").slice(0, 300),
@@ -319,6 +330,18 @@ const validateStep = ({ expectation = {}, step = {}, label = "step" }) => {
     );
   }
 
+  if (expectation.expectedFuel) {
+    check(() =>
+      assert(
+        step.rows.length > 0 &&
+          step.rows.every((row) =>
+            normalize(row.fuel).includes(normalize(expectation.expectedFuel)),
+          ),
+        `expected every returned row to use ${expectation.expectedFuel}`,
+      ),
+    );
+  }
+
   for (const snippet of expectation.expectedAnswerIncludes || []) {
     check(() =>
       assert(
@@ -356,6 +379,7 @@ const validateFinalStep = ({ testCase, steps }) => {
     expectedRowCountMin:
       testCase.expectedRowCountMin ??
       (/price/i.test(finalMessage) && !testCase.allowNoRows ? 1 : undefined),
+    expectedFuel: testCase.expectedFuel,
     expectedAnswerIncludes: testCase.expectedAnswerIncludes,
     maxFinalDurationMs: testCase.maxFinalDurationMs,
   };

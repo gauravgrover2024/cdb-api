@@ -192,6 +192,7 @@
     "aci:context-manager:relative-reference:smoke": "node src/scripts/aci-audits/smokeAciContextRelativeReferenceV1.cjs",
     "aci:context-manager:no-stale-comparison:smoke": "node src/scripts/aci-audits/smokeAciContextNoStaleComparisonV1.cjs",
     "aci:context-manager:roller-coaster:smoke": "node src/scripts/aci-audits/smokeAciContextRollerCoasterV1.cjs",
+    "aci:context-manager:discovery-refinement:smoke": "node src/scripts/aci-audits/smokeAciContextualDiscoveryRefinementV1.js",
     "aci:decision:conditional-comparison:smoke": "node src/scripts/aci-decision/smokeConditionalComparisonDecisionGuidanceV1.cjs",
     "aci:feature-explainer:build": "node src/scripts/aci-builds/buildCodexAciFeatureExplainersV2.js",
     "aci:feature-explainer:refresh": "node src/scripts/aci-builds/buildCodexAciFeatureExplainersV2.js --write",

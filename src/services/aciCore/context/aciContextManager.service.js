@@ -689,6 +689,8 @@ function mergeAciContext({ previousContext = {}, resolvedContext = {}, message =
   return createEmptyAciContextState({
     selectedVehicle,
     contextLedger: previousState.contextLedger || {},
+    buyerContext: previousState.buyerContext || previousState.buyerIntent || {},
+    buyerGuidanceContext: previousState.buyerGuidanceContext || {},
     activeComparison: resolvedContext.activeComparison || previousState.activeComparison || {},
     requested: resolvedContext.requested || {},
     anchors: {

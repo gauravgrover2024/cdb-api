@@ -133,6 +133,13 @@ const compactScoreModules = (modules = {}) =>
     ]),
   );
 
+const compactFuelOption = (option = {}) => pick(option, [
+  "fuel", "fuelType", "fuelKey", "startsFromVariant", "startsFromPrice",
+  "startsFromPriceLabel", "bestUnderBudgetVariant", "bestUnderBudgetPrice",
+  "bestUnderBudgetPriceLabel", "transmission", "transmissions",
+  "qualifyingVariantCount",
+]);
+
 const compactRow = (row = {}) => {
   const result = {
     ...pick(row, [
@@ -176,10 +183,12 @@ const compactRow = (row = {}) => {
   }
   if (row.models) result.models = asArray(row.models).slice(0, 5).map(compactFeatureModel);
   if (row.modules) result.modules = compactScoreModules(row.modules);
+  if (row.fuelOptions) result.fuelOptions = asArray(row.fuelOptions).map(compactFuelOption);
   return result;
 };
 
 const compactModelGroup = (group = {}) => {
+  const providedFuelOptions = asArray(group.fuelOptions).map(compactFuelOption);
   const fuelBuckets = new Map();
   for (const variant of asArray(group.qualifyingVariants)) {
     const fuelType = text(variant.fuelType || variant.fuel, 40);
@@ -212,7 +221,7 @@ const compactModelGroup = (group = {}) => {
 
   return {
     ...compactRow(group),
-    fuelOptions: [...fuelBuckets.values()],
+    fuelOptions: hasOwn(group, "fuelOptions") ? providedFuelOptions : [...fuelBuckets.values()],
   };
 };
 
@@ -295,9 +304,11 @@ const compactAction = (action = {}) => ({
 
 const compactFilters = (filters = {}) =>
   pick(filters, [
-    "budgetMin", "budgetMax", "maxBudget", "maxPrice", "priceBasis",
+    "budgetMin", "budgetMax", "budgetTarget", "statedBudget", "previewBudgetMin",
+    "budgetWindowMode", "maxBudget", "maxPrice", "priceBasis",
     "budgetBasis", "bodyType", "bodyStyle", "fuelType", "fuelKey",
-    "transmission", "city", "citySlug", "feature", "ranking",
+    "transmission", "city", "citySlug", "feature", "ranking", "sortDirection",
+    "previewFuelType", "buyerUseCase", "useCase", "buyerIntent",
     "mustHaveFeatures", "compareFeatures",
   ]);
 

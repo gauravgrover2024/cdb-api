@@ -2896,6 +2896,37 @@ const fuelTypeMatchesBudgetFilter = (row = {}, requestedFuelType = "") => {
   return Boolean(haystack && haystack.includes(requested));
 };
 
+const COMMERCIAL_BUDGET_PRODUCT_PATTERN =
+  /\b(?:taxi|cab|fleet|commercial|cargo|goods?|pickup|pick[\s-]*up|tour|xpres(?:[\s-]*t)?|super\s+carry|dost|intra)\b/i;
+
+const isCommercialBudgetDiscoveryProduct = (row = {}) => {
+  if (
+    row.isTaxi === true ||
+    row.isCommercial === true ||
+    row.commercialOnly === true ||
+    row.isCommercialVehicle === true ||
+    row.passengerVehicle === false
+  ) return true;
+
+  return COMMERCIAL_BUDGET_PRODUCT_PATTERN.test(
+    [
+      row.make,
+      row.brand,
+      row.model,
+      row.fullModel,
+      row.displayName,
+      row.variant,
+      row.variantName,
+      row.bodyType,
+      row.segment,
+      row.category,
+      row.productType,
+      row.usageType,
+      row.vehicleType,
+    ].filter(Boolean).join(" "),
+  );
+};
+
 
 const normalizeBudgetDiscoveryRow = (row = {}) => {
   const make = displayName(firstMeaningful(row.make, row.brand));
@@ -2961,6 +2992,7 @@ const normalizeBudgetDiscoveryRow = (row = {}) => {
     exShowroomPriceLabel: row.exShowroomPriceLabel || (exShowroomPrice ? formatMoney(exShowroomPrice) : ""),
     onRoadPrice,
     onRoadPriceLabel: row.onRoadPriceLabel || (onRoadPrice ? formatMoney(onRoadPrice) : ""),
+    commercialOnly: isCommercialBudgetDiscoveryProduct(row),
   };
 };
 
@@ -3127,6 +3159,7 @@ const getCachedBudgetDiscoveryRows = async ({
     const rows = rawRows
       .map(normalizeBudgetDiscoveryRow)
       .filter((row) => Number(row.exShowroomPrice || 0) > 0)
+      .filter((row) => !isCommercialBudgetDiscoveryProduct(row))
       .sort((a, b) => {
         const priceDelta = Number(a.exShowroomPrice || 0) - Number(b.exShowroomPrice || 0);
         if (priceDelta) return priceDelta;
@@ -3182,6 +3215,15 @@ const getBudgetDiscoveryProjection = () => ({
   bodyType: 1,
   bodyTypeKey: 1,
   segment: 1,
+  category: 1,
+  productType: 1,
+  usageType: 1,
+  vehicleType: 1,
+  isTaxi: 1,
+  isCommercial: 1,
+  commercialOnly: 1,
+  isCommercialVehicle: 1,
+  passengerVehicle: 1,
   exShowroomPrice: 1,
   exShowroomPriceLabel: 1,
   onRoadPrice: 1,
@@ -3189,6 +3231,26 @@ const getBudgetDiscoveryProjection = () => ({
   builtAt: 1,
   updatedAt: 1,
 });
+
+const applyPassengerBudgetDiscoveryQueryGuards = (query = {}) => {
+  query.isTaxi = { $ne: true };
+  query.isCommercial = { $ne: true };
+  query.commercialOnly = { $ne: true };
+  query.isCommercialVehicle = { $ne: true };
+  query.passengerVehicle = { $ne: false };
+  query.$nor = [
+    { fullModel: COMMERCIAL_BUDGET_PRODUCT_PATTERN },
+    { displayName: COMMERCIAL_BUDGET_PRODUCT_PATTERN },
+    { model: COMMERCIAL_BUDGET_PRODUCT_PATTERN },
+    { variant: COMMERCIAL_BUDGET_PRODUCT_PATTERN },
+    { segment: COMMERCIAL_BUDGET_PRODUCT_PATTERN },
+    { category: COMMERCIAL_BUDGET_PRODUCT_PATTERN },
+    { productType: COMMERCIAL_BUDGET_PRODUCT_PATTERN },
+    { usageType: COMMERCIAL_BUDGET_PRODUCT_PATTERN },
+    { vehicleType: COMMERCIAL_BUDGET_PRODUCT_PATTERN },
+  ];
+  return query;
+};
 
 const getScopedBudgetDiscoveryRows = async ({
   collection,
@@ -3227,6 +3289,7 @@ const getScopedBudgetDiscoveryRows = async ({
     citySlug: normalizedCitySlug,
     [priceField]: priceQuery,
   };
+  applyPassengerBudgetDiscoveryQueryGuards(query);
 
   const makeKey = slugForReadModel(make);
   if (makeKey) query.makeKey = makeKey;
@@ -3666,15 +3729,82 @@ const getBudgetBodyBucket = (group = {}) => {
   return bodyText || "other";
 };
 
+const budgetGroupMatchesUseCase = (group = {}, filters = {}) => {
+  const useCase = searchKey(filters.buyerUseCase || filters.useCase || filters.buyerIntent);
+  if (!useCase.includes("family")) return true;
+  return ["mpv", "suv", "sedan", "hatchback"].includes(getBudgetBodyBucket(group));
+};
+
+const recommendationGroupPrice = (group = {}) => Number(
+  group.startsFromPrice || group.bestUnderBudgetPrice || group.exShowroomPrice || 0,
+);
+
+const projectBudgetGroupToPreviewWindow = ({
+  group = {},
+  budgetMin = 0,
+  budgetMax = 0,
+  fuelType = "",
+} = {}) => {
+  const variants = asArray(group.qualifyingVariants)
+    .filter((variant) => {
+      const price = Number(variant.exShowroomPrice || variant.price || 0);
+      return price > 0 &&
+        (!budgetMin || price >= budgetMin) &&
+        (!budgetMax || price <= budgetMax) &&
+        (!fuelType || fuelTypeMatchesBudgetFilter(variant, fuelType));
+    })
+    .sort((left, right) => Number(left.exShowroomPrice || 0) - Number(right.exShowroomPrice || 0));
+
+  const first = variants[0];
+  const last = variants[variants.length - 1];
+  if (first) {
+    return compactObject({
+      ...group,
+      startsFromVariant: first.variant || group.startsFromVariant,
+      startsFromPrice: first.exShowroomPrice,
+      startsFromPriceLabel: first.exShowroomPriceLabel || formatMoney(first.exShowroomPrice),
+      bestUnderBudgetVariant: last?.variant || group.bestUnderBudgetVariant,
+      bestUnderBudgetPrice: last?.exShowroomPrice || group.bestUnderBudgetPrice,
+      bestUnderBudgetPriceLabel:
+        last?.exShowroomPriceLabel || formatMoney(last?.exShowroomPrice || group.bestUnderBudgetPrice),
+      qualifyingVariantCount: variants.length,
+      qualifyingVariants: variants,
+    });
+  }
+
+  const fallbackPrice = Number(group.bestUnderBudgetPrice || group.startsFromPrice || 0);
+  if (fuelType && !asArray(group.fuelTypes).some((fuel) => fuelTypeMatchesBudgetFilter({ fuelType: fuel }, fuelType))) {
+    return null;
+  }
+  if (!fallbackPrice || (budgetMin && fallbackPrice < budgetMin) || (budgetMax && fallbackPrice > budgetMax)) {
+    return null;
+  }
+
+  return compactObject({
+    ...group,
+    startsFromVariant: group.bestUnderBudgetVariant || group.startsFromVariant,
+    startsFromPrice: fallbackPrice,
+    startsFromPriceLabel: group.bestUnderBudgetPriceLabel || formatMoney(fallbackPrice),
+  });
+};
+
 const buildDiverseBudgetPreviewGroups = ({
   groups = [],
   filters = {},
   limit = BUDGET_DISCOVERY_PREVIEW_GROUP_LIMIT,
 } = {}) => {
   const safeLimit = Math.max(1, Number(limit || BUDGET_DISCOVERY_PREVIEW_GROUP_LIMIT));
-  const normalizedGroups = groups.map(withBudgetBodyTypeGroup);
+  const normalizedGroups = groups
+    .map(withBudgetBodyTypeGroup)
+    .filter((group) => budgetGroupMatchesUseCase(group, filters));
 
   if (!normalizedGroups.length) return [];
+
+  if (filters.sortDirection === "desc") {
+    return [...normalizedGroups]
+      .sort((left, right) => recommendationGroupPrice(right) - recommendationGroupPrice(left))
+      .slice(0, safeLimit);
+  }
 
   // Body-type-specific discovery must remain inside that body type.
   // Example: "SUVs under 20 lakhs" should not be diversified into sedans/hatchbacks.
@@ -3757,15 +3887,64 @@ const buildDiverseBudgetPreviewGroups = ({
   return selected.slice(0, safeLimit);
 };
 
+const buildBudgetFuelOptions = ({
+  rows = [],
+  budgetMin = 0,
+  budgetMax = 0,
+  priceBasis = "ex_showroom",
+} = {}) => {
+  const buckets = new Map();
+
+  for (const row of rows) {
+    const price = getBudgetRowPrice(row, priceBasis);
+    if (!price || (budgetMin && price <= budgetMin) || (budgetMax && price > budgetMax)) continue;
+
+    const fuelType = firstMeaningful(row.fuelType, row.fuel, "");
+    const fuelKey = slugForReadModel(fuelType);
+    if (!fuelKey) continue;
+
+    if (!buckets.has(fuelKey)) buckets.set(fuelKey, { fuelType, rows: [] });
+    buckets.get(fuelKey).rows.push(row);
+  }
+
+  return [...buckets.values()].map(({ fuelType, rows: fuelRows }) => {
+    const variants = uniqueBy(
+      [...fuelRows].sort(
+        (left, right) => getBudgetRowPrice(left, priceBasis) - getBudgetRowPrice(right, priceBasis),
+      ),
+      getBudgetVariantUniqueKey,
+    );
+    const startsFrom = variants[0] || {};
+    const bestUnderBudget = variants[variants.length - 1] || startsFrom;
+
+    return compactObject({
+      fuelType,
+      fuelKey: slugForReadModel(fuelType),
+      startsFromVariant: startsFrom.variant,
+      startsFromPrice: getBudgetRowPrice(startsFrom, priceBasis),
+      startsFromPriceLabel: getBudgetRowPriceLabel(startsFrom, priceBasis),
+      bestUnderBudgetVariant: bestUnderBudget.variant,
+      bestUnderBudgetPrice: getBudgetRowPrice(bestUnderBudget, priceBasis),
+      bestUnderBudgetPriceLabel: getBudgetRowPriceLabel(bestUnderBudget, priceBasis),
+      transmission: bestUnderBudget.transmission || startsFrom.transmission,
+      transmissions: unique(variants.map((row) => row.transmission).filter(Boolean)),
+      qualifyingVariantCount: variants.length,
+    });
+  });
+};
+
 const buildBudgetDiscoveryModelGroups = ({
   rows = [],
+  budgetMin = 0,
   budgetMax = 0,
+  fuelOptionBudgetMin = budgetMin,
   variantLimit = BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
   priceBasis = "ex_showroom",
 } = {}) => {
   const groups = new Map();
 
   for (const row of rows) {
+    if (isCommercialBudgetDiscoveryProduct(row)) continue;
     const groupKey = `${row.makeKey || slugForReadModel(row.make)}|${row.modelKey || slugForReadModel(row.model)}`;
     if (!groupKey.replace(/\|/g, "")) continue;
 
@@ -3795,7 +3974,10 @@ const buildBudgetDiscoveryModelGroups = ({
     .map((group) => {
       const variants = uniqueBy(
         group.rows
-        .filter((row) => getBudgetRowPrice(row, priceBasis) > 0 && (!budgetMax || getBudgetRowPrice(row, priceBasis) <= budgetMax))
+        .filter((row) => {
+          const price = getBudgetRowPrice(row, priceBasis);
+          return price > 0 && (!budgetMin || price > budgetMin) && (!budgetMax || price <= budgetMax);
+        })
         .sort((left, right) => getBudgetRowPrice(left, priceBasis) - getBudgetRowPrice(right, priceBasis)),
         getBudgetVariantUniqueKey,
       );
@@ -3804,8 +3986,15 @@ const buildBudgetDiscoveryModelGroups = ({
       const bestUnderBudget = variants[variants.length - 1] || startsFrom;
       const fuelTypes = unique(variants.map((row) => row.fuelType || row.fuel).filter(Boolean));
       const transmissions = unique(variants.map((row) => row.transmission).filter(Boolean));
+      const fuelOptions = buildBudgetFuelOptions({
+        rows: group.rows,
+        budgetMin: fuelOptionBudgetMin,
+        budgetMax,
+        priceBasis,
+      });
 
-      return compactObject({
+      return {
+        ...compactObject({
         make: group.make,
         brand: group.brand,
         model: group.model,
@@ -3863,7 +4052,11 @@ const buildBudgetDiscoveryModelGroups = ({
         })),
         dataSource: "aci_vehicle_price_rows",
         priceBasis,
-      });
+        }),
+        // Preserve an explicit empty array so clients know this model has no
+        // fuel variant inside the focused preview band.
+        fuelOptions,
+      };
     })
     .filter((group) => group.qualifyingVariantCount > 0)
     .sort((left, right) => {
@@ -3916,6 +4109,7 @@ const buildBudgetPriceRowQuery = ({
     citySlug: slugForReadModel(citySlug || DEFAULT_CITY) || "new-delhi",
     [priceField]: priceQuery,
   };
+  applyPassengerBudgetDiscoveryQueryGuards(query);
 
   const makeKey = slugForReadModel(make);
   if (makeKey) query.makeKey = makeKey;
@@ -4081,6 +4275,15 @@ const runtimeBudgetVehicleDiscoveryFromSummaries = async ({
         bodyType: 1,
         bodyTypeKey: 1,
         segment: 1,
+        category: 1,
+        productType: 1,
+        usageType: 1,
+        vehicleType: 1,
+        isTaxi: 1,
+        isCommercial: 1,
+        commercialOnly: 1,
+        isCommercialVehicle: 1,
+        passengerVehicle: 1,
         city: 1,
         citySlug: 1,
         minExShowroomPrice: 1,
@@ -4105,6 +4308,7 @@ const runtimeBudgetVehicleDiscoveryFromSummaries = async ({
   }
 
   let summaries = (await summaryCursor.toArray())
+    .filter((row) => !isCommercialBudgetDiscoveryProduct(row))
     .filter((row) => bodyTypeMatchesBudgetFilter(row, filters.bodyType))
     .filter((row) => {
       if (!filters.transmission) return true;
@@ -4144,10 +4348,25 @@ const runtimeBudgetVehicleDiscoveryFromSummaries = async ({
       .aggregate(
         [
           { $match: priceRowQuery },
+          { $sort: { modelKey: 1, exShowroomPrice: 1 } },
           {
             $group: {
               _id: "$modelKey",
               count: { $sum: 1 },
+              variants: {
+                $push: {
+                  variant: "$variant",
+                  variantKey: "$variantKey",
+                  fuelType: { $ifNull: ["$fuelType", "$fuel"] },
+                  fuelKey: "$fuelKey",
+                  transmission: "$transmission",
+                  transmissionKey: "$transmissionKey",
+                  exShowroomPrice: "$exShowroomPrice",
+                  exShowroomPriceLabel: "$exShowroomPriceLabel",
+                  onRoadPrice: "$onRoadPrice",
+                  onRoadPriceLabel: "$onRoadPriceLabel",
+                },
+              },
             },
           },
         ],
@@ -4160,7 +4379,7 @@ const runtimeBudgetVehicleDiscoveryFromSummaries = async ({
   const modelStatByKey = new Map(
     modelStats
       .filter((item) => item?._id)
-      .map((item) => [item._id, Number(item.count || 0)]),
+      .map((item) => [item._id, item]),
   );
   if (modelStatByKey.size) {
     summaries = summaries.filter((summary) => modelStatByKey.has(summary.modelKey));
@@ -4171,17 +4390,66 @@ const runtimeBudgetVehicleDiscoveryFromSummaries = async ({
   );
   const countDurationMs = Date.now() - countStartedAt;
 
-  const allModelGroups = summaries
-    .map((summary) => ({
-      ...buildBudgetGroupFromSummary({ summary, budgetMax }),
-      qualifyingVariantCount:
-        modelStatByKey.get(summary.modelKey) ||
-        Math.max(1, Number(summary.variantCount || 0) || asArray(summary.variantsPreview).length || 1),
-    }))
-    .filter((group) => group.modelKey || group.model);
+  const previewBudgetMin = Number(filters.previewBudgetMin || budgetMin || 0);
+  const modelGroupPairs = summaries
+    .map((summary) => {
+      const stats = modelStatByKey.get(summary.modelKey);
+      const qualifyingRows = asArray(stats?.variants).map((row) =>
+        normalizeBudgetDiscoveryRow({
+          ...row,
+          make: summary.make,
+          makeKey: summary.makeKey,
+          model: summary.model,
+          modelKey: summary.modelKey,
+          fullModel: summary.fullModel,
+          displayName: summary.displayName,
+          bodyType: summary.bodyType,
+          bodyTypeKey: summary.bodyTypeKey,
+          segment: summary.segment,
+          city: summary.city,
+          citySlug: summary.citySlug,
+        }),
+      );
+      const exactGroup = buildBudgetDiscoveryModelGroups({
+        rows: qualifyingRows,
+        budgetMax,
+        fuelOptionBudgetMin: previewBudgetMin,
+        variantLimit: BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
+        priceBasis: "ex_showroom",
+      })[0];
+      const previewGroup = buildBudgetDiscoveryModelGroups({
+        rows: qualifyingRows.filter((row) =>
+          !filters.previewFuelType || fuelTypeMatchesBudgetFilter(row, filters.previewFuelType),
+        ),
+        budgetMin: previewBudgetMin,
+        budgetMax,
+        variantLimit: BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
+        priceBasis: "ex_showroom",
+      })[0];
+
+      const fullGroup = exactGroup || {
+        ...buildBudgetGroupFromSummary({ summary, budgetMax }),
+        qualifyingVariantCount:
+          Number(stats?.count || 0) ||
+          Math.max(1, Number(summary.variantCount || 0) || asArray(summary.variantsPreview).length || 1),
+      };
+
+      return { fullGroup, previewGroup };
+    })
+    .filter(({ fullGroup }) => fullGroup.modelKey || fullGroup.model)
+    .filter(({ fullGroup }) => budgetGroupMatchesUseCase(fullGroup, filters));
+  const allModelGroups = modelGroupPairs.map(({ fullGroup }) => fullGroup);
   const fullModelGroups = allModelGroups.slice(0, BUDGET_DISCOVERY_FULL_GROUP_LIMIT);
+  const previewEligibleGroups = modelGroupPairs
+    .map(({ fullGroup, previewGroup }) => previewGroup || projectBudgetGroupToPreviewWindow({
+      group: fullGroup,
+      budgetMin: previewBudgetMin,
+      budgetMax,
+      fuelType: filters.previewFuelType,
+    }))
+    .filter(Boolean);
   const previewSeedGroups = buildDiverseBudgetPreviewGroups({
-    groups: allModelGroups,
+    groups: previewEligibleGroups,
     filters,
     limit: BUDGET_DISCOVERY_PREVIEW_GROUP_LIMIT,
   });
@@ -4193,10 +4461,13 @@ const runtimeBudgetVehicleDiscoveryFromSummaries = async ({
         previewGroups: previewSeedGroups,
         projection,
         citySlug,
-        budgetMin,
+        budgetMin: previewBudgetMin,
         budgetMax,
         make,
-        filters,
+        filters: {
+          ...filters,
+          fuelType: filters.previewFuelType || filters.fuelType,
+        },
       })
     : previewSeedGroups;
   const hydrateDurationMs = Date.now() - hydrateStartedAt;
@@ -4250,10 +4521,16 @@ const runtimeBudgetVehicleDiscoveryFromSummaries = async ({
     filters: compactObject({
       city,
       citySlug,
+      budgetTarget: filters.budgetTarget,
+      statedBudget: filters.statedBudget,
+      previewBudgetMin,
+      previewFuelType: filters.previewFuelType,
+      budgetWindowMode: filters.budgetWindowMode,
       budgetMax,
       bodyType: filters.bodyType,
       transmission: filters.transmission,
       fuelType: filters.fuelType,
+      buyerUseCase: filters.buyerUseCase,
       make,
       mustHaveFeatures: [],
     }),
@@ -4261,6 +4538,8 @@ const runtimeBudgetVehicleDiscoveryFromSummaries = async ({
       enabled: true,
       isFeatureDiscovery: false,
       budgetMin,
+      previewBudgetMin,
+      budgetTarget: filters.budgetTarget,
       budgetMax,
       priceBasis: "ex_showroom",
       budgetBasis: "ex_showroom",
@@ -4541,7 +4820,8 @@ export const runtimeBudgetVehicleDiscovery = async ({
     make,
     filters,
   });
-  const normalizedRows = scopedRowsResult.rows || [];
+  const normalizedRows = (scopedRowsResult.rows || [])
+    .filter((row) => !isCommercialBudgetDiscoveryProduct(row));
 
   const makeKey = slugForReadModel(make);
   const featureVariantKeys = isFeatureDiscovery
@@ -4578,15 +4858,29 @@ export const runtimeBudgetVehicleDiscovery = async ({
   const allModelGroups = buildBudgetDiscoveryModelGroups({
     rows: uniqueVariantRows,
     budgetMax,
+    fuelOptionBudgetMin: Number(filters.previewBudgetMin || budgetMin || 0),
     variantLimit:
       isFeatureDiscovery || filters.requireExactVariants === true
         ? 200
         : BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
     priceBasis,
-  });
+  }).filter((group) => budgetGroupMatchesUseCase(group, filters));
   const fullModelGroups = allModelGroups.slice(0, BUDGET_DISCOVERY_FULL_GROUP_LIMIT);
+  const previewBudgetMin = Number(filters.previewBudgetMin || budgetMin || 0);
+  const previewEligibleGroups = buildBudgetDiscoveryModelGroups({
+    rows: uniqueVariantRows.filter((row) =>
+      !filters.previewFuelType || fuelTypeMatchesBudgetFilter(row, filters.previewFuelType),
+    ),
+    budgetMin: previewBudgetMin,
+    budgetMax,
+    variantLimit:
+      isFeatureDiscovery || filters.requireExactVariants === true
+        ? 200
+        : BUDGET_DISCOVERY_VARIANTS_PER_GROUP_LIMIT,
+    priceBasis,
+  }).filter((group) => budgetGroupMatchesUseCase(group, filters));
   const previewModelGroups = buildDiverseBudgetPreviewGroups({
-    groups: allModelGroups,
+    groups: previewEligibleGroups,
     filters,
     limit: BUDGET_DISCOVERY_PREVIEW_GROUP_LIMIT,
   });
@@ -4648,10 +4942,16 @@ export const runtimeBudgetVehicleDiscovery = async ({
     filters: compactObject({
       city,
       citySlug,
+      budgetTarget: filters.budgetTarget,
+      statedBudget: filters.statedBudget,
+      previewBudgetMin,
+      previewFuelType: filters.previewFuelType,
+      budgetWindowMode: filters.budgetWindowMode,
       budgetMax,
       bodyType: filters.bodyType,
       transmission: filters.transmission,
       fuelType: filters.fuelType,
+      buyerUseCase: filters.buyerUseCase,
       make,
       mustHaveFeatures,
     }),
@@ -4659,6 +4959,8 @@ export const runtimeBudgetVehicleDiscovery = async ({
       enabled: true,
       isFeatureDiscovery,
       budgetMin,
+      previewBudgetMin,
+      budgetTarget: filters.budgetTarget,
       budgetMax,
       priceBasis,
       budgetBasis: priceBasis,

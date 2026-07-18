@@ -208,6 +208,13 @@ const composePriceAnswer = (response = {}) => {
   const queryText = getPriceQueryText(response);
   const wantsOnRoad = /\bon\s*road\b|\bonroad\b/i.test(queryText);
   const wantsExShowroom = /\bex\s*showroom\b|\bexshowroom\b/i.test(queryText);
+  const wantsVariantList = /\b(variants|trims)\b/i.test(queryText);
+  const requestedFuel = cleanText(
+    queryText.match(/\b(petrol|diesel|cng|electric|ev|hybrid)\b/i)?.[1],
+  ).toLowerCase();
+  const requestedTransmission = cleanText(
+    queryText.match(/\b(automatic|manual|amt|cvt|dct|ivt)\b/i)?.[1],
+  ).toLowerCase();
 
   const onRoadWithoutOptional = getOnRoadWithoutOptionalLabel(row);
   const onRoadWithOptional = getOptionalOnRoadLabel(row);
@@ -241,6 +248,33 @@ const composePriceAnswer = (response = {}) => {
       if (exLine) evidence.push(exLine);
       const onRoadLine = rangeSentence("On-road", onRoadRange);
       if (onRoadLine) evidence.push(onRoadLine);
+    }
+
+    if (wantsVariantList && evidence.length) {
+      const scope = [requestedFuel, requestedTransmission].filter(Boolean).join(" ");
+      const countBy = (keyFor = () => "") => {
+        const counts = new Map();
+        rows.forEach((item) => {
+          const key = cleanText(keyFor(item)).toLowerCase();
+          if (!key) return;
+          counts.set(key, (counts.get(key) || 0) + 1);
+        });
+        return [...counts.entries()];
+      };
+      const split = requestedFuel && !requestedTransmission
+        ? countBy((item) => item.transmission || item.gearbox)
+        : requestedTransmission && !requestedFuel
+          ? countBy((item) => item.fuelType || item.fuel)
+          : [];
+      const splitText = split.length > 1
+        ? ` You get ${split
+            .map(([label, count]) => `${count} ${label}`)
+            .join(" and ")} choices.`
+        : "";
+
+      return normalizePriceAnswer(
+        `Here are all ${rows.length} current ${responseVehicleLabel || vehicle || "model"}${scope ? ` ${scope}` : ""} variants in ${city}.${splitText} ${evidence[0]}.`,
+      );
     }
 
     if (evidence.length) {
