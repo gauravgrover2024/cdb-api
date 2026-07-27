@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Vehicle from "../models/Vehicle.js";
 import VehicleRecord from "../models/VehicleRecord.js";
 import VehicleFeature from "../models/VehicleFeature.js";
+import VehicleSuggestionTerm from "../models/VehicleSuggestionTerm.js";
 import {
   normalizeVehicleDatasetRow,
   vehicleNormalizationFields,
@@ -1803,7 +1804,7 @@ const getUniqueMakes = asyncHandler(async (req, res) => {
     ? cityQuery
     : { ...cityQuery, ...ACTIVE_VARIANT_FILTER };
 
-  const [makeValues, brandValues] = await Promise.all([
+  const [makeValues, brandValues, suggestedMakes] = await Promise.all([
     Vehicle.distinct("make", {
       ...baseQuery,
       make: { $exists: true, $ne: null },
@@ -1812,11 +1813,12 @@ const getUniqueMakes = asyncHandler(async (req, res) => {
       ...baseQuery,
       brand: { $exists: true, $ne: null },
     }),
+    VehicleSuggestionTerm.distinct("make", { level: "make" }),
   ]);
 
   const scrapedMakes = [
     ...new Set(
-      [...makeValues, ...brandValues]
+      [...makeValues, ...brandValues, ...suggestedMakes]
         .map((value) => String(value || "").trim())
         .filter(Boolean),
     ),
@@ -1848,13 +1850,19 @@ const getUniqueModels = asyncHandler(async (req, res) => {
 
   const query = buildVehicleQuery({ make, city });
   if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
-  const rawModels = await Vehicle.distinct("model", {
-    ...query,
-    model: { $exists: true, $ne: null },
-  });
-  const scrapedModels = [
+  const [rawModels, suggestedModels] = await Promise.all([
+    Vehicle.distinct("model", {
+      ...query,
+      model: { $exists: true, $ne: null },
+    }),
+    VehicleSuggestionTerm.distinct("model", {
+      level: "model",
+      makeNormalized: normalizeLooseToken(make),
+    }),
+  ]);
+  const models = [
     ...new Set(
-      rawModels
+      [...rawModels, ...suggestedModels]
         .map((value) => String(value || "").trim())
         .map((value) => trimLeading(value, make) || value)
         .filter(Boolean),
@@ -1888,13 +1896,20 @@ const getUniqueVariants = asyncHandler(async (req, res) => {
 
   const query = buildVehicleQuery({ make, model, city });
   if (!includeDiscontinued) mergeAndCondition(query, ACTIVE_VARIANT_FILTER);
-  const rawVariants = await Vehicle.distinct("variant", {
-    ...query,
-    variant: { $exists: true, $ne: null },
-  });
-  const scrapedVariants = [
+  const [rawVariants, suggestedVariants] = await Promise.all([
+    Vehicle.distinct("variant", {
+      ...query,
+      variant: { $exists: true, $ne: null },
+    }),
+    VehicleSuggestionTerm.distinct("variant", {
+      level: "variant",
+      makeNormalized: normalizeLooseToken(make),
+      modelNormalized: normalizeLooseToken(trimLeading(model, make) || model),
+    }),
+  ]);
+  const variants = [
     ...new Set(
-      rawVariants
+      [...rawVariants, ...suggestedVariants]
         .map((value) => String(value || "").trim())
         .map(
           (value) =>
@@ -1949,6 +1964,127 @@ const addVehicleSuggestionTerm = asyncHandler(async (req, res) => {
 const reconcileVehicleSuggestionTerms = asyncHandler(async (req, res) => {
   const result = await reconcileManualVehicleTerms();
   res.json({ success: true, ...result });
+});
+
+// "Type & Save" — records a Make/Model/Variant term typed by a user that
+// isn't in the scraper-owned `vehicles` collection yet. Stored in a separate
+// collection (VehicleSuggestionTerm) so it survives the next scrape and
+// shows up in future autosuggest via getUniqueMakes/Models/Variants, without
+// ever writing into the scraper-owned collection itself.
+const addSuggestionTerm = asyncHandler(async (req, res) => {
+  const { level, make, model, variant, city } = req.body || {};
+  const normalizedLevel = String(level || "").trim().toLowerCase();
+  if (!["make", "model", "variant"].includes(normalizedLevel)) {
+    res.status(400);
+    throw new Error("level must be one of make, model, variant");
+  }
+
+  const trimmedMake = String(make || "").trim();
+  const trimmedModelRaw = String(model || "").trim();
+  const trimmedVariantRaw = String(variant || "").trim();
+
+  if (!trimmedMake) {
+    res.status(400);
+    throw new Error("make is required");
+  }
+  if (normalizedLevel !== "make" && !trimmedModelRaw) {
+    res.status(400);
+    throw new Error("model is required for this level");
+  }
+  if (normalizedLevel === "variant" && !trimmedVariantRaw) {
+    res.status(400);
+    throw new Error("variant is required");
+  }
+
+  // Match the same make-prefix trimming used by getUniqueModels/getUniqueVariants
+  // so suggestion lookups line up with the catalogue's own values.
+  const cleanModel = trimLeading(trimmedModelRaw, trimmedMake);
+  const cleanVariant = trimLeading(
+    trimLeading(trimmedVariantRaw, `${trimmedMake} ${cleanModel}`.trim()),
+    cleanModel,
+  );
+
+  const makeKey = normalizeLooseToken(trimmedMake);
+  const modelKey = normalizeLooseToken(cleanModel);
+  const variantKey = normalizeLooseToken(cleanVariant);
+
+  let existingMatch = null;
+
+  if (normalizedLevel === "make") {
+    const [vehicleMakes, vehicleBrands, suggestionMakes] = await Promise.all([
+      Vehicle.distinct("make", { make: { $exists: true, $ne: null } }),
+      Vehicle.distinct("brand", { brand: { $exists: true, $ne: null } }),
+      VehicleSuggestionTerm.distinct("make", { level: "make" }),
+    ]);
+    existingMatch = [...vehicleMakes, ...vehicleBrands, ...suggestionMakes].find(
+      (value) => normalizeLooseToken(value) === makeKey,
+    );
+  } else if (normalizedLevel === "model") {
+    const [vehicleModels, suggestionModels] = await Promise.all([
+      Vehicle.distinct("model", buildMakeMatch(trimmedMake)),
+      VehicleSuggestionTerm.distinct("model", {
+        level: "model",
+        makeNormalized: makeKey,
+      }),
+    ]);
+    existingMatch = [...vehicleModels, ...suggestionModels].find(
+      (value) => normalizeLooseToken(trimLeading(value, trimmedMake)) === modelKey,
+    );
+  } else {
+    const query = buildVehicleQuery({ make: trimmedMake, model: cleanModel });
+    const [vehicleVariants, suggestionVariants] = await Promise.all([
+      Vehicle.distinct("variant", { ...query, variant: { $exists: true, $ne: null } }),
+      VehicleSuggestionTerm.distinct("variant", {
+        level: "variant",
+        makeNormalized: makeKey,
+        modelNormalized: modelKey,
+      }),
+    ]);
+    existingMatch = [...vehicleVariants, ...suggestionVariants].find((value) => {
+      const cleaned = trimLeading(
+        trimLeading(String(value || ""), `${trimmedMake} ${cleanModel}`.trim()),
+        cleanModel,
+      );
+      return normalizeLooseToken(cleaned) === variantKey;
+    });
+  }
+
+  if (existingMatch) {
+    return res.json({ success: true, matchedExisting: true, value: existingMatch });
+  }
+
+  const normalizedKey =
+    normalizedLevel === "make"
+      ? `make:${makeKey}`
+      : normalizedLevel === "model"
+        ? `model:${makeKey}|${modelKey}`
+        : `variant:${makeKey}|${modelKey}|${variantKey}`;
+
+  await VehicleSuggestionTerm.findOneAndUpdate(
+    { normalizedKey },
+    {
+      $setOnInsert: {
+        normalizedKey,
+        level: normalizedLevel,
+        make: trimmedMake,
+        model: normalizedLevel === "make" ? "" : cleanModel,
+        variant: normalizedLevel === "variant" ? cleanVariant : "",
+        makeNormalized: makeKey,
+        modelNormalized: normalizedLevel === "make" ? "" : modelKey,
+        variantNormalized: normalizedLevel === "variant" ? variantKey : "",
+        city: String(city || "").trim(),
+        createdBy: req.user?._id || null,
+      },
+    },
+    { upsert: true, new: true },
+  );
+
+  DISTINCT_CACHE.clear();
+
+  const value =
+    normalizedLevel === "make" ? trimmedMake : normalizedLevel === "model" ? cleanModel : cleanVariant;
+
+  res.json({ success: true, matchedExisting: false, value });
 });
 
 const getVariantOptionsByModel = asyncHandler(async (req, res) => {
@@ -3376,6 +3512,7 @@ export {
   getUniqueMakes,
   getUniqueModels,
   getUniqueVariants,
+  addSuggestionTerm,
   getVariantOptionsByModel,
   getVehicleByDetails,
   getVehicleMedia,
