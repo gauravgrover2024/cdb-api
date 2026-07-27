@@ -208,6 +208,13 @@ const composePriceAnswer = (response = {}) => {
   const queryText = getPriceQueryText(response);
   const wantsOnRoad = /\bon\s*road\b|\bonroad\b/i.test(queryText);
   const wantsExShowroom = /\bex\s*showroom\b|\bexshowroom\b/i.test(queryText);
+  const wantsVariantList = /\b(variants|trims)\b/i.test(queryText);
+  const requestedFuel = cleanText(
+    queryText.match(/\b(petrol|diesel|cng|electric|ev|hybrid)\b/i)?.[1],
+  ).toLowerCase();
+  const requestedTransmission = cleanText(
+    queryText.match(/\b(automatic|manual|amt|cvt|dct|ivt)\b/i)?.[1],
+  ).toLowerCase();
 
   const onRoadWithoutOptional = getOnRoadWithoutOptionalLabel(row);
   const onRoadWithOptional = getOptionalOnRoadLabel(row);
@@ -241,6 +248,33 @@ const composePriceAnswer = (response = {}) => {
       if (exLine) evidence.push(exLine);
       const onRoadLine = rangeSentence("On-road", onRoadRange);
       if (onRoadLine) evidence.push(onRoadLine);
+    }
+
+    if (wantsVariantList && evidence.length) {
+      const scope = [requestedFuel, requestedTransmission].filter(Boolean).join(" ");
+      const countBy = (keyFor = () => "") => {
+        const counts = new Map();
+        rows.forEach((item) => {
+          const key = cleanText(keyFor(item)).toLowerCase();
+          if (!key) return;
+          counts.set(key, (counts.get(key) || 0) + 1);
+        });
+        return [...counts.entries()];
+      };
+      const split = requestedFuel && !requestedTransmission
+        ? countBy((item) => item.transmission || item.gearbox)
+        : requestedTransmission && !requestedFuel
+          ? countBy((item) => item.fuelType || item.fuel)
+          : [];
+      const splitText = split.length > 1
+        ? ` You get ${split
+            .map(([label, count]) => `${count} ${label}`)
+            .join(" and ")} choices.`
+        : "";
+
+      return normalizePriceAnswer(
+        `Here are all ${rows.length} current ${responseVehicleLabel || vehicle || "model"}${scope ? ` ${scope}` : ""} variants in ${city}.${splitText} ${evidence[0]}.`,
+      );
     }
 
     if (evidence.length) {
@@ -454,6 +488,14 @@ const composeFeatureComparisonAnswer = (response = {}) => {
       typeof vehicle === "string" ? cleanText(vehicle) : getVehicleLabel(vehicle),
     )
     .filter(Boolean);
+  const exactVariantComparison =
+    vehicles.length >= 2 &&
+    vehicles.slice(0, 2).every(
+      (vehicle) =>
+        vehicle &&
+        typeof vehicle === "object" &&
+        firstText(vehicle.variant, vehicle.variantName, vehicle.selectedVariant),
+    );
 
   if (vehicleLabels.length < 2) return response.answer;
 
@@ -481,29 +523,109 @@ const composeFeatureComparisonAnswer = (response = {}) => {
 
   if (!featureNames.length) return response.answer;
 
+  if (exactVariantComparison && rows.length === 1) {
+    const featureName = featureNames[0];
+    const modelResults = asArray(rows[0]?.models).slice(0, 2);
+    if (modelResults.length === 2) {
+      const available = modelResults.map((model) => model.available === true);
+      const unknown = modelResults.map((model) => model.status === "unknown");
+      if (available.every(Boolean)) {
+        return `Yes — both ${vehicleLabels[0]} and ${vehicleLabels[1]} have ${featureName}. This is for the exact variants selected.`;
+      }
+      if (available.filter(Boolean).length === 1) {
+        const availableIndex = available.findIndex(Boolean);
+        const otherIndex = availableIndex === 0 ? 1 : 0;
+        return `${vehicleLabels[availableIndex]} has ${featureName}. ${vehicleLabels[otherIndex]} does not show it on the selected variant.`;
+      }
+      if (unknown.some(Boolean)) {
+        const unknownLabels = unknown
+          .map((isUnknown, index) => (isUnknown ? vehicleLabels[index] : ""))
+          .filter(Boolean);
+        const absentLabels = modelResults
+          .map((model, index) =>
+            model.available !== true && model.status !== "unknown"
+              ? vehicleLabels[index]
+              : "",
+          )
+          .filter(Boolean);
+        const absentLine = absentLabels.length
+          ? `${absentLabels.join(" and ")} does not show ${featureName} on the selected variant. `
+          : "";
+        return `${absentLine}I could not confirm it for ${unknownLabels.join(" and ")}, so I would rather leave that part open than guess.`;
+      }
+      return `No — neither selected variant shows ${featureName}.`;
+    }
+  }
+
   const fuelFilter = firstText(
     response.fuelFilter,
     response.data?.fuelFilter,
     activeComparison.fuelFilter,
   );
 
-  const compared = vehicleLabels.slice(0, 2).join(" vs ");
-  const scope = fuelFilter ? `${fuelFilter.toUpperCase()} variants` : "the selected comparison";
+  // A requested feature comparison should answer every requested item instead
+  // of silently dropping the fifth one. Keep a generous UI-safe ceiling for
+  // unusually long bundles while preserving the user's requested order.
+  const featureLines = rows.slice(0, 10).map((row) => {
+    const featureName = humanizeFeatureKey(
+      firstText(row.feature, row.displayName, row.name, row.featureKey, row.key),
+    );
+    const modelLines = asArray(row.models).slice(0, 2).map((model) => {
+      const modelName = firstText(model.label, model.fullModel, model.model);
+      const availableCount = Number(model.availableCount || 0);
+      const totalVariants = Number(model.totalVariants || model.checkedVariants || 0);
 
-  return renderLanguage(
+      if (model.status === "unknown") return `${modelName}: I could not confirm it`;
+      if (model.available === false) return `${modelName}: not offered on the variants checked`;
+      if (totalVariants === 1) return `${modelName}: yes`;
+      if (availableCount && totalVariants) {
+        return `${modelName}: ${availableCount}/${totalVariants} current variants`;
+      }
+      return `${modelName}: available`;
+    });
+
+    return `${featureName}: ${modelLines.join("; ")}`;
+  }).filter(Boolean);
+
+  const priceLine = featureLines.length
+    ? `${featureLines.join(". ")}.`
+    : `${featureNames.join(", ")} comparison is ready.`;
+  const differenceLine = fuelFilter
+    ? `This view is limited to ${fuelFilter.toUpperCase()} variants. Open it for the exact variant breakdown.`
+    : exactVariantComparison
+      ? "This answer is for the exact variants selected."
+      : "Open the comparison for the exact variant breakdown.";
+
+  const comparisonAnswer = renderLanguage(
     "comparison_summary",
     {
       vehicleA: vehicleLabels[0],
       vehicleB: vehicleLabels[1],
-      priceLine: `Scope: ${scope}.`,
-      differenceLine: `Requested features: ${featureNames.join(", ")}. ${
-        fuelFilter
-          ? `${fuelFilter.toUpperCase()} is being used as a fuel filter, not as a feature row.`
-          : "The answer focuses only on the requested comparison scope."
-      }`,
+      priceLine,
+      differenceLine,
     },
     response,
   ).text;
+
+  const relatedResponses = asArray(response.secondaryResponses);
+  const hasRelatedColors = relatedResponses.some(
+    (item) => getIntent(item) === "vehicle_colors",
+  );
+  const hasRelatedPrices = relatedResponses.some(
+    (item) => getIntent(item) === "vehicle_pricelist",
+  );
+
+  if (hasRelatedColors && hasRelatedPrices) {
+    const city = firstText(
+      response.contextPatch?.anchorCity,
+      response.contextSnapshot?.anchorCity,
+      "your city",
+    ).replace(/-/g, " ");
+    const cityLabel = city.charAt(0).toUpperCase() + city.slice(1);
+    return `${comparisonAnswer} I have also prepared both colour galleries and the ${cityLabel} price lists in the related options.`;
+  }
+
+  return comparisonAnswer;
 };
 
 
@@ -545,18 +667,199 @@ const composeVehicleComparisonAnswer = (response = {}) => {
     commonHighlights.length ||
     0;
 
+  const variantSelection = asArray(
+    summary.variantSelection ||
+      response.data?.variantSelection ||
+      response.variantSelection,
+  );
+  const peerSelection = variantSelection[1] || {};
+  const fallbackSelection =
+    variantSelection.find((selection) => selection.fallbackReason) || {};
+  const selectedFuel = firstText(
+    variantSelection[0]?.selectedFuel,
+    peerSelection.selectedFuel,
+  );
+  const selectedTransmission = firstText(
+    variantSelection[0]?.selectedTransmission,
+    peerSelection.selectedTransmission,
+  );
+  const friendlyPowertrain = [selectedFuel, selectedTransmission]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  let pairingLine = "";
+  if (fallbackSelection.fallbackReason === "no_matching_fuel_variant") {
+    const requestedFuel = firstText(
+      fallbackSelection.preferredFuel,
+      variantSelection[0]?.selectedFuel,
+      "matching-fuel",
+    ).replace(/_/g, " ");
+    const fuelArticle = /^[aeiou]/i.test(requestedFuel) ? "an" : "a";
+    pairingLine = `I could not find ${fuelArticle} ${requestedFuel} ${firstText(
+      fallbackSelection.targetLabel,
+      "matching car",
+    )} variant, so I am using ${firstText(
+      fallbackSelection.selectedVehicleLabel,
+      "the nearest available variant",
+    )} as the nearest available option. If that pairing does not work for you, tell me and I will switch it.`;
+  } else if (
+    fallbackSelection.fallbackReason === "no_matching_transmission_with_fuel"
+  ) {
+    const requestedTransmission = firstText(
+      fallbackSelection.preferredTransmission,
+      variantSelection[0]?.selectedTransmission,
+      "matching transmission",
+    ).replace(/_/g, " ");
+    pairingLine = `I kept both cars on ${firstText(
+      fallbackSelection.selectedFuel,
+      selectedFuel,
+    ).toLowerCase()}, but I could not find a ${requestedTransmission} ${firstText(
+      fallbackSelection.targetLabel,
+      "matching car",
+    )} variant, so I am using ${firstText(
+      fallbackSelection.selectedVehicleLabel,
+      "the nearest available variant",
+    )}.`;
+  } else if (fallbackSelection.fallbackReason) {
+    pairingLine = `I could not find the requested powertrain for ${firstText(
+      fallbackSelection.targetLabel,
+      "one of the cars",
+    )}, so I am using ${firstText(
+      fallbackSelection.selectedVehicleLabel,
+      "the nearest available variant",
+    )}. If that pairing does not work for you, tell me and I will switch it.`;
+  } else if (
+    variantSelection.length >= 2 &&
+    (peerSelection.fuelMatched === false ||
+      peerSelection.transmissionMatched === false)
+  ) {
+    const anchorPowertrain = [
+      variantSelection[0]?.selectedFuel,
+      variantSelection[0]?.selectedTransmission,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    const peerPowertrain = [
+      peerSelection.selectedFuel,
+      peerSelection.selectedTransmission,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    pairingLine = `These are the exact variants selected, but their powertrains differ: ${labels[0]} is ${anchorPowertrain || "one configuration"}, while ${labels[1]} is ${peerPowertrain || "another configuration"}. I can switch to a like-for-like pair if you prefer.`;
+  } else if (
+    variantSelection.length >= 2 &&
+    peerSelection.fuelMatched === true &&
+    peerSelection.transmissionMatched === true &&
+    friendlyPowertrain
+  ) {
+    pairingLine = `I kept the comparison like-for-like on powertrain: both are ${friendlyPowertrain}.`;
+  }
+
   const priceLine =
     priceDeltaLabel && cheaperVehicle
-      ? `${cheaperVehicle} is cheaper by about ${priceDeltaLabel} on-road.`
-      : "The price difference is available in the comparison table.";
+      ? `${pairingLine} On-road, ${cheaperVehicle} is about ${priceDeltaLabel} cheaper.`.trim()
+      : `${pairingLine} I have kept the exact selected variants side by side below.`.trim();
+
+  const buyerFeatureRelevance = (item = {}) => {
+    const text = firstText(
+      item.feature,
+      item.displayName,
+      item.name,
+      item.featureKey,
+    ).toLowerCase();
+    const category = firstText(item.category).toLowerCase();
+    if (/ncap|crash rating/.test(text)) return -100;
+    if (/airbag|stability|\besc\b|isofix|brake assist|anti-lock|\babs\b/.test(text)) return 120;
+    if (/ground clearance|approach angle|departure angle|break.?over|water wading/.test(text)) return 105;
+    if (/mileage|fuel economy|range|power|torque|engine/.test(text)) return 95;
+    if (/camera|cruise|hill hold|tpms|parking sensor/.test(text)) return 90;
+    if (/comfort|convenience/.test(category)) return 75;
+    if (/infotainment|entertainment/.test(category)) return 70;
+    if (/safety/.test(category)) return 100;
+    if (/dimension|capacity|performance/.test(category)) return 85;
+    if (/antenna|accessory power outlet/.test(text)) return 10;
+    return 50;
+  };
+
+  const buyerFeatureFamily = (item = {}) => {
+    const text = firstText(
+      item.feature,
+      item.displayName,
+      item.name,
+      item.featureKey,
+    ).toLowerCase();
+    if (/airbag/.test(text)) return "airbags";
+    if (/anti-lock|\babs\b|brake assist/.test(text)) return "braking";
+    if (/stability|\besc\b|traction control/.test(text)) return "stability";
+    if (/ncap|crash rating/.test(text)) return "crash-rating";
+    if (/engine type|engine displacement|power|torque/.test(text)) return "engine-output";
+    if (/mileage|fuel economy|range/.test(text)) return "efficiency";
+    if (/approach angle|departure angle|break.?over|ground clearance|water wading/.test(text)) return "off-road-geometry";
+    if (/android auto|apple carplay|bluetooth|touchscreen|radio/.test(text)) return "infotainment";
+    if (/headlamp|headlight|drl|taillight|fog light/.test(text)) return "lighting";
+    return firstText(item.featureKey, item.feature, item.displayName, item.name)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_");
+  };
+
+  const selectBuyerFeatureNames = (items = [], limit = 3) => {
+    const seenFamilies = new Set();
+    const names = [];
+    for (const item of [...items].sort(
+      (left, right) =>
+        buyerFeatureRelevance(right) - buyerFeatureRelevance(left),
+    )) {
+      if (buyerFeatureRelevance(item) < 0) continue;
+      const family = buyerFeatureFamily(item);
+      if (!family || seenFamilies.has(family)) continue;
+      const name = firstText(item.feature, item.displayName, item.name);
+      if (!name) continue;
+      seenFamilies.add(family);
+      names.push(name);
+      if (names.length >= limit) break;
+    }
+    return names;
+  };
+
+  const differenceFeatureCandidates = selectBuyerFeatureNames(
+    featureDifferences,
+    8,
+  );
+  const differenceFeatures = differenceFeatureCandidates
+    .filter(
+      (name, index, values) =>
+        !values.some(
+          (other, otherIndex) =>
+            otherIndex !== index &&
+            other.length > name.length &&
+            other.toLowerCase().startsWith(`${name.toLowerCase()} (`),
+        ),
+    )
+    .slice(0, 3);
+  const sharedFeatures = selectBuyerFeatureNames(commonHighlights, 2);
 
   const differenceLine = differenceCount
-    ? `I also found ${differenceCount} indexed feature/spec differences and ${commonCount} common highlights in the compared variant data.${
-        missingEvidence.length ? " Some indexed evidence is partial, so this is not a complete brochure-level diff." : ""
+    ? `${
+        differenceFeatures.length
+          ? `The clearest equipment differences are ${differenceFeatures.join(", ")}.`
+          : "There are meaningful equipment and specification differences between them."
+      }${
+        commonCount && sharedFeatures.length
+          ? ` Both still include ${sharedFeatures.join(" and ")}.`
+          : ""
+      }${
+        missingEvidence.length ? " A few details are still incomplete, so I will not overstate the result." : ""
+      } ${
+        fallbackSelection.fallbackReason
+          ? "Once you confirm this fallback pairing, I can explain the trade-offs that matter for your use."
+          : "Tell me how you will use the car most often, and I will explain which trade-offs matter for you."
       }`
     : missingEvidence.length || hasUnavailableRows
-      ? "The feature/spec comparison is partial because one compared variant did not resolve to indexed rows yet."
-      : "No indexed feature/spec differences were found for these exact compared variants.";
+      ? "I am still missing a few details for these exact variants, so I would rather keep the verdict open than guess."
+      : "These two variants look closely matched on the confirmed features and specifications.";
 
   return renderLanguage(
     "comparison_summary",
@@ -606,7 +909,7 @@ const summarizeSpecValues = (items = []) => {
   if (groups.length === 1) {
     const [value, variants] = groups[0];
     const variantCount = uniqueTexts(variants).length;
-    if (variantCount > 1) return [`${value} across ${variantCount} indexed variants`];
+    if (variantCount > 1) return [`${value} across ${variantCount} variants checked`];
     return [value];
   }
 
@@ -616,7 +919,7 @@ const summarizeSpecValues = (items = []) => {
   });
 
   const remaining = groups.length - summaries.length;
-  if (remaining > 0) summaries.push(`plus ${remaining} more indexed value groups`);
+  if (remaining > 0) summaries.push(`plus ${remaining} other values across the range`);
   return summaries;
 };
 
@@ -815,7 +1118,7 @@ const composeVehicleColorsAnswer = (response = {}) => {
   }
 
   if (totalColorCount || colors.length) {
-    return `No — ${vehicleLabel} does not have ${requestedLabel} color options in the current DB-backed color list.`;
+    return `No — ${vehicleLabel} is not offered with a ${requestedLabel} option in the current colour range.`;
   }
 
   return `I do not have confirmed ${requestedLabel} color data for ${vehicleLabel} yet.`;
@@ -1054,6 +1357,48 @@ const attachAciProvenanceEnvelope = (response = {}) => {
 
 export const composeAciAnswer = (response = {}) => {
   if (!response || typeof response !== "object") return response;
+
+  const finalRecommendation =
+    response.finalRecommendation ||
+    response.data?.finalRecommendation ||
+    response.meta?.finalRecommendation ||
+    null;
+  if (
+    finalRecommendation?.finalRecommendationEnabled === true &&
+    finalRecommendation?.answer
+  ) {
+    return attachAciProvenanceEnvelope({
+      ...response,
+      title: finalRecommendation.title || response.title,
+      answer: finalRecommendation.answer,
+      finalRecommendationEnabled: true,
+      canUseForFinalRecommendation: true,
+      data: {
+        ...(response.data || {}),
+        title: finalRecommendation.title || response.data?.title || response.title,
+        answer: finalRecommendation.answer,
+        finalRecommendation,
+        finalRecommendationEnabled: true,
+        canUseForFinalRecommendation: true,
+      },
+    });
+  }
+
+  const conditionalDecisionGuidance =
+    response.conditionalDecisionGuidance ||
+    response.data?.conditionalDecisionGuidance ||
+    response.meta?.conditionalDecisionGuidance ||
+    null;
+  if (conditionalDecisionGuidance?.activated === true && response.answer) {
+    return attachAciProvenanceEnvelope({
+      ...response,
+      data: {
+        ...(response.data || {}),
+        answer: response.answer,
+        conditionalDecisionGuidance,
+      },
+    });
+  }
 
   const responseForEnvelope = applyRequestedColorFamilyRows(response);
   const intent = getIntent(responseForEnvelope);

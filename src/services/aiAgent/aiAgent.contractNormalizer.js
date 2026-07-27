@@ -622,8 +622,8 @@ const applyFeatureIntentCorrections = ({ response = {}, message = "", widget = n
         : `${firstText(corrected.data?.feature, "Feature")} matches`;
     corrected.answer =
       rows.length > 0
-        ? `I found ${rows.length} matching feature records.`
-        : corrected.answer || "I checked stored feature records for matching variants.";
+        ? `I found ${rows.length} matching feature result${rows.length === 1 ? "" : "s"}.`
+        : corrected.answer || "I checked the available variants for that feature.";
 
     corrected.widget = {
       ...(widget || {}),
@@ -814,7 +814,7 @@ const enhanceFeaturePayloads = async (response = {}) => {
 
   if (
     intent === "vehicle_feature_discovery" ||
-    canvasType === "feature_match_builder_canvas"
+    (canvasType === "feature_match_builder_canvas" && intent !== "vehicle_recommendation")
   ) {
     if (isCompleteFeatureDiscoveryPayload(response, widget)) {
       return response;
@@ -909,6 +909,8 @@ const enhanceFeaturePayloads = async (response = {}) => {
 
 export const normalizeAciFinalResponse = async (response = {}, options = {}) => {
   if (!response || typeof response !== "object") return response;
+
+  if (response.meta?.aciFinalResponseNormalized === true) return response;
 
   // Feature Resolver V2 already returns a complete frontend-safe contract.
   // Do not let legacy normalizers rewrite it back to “matching feature records”
@@ -1173,13 +1175,21 @@ export const normalizeAciFinalResponse = async (response = {}, options = {}) => 
             },
         };
 
-  return composeAciAnswer({
+  const composed = composeAciAnswer({
     ...normalized,
     sourceTransparency,
     runtimeResultsMeta,
     contextSnapshot,
     contextPatch: finalContextPatch,
   });
+
+  return {
+    ...composed,
+    meta: {
+      ...(composed.meta || {}),
+      aciFinalResponseNormalized: true,
+    },
+  };
 };
 
 export default normalizeAciFinalResponse;

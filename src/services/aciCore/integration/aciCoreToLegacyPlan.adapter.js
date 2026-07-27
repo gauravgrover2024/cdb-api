@@ -662,9 +662,11 @@ const inferOutput = (tool = '', meaningFrame = {}) => {
   }
 
   if (tool === 'vehicle_explainer') {
+    const isVehicleOverview = meaningFrame.primaryTask === 'vehicle_overview';
+
     return {
-      canvasType: 'explainer_canvas',
-      inlineType: 'explainer_card',
+      canvasType: isVehicleOverview ? 'car_overview_canvas' : 'explainer_canvas',
+      inlineType: isVehicleOverview ? null : 'explainer_card',
       groupBy: null,
       preferredWidgetType: null,
     };

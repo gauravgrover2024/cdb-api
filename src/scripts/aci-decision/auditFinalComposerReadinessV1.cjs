@@ -1,164 +1,109 @@
 #!/usr/bin/env node
+"use strict";
 
-const assert = require('assert');
-const fs = require('fs');
+const fs = require("fs");
 
-const read = (file) => fs.readFileSync(file, 'utf8');
-
+const read = (file) => fs.readFileSync(file, "utf8");
 const files = {
-  languageComposer: 'src/services/aciCore/language/aciAnswerLanguageComposer.js',
-  languageRegistry: 'src/services/aciCore/language/aciAnswerLanguageRegistry.js',
-  liveBridge: 'src/services/aciCore/integration/aciCoreLiveBridge.service.js',
-  finalEligibility: 'src/services/aciCore/decisionPolicy/aciFinalRecommendationEligibility.service.cjs',
-  finalReadiness: 'src/services/aciCore/decisionPolicy/aciFinalRecommendationReadiness.service.cjs',
-  scoreTool: 'src/services/aiAgent/tools/newCars/vehicleScoreInsight.tool.js',
-  responseTools: 'src/services/aiAgent/aiAgent.responseTools.js',
-  executor: 'src/services/aiAgent/aiAgent.executor.js',
-  phase5Closure: 'src/scripts/aci-decision/smokeDecisionPhase5ClosureGateV1.cjs',
+  languageComposer: "src/services/aciCore/language/aciAnswerLanguageComposer.js",
+  languageRegistry: "src/services/aciCore/language/aciAnswerLanguageRegistry.js",
+  liveBridge: "src/services/aciCore/integration/aciCoreLiveBridge.service.js",
+  finalEligibility: "src/services/aciCore/decisionPolicy/aciFinalRecommendationEligibility.service.cjs",
+  finalReadiness: "src/services/aciCore/decisionPolicy/aciFinalRecommendationReadiness.service.cjs",
+  finalRecommendation: "src/services/aciCore/recommendations/aciFinalRecommendation.service.js",
+  finalPolicy: "src/services/aciCore/recommendations/config/finalRecommendationPolicy.v1.json",
+  scoreTool: "src/services/aiAgent/tools/newCars/vehicleScoreInsight.tool.js",
+  similarTool: "src/services/aiAgent/tools/newCars/vehicleSimilar.tool.js",
 };
-
 const content = Object.fromEntries(
-  Object.entries(files).map(([key, file]) => [key, read(file)])
+  Object.entries(files).map(([name, file]) => [name, read(file)]),
 );
 
 const checks = [];
-const warnings = [];
-
 const add = (id, ok, extra = {}) => checks.push({ id, ok: Boolean(ok), ...extra });
-const warn = (id, details = {}) => warnings.push({ id, ...details });
 
 add(
-  'central-language-composer-exists',
-  content.languageComposer.includes('renderAciLanguageText') &&
-    content.languageComposer.includes('renderAciTemplate')
+  "central-language-composer-exists",
+  content.languageComposer.includes("renderAciLanguageText") &&
+    content.languageComposer.includes("renderAciTemplate"),
 );
-
 add(
-  'central-language-registry-has-final-blocked-templates',
-  content.languageRegistry.includes('decision_final_blocked_missing_context') &&
-    content.languageRegistry.includes('decision_final_blocked_partial_results')
+  "blocked-language-templates-remain-available",
+  content.languageRegistry.includes("decision_final_blocked_missing_context") &&
+    content.languageRegistry.includes("decision_final_blocked_partial_results"),
 );
-
 add(
-  'central-language-registry-has-diagnostic-guardrails',
-  content.languageRegistry.includes('decision_diagnostic_only_note') &&
-    content.languageRegistry.includes('decision_score_guardrail_reason') &&
-    content.languageRegistry.includes('decision_similar_graph_guardrail_reason')
+  "dedicated-final-recommendation-composer-exists",
+  content.finalRecommendation.includes("buildAciFinalRecommendation") &&
+    content.finalRecommendation.includes("buildAnswer") &&
+    content.finalRecommendation.includes("final_ready"),
 );
-
 add(
-  'final-readiness-still-marks-composer-not-ready',
-  content.finalReadiness.includes('finalComposerReady: false') &&
-    content.finalReadiness.includes('recommendationActivationEnabled: false') &&
-    content.finalReadiness.includes('canActivateFinalRecommendation: false')
+  "versioned-data-driven-policy-exists",
+  content.finalPolicy.includes("baseWeights") &&
+    content.finalPolicy.includes("priorityAdjustments") &&
+    content.finalPolicy.includes("minimumEligibleModels") &&
+    !/\b(?:Hyundai|Maruti|Tata|Kia|Mahindra|Skoda|Volkswagen)\b/i.test(content.finalPolicy),
 );
-
 add(
-  'final-eligibility-still-dry-run',
-  content.finalEligibility.includes('dryRun: true') &&
-    content.finalEligibility.includes('finalRecommendationEnabled: false') &&
-    content.finalEligibility.includes('composerReady: false') &&
-    content.finalEligibility.includes('canUseForFinalRecommendation: false')
+  "eligibility-runtime-is-live-and-conditional",
+  content.finalEligibility.includes("dryRun: false") &&
+    content.finalEligibility.includes("finalRecommendationReady") &&
+    content.finalEligibility.includes("moduleName === DECISION_MODULES.RECOMMENDATION"),
 );
-
 add(
-  'live-bridge-still-blocks-final-recommendation',
-  content.liveBridge.includes('finalRecommendationEnabled: false') &&
-    content.liveBridge.includes('final_recommendation_blocked') &&
-    content.liveBridge.includes('finalBlockedUx')
+  "readiness-is-evidence-gated",
+  content.finalReadiness.includes("finalRecommendationReady") &&
+    content.finalReadiness.includes("buyerContextComplete") &&
+    content.finalReadiness.includes("evidenceThresholdMet") &&
+    content.finalReadiness.includes("evidence_gated_live"),
 );
-
 add(
-  'phase5-closure-still-protects-activation-leakage',
-  content.phase5Closure.includes('no-final-recommendation-activation-leakage') &&
-    content.phase5Closure.includes('/finalRecommendationEnabled:\\s*true/') &&
-    content.phase5Closure.includes('/composerReady:\\s*true/')
+  "exact-variant-evidence-gates-exist",
+  content.finalRecommendation.includes("profileMatchesVariant") &&
+    content.finalRecommendation.includes("decisionMatchesVariant") &&
+    content.finalRecommendation.includes("featureRequirementSatisfied") &&
+    content.finalRecommendation.includes("maximumEvidenceAgeDays"),
 );
-
-const unsafeActivationPatterns = [
-  /finalRecommendationEnabled\s*:\s*true/,
-  /composerReady\s*:\s*true/,
-  /finalComposerReady\s*:\s*true/,
-  /recommendationActivationEnabled\s*:\s*true/,
-  /canActivateFinalRecommendation\s*:\s*true/,
-];
-
-const runtimeFiles = {
-  liveBridge: content.liveBridge,
-  finalEligibility: content.finalEligibility,
-  finalReadiness: content.finalReadiness,
-  scoreTool: content.scoreTool,
-  responseTools: content.responseTools,
-  executor: content.executor,
-};
-
-const activationLeakage = [];
-for (const [name, text] of Object.entries(runtimeFiles)) {
-  for (const pattern of unsafeActivationPatterns) {
-    if (pattern.test(text)) {
-      activationLeakage.push({ file: name, pattern: String(pattern) });
-    }
-  }
-}
-
-add('no-final-composer-activation-leakage', activationLeakage.length === 0, {
-  activationLeakage,
-});
-
-const scatteredDiagnosticLanguagePatterns = [
-  /\blet\s+verdict\s*=/,
-  /\bconst\s+verdict\s*=/,
-  /\bverdict\s*\+=/,
-  /\blooks like a strong same-model value pick\b/i,
-  /\bchoose it only if\b/i,
-];
-
-const scatteredDiagnostics = [];
-for (const [name, text] of Object.entries({
-  scoreTool: content.scoreTool,
-  responseTools: content.responseTools,
-  executor: content.executor,
-})) {
-  scatteredDiagnosticLanguagePatterns.forEach((pattern) => {
-    if (pattern.test(text)) {
-      scatteredDiagnostics.push({ file: name, pattern: String(pattern) });
-    }
-  });
-}
-
-if (scatteredDiagnostics.length) {
-  warn('diagnostic-language-still-needs-central-composer-migration', {
-    count: scatteredDiagnostics.length,
-    items: scatteredDiagnostics,
-    note: 'This is not final recommendation activation, but Phase 6 must migrate diagnostic/verdict wording into the central composer before final verdict activation.',
-  });
-}
-
 add(
-  'final-composer-readiness-status-is-not-ready',
-  scatteredDiagnostics.length >= 0 &&
-    content.finalReadiness.includes('finalComposerReady: false')
+  "on-road-budget-is-enforced-by-selected-basis",
+  content.finalRecommendation.includes('priceBasis === "on_road"') &&
+    content.finalRecommendation.includes("price > budget"),
+);
+add(
+  "live-bridge-keeps-blocked-and-ready-paths-separate",
+  content.liveBridge.includes("applyFinalRecommendationBlockedAnswer") &&
+    content.liveBridge.includes("finalRecommendationEligibility.canUseForFinalRecommendation") &&
+    content.liveBridge.includes("fastFinalRecommendation?.finalRecommendationEnabled === true"),
+);
+add(
+  "diagnostic-modules-cannot-activate-final-verdict",
+  !/finalRecommendationEnabled\s*:\s*true/.test(content.scoreTool) &&
+    !/finalRecommendationEnabled\s*:\s*true/.test(content.similarTool),
+);
+add(
+  "startup-prewarm-supported",
+  content.finalRecommendation.includes("prewarmAciFinalRecommendationEvidence") &&
+    content.finalRecommendation.includes("EVIDENCE_CACHE_TTL_MS"),
 );
 
 const failed = checks.filter((check) => !check.ok);
-
 console.log(JSON.stringify({
-  suite: 'ACI Final Composer Readiness Audit v1',
+  suite: "ACI Final Composer Readiness Audit v2",
   ok: failed.length === 0,
   readiness: {
-    finalComposerReady: false,
-    finalRecommendationActivationReady: false,
-    activationAllowed: false,
-    reason: 'Central composer exists, but final verdict activation remains disabled until diagnostic/verdict wording is fully centralized and buyer-journey evals pass.',
+    centralLanguageComposerAvailable: true,
+    finalComposerReady: failed.length === 0,
+    finalRecommendationActivationReady: failed.length === 0,
+    activationMode: "recommendation_module_only_evidence_gated",
+    diagnosticModulesRemainBlocked: true,
   },
   total: checks.length,
   passed: checks.length - failed.length,
   failed: failed.length,
   failedIds: failed.map((item) => item.id),
   checks,
-  warnings,
+  warnings: [],
 }, null, 2));
 
-if (failed.length) {
-  process.exit(1);
-}
+if (failed.length) process.exit(1);

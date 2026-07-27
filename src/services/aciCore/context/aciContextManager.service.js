@@ -185,6 +185,7 @@ function compactAciContextState(contextState = {}) {
 
   return createEmptyAciContextState({
     selectedVehicle,
+    contextLedger: state.contextLedger || {},
     buyerContext: state.buyerContext || state.buyerIntent || {},
     buyerGuidanceContext: state.buyerGuidanceContext || {},
     activeComparison,
@@ -635,6 +636,11 @@ const getPreviousState = (activeContext = {}) => {
   if (isAciContextState(activeContext?.aciContextState)) return activeContext.aciContextState;
   return createEmptyAciContextState({
     selectedVehicle: activeContext?.selectedVehicle || {},
+    contextLedger:
+      activeContext?.contextLedger ||
+      activeContext?.contextState?.contextLedger ||
+      activeContext?.aciContextState?.contextLedger ||
+      {},
     activeComparison:
       activeContext?.activeComparison ||
       activeContext?.selectedComparisonSet ||
@@ -682,6 +688,9 @@ function mergeAciContext({ previousContext = {}, resolvedContext = {}, message =
 
   return createEmptyAciContextState({
     selectedVehicle,
+    contextLedger: previousState.contextLedger || {},
+    buyerContext: previousState.buyerContext || previousState.buyerIntent || {},
+    buyerGuidanceContext: previousState.buyerGuidanceContext || {},
     activeComparison: resolvedContext.activeComparison || previousState.activeComparison || {},
     requested: resolvedContext.requested || {},
     anchors: {
@@ -994,7 +1003,8 @@ function buildContextPatchFromState(contextState = {}) {
   if (comparisonVehicles.length >= 2) {
     return compactObject({
       contextState: state,
-    buyerContext: state.buyerContext || {},
+      buyerContext: state.buyerContext || {},
+      contextLedger: state.contextLedger || {},
       aciContextState: state,
       anchorCity: vehicle.citySlug || vehicle.city,
       activeComparison: compactObject({
@@ -1071,6 +1081,7 @@ function buildContextPatchFromState(contextState = {}) {
       : null,
     requested: state.requested,
     buyerContext: state.buyerContext || {},
+    contextLedger: state.contextLedger || {},
     buyerGuidanceContext: state.buyerGuidanceContext || {},
     contextConfidence: state.confidence?.contextConfidence,
     resolutionSource: state.confidence?.resolutionSource,

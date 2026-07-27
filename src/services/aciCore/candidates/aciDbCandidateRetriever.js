@@ -146,7 +146,7 @@ const hasWord = (normalizedMessage, term) => {
   }
 
   const boundary = new RegExp(`(^|\\s)${cleaned.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`);
-  return boundary.test(normalizedMessage) || normalizedMessage.includes(cleaned);
+  return boundary.test(normalizedMessage);
 };
 
 const extractBudgetCandidates = (message = '') => {

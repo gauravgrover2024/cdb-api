@@ -547,7 +547,7 @@ export const INTENT_DEFINITIONS = [
     requiredEntities: [],
     optionalEntities: ["budgetMax", "bodyType", "model"],
     widgetType: "vehicle_safety_results",
-    failureMessage: "No stored safety feature records matched this request.",
+    failureMessage: "I could not confirm matching safety features for this request.",
   },
 
   {
@@ -622,7 +622,7 @@ export const INTENT_DEFINITIONS = [
     requiredEntities: [],
     optionalEntities: ["make", "dateRange"],
     widgetType: "latest_catalogue_updates",
-    failureMessage: "Launch status is not captured in current database.",
+    failureMessage: "I cannot confirm the latest launch status yet.",
   },
 
   {

@@ -49,6 +49,8 @@ const clean = (value = "") =>
     .trim()
     .toLowerCase();
 
+const auditModelSummaryCache = new Map();
+
 const vehicleText = (vehicle = {}) =>
   [
     vehicle.make,
@@ -116,6 +118,37 @@ const knownModelMentions = (message = "") => {
   return MODEL_MENTION_RULES
     .filter((rule) => rule.pattern.test(text))
     .map(({ make, model }) => ({ make, model }));
+};
+
+const getAuditModelSummary = async ({ make = "", model = "" } = {}) => {
+  const cacheKey = `${clean(make)}|${clean(model)}`;
+  const query = modelQueryFor({ make, model });
+  if (!query) return null;
+  if (!auditModelSummaryCache.has(cacheKey)) {
+    auditModelSummaryCache.set(
+      cacheKey,
+      mongoose.connection.db.collection("aci_vehicle_model_summary").findOne(query, {
+        projection: {
+          make: 1,
+          brand: 1,
+          model: 1,
+          fullModel: 1,
+          makeKey: 1,
+          modelKey: 1,
+          shortModelKey: 1,
+          fuelTypes: 1,
+          transmissions: 1,
+        },
+      }),
+    );
+  }
+  return auditModelSummaryCache.get(cacheKey);
+};
+
+const warmAuditModelSummaryCache = async () => {
+  await Promise.all(MODEL_MENTION_RULES.map(({ make, model }) =>
+    getAuditModelSummary({ make, model }),
+  ));
 };
 
 const taskCandidatesFor = (message = "") => {
@@ -190,7 +223,6 @@ const cityFromMessage = (message = "") => {
 };
 
 async function buildFastAuditCandidateSnapshot({ message = "", activeContext = {} } = {}) {
-  const db = mongoose.connection.db;
   const explicitModels = knownModelMentions(message);
   const rows = [];
   const seen = new Set();
@@ -199,22 +231,7 @@ async function buildFastAuditCandidateSnapshot({ message = "", activeContext = {
     const seenKey = `${clean(item.make)}|${clean(item.model)}`;
     if (seen.has(seenKey)) continue;
     seen.add(seenKey);
-    const query = modelQueryFor(item);
-    const row = query
-      ? await db.collection("aci_vehicle_model_summary").findOne(query, {
-          projection: {
-            make: 1,
-            brand: 1,
-            model: 1,
-            fullModel: 1,
-            makeKey: 1,
-            modelKey: 1,
-            shortModelKey: 1,
-            fuelTypes: 1,
-            transmissions: 1,
-          },
-        })
-      : null;
+    const row = await getAuditModelSummary(item);
     if (row) rows.push(row);
   }
 
@@ -635,6 +652,7 @@ const CASES = [
 
 const main = async () => {
   await connectDB();
+  await warmAuditModelSummaryCache();
 
   const startedAt = Date.now();
   const results = [];
@@ -684,6 +702,7 @@ export {
   buildFastAuditCandidateSnapshot,
   hasForbiddenContextPayload,
   planContextCase,
+  warmAuditModelSummaryCache,
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

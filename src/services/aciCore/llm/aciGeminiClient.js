@@ -57,6 +57,7 @@ async function generateAciStructuredObject({
   modelName = getAciMeaningParserModelName(),
   timeoutMs = getAciMeaningParserTimeoutMs(),
   temperature = 0,
+  maxRetries = 2,
 } = {}) {
   const provider = createAciGeminiProvider();
   const controller = new AbortController();
@@ -70,6 +71,7 @@ async function generateAciStructuredObject({
       system,
       prompt,
       temperature,
+      maxRetries,
       abortSignal: controller.signal,
     });
 

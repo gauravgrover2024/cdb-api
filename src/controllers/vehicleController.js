@@ -7,11 +7,17 @@ import VehicleSuggestionTerm from "../models/VehicleSuggestionTerm.js";
 import {
   normalizeVehicleDatasetRow,
   vehicleNormalizationFields,
+  lowerKey,
 } from "../utils/vehicleDatasetNormalizer.js";
 import {
   buildSearchTokenFilter,
   escapeSearchRegex,
 } from "../utils/searchTokens.js";
+import {
+  createSuggestionTerm,
+  getActiveManualTerms,
+  reconcileManualVehicleTerms,
+} from "../services/vehicleSuggestionTermService.js";
 
 const VEHICLE_LIST_PROJECTION = {
   make: 1,
@@ -957,12 +963,30 @@ const writeCache = (cacheMap, prefix, params = {}, data = []) => {
   cacheMap.set(key, { ts: Date.now(), data });
 };
 
+const setVehiclePublicCacheHeaders = (
+  res,
+  { browserSeconds = 300, edgeSeconds = 600, staleSeconds = 86400 } = {},
+) => {
+  const browserValue = `public, max-age=${browserSeconds}, s-maxage=${edgeSeconds}, stale-while-revalidate=${staleSeconds}`;
+  const edgeValue = `public, max-age=${edgeSeconds}, stale-while-revalidate=${staleSeconds}`;
+  res.set("Cache-Control", browserValue);
+  res.set("CDN-Cache-Control", edgeValue);
+  res.set("Vercel-CDN-Cache-Control", edgeValue);
+};
+
 const readDistinctCache = (scope, params = {}) => {
   return readCache(DISTINCT_CACHE, DISTINCT_CACHE_TTL_MS, scope, params);
 };
 
 const writeDistinctCache = (scope, params = {}, data = []) => {
   writeCache(DISTINCT_CACHE, scope, params, data);
+};
+
+// Manual suggestion-term adds/reconciles change the makes/models/variants
+// dropdowns; clear the cache rather than trying to compute which keys are
+// affected.
+const invalidateDistinctCache = () => {
+  DISTINCT_CACHE.clear();
 };
 
 const SIMILAR_BASE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -974,6 +998,16 @@ const VEHICLE_MEDIA_CACHE = new Map();
 const POPULAR_CARS_CACHE_TTL_MS = 10 * 60 * 1000;
 const POPULAR_CARS_CACHE = new Map();
 const POPULAR_CARS_IN_FLIGHT = new Map();
+const POPULAR_CARS_SNAPSHOT_COLLECTION = "aci_home_popular_cars_v1";
+const POPULAR_CARS_SNAPSHOT_VERSION = "aci_home_popular_cars_v1";
+const configuredPopularCarsSnapshotTtlMs = Number(
+  process.env.ACI_HOME_SNAPSHOT_TTL_MS || 7 * 24 * 60 * 60 * 1000,
+);
+const POPULAR_CARS_SNAPSHOT_TTL_MS = Number.isFinite(
+  configuredPopularCarsSnapshotTtlMs,
+)
+  ? Math.max(POPULAR_CARS_CACHE_TTL_MS, configuredPopularCarsSnapshotTtlMs)
+  : 7 * 24 * 60 * 60 * 1000;
 const VEHICLE_COLORS_COLLECTION = "vehicle_colors_v2";
 const R2_PUBLIC_IMAGE_PREFIX =
   "https://pub-8504a10fc1c04f02ac8760cb90462ae3.r2.dev/";
@@ -1739,12 +1773,31 @@ const bulkUploadVehicles = asyncHandler(async (req, res) => {
   res.json({ success: true, data: results });
 });
 
+// Unions manual "Type & Save" terms into a scraped distinct-values list.
+// Scraped values always win on a case/space-insensitive clash; only genuinely
+// new manual values are reported back via `customValues` so the frontend can
+// badge them without changing the existing string[] response shape.
+const mergeManualValues = (scrapedValues, manualTerms) => {
+  const scrapedKeys = new Set(scrapedValues.map((value) => lowerKey(value)));
+  const customValues = [];
+  for (const term of manualTerms) {
+    const key = lowerKey(term.value);
+    if (!key || scrapedKeys.has(key)) continue;
+    scrapedKeys.add(key);
+    customValues.push(term.value);
+  }
+  return {
+    merged: [...scrapedValues, ...customValues].sort((a, b) => a.localeCompare(b)),
+    customValues,
+  };
+};
+
 const getUniqueMakes = asyncHandler(async (req, res) => {
   const { city } = req.query;
   const includeDiscontinued = parseBoolean(req.query.includeDiscontinued);
   const cached = readDistinctCache("makes", { city, includeDiscontinued });
   if (cached) {
-    return res.json({ success: true, data: cached, cached: true });
+    return res.json({ success: true, data: cached.data, customValues: cached.customValues, cached: true });
   }
   const cityQuery = city ? buildVehicleQuery({ city }) : {};
   const baseQuery = includeDiscontinued
@@ -1763,16 +1816,19 @@ const getUniqueMakes = asyncHandler(async (req, res) => {
     VehicleSuggestionTerm.distinct("make", { level: "make" }),
   ]);
 
-  const makes = [
+  const scrapedMakes = [
     ...new Set(
       [...makeValues, ...brandValues, ...suggestedMakes]
         .map((value) => String(value || "").trim())
         .filter(Boolean),
     ),
-  ].sort((a, b) => a.localeCompare(b));
-  writeDistinctCache("makes", { city, includeDiscontinued }, makes);
+  ];
 
-  res.json({ success: true, data: makes });
+  const manualTerms = await getActiveManualTerms({ level: "make" });
+  const { merged: makes, customValues } = mergeManualValues(scrapedMakes, manualTerms);
+  writeDistinctCache("makes", { city, includeDiscontinued }, { data: makes, customValues });
+
+  res.json({ success: true, data: makes, customValues });
 });
 
 const getUniqueModels = asyncHandler(async (req, res) => {
@@ -1789,7 +1845,7 @@ const getUniqueModels = asyncHandler(async (req, res) => {
     includeDiscontinued,
   });
   if (cached) {
-    return res.json({ success: true, data: cached, cached: true });
+    return res.json({ success: true, data: cached.data, customValues: cached.customValues, cached: true });
   }
 
   const query = buildVehicleQuery({ make, city });
@@ -1811,10 +1867,13 @@ const getUniqueModels = asyncHandler(async (req, res) => {
         .map((value) => trimLeading(value, make) || value)
         .filter(Boolean),
     ),
-  ].sort((a, b) => a.localeCompare(b));
-  writeDistinctCache("models", { make, city, includeDiscontinued }, models);
+  ];
 
-  res.json({ success: true, data: models });
+  const manualTerms = await getActiveManualTerms({ level: "model", make });
+  const { merged: models, customValues } = mergeManualValues(scrapedModels, manualTerms);
+  writeDistinctCache("models", { make, city, includeDiscontinued }, { data: models, customValues });
+
+  res.json({ success: true, data: models, customValues });
 });
 
 const getUniqueVariants = asyncHandler(async (req, res) => {
@@ -1832,7 +1891,7 @@ const getUniqueVariants = asyncHandler(async (req, res) => {
     includeDiscontinued,
   });
   if (cached) {
-    return res.json({ success: true, data: cached, cached: true });
+    return res.json({ success: true, data: cached.data, customValues: cached.customValues, cached: true });
   }
 
   const query = buildVehicleQuery({ make, model, city });
@@ -1861,14 +1920,50 @@ const getUniqueVariants = asyncHandler(async (req, res) => {
         )
         .filter(Boolean),
     ),
-  ].sort((a, b) => a.localeCompare(b));
+  ];
+
+  const manualTerms = await getActiveManualTerms({ level: "variant", make, model });
+  const { merged: variants, customValues } = mergeManualValues(scrapedVariants, manualTerms);
   writeDistinctCache(
     "variants",
     { make, model, city, includeDiscontinued },
-    variants,
+    { data: variants, customValues },
   );
 
-  res.json({ success: true, data: variants });
+  res.json({ success: true, data: variants, customValues });
+});
+
+// "Type & Save" — add a manual Make/Model/Variant term. Returns the scraped
+// canonical value instead of creating a record when one already exists.
+const addVehicleSuggestionTerm = asyncHandler(async (req, res) => {
+  const { level, make, model, variant, city } = req.body || {};
+
+  let result;
+  try {
+    result = await createSuggestionTerm({
+      level,
+      make,
+      model,
+      variant,
+      city,
+      createdBy: req.user?._id,
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500);
+    throw error;
+  }
+
+  res.status(result.matchedExisting ? 200 : 201).json({
+    success: true,
+    ...result,
+  });
+});
+
+// Manual trigger for the same reconciliation the scraper runs after every
+// sync — merges any manual term now covered by scraped data.
+const reconcileVehicleSuggestionTerms = asyncHandler(async (req, res) => {
+  const result = await reconcileManualVehicleTerms();
+  res.json({ success: true, ...result });
 });
 
 // "Type & Save" — records a Make/Model/Variant term typed by a user that
@@ -2116,6 +2211,7 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
     { make, model, variant },
   );
   if (cached) {
+    setVehiclePublicCacheHeaders(res, { edgeSeconds: 3600 });
     return res.json({ ...cached, fromCache: true });
   }
 
@@ -2205,6 +2301,7 @@ const getVehicleMedia = asyncHandler(async (req, res) => {
     data: dedupeMediaRowsByHexLatest(fallbackRows),
   };
   writeCache(VEHICLE_MEDIA_CACHE, "media", { make, model, variant }, payload);
+  setVehiclePublicCacheHeaders(res, { edgeSeconds: 3600 });
   res.json(payload);
 });
 
@@ -3050,9 +3147,89 @@ const buildPopularCarsPayload = async ({
   return payload;
 };
 
+const getPopularCarsSnapshotKey = ({ city, limit }) =>
+  `${POPULAR_CARS_SNAPSHOT_VERSION}:${city}:${limit}`;
+
+const readPopularCarsSnapshot = async ({ city, limit }) => {
+  const startedAt = Date.now();
+  const snapshot = await mongoose.connection.db
+    .collection(POPULAR_CARS_SNAPSHOT_COLLECTION)
+    .findOne({
+      cacheKey: getPopularCarsSnapshotKey({ city, limit }),
+      snapshotVersion: POPULAR_CARS_SNAPSHOT_VERSION,
+    });
+
+  if (!snapshot?.payload || !snapshot?.builtAt) return null;
+  const ageMs = Date.now() - new Date(snapshot.builtAt).getTime();
+  if (!Number.isFinite(ageMs) || ageMs > POPULAR_CARS_SNAPSHOT_TTL_MS) {
+    return null;
+  }
+
+  return {
+    ...snapshot.payload,
+    meta: {
+      ...(snapshot.payload.meta || {}),
+      queryMs: Date.now() - startedAt,
+      sourceQueryMs: snapshot.payload.meta?.queryMs ?? null,
+      snapshot: true,
+      snapshotBuiltAt: snapshot.builtAt,
+      snapshotAgeMs: Math.max(0, ageMs),
+    },
+  };
+};
+
+const persistPopularCarsSnapshot = async ({ city, limit, payload }) => {
+  const builtAt = new Date();
+  await mongoose.connection.db
+    .collection(POPULAR_CARS_SNAPSHOT_COLLECTION)
+    .updateOne(
+      { cacheKey: getPopularCarsSnapshotKey({ city, limit }) },
+      {
+        $set: {
+          snapshotVersion: POPULAR_CARS_SNAPSHOT_VERSION,
+          city,
+          limit,
+          payload,
+          builtAt,
+          updatedAt: builtAt,
+        },
+        $setOnInsert: { createdAt: builtAt },
+      },
+      { upsert: true },
+    );
+};
+
+const refreshPopularCarsSnapshot = async ({
+  city = "new-delhi",
+  limit = 25,
+} = {}) => {
+  if (!mongoose.connection?.db) {
+    throw new Error("MongoDB connection is not ready for snapshot refresh");
+  }
+  const normalizedCity = toCityToken(city || "new-delhi") || "new-delhi";
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 25, 1), 25);
+  const payload = await buildPopularCarsPayload({
+    city: normalizedCity,
+    limit: normalizedLimit,
+  });
+  await persistPopularCarsSnapshot({
+    city: normalizedCity,
+    limit: normalizedLimit,
+    payload,
+  });
+  writeCache(
+    POPULAR_CARS_CACHE,
+    "popular-cars",
+    { city: normalizedCity, limit: normalizedLimit },
+    payload,
+  );
+  return payload;
+};
+
 const warmPopularCarsCache = async ({
   city = "new-delhi",
   limit = 25,
+  forceRefresh = false,
 } = {}) => {
   if (!mongoose.connection?.db) {
     throw new Error(
@@ -3066,25 +3243,39 @@ const warmPopularCarsCache = async ({
     city: normalizedCity,
     limit: normalizedLimit,
   });
-  const cached = readCache(
-    POPULAR_CARS_CACHE,
-    POPULAR_CARS_CACHE_TTL_MS,
-    "popular-cars",
-    {
-      city: normalizedCity,
-      limit: normalizedLimit,
-    },
-  );
+  const cached = forceRefresh
+    ? null
+    : readCache(
+        POPULAR_CARS_CACHE,
+        POPULAR_CARS_CACHE_TTL_MS,
+        "popular-cars",
+        {
+          city: normalizedCity,
+          limit: normalizedLimit,
+        },
+      );
   if (cached) return cached;
 
   if (POPULAR_CARS_IN_FLIGHT.has(cacheKey)) {
     return POPULAR_CARS_IN_FLIGHT.get(cacheKey);
   }
 
-  const warmPromise = buildPopularCarsPayload({
-    city: normalizedCity,
-    limit: normalizedLimit,
-  })
+  const warmPromise = (forceRefresh
+    ? refreshPopularCarsSnapshot({
+        city: normalizedCity,
+        limit: normalizedLimit,
+      })
+    : readPopularCarsSnapshot({
+        city: normalizedCity,
+        limit: normalizedLimit,
+      }).then(
+        (snapshot) =>
+          snapshot ||
+          refreshPopularCarsSnapshot({
+            city: normalizedCity,
+            limit: normalizedLimit,
+          }),
+      ))
     .then((payload) => {
       writeCache(
         POPULAR_CARS_CACHE,
@@ -3120,12 +3311,12 @@ const getPopularCars = asyncHandler(async (req, res) => {
     },
   );
   if (cached) {
-    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+    setVehiclePublicCacheHeaders(res);
     return res.json({ ...cached, cached: true });
   }
 
   const payload = await warmPopularCarsCache({ city, limit });
-  res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+  setVehiclePublicCacheHeaders(res);
   return res.json(payload);
 });
 
@@ -3305,7 +3496,9 @@ const warmVehicleCachesWhenConnected = (attempt = 0) => {
 };
 
 // Warm vehicle discovery caches in background so first UI open is fast once Mongo is ready.
-setTimeout(() => warmVehicleCachesWhenConnected(), 500);
+if (process.env.ACI_DISABLE_VEHICLE_CACHE_AUTOWARM !== "1") {
+  setTimeout(() => warmVehicleCachesWhenConnected(), 500);
+}
 
 export {
   getVehicles,
@@ -3324,5 +3517,15 @@ export {
   getVehicleByDetails,
   getVehicleMedia,
   getPopularCars,
+  refreshPopularCarsSnapshot,
   getSimilarModels,
+  addVehicleSuggestionTerm,
+  reconcileVehicleSuggestionTerms,
+  // Shared identity-matching helpers, reused by vehicleSuggestionTermService
+  // so manual "Type & Save" entries are matched against scraped rows with the
+  // exact same make/model/variant resolution rules as every other lookup.
+  buildVehicleQuery,
+  matchesVehicleFilters,
+  ACTIVE_VARIANT_FILTER,
+  invalidateDistinctCache,
 };

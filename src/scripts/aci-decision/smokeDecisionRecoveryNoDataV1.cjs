@@ -43,14 +43,14 @@ addCheck(
 
 addCheck(
   'exact-variant-response-tools-has-safe-recovery',
-  responseTools.includes('does not match an exact current DB-backed variant') &&
-    responseTools.includes('I should not calculate EMI using a random model-level price')
+  responseTools.includes('could not match ${variantResolution.requestedVariant || variant} to a current variant I can verify') &&
+    responseTools.includes('I should not calculate EMI from the wrong price')
 );
 
 addCheck(
   'score-no-data-has-next-actions',
-  scoreTool.includes('I can still help with listed variants') &&
-    scoreTool.includes('I can still help with price, features, variants, similar cars')
+  scoreTool.includes('I can still help with its available variants') &&
+    scoreTool.includes('I can still help with its price, features, variants, similar cars')
 );
 
 addCheck(

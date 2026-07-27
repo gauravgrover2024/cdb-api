@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 
 import connectDB from "../../config/db.js";
 import { hasForbiddenContextPayload, planContextCase } from "./auditAciContextManagerV1.js";
+import { runAciCoreLiveBridge } from "../../services/aciCore/integration/aciCoreLiveBridge.service.js";
 
 const clean = (value = "") =>
   String(value || "")
@@ -83,6 +84,17 @@ const cases = [
     expectedTextParts: ["be 6"],
     forbiddenVariantParts: ["be 6e", "mahindra be 6e", "6e"],
   },
+  {
+    id: "toyota-must-not-trigger-ota-feature",
+    message: "Change city for Toyota Innova Hycross price list",
+    expectedMake: "Toyota",
+    expectedModel: "Innova Hycross",
+    expectedTool: "vehicle_pricelist",
+    expectedTextParts: ["toyota", "innova hycross"],
+    forbiddenModelParts: ["over the air", "ota updates"],
+    forbiddenVariantParts: ["over the air", "ota updates"],
+    live: true,
+  },
 ];
 
 const runCase = async (testCase = {}) => {
@@ -90,8 +102,17 @@ const runCase = async (testCase = {}) => {
   const failures = [];
 
   try {
-    const result = await planContextCase({ message: testCase.message, context: {} });
+    const result = testCase.live
+      ? await runAciCoreLiveBridge({
+          message: testCase.message,
+          context: {},
+          user: null,
+          session: {},
+          meta: { source: "embarrassment_query_audit", caseId: testCase.id },
+        })
+      : await planContextCase({ message: testCase.message, context: {} });
     const selectedVehicle = result.selectedVehicle || {};
+    const actualTool = result.tool || result.intent || "";
     const modelBag = [
       selectedVehicle.make,
       selectedVehicle.model,
@@ -106,8 +127,8 @@ const runCase = async (testCase = {}) => {
     ].join(" ");
     const forbiddenContextKeys = hasForbiddenContextPayload(result.contextState || {});
 
-    if (result.tool !== testCase.expectedTool) {
-      failures.push(`Expected tool ${testCase.expectedTool}, got ${result.tool}`);
+    if (actualTool !== testCase.expectedTool) {
+      failures.push(`Expected tool ${testCase.expectedTool}, got ${actualTool}`);
     }
 
     if (clean(selectedVehicle.make) !== clean(testCase.expectedMake)) {
@@ -147,7 +168,7 @@ const runCase = async (testCase = {}) => {
       durationMs: Date.now() - startedAt,
       failures,
       summary: {
-        tool: result.tool,
+        tool: actualTool,
         anchorMake: selectedVehicle.make || "",
         anchorModel: selectedVehicle.model || "",
         anchorFullModel: selectedVehicle.fullModel || "",

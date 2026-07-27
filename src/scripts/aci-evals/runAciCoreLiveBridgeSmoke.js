@@ -224,6 +224,65 @@ const runSequentialContextIsolationCases = async () => {
     const failures = [];
     let context = {};
     const setupResponse = await runAciCoreLiveBridge({
+      message: "Mahindra Thar price list",
+      context,
+    });
+    context = mergeContextPatch(context, setupResponse);
+
+    const response = await runAciCoreLiveBridge({
+      message: "Best SUV under 20 lakhs with Sunroof",
+      context,
+    });
+    const rows = getRows(response);
+    const selectedVehicle = response.contextPatch?.selectedVehicle;
+    const answer = text(response.answer);
+
+    if (response.intent !== "vehicle_recommendation") {
+      failures.push(`expected vehicle_recommendation intent, got ${response.intent}`);
+    }
+
+    if (response.canvasType !== "feature_match_builder_canvas") {
+      failures.push(`expected feature_match_builder_canvas, got ${response.canvasType}`);
+    }
+
+    if (getBridgeIsolation(response) !== "broad_discovery_without_model") {
+      failures.push(`expected broad_discovery_without_model isolation, got ${getBridgeIsolation(response)}`);
+    }
+
+    if (rows.length < 2) {
+      failures.push(`expected a multi-model sunroof shortlist, got ${rows.length} rows`);
+    }
+
+    if (selectedVehicle !== null || response.contextPatch?.clearSelectedVehicle !== true) {
+      failures.push("broad recommendation did not clear the previous Thar selection");
+    }
+
+    if (!/suvs with sunroof under/.test(answer) || /not available|not listed/.test(answer)) {
+      failures.push(`unexpected shortlist answer: ${response.answer}`);
+    }
+
+    results.push({
+      id: "sequential-selected-car-to-generic-feature-shortlist",
+      message: "Mahindra Thar price list -> Best SUV under 20 lakhs with Sunroof",
+      pass: failures.length === 0,
+      failures,
+      summary: {
+        setupIntent: setupResponse.intent,
+        intent: response.intent,
+        canvasType: response.canvasType,
+        rowCount: rows.length,
+        selectedVehicle,
+        clearSelectedVehicle: response.contextPatch?.clearSelectedVehicle,
+        answer: response.answer,
+        aciCoreBridge: response.aciCoreBridge || response.meta?.aciCoreBridge || null,
+      },
+    });
+  }
+
+  {
+    const failures = [];
+    let context = {};
+    const setupResponse = await runAciCoreLiveBridge({
       message: "Punch and Nexon CNG sunroof ABS ADAS",
       context,
     });

@@ -12,6 +12,54 @@ import {
   maybeRunAciEarlyFeatureGate,
   maybeRunAciPreBridgeMultiFeatureAnswer,
 } from "./aiAgent.earlyFeatureGate.js";
+import { buildAciCompoundVehiclePlan } from "./aiAgent.compoundVehicleRequest.js";
+import { applyAciCustomerJourneyGuidance } from "./aiAgent.customerJourney.js";
+
+const sealDiagnosticShortlistComposerAtRoot = (response = {}) => {
+  if (!response || typeof response !== "object") return response;
+  if (
+    response.finalRecommendationEnabled === true ||
+    response.finalRecommendation?.finalRecommendationEnabled === true ||
+    response.data?.finalRecommendationEnabled === true
+  ) return response;
+  if (response.conditionalDecisionGuidance?.activated === true) return response;
+
+  const composer =
+    response.diagnosticShortlistComposer ||
+    response.data?.diagnosticShortlistComposer ||
+    response.meta?.diagnosticShortlistComposer ||
+    response.contextPatch?.diagnosticShortlistComposer ||
+    null;
+
+  if (!composer?.answer) return response;
+
+  const title = composer.title || response.title || response.data?.title || "Diagnostic shortlist";
+  const answer = composer.answer;
+
+  return {
+    ...response,
+    title,
+    answer,
+    clarification: response.clarification || answer,
+    diagnosticShortlistComposer: composer,
+    data: {
+      ...(response.data || {}),
+      title,
+      answer,
+      clarification: response.data?.clarification || answer,
+      diagnosticShortlistComposer: composer,
+    },
+    meta: {
+      ...(response.meta || {}),
+      diagnosticShortlistComposer: composer,
+    },
+    contextPatch: {
+      ...(response.contextPatch || {}),
+      diagnosticShortlistComposer: composer,
+    },
+  };
+};
+
 
 import {
   makeUnavailablePlan,
@@ -498,6 +546,20 @@ const chatWithAgentCore = async (...args) => {
     };
   }
 
+  const compoundVehiclePlan = await buildAciCompoundVehiclePlan({
+    message,
+    context,
+  });
+
+  if (compoundVehiclePlan) {
+    return executeAciPlannerPlan({
+      plan: compoundVehiclePlan,
+      userMessage: message,
+      context,
+      runtimeHints: { rawInput },
+    });
+  }
+
   const preBridgeMultiFeatureResponse = await maybeRunAciPreBridgeMultiFeatureAnswer({
     message,
     context,
@@ -730,26 +792,41 @@ export const chatWithAgent = async (...args) => {
   const startedAt = Date.now();
   const { message, context } = getNormalizerInputs(args);
   const response = await chatWithAgentCore(...args);
+  const broadDiscoveryResponse =
+    response?.meta?.aciCoreBridge?.contextIsolation === "broad_discovery_without_model" ||
+    response?.aciCoreBridge?.contextIsolation === "broad_discovery_without_model";
 
-  await repairAciResponseContextFromActiveContext({
-    response,
-    context,
-    hydrateModelEntity: hydrateAciExplicitModelEntityFromReadModel,
-  });
+  if (!broadDiscoveryResponse) {
+    await repairAciResponseContextFromActiveContext({
+      response,
+      context,
+      hydrateModelEntity: hydrateAciExplicitModelEntityFromReadModel,
+    });
+  }
 
   const normalized = await normalizeAciFinalResponse(response, {
     message,
     context,
   });
 
-  await repairAciResponseContextFromActiveContext({
-    response: normalized,
-    context,
-    hydrateModelEntity: hydrateAciExplicitModelEntityFromReadModel,
+  if (!broadDiscoveryResponse) {
+    await repairAciResponseContextFromActiveContext({
+      response: normalized,
+      context,
+      hydrateModelEntity: hydrateAciExplicitModelEntityFromReadModel,
+    });
+  }
+
+  const serviceContractResponse = normalizeAciServiceResponseContract(normalized, {
+    startedAt,
   });
 
-  return normalizeAciServiceResponseContract(normalized, {
-    startedAt,
+  const sealedResponse = sealDiagnosticShortlistComposerAtRoot(serviceContractResponse);
+
+  return applyAciCustomerJourneyGuidance({
+    response: sealedResponse,
+    message,
+    context,
   });
 };
 

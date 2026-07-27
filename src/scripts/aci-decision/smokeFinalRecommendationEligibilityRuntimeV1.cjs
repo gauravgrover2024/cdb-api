@@ -125,7 +125,7 @@ const CASES = [
 
       assert.strictEqual(eligibility.canUseForFinalRecommendation, false, `${testCase.id}: final recommendation unexpectedly enabled`);
       assert.strictEqual(eligibility.finalRecommendationEnabled, false, `${testCase.id}: finalRecommendationEnabled unexpectedly true`);
-      assert.strictEqual(eligibility.dryRun, true, `${testCase.id}: dryRun flag missing`);
+      assert.strictEqual(eligibility.dryRun, false, `${testCase.id}: eligibility runtime should use live evidence gates`);
       assert.notStrictEqual(
         eligibility.allowedAnswerType,
         ALLOWED_ANSWER_TYPES.FINAL_RECOMMENDATION_ALLOWED,

@@ -45,6 +45,48 @@ const logStepTime = (label, startedAt) => {
   console.log(`${label} in ${seconds}s`);
 };
 
+const sameIndexKey = (left = {}, right = {}) =>
+  JSON.stringify(left) === JSON.stringify(right);
+
+const createCompatibleIndexes = async (db, collectionName, specs = []) => {
+  const collection = db.collection(collectionName);
+  const existingIndexes = await collection.indexes().catch((error) => {
+    if (error?.code === 26 || error?.codeName === "NamespaceNotFound") return [];
+    throw error;
+  });
+
+  for (const spec of specs) {
+    const existingSameKey = existingIndexes.find((index) =>
+      sameIndexKey(index.key, spec.key),
+    );
+
+    if (existingSameKey) {
+      console.log(
+        `${collectionName}: using existing index ${existingSameKey.name} for ${spec.name}`,
+      );
+      continue;
+    }
+
+    const { key, ...options } = spec;
+
+    try {
+      await collection.createIndex(key, options);
+      existingIndexes.push(spec);
+    } catch (error) {
+      if (
+        error?.codeName === "IndexOptionsConflict" ||
+        error?.codeName === "IndexKeySpecsConflict"
+      ) {
+        console.warn(
+          `${collectionName}: skipped conflicting index ${spec.name}: ${error.message}`,
+        );
+        continue;
+      }
+      throw error;
+    }
+  }
+};
+
 const getObjectishField = (value, key = "") => {
   if (!value || !key) return "";
 
@@ -573,7 +615,7 @@ const loadVariantGearboxMap = async (db) => {
 };
 
 const createIndexes = async (db) => {
-  await db.collection(MODEL_SUMMARY_COLLECTION).createIndexes([
+  await createCompatibleIndexes(db, MODEL_SUMMARY_COLLECTION, [
     {
       key: { makeKey: 1, modelKey: 1, citySlug: 1 },
       name: "aci_model_summary_identity",
@@ -603,7 +645,7 @@ const createIndexes = async (db) => {
     },
   ]);
 
-  await db.collection(PRICE_ROWS_COLLECTION).createIndexes([
+  await createCompatibleIndexes(db, PRICE_ROWS_COLLECTION, [
     {
       key: { makeKey: 1, modelKey: 1, variantKey: 1, citySlug: 1 },
       name: "aci_price_rows_identity",

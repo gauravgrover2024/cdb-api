@@ -269,12 +269,44 @@ function buildFinalRecommendationEligibilityRuntime({
       evidence: Object.keys(evidence || {}).length ? evidence : response.evidence,
     },
   });
+  const finalRecommendation = asObject(
+    response.finalRecommendation ||
+    response.data?.finalRecommendation ||
+    response.meta?.finalRecommendation
+  );
+  const finalRecommendationReady =
+    requestedFinalRecommendation &&
+    finalRecommendation.requested === true &&
+    finalRecommendation.status === 'final_ready' &&
+    finalRecommendation.finalRecommendationEnabled === true &&
+    finalRecommendation.canUseForFinalRecommendation === true &&
+    moduleName === DECISION_MODULES.RECOMMENDATION &&
+    missingMandatoryInputs.length === 0 &&
+    evidenceGate.hasUsefulEvidence;
+  const effectiveBuyerGuidanceContext = finalRecommendationReady
+    ? {
+        ...buyerGuidanceContext,
+        guidanceMode: 'final_recommendation',
+        finalPurchaseVerdictEnabled: true,
+      }
+    : buyerGuidanceContext;
+  const effectiveBuyerDecisionInput = finalRecommendationReady
+    ? {
+        ...buyerDecisionInput,
+        buyerGuidanceContext: effectiveBuyerGuidanceContext,
+      }
+    : buyerDecisionInput;
+  const effectiveBuyerInputClarification = finalRecommendationReady
+    ? {
+        ...buyerInputClarification,
+        finalRecommendationStillDisabled: false,
+        buyerGuidanceContext: effectiveBuyerGuidanceContext,
+      }
+    : buyerInputClarification;
 
   const blockedReasons = [];
 
   if (requestedFinalRecommendation) {
-    blockedReasons.push(BLOCKED_REASONS.FINAL_RECOMMENDATION_POLICY_NOT_READY);
-
     if (moduleName && moduleName !== DECISION_MODULES.RECOMMENDATION) {
       blockedReasons.push(BLOCKED_REASONS.MODULE_NOT_FINAL_RECOMMENDATION_ELIGIBLE);
     }
@@ -286,42 +318,54 @@ function buildFinalRecommendationEligibilityRuntime({
     if (!evidenceGate.hasUsefulEvidence) {
       blockedReasons.push(BLOCKED_REASONS.EVIDENCE_THRESHOLD_NOT_MET);
     }
+
+    if (!finalRecommendationReady) {
+      blockedReasons.push(BLOCKED_REASONS.FINAL_RECOMMENDATION_POLICY_NOT_READY);
+      blockedReasons.push(...asArray(finalRecommendation.blockedReasons));
+    }
   }
 
   const uniqueBlockedReasons = [...new Set(blockedReasons.filter(Boolean))];
   const finalPolicyReadiness = buildFinalRecommendationPolicyReadiness({
     requestedFinalRecommendation,
-    buyerDecisionInput,
-    buyerInputClarification,
+    buyerDecisionInput: effectiveBuyerDecisionInput,
+    buyerInputClarification: effectiveBuyerInputClarification,
     evidenceGate,
     blockedReasons: uniqueBlockedReasons,
+    finalRecommendationReady,
   });
 
 
   return {
-    version: 'aci_final_recommendation_eligibility_runtime_v1',
-    dryRun: true,
+    version: 'aci_final_recommendation_eligibility_runtime_v2',
+    dryRun: false,
     requestedFinalRecommendation,
-    canUseForFinalRecommendation: false,
-    finalRecommendationEnabled: false,
-    composerReady: false,
+    canUseForFinalRecommendation: finalRecommendationReady,
+    finalRecommendationEnabled: finalRecommendationReady,
+    composerReady: finalRecommendationReady,
     module: moduleName,
     evaluatedTool: bridge.tool || response.tool || '',
     allowedAnswerType: requestedFinalRecommendation
-      ? (provisionalGuidanceMode ? ALLOWED_ANSWER_TYPES.DIAGNOSTIC_ONLY : (missingMandatoryInputs.length > 0 ? ALLOWED_ANSWER_TYPES.CLARIFICATION_REQUIRED : ALLOWED_ANSWER_TYPES.DIAGNOSTIC_ONLY))
+      ? (finalRecommendationReady
+          ? ALLOWED_ANSWER_TYPES.FINAL_RECOMMENDATION_ALLOWED
+          : provisionalGuidanceMode
+            ? ALLOWED_ANSWER_TYPES.DIAGNOSTIC_ONLY
+            : (missingMandatoryInputs.length > 0 ? ALLOWED_ANSWER_TYPES.CLARIFICATION_REQUIRED : ALLOWED_ANSWER_TYPES.DIAGNOSTIC_ONLY))
       : (response.decisionPolicy?.allowedAnswerType || response.data?.decisionPolicy?.allowedAnswerType || ALLOWED_ANSWER_TYPES.DIAGNOSTIC_ONLY),
     blockedReasons: uniqueBlockedReasons,
     missingMandatoryInputs: requestedFinalRecommendation ? missingMandatoryInputs : [],
-    buyerDecisionInput: requestedFinalRecommendation ? buyerDecisionInput : null,
-    buyerInputClarification: requestedFinalRecommendation ? buyerInputClarification : null,
-    buyerGuidanceContext: requestedFinalRecommendation ? buyerGuidanceContext : null,
-    provisionalGuidanceMode: requestedFinalRecommendation ? provisionalGuidanceMode : '',
+    buyerDecisionInput: requestedFinalRecommendation ? effectiveBuyerDecisionInput : null,
+    buyerInputClarification: requestedFinalRecommendation ? effectiveBuyerInputClarification : null,
+    buyerGuidanceContext: requestedFinalRecommendation ? effectiveBuyerGuidanceContext : null,
+    provisionalGuidanceMode: requestedFinalRecommendation && !finalRecommendationReady ? provisionalGuidanceMode : '',
     finalPolicyReadiness: requestedFinalRecommendation ? finalPolicyReadiness : null,
     presentInputs,
     evidenceStatus: evidenceGate.evidenceStatus,
     evidenceConfidence: evidenceGate.confidence,
     reason: requestedFinalRecommendation
-      ? 'Final recommendation is detected but blocked in runtime dry-run until buyer context, evidence thresholds and central decision composer are production-ready.'
+      ? (finalRecommendationReady
+          ? 'Final recommendation is enabled because buyer context, exact-variant evidence, freshness, provenance, and composer gates passed.'
+          : 'Final recommendation is blocked because one or more buyer-context or evidence gates did not pass.')
       : 'No final recommendation request detected.',
   };
 }

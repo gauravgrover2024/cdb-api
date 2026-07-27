@@ -87,11 +87,23 @@ add('fast-filter-sample-reduced', /ACI_SIMILAR_AUDIT_SAMPLE_LIMIT=8/.test(script
 add('full-relation-sample-preserved', /ACI_SIMILAR_RELATION_SAMPLE_LIMIT=80/.test(scripts['aci:decision:similar-relation-mode:eval:full'] || ''));
 add('full-filter-sample-preserved', /ACI_SIMILAR_AUDIT_SAMPLE_LIMIT=80/.test(scripts['aci:decision:similar-filter:audit:full'] || ''));
 
-add('final-eligibility-stays-disabled', /canUseForFinalRecommendation:\s*false/.test(finalEligibility));
-add('final-eligibility-dry-run-present', /dryRun:\s*true/.test(finalEligibility));
+add(
+  'final-eligibility-is-conditionally-enabled',
+  /canUseForFinalRecommendation:\s*finalRecommendationReady/.test(finalEligibility) &&
+    /moduleName === DECISION_MODULES\.RECOMMENDATION/.test(finalEligibility) &&
+    /missingMandatoryInputs\.length === 0/.test(finalEligibility) &&
+    /evidenceGate\.hasUsefulEvidence/.test(finalEligibility)
+);
+add('final-eligibility-live-gate-present', /dryRun:\s*false/.test(finalEligibility));
 add('final-eligibility-policy-not-ready-block-present', /FINAL_RECOMMENDATION_POLICY_NOT_READY/.test(finalEligibility));
 
 add('live-bridge-attaches-final-blocked-ux', liveBridge.includes('finalBlockedUx') && liveBridge.includes('final_recommendation_blocked'));
+add(
+  'live-bridge-final-activation-is-gated',
+  liveBridge.includes('fastFinalRecommendation?.finalRecommendationEnabled === true') &&
+    liveBridge.includes('finalRecommendationEligibility.canUseForFinalRecommendation === true') &&
+    liveBridge.includes('ALLOWED_ANSWER_TYPES.FINAL_RECOMMENDATION_ALLOWED')
+);
 add(
   'language-registry-has-final-choice-guidance',
   /decision_buyer_guidance_practical_first_view|decision_buyer_guidance_conditional|decision_buyer_guidance_sharpened_recommendation/i.test(languageRegistry) &&
@@ -104,7 +116,6 @@ add('progress-tracker-has-phase4e', /Phase 4E adds final-blocked readiness UX/i.
 add('progress-tracker-points-to-phase4f-or-phase5', /Phase 4F closure gate|Phase 5|Buyer Context/i.test(progress));
 
 const riskyRuntimeFiles = [
-  'src/services/aciCore/integration/aciCoreLiveBridge.service.js',
   'src/services/aiAgent/tools/newCars/vehicleScoreInsight.tool.js',
   'src/services/aiAgent/tools/newCars/vehicleSimilar.tool.js',
   'src/services/aiAgent/aiAgent.responseTools.js',
@@ -130,7 +141,7 @@ for (const file of riskyRuntimeFiles) {
   });
 }
 
-add('no-runtime-final-recommendation-leakage', leakage.length === 0, { leakage });
+add('no-final-recommendation-leakage-from-diagnostic-modules', leakage.length === 0, { leakage });
 
 const failed = checks.filter((check) => !check.ok);
 

@@ -2,9 +2,16 @@ import asyncHandler from "express-async-handler";
 import { chatWithAgent } from "../services/aiAgent/aiAgent.service.js";
 import { logInteraction } from "../services/aiAgent/aiAgent.learningEngine.js";
 import { getAiAutocompleteSuggestions } from "../services/aiAgent/aiAgent.autocomplete.js";
+import { getAvailablePricingCities } from "../services/aiAgent/tools/newCars/vehiclePricelist.tool.js";
+import { compactAciClientResponse } from "../services/aiAgent/aiAgent.clientResponse.js";
+
+const clientResponseFor = (response, source = "") =>
+  source === "aci_assist_v2_frontend"
+    ? compactAciClientResponse(response)
+    : response;
 
 export const chatWithAiAgent = asyncHandler(async (req, res) => {
-  const { message, sessionId, context, selectedEntity, filters, debug } =
+  const { message, sessionId, context, selectedEntity, filters, debug, source } =
     req.body || {};
 
   if (!message || typeof message !== "string") {
@@ -22,11 +29,11 @@ export const chatWithAiAgent = asyncHandler(async (req, res) => {
     user: req.user,
   });
 
-  res.json(response);
+  res.json(clientResponseFor(response, source));
 });
 
 export const chatWithAiAgentPublic = asyncHandler(async (req, res) => {
-  const { message, sessionId, context, selectedEntity, filters, debug } =
+  const { message, sessionId, context, selectedEntity, filters, debug, source } =
     req.body || {};
 
   if (!message || typeof message !== "string") {
@@ -44,7 +51,7 @@ export const chatWithAiAgentPublic = asyncHandler(async (req, res) => {
     user: null,
   });
 
-  res.json(response);
+  res.json(clientResponseFor(response, source));
 });
 
 export const logAiSuggestionInteraction = asyncHandler(async (req, res) => {
@@ -70,9 +77,20 @@ export const logAiSuggestionInteraction = asyncHandler(async (req, res) => {
 });
 
 export const autocompleteAiAgent = asyncHandler(async (req, res) => {
-  const { q = "", limit = 8 } = req.query || {};
-
-  const context = req.body?.context || {};
+  const { q = "", limit = 8, make = "", model = "", variant = "" } =
+    req.query || {};
+  const context =
+    req.body?.context ||
+    (model
+      ? {
+          selectedVehicle: {
+            make,
+            brand: make,
+            model,
+            variant,
+          },
+        }
+      : {});
 
   const response = await getAiAutocompleteSuggestions({
     q,
@@ -80,5 +98,64 @@ export const autocompleteAiAgent = asyncHandler(async (req, res) => {
     limit: Number(limit) || 8,
   });
 
+  res.set(
+    "Cache-Control",
+    "public, max-age=60, s-maxage=300, stale-while-revalidate=3600",
+  );
   res.json(response);
+});
+
+export const autocompleteAiAgentPublic = asyncHandler(async (req, res) => {
+  const payload = req.method === "POST" ? req.body || {} : req.query || {};
+  const {
+    q = "",
+    limit = 8,
+    context: suppliedContext = {},
+    make = "",
+    model = "",
+    variant = "",
+  } = payload;
+  const context =
+    suppliedContext && typeof suppliedContext === "object" &&
+    Object.keys(suppliedContext).length
+      ? suppliedContext
+      : model
+        ? {
+            selectedVehicle: {
+              make,
+              brand: make,
+              model,
+              variant,
+            },
+          }
+        : {};
+
+  const response = await getAiAutocompleteSuggestions({
+    q,
+    context,
+    limit: Number(limit) || 8,
+  });
+
+  if (req.method === "GET") {
+    res.set(
+      "Cache-Control",
+      "public, max-age=60, s-maxage=300, stale-while-revalidate=3600",
+    );
+  } else {
+    res.set("Cache-Control", "no-store");
+  }
+  res.json(response);
+});
+
+export const getAiAgentPricingCitiesPublic = asyncHandler(async (_req, res) => {
+  const rows = await getAvailablePricingCities();
+  res.set(
+    "Cache-Control",
+    "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400",
+  );
+  res.json({
+    ok: true,
+    count: rows.length,
+    rows,
+  });
 });

@@ -79,10 +79,22 @@ const extractUseCase = (text = '') => {
 
 const extractFamily = (text = '') => {
   const raw = cleanText(text).toLowerCase();
+  const numberWords = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+  };
   const familyCount =
     raw.match(/\bfamily\s+of\s+(\d+)\b/i) ||
     raw.match(/\b(\d+)\s*(?:people|members|seater need|seats?)\b/i);
   if (familyCount) return `${familyCount[1]} occupants`;
+  const familyWord = raw.match(/\bfamily\s+of\s+(one|two|three|four|five|six|seven|eight)\b/i);
+  if (familyWord) return `${numberWords[familyWord[1]]} occupants`;
   if (/\bfamily\b|\bparents?\b|\bkids?\b|\brear seat\b/.test(raw)) return 'family occupancy';
   return '';
 };
@@ -124,7 +136,7 @@ const extractTransmission = (text = '') => {
 
 const extractSafetyPriority = (text = '') => {
   const raw = cleanText(text).toLowerCase();
-  if (/\bsafest\b|\bsafety\s+(?:is\s+)?(?:important|priority|must)|\bhigh\s+safety\b|\bncap\b|\bcrash\s+test\b|\b5\s*star\b/.test(raw)) {
+  if (/\bsafest\b|\bsafety\s+(?:is\s+)?(?:important|(?:my\s+)?(?:top|highest|first)\s+priority|priority|must)|\b(?:top|highest|high)\s+safety\b|\bsafety[^.]{0,30}\btop\s+priority\b|\bncap\b|\bcrash\s+test\b|\b5\s*star\b/.test(raw)) {
     return 'high';
   }
   if (/\bsafety\b|\bairbags?\b/.test(raw)) return 'medium';

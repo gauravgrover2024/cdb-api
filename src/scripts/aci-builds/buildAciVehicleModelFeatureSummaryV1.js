@@ -263,6 +263,10 @@ for (const modelKey of modelKeys.sort()) {
 
 await out.createIndex({ modelKey: 1 }, { name: "model_feature_summary_model_key", unique: true });
 await out.createIndex({ make: 1, model: 1 }, { name: "model_feature_summary_make_model" });
+await out.createIndex(
+  { "allFeatures.key": 1, "allFeatures.count": 1, modelKey: 1 },
+  { name: "model_feature_summary_feature_availability" },
+);
 await out.createIndex({ updatedAt: -1 }, { name: "model_feature_summary_updated" });
 
 console.log(JSON.stringify({

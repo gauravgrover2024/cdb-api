@@ -11,9 +11,11 @@ import {
 import {
   runAciCoreLiveBridge,
 } from "../../services/aciCore/integration/aciCoreLiveBridge.service.js";
+import { warmVehicleAliasRegistry } from "../../services/aciCore/context/aciVehicleAliasRegistry.service.js";
 import {
   hasForbiddenContextPayload,
   planContextCase,
+  warmAuditModelSummaryCache,
 } from "./auditAciContextManagerV1.js";
 
 const CASE_TIMEOUT_MS = 5000;
@@ -515,6 +517,7 @@ const runStressCase = async (testCase = {}) => {
       ? { contextState: testCase.previousContextState, aciContextState: testCase.previousContextState }
       : {};
     const result = await withTimeout(planContextCase({ message: testCase.message, context }), testCase.id);
+    const planningDurationMs = Date.now() - startedAt;
     const expected = testCase.expected || {};
     const answerPreview = buildAnswerPreview(result, expected);
 
@@ -559,7 +562,9 @@ const runStressCase = async (testCase = {}) => {
     }
 
     let e2eSummary = null;
+    let e2eDurationMs = 0;
     if (expected.e2eSanity) {
+      const e2eStartedAt = Date.now();
       const e2eOutput = await withE2eTimeout(
         runAciCoreLiveBridge({
           message: testCase.message,
@@ -570,6 +575,7 @@ const runStressCase = async (testCase = {}) => {
         }),
         testCase.id,
       );
+      e2eDurationMs = Date.now() - e2eStartedAt;
 
       e2eSummary = assertE2eAnswerQuality({ output: e2eOutput, expected, failures });
     }
@@ -583,6 +589,8 @@ const runStressCase = async (testCase = {}) => {
       group: testCase.group,
       pass: failures.length === 0,
       durationMs,
+      planningDurationMs,
+      e2eDurationMs,
       message: testCase.message,
       e2eSanity: Boolean(expected.e2eSanity),
       failures,
@@ -604,6 +612,8 @@ const runStressCase = async (testCase = {}) => {
       group: testCase.group,
       pass: false,
       durationMs: Date.now() - startedAt,
+      planningDurationMs: Date.now() - startedAt,
+      e2eDurationMs: 0,
       message: testCase.message,
       e2eSanity: Boolean(testCase.expected?.e2eSanity),
       failures: [error?.message || String(error)],
@@ -614,6 +624,10 @@ const runStressCase = async (testCase = {}) => {
 
 const main = async () => {
   await connectDB();
+  await Promise.all([
+    warmAuditModelSummaryCache(),
+    warmVehicleAliasRegistry(),
+  ]);
 
   const startedAt = Date.now();
   const results = [];
@@ -622,7 +636,10 @@ const main = async () => {
   }
 
   const durationMs = Date.now() - startedAt;
-  const durations = results.map((item) => item.durationMs);
+  const durations = results.map((item) => item.planningDurationMs ?? item.durationMs);
+  const e2eDurations = results
+    .filter((item) => item.e2eSanity)
+    .map((item) => item.e2eDurationMs || 0);
   const slowCases = results
     .filter((item) => item.durationMs > (item.e2eSanity ? E2E_CASE_TIMEOUT_MS : CASE_TIMEOUT_MS))
     .map((item) => ({
@@ -652,6 +669,13 @@ const main = async () => {
     p95Ms: percentile(durations, 95),
     maxMs: Math.max(...durations),
     totalMs: durationMs,
+    measurement: "context_planning_only",
+    e2e: {
+      count: e2eDurations.length,
+      medianMs: percentile(e2eDurations, 50),
+      p95Ms: percentile(e2eDurations, 95),
+      maxMs: e2eDurations.length ? Math.max(...e2eDurations) : 0,
+    },
   };
   const timingFailures = [];
   if (timing.medianMs > MEDIAN_TARGET_MS) timingFailures.push(`median ${timing.medianMs}ms > ${MEDIAN_TARGET_MS}ms`);

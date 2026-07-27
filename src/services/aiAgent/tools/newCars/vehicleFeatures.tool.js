@@ -11,6 +11,11 @@ import {
   buildAciLanguageSeed,
   renderAciTemplate,
 } from "../../../aciCore/language/aciAnswerLanguageComposer.js";
+import {
+  ACI_FEATURE_EXPLAINER_COLLECTION,
+  composeAciFeatureExplanation,
+  resolveAciFeatureExplainer,
+} from "../../../aciCore/features/aciFeatureExplainer.service.js";
 
 const TOOL_NAME = "vehicle_features";
 const DEFAULT_CITY = "new-delhi";
@@ -131,6 +136,9 @@ const getModel = ({ toolPlan = {}, context = {}, userMessage = "" } = {}) => {
 
 const KNOWN_FEATURE_TERMS = [
   "ADAS",
+  "ABS",
+  "anti-lock braking system",
+  "anti lock braking system",
   "sunroof",
   "panoramic sunroof",
   "single pane sunroof",
@@ -193,6 +201,22 @@ const KNOWN_FEATURE_TERMS = [
   "height",
   "wheelbase",
 ];
+
+const isFeatureVariantCollision = ({ variant = "", feature = "" } = {}) => {
+  const variantKey = normalizeText(variant);
+  const featureKey = normalizeText(feature);
+  if (!variantKey || !featureKey) return false;
+  if (variantKey === featureKey) return true;
+
+  const featureAcronyms = [
+    ...String(feature || "").matchAll(/\(([A-Za-z0-9]{2,8})\)/g),
+  ].map((match) => normalizeText(match[1]));
+
+  if (featureAcronyms.includes(variantKey)) return true;
+  if (variantKey === "abs" && /\babs\b|anti\s+lock\s+brak/i.test(featureKey)) return true;
+
+  return false;
+};
 
 
 const FEATURE_QUERY_ALIASES = [
@@ -694,6 +718,9 @@ const normalizeCustomerCopy = (value = "") => {
 const lowerFirst = (value = "") => {
   const text = cleanText(value);
   if (!text) return "";
+  if (/^anti-lock braking system \(abs\)$/i.test(text)) {
+    return "anti-lock braking system (ABS)";
+  }
   if (/^[A-Z0-9]{2,}$/.test(text)) return text;
   return text.charAt(0).toLowerCase() + text.slice(1);
 };
@@ -846,7 +873,7 @@ const buildCustomerFeatureAnswer = ({
           : `Here are ${target}'s available features`;
       const suffix = sample ? `: ${sample}.` : ` — ${evidenceCount} indexed ${scope}.`;
       const limitation = /lose|lost|miss|missing|without/i.test(userMessage || "")
-        ? " I can show the indexed feature rows, but this view does not yet calculate a complete upgrade-loss ladder."
+        ? " I can show the confirmed feature differences, but this view does not yet calculate a complete upgrade-loss ladder."
         : isModelLevelFeatureSummary
           ? " Features vary by variant."
           : " Equipment can differ by fuel/transmission sub-variant.";
@@ -870,7 +897,7 @@ const buildCustomerFeatureAnswer = ({
     }
 
     const scope = isSafetyFeatureQuery ? "safety feature list" : "feature list";
-    return `I found ${target}, but a full ${scope} is not available in the indexed feature records yet. I will not guess features without matching data.`;
+    return `I found ${target}, but I cannot verify the full ${scope} yet. I would rather leave a feature open than guess.`;
   }
 
   if (result.intent === "vehicle_feature_answer" && featureLabel) {
@@ -1077,6 +1104,65 @@ const isInactiveVariantResult = (result = {}) => {
   );
 };
 
+const FEATURE_IMPORTANCE_RANK = Object.freeze({
+  critical: 5,
+  high: 4,
+  medium: 3,
+  low: 2,
+  not_applicable: 0,
+});
+
+const scoreFeatureDecisionImpact = (explainer = {}) => {
+  if (explainer.importance?.safetyCritical === true) return 6;
+  return Math.max(
+    0,
+    ...Object.values(explainer.importance || {}).map((value) =>
+      FEATURE_IMPORTANCE_RANK[normalizeText(value)] || 0),
+  );
+};
+
+const enrichFeatureComparisonDecisionContext = async ({ data = {} } = {}) => {
+  const differenceRows = asArray(data.differenceRows);
+  if (!differenceRows.length) return [];
+
+  const enriched = [];
+  for (const row of differenceRows.slice(0, 80)) {
+    const explainer = await resolveAciFeatureExplainer({
+      canonicalKey: row.featureKey,
+      featureName: row.displayName,
+    });
+    if (!explainer) {
+      enriched.push(row);
+      continue;
+    }
+
+    enriched.push({
+      ...row,
+      decisionImpact: {
+        canonicalKey: explainer.canonicalKey,
+        buyerSummary: explainer.buyerSummary,
+        whenItMattersSummary: explainer.whenItMattersSummary,
+        buyerAdvice: explainer.buyerAdvice,
+        featureType: explainer.featureType,
+        decisionCategory: explainer.decisionCategory,
+        importance: explainer.importance,
+        impactScore: scoreFeatureDecisionImpact(explainer),
+        sourceCollection: ACI_FEATURE_EXPLAINER_COLLECTION,
+      },
+    });
+  }
+
+  data.differenceRows = enriched;
+  data.featureExplanationRecordCount = enriched.filter((row) => row.decisionImpact).length;
+  data.decisionRelevantDifferences = enriched
+    .filter((row) => row.decisionImpact)
+    .sort((left, right) =>
+      Number(right.decisionImpact?.impactScore || 0) -
+      Number(left.decisionImpact?.impactScore || 0))
+    .slice(0, 10);
+  return data.decisionRelevantDifferences;
+};
+
 const toPublicResponse = async ({
   result = {},
   model = "",
@@ -1195,14 +1281,80 @@ const toPublicResponse = async ({
             city,
           });
 
-  const answer = buildCustomerFeatureAnswer({
+  const decisionRelevantDifferences =
+    result.intent === "vehicle_feature_comparison"
+      ? await enrichFeatureComparisonDecisionContext({ data })
+      : [];
+  let answer = buildCustomerFeatureAnswer({
     result,
     data,
     model: responseModel,
     variant: responseVariant,
     userMessage,
   });
+  if (decisionRelevantDifferences.length) {
+    const priorityNames = decisionRelevantDifferences
+      .slice(0, 3)
+      .map((row) => cleanText(row.displayName))
+      .filter(Boolean);
+    if (priorityNames.length) {
+      answer = cleanText(
+        `${answer} Start by checking how ${priorityNames.join(", ")} differ, then weigh the remaining equipment against the price gap and your regular use.`,
+      );
+    }
+  }
+  const shouldAttachFeatureExplanation = result.intent === "vehicle_feature_answer";
+  const featureExplanation = shouldAttachFeatureExplanation
+    ? await resolveAciFeatureExplainer({
+        canonicalKey: firstText(
+          data.featureKey,
+          data.resolvedFeature?.canonicalKey,
+          result.featureKey,
+        ),
+        featureName: firstText(
+          data.featureName,
+          data.resolvedFeature?.displayName,
+          data.feature,
+          result.feature,
+        ),
+      })
+    : null;
+  const featureExplanationText = composeAciFeatureExplanation(featureExplanation || {});
+
+  if (featureExplanation && featureExplanationText) {
+    data.featureExplanation = featureExplanation;
+    answer = cleanText(`${answer} ${featureExplanationText}`);
+  }
   const title = normalizeCustomerCopy(result.title);
+  const baseSourceTransparency = result.sourceTransparency || {
+    modulesChecked: [
+      "vehicle_feature_catalog_v2",
+      "vehicle_variant_feature_matrix_v2",
+    ],
+    recordCount:
+      Number(data.rows?.length || 0) ||
+      Number(data.features?.length || 0) ||
+      Number(data.variants?.length || 0),
+  };
+  const sourceTransparency = featureExplanation
+    ? {
+        ...baseSourceTransparency,
+        modulesChecked: [...new Set([
+          ...asArray(baseSourceTransparency.modulesChecked),
+          ACI_FEATURE_EXPLAINER_COLLECTION,
+        ])],
+        featureExplanationRecordCount: 1,
+      }
+    : decisionRelevantDifferences.length
+      ? {
+          ...baseSourceTransparency,
+          modulesChecked: [...new Set([
+            ...asArray(baseSourceTransparency.modulesChecked),
+            ACI_FEATURE_EXPLAINER_COLLECTION,
+          ])],
+          featureExplanationRecordCount: Number(data.featureExplanationRecordCount || 0),
+        }
+      : baseSourceTransparency;
 
   const widget = {
     type: TOOL_NAME,
@@ -1231,6 +1383,12 @@ const toPublicResponse = async ({
     meta: {
       ...(result.meta || {}),
       resolver: "featureResolverV2",
+      ...(featureExplanation
+        ? { featureExplainerCollection: ACI_FEATURE_EXPLAINER_COLLECTION }
+        : {}),
+      ...(decisionRelevantDifferences.length
+        ? { featureDecisionImpactCollection: ACI_FEATURE_EXPLAINER_COLLECTION }
+        : {}),
     },
   };
 
@@ -1263,21 +1421,19 @@ const toPublicResponse = async ({
       anchorVariant: selectedVehicle.variant || "",
       anchorCity: city,
     },
-    sourceTransparency: result.sourceTransparency || {
-      modulesChecked: [
-        "vehicle_feature_catalog_v2",
-        "vehicle_variant_feature_matrix_v2",
-      ],
-      recordCount:
-        Number(data.rows?.length || 0) ||
-        Number(data.features?.length || 0) ||
-        Number(data.variants?.length || 0),
-    },
+    ...(featureExplanation ? { featureExplanation } : {}),
+    sourceTransparency,
     meta: {
       ...(result.meta || {}),
       resolver: "featureResolverV2",
       inactiveVariant,
       modelLevelExplorer,
+      ...(featureExplanation
+        ? { featureExplainerCollection: ACI_FEATURE_EXPLAINER_COLLECTION }
+        : {}),
+      ...(decisionRelevantDifferences.length
+        ? { featureDecisionImpactCollection: ACI_FEATURE_EXPLAINER_COLLECTION }
+        : {}),
     },
   };
 };
@@ -1400,7 +1556,7 @@ const buildModelFeatureSummaryAnswer = ({
   if (infotainment.length) parts.push(`Tech features include ${infotainment.join(", ")}`);
 
   if (!parts.length) {
-    return `I found indexed feature coverage for ${modelLabel}, but the model summary does not yet have enough clean highlights to present confidently.`;
+    return `I found feature information for ${modelLabel}, but there are not enough clear highlights to present it confidently yet.`;
   }
 
   return `${modelLabel}: ${parts.join(". ")}. Features vary by variant, so check the exact trim before finalizing.`;
@@ -1597,7 +1753,7 @@ export const runVehicleFeaturesTool = async (args = {
     context,
     userMessage,
     model,
-  });
+  }).filter((variant) => !isFeatureVariantCollision({ variant, feature }));
   const contextFeatureSummary =
     /\b(this|it|its|same|current|selected)\b/i.test(userMessage || "") &&
     /\bfeatures?\b/i.test(userMessage || "");

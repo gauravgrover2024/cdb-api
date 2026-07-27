@@ -3,7 +3,7 @@
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 from bs4 import BeautifulSoup
@@ -18,8 +18,6 @@ from mongo_connection import monthly_sales_collection
 
 URL = "https://www.v3cars.com/popular-cars"
 
-MONTH = "2026-04"
-
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -31,6 +29,22 @@ HEADERS = {
 # ============================================================
 # HELPERS
 # ============================================================
+
+MONTH_NUMBERS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+
 
 def normalize_spaces(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
@@ -52,7 +66,6 @@ def normalize_model_name(model: str) -> str:
     # ========================================================
 
     replacements = {
-        "Maruti Victoris": "Maruti Grand Vitara",
         "Mahindra XUV 7XO": "Mahindra XUV700",
         "Mahindra Scorpio-N": "Mahindra Scorpio N",
     }
@@ -70,6 +83,26 @@ def parse_number(value: str):
     return int(
         match.group(1).replace(",", "")
     )
+
+
+def month_period(month_label: str):
+
+    month_num = MONTH_NUMBERS.get(
+        str(month_label or "").strip().lower()
+    )
+
+    if not month_num:
+        return None
+
+    now = datetime.now(timezone.utc)
+    year = now.year
+
+    # Sales data usually lags the calendar month. If a future month label
+    # appears around a year boundary, it belongs to the previous year.
+    if month_num > now.month:
+        year -= 1
+
+    return f"{year}-{month_num:02d}"
 
 
 def build_session():
@@ -97,6 +130,50 @@ def fetch_page(session):
 # CARD PARSER
 # ============================================================
 
+def find_sales_cards(soup):
+
+    legacy_cards = soup.find_all(
+        "section",
+        class_="card"
+    )
+
+    if legacy_cards:
+        return legacy_cards
+
+    cards = []
+    seen = set()
+
+    for heading in soup.find_all("h3"):
+
+        heading_classes = heading.get("class") or []
+
+        if not {"text-lg", "font-medium"}.issubset(set(heading_classes)):
+            continue
+
+        card = heading.find_parent(
+            "div",
+            class_=lambda value: value and "cursor-pointer" in value
+        )
+
+        if not card:
+            continue
+
+        text = card.get_text(" ", strip=True)
+
+        if not re.search(r"\b[A-Za-z]+\s+Sales:\s*[\d,]+", text):
+            continue
+
+        key = id(card)
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        cards.append(card)
+
+    return cards
+
+
 def parse_card(card, rank: int):
 
     text = card.get_text(" ", strip=True)
@@ -107,21 +184,33 @@ def parse_card(card, rank: int):
 
     model = None
 
-    links = card.find_all("a")
+    heading = card.find("h3")
 
-    for link in links:
-
+    if heading:
         candidate = normalize_spaces(
-            link.get_text(" ", strip=True)
+            heading.get_text(" ", strip=True)
         )
 
-        if (
-            len(candidate) > 3
-            and len(candidate) < 60
-            and "price" not in candidate.lower()
-        ):
+        if candidate:
             model = candidate
-            break
+
+    links = card.find_all("a")
+
+    if not model:
+
+        for link in links:
+
+            candidate = normalize_spaces(
+                link.get_text(" ", strip=True)
+            )
+
+            if (
+                len(candidate) > 3
+                and len(candidate) < 60
+                and "price" not in candidate.lower()
+            ):
+                model = candidate
+                break
 
     if not model:
         return None
@@ -135,18 +224,27 @@ def parse_card(card, rank: int):
     sales = None
 
     sales_match = re.search(
-        r"April\s+Sales\s+([\d,]+)",
+        r"\b([A-Za-z]+)\s+Sales:\s*([\d,]+)",
         text,
         flags=re.IGNORECASE
     )
 
+    sales_month_label = None
+
     if sales_match:
 
+        sales_month_label = sales_match.group(1)
+
         sales = parse_number(
-            sales_match.group(1)
+            sales_match.group(2)
         )
 
     if not sales:
+        return None
+
+    period = month_period(sales_month_label)
+
+    if not period:
         return None
 
     # ========================================================
@@ -154,17 +252,20 @@ def parse_card(card, rank: int):
     # ========================================================
 
     previous_sales = None
+    previous_month_label = None
 
-    previous_match = re.search(
-        r"March\s+Sales\s+([\d,]+)",
+    sales_matches = list(re.finditer(
+        r"\b([A-Za-z]+)\s+Sales:\s*([\d,]+)",
         text,
         flags=re.IGNORECASE
-    )
+    ))
 
-    if previous_match:
+    if len(sales_matches) > 1:
+
+        previous_month_label = sales_matches[1].group(1)
 
         previous_sales = parse_number(
-            previous_match.group(1)
+            sales_matches[1].group(2)
         )
 
     # ========================================================
@@ -174,7 +275,7 @@ def parse_card(card, rank: int):
     percent_change = None
 
     pct_match = re.search(
-        r"%\s*Change\s*([\-0-9\.]+)",
+        r"%\s*Change:\s*([\-0-9\.]+)",
         text,
         flags=re.IGNORECASE
     )
@@ -195,7 +296,7 @@ def parse_card(card, rank: int):
     body_style = None
 
     body_match = re.search(
-        r"Body Style\s+([A-Za-z]+)",
+        r"Body Style:\s+([A-Za-z]+)",
         text,
         flags=re.IGNORECASE
     )
@@ -213,7 +314,7 @@ def parse_card(card, rank: int):
     segment = None
 
     segment_match = re.search(
-        r"Segment\s+([A-Za-z0-9\-]+)",
+        r"Segment:\s+([A-Za-z0-9\-]+)\s*-?\s*segment",
         text,
         flags=re.IGNORECASE
     )
@@ -231,7 +332,7 @@ def parse_card(card, rank: int):
     price_range = None
 
     price_match = re.search(
-        r"₹\s*([\d\.\-\s]+lakh)",
+        r"₹\s*([\d\.]+)\s*-\s*₹\s*([\d\.]+)\s*L",
         text,
         flags=re.IGNORECASE
     )
@@ -239,15 +340,22 @@ def parse_card(card, rank: int):
     if price_match:
 
         price_range = normalize_spaces(
-            price_match.group(1)
+            f"{price_match.group(1)} - {price_match.group(2)} L"
         )
+
+    rank_match = re.search(r"\b(\d+)\s+Rank\b", text, flags=re.IGNORECASE)
+
+    if rank_match:
+        rank = int(rank_match.group(1))
 
     # ========================================================
     # DOCUMENT
     # ========================================================
 
     return {
-        "month": MONTH,
+        "month": period,
+
+        "salesMonthLabel": sales_month_label,
 
         "rank": rank,
 
@@ -256,6 +364,8 @@ def parse_card(card, rank: int):
         "sales": sales,
 
         "previousMonthSales": previous_sales,
+
+        "previousMonthLabel": previous_month_label,
 
         "percentChange": percent_change,
 
@@ -269,7 +379,7 @@ def parse_card(card, rank: int):
 
         "sourceUrl": URL,
 
-        "scrapedAt": datetime.utcnow(),
+        "scrapedAt": datetime.now(timezone.utc),
     }
 
 
@@ -294,10 +404,7 @@ def main():
         "html.parser"
     )
 
-    cards = soup.find_all(
-        "section",
-        class_="card"
-    )
+    cards = find_sales_cards(soup)
 
     print(f"Cards found: {len(cards)}")
 

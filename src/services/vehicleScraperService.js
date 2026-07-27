@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import mongoose from "mongoose";
+import { reconcileManualVehicleTerms } from "./vehicleSuggestionTermService.js";
 
 const DEFAULT_SCRIPTS_DIR = path.resolve(process.cwd(), "scripts/vehicle-scrapers");
 const SCRIPTS_DIR =
@@ -158,6 +159,7 @@ const toRunResponse = (run, { includeLogs = false } = {}) => ({
   summaryBefore: run.summaryBefore || null,
   summaryAfter: run.summaryAfter || null,
   delta: run.delta || null,
+  reconcile: run.reconcile || null,
   logsTail: tailList(run.logs, 200),
   logsCount: run.logs.length,
   logs: includeLogs ? run.logs : undefined,
@@ -250,6 +252,7 @@ export const startVehicleScraperRun = async (scriptKey) => {
     summaryBefore: before,
     summaryAfter: null,
     delta: null,
+    reconcile: null,
   };
 
   runs.unshift(run);
@@ -289,6 +292,16 @@ export const startVehicleScraperRun = async (scriptKey) => {
     run.summaryAfter = await getCollectionsSnapshot();
     run.delta = buildDelta(run.summaryBefore, run.summaryAfter);
     activeByScript.delete(script.key);
+
+    // A successful scrape into `vehicles` may now cover manual "Type & Save"
+    // terms — reconcile so they drop out of the autosuggest union.
+    if (run.status === "completed" && script.targetCollections?.includes("vehicles")) {
+      try {
+        run.reconcile = await reconcileManualVehicleTerms();
+      } catch (error) {
+        pushLog(run, "stderr", `[reconcile] failed: ${error.message}`);
+      }
+    }
   });
 
   return toRunResponse(run, { includeLogs: true });

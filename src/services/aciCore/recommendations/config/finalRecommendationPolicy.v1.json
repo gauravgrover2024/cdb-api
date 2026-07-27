@@ -1,0 +1,44 @@
+{
+  "version": "aci_final_recommendation_policy_v1_2026_07_10",
+  "gates": {
+    "minimumEligibleModels": 2,
+    "maximumEvidenceAgeDays": 45,
+    "allowedMarketBands": ["strong", "good"],
+    "allowedActiveMarketBands": ["strong", "good"],
+    "allowedProvenanceBands": ["strong", "good"],
+    "allowedDecisionConfidence": ["high", "medium"],
+    "verifiedCrashApplicabilityScopes": [
+      "official_exact_variant",
+      "official_tested_variant",
+      "independent_exact_variant",
+      "independent_tested_variant"
+    ]
+  },
+  "baseWeights": {
+    "safety": 0.2,
+    "practicality": 0.14,
+    "cityUse": 0.1,
+    "highwayUse": 0.06,
+    "runningCost": 0.11,
+    "features": 0.11,
+    "comfort": 0.06,
+    "performance": 0.05,
+    "affordability": 0.07,
+    "regretResistance": 0.05,
+    "evidenceQuality": 0.05
+  },
+  "priorityAdjustments": {
+    "highSafety": { "safety": 0.16, "performance": -0.03, "comfort": -0.02 },
+    "familyUse": { "practicality": 0.09, "comfort": 0.02, "performance": -0.02 },
+    "cityUse": { "cityUse": 0.08, "highwayUse": -0.03 },
+    "highwayUse": { "highwayUse": 0.08, "cityUse": -0.02 },
+    "meaningfulRunning": { "runningCost": 0.06, "performance": -0.01 },
+    "featurePriority": { "features": 0.07, "comfort": 0.01 },
+    "automaticPreference": { "cityUse": 0.03 }
+  },
+  "penalties": {
+    "missingExactCrashApplicabilityForHighSafety": 4,
+    "mediumDecisionConfidence": 2,
+    "missingScoreConfidence": 3
+  }
+}

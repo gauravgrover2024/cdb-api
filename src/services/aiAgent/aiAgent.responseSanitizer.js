@@ -719,8 +719,8 @@ const patchFeatureAnswerWording = (response = {}, message = "", context = {}) =>
     ...response,
     answer:
       variant
-        ? `${prefix} ${model} ${variant} appears in the matching ${feature} feature records. Please confirm exact fuel/transmission sub-variant in the feature card, because features can differ within the same trim family.`
-        : `${prefix} ${model} appears in the matching ${feature} feature records. Please confirm the exact variant in the feature card, because features can differ by trim.`,
+        ? `${prefix} ${feature} is confirmed for ${model} ${variant}. Check the exact fuel and transmission in the feature card, because equipment can differ within the same trim.`
+        : `${prefix} ${feature} is confirmed for ${model}. Check the exact variant in the feature card, because equipment can differ by trim.`,
   };
 };
 
@@ -890,11 +890,16 @@ export const sanitizeAiAgentResponse = (response = {}, { message = "", context =
   const removeAvailability =
     next.inlineType === "unavailable_notice" ||
     next.intent === "vehicle_color_gallery";
+  const actionLimit =
+    Number(next.meta?.toolCount || 0) > 2 ||
+    asArray(next.secondaryResponses).length > 1
+      ? 40
+      : 5;
 
   next.actions = sanitizeList(next.actions || [], {
     removeVehicleCtas,
     removeAvailability,
-    max: 5,
+    max: actionLimit,
   });
 
   next.leadingQuestions = sanitizeList(next.leadingQuestions || [], {

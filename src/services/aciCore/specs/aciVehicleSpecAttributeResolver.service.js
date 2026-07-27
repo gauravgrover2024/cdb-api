@@ -162,16 +162,20 @@ const SPEC_ATTRIBUTE_BY_KEY = Object.fromEntries(
 const hasAlias = (text = '', alias = '') =>
   new RegExp(`(^|\\s)${normalizeText(alias).replace(/\s+/g, '\\s+')}($|\\s)`, 'i').test(normalizeText(text));
 
-function resolveSpecAttributeFromText({ message = '', features = [], topics = [] } = {}) {
+function resolveSpecAttributesFromText({ message = '', features = [], topics = [] } = {}) {
   const text = [
     message,
     ...asArray(features),
     ...asArray(topics),
   ].join(' ');
 
-  return SPEC_ATTRIBUTE_DEFINITIONS.find((definition) =>
+  return SPEC_ATTRIBUTE_DEFINITIONS.filter((definition) =>
     definition.aliases.some((alias) => hasAlias(text, alias)),
-  ) || null;
+  );
+}
+
+function resolveSpecAttributeFromText(input = {}) {
+  return resolveSpecAttributesFromText(input)[0] || null;
 }
 
 const isSpecAttributeTopic = (value = '') =>
@@ -567,6 +571,7 @@ export {
   isSpecAttributeTopic,
   lookupVehicleSpecAttribute,
   resolveSpecAttributeFromText,
+  resolveSpecAttributesFromText,
   runVehicleSpecAttributeLookup,
 };
 

@@ -146,7 +146,7 @@ const resolveAnchorGraph = async ({ col, toolPlan = {}, context = {}, userMessag
       graphVersion: GRAPH_VERSION,
       $or: [
         { "anchor.modelKey": key },
-        { "anchor.displayName": new RegExp(`(^|\\b)${key.replace(/[-_]+/g, " ")}(\\b|$)`, "i") },
+        { "anchor.displayName": new RegExp(`^${key.replace(/[-_]+/g, " ")}$`, "i") },
       ],
     });
     if (exact) return exact;

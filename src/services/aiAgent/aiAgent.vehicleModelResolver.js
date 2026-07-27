@@ -720,7 +720,9 @@ const scoreEntityCandidate = ({ gram = "", entry = {} } = {}) => {
     else if (textNorm.startsWith(`${gramNorm} `)) score += 80;
     else if (textNorm.endsWith(` ${gramNorm}`)) score += 75;
     else if (` ${textNorm} `.includes(` ${gramNorm} `) && gramNorm.length >= 3) score += 55;
-    else if (gramNorm.includes(textNorm) && textNorm.length >= 4) score += 35;
+    // Do not infer a vehicle from a word fragment. A brand such as "Force"
+    // must not match feature language such as "brakeforce". Spaced and
+    // compact aliases are already handled by the exact checks above.
 
     if (entry.model && normalizeText(entry.model) === gramNorm) score += 35;
     if (entry.fullModel && normalizeText(entry.fullModel) === gramNorm) score += 30;

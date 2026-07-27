@@ -7,9 +7,16 @@ import { runAciUnderstandingEngine } from "../understanding/aciUnderstandingEngi
 import { normalizeAciBuyerLanguage } from "../understanding/aciLanguageNormalization.service.js";
 import mongoose from "mongoose";
 import resolveVehicleAlias from "../context/aciVehicleAliasRegistry.service.js";
+import {
+  evaluateCandidateSourceProvenance,
+  filterDiagnosticSourceProvenanceRows,
+} from "../candidates/aciCandidateSourceProvenance.service.js";
 
 import { buildLegacyPlanFromAciMeaningFrame } from "./aciCoreToLegacyPlan.adapter.js";
-import { executeAciPlannerPlan } from "../../aiAgent/aiAgent.executor.js";
+import {
+  executeAciPlannerPlan,
+  runtimeBudgetVehicleDiscovery,
+} from "../../aiAgent/aiAgent.executor.js";
 import { normalizeAciFinalResponse } from "../../aiAgent/aiAgent.contractNormalizer.js";
 import { composeAciAnswer } from "../../aiAgent/aiAgent.answerComposer.js";
 import {
@@ -33,9 +40,27 @@ import {
   hydrateContextFromCandidates,
   mergeContextPatches,
 } from "../context/aciContextManager.service.js";
+import { applyBuyerContextToContextState } from "../context/aciBuyerContextExtractor.service.js";
+import {
+  createEmptyAciContextState,
+  createEmptySelectedVehicleState,
+} from "../context/aciContextState.contract.js";
+import {
+  enrichAciContextPatchWithTurnLedger,
+  resolveRelativeComparisonFromLedger,
+} from "../context/aciConversationTurnLedger.service.js";
 import {
   resolveModelScopedVariantFromMessage,
 } from "../variants/modelScopedVariantResolver.service.js";
+import {
+  resolveAciExplicitMessageModelEntity,
+} from "../../aiAgent/aiAgent.modelContextResolver.js";
+import {
+  ACI_FEATURE_EXPLAINER_COLLECTION,
+  composeAciFeatureDecisionExplanation,
+  resolveAciFeatureExplainerFromText,
+  resolveAciFeatureExplainersFromText,
+} from "../features/aciFeatureExplainer.service.js";
 
 
 const require = createRequire(import.meta.url);
@@ -117,6 +142,9 @@ const hasContextReference = (message = "") =>
 const hasComparisonLanguage = (message = "") =>
   /\b(vs|v\/s|versus|compare|comparison|compared|better|better than|difference between|price difference|show price difference|which is cheaper|cheaper|costlier|more expensive|which one|which should|choose|pick|recommend|verdict)\b/i.test(message);
 
+const hasExplicitFeatureComparisonLanguage = (message = "") =>
+  /\b(vs|v\/s|versus|compare|comparison|compared|difference between)\b/i.test(message);
+
 const isDirectNonComparisonTask = (message = "") =>
   /\b(colors?|colours?|sunroof|airbags?|features?|mileage|range|boot space|ground clearance|engine cc|power|price|on road|on-road|ex showroom|ex-showroom)\b/i.test(message) &&
   !/\b(price difference|show price difference|which is cheaper|compare|vs|v\/s|versus|difference between)\b/i.test(message);
@@ -131,9 +159,14 @@ const hasActiveComparisonFollowUp = ({ message = "", context = {} } = {}) => {
 
   if (!Array.isArray(vehicles) || vehicles.length < 2) return false;
 
-  if (isDirectNonComparisonTask(message)) return false;
+  const explicitlyRefersToComparison =
+    /\b(which|which one|which has|between them|both|them|their)\b/i.test(message);
 
-  return /\b(which one|which is better|better|safer|safety|their|price difference|show price difference|which is cheaper|cheaper|costlier|expensive|which should i|should i buy|choose|pick|recommend|verdict|final choice)\b/i.test(
+  if (isDirectNonComparisonTask(message) && !explicitlyRefersToComparison) {
+    return false;
+  }
+
+  return /\b(which|which one|which has|which is better|better|safer|safety|between them|both|them|their|price difference|show price difference|which is cheaper|cheaper|costlier|expensive|which should i|should i buy|choose|pick|recommend|verdict|final choice)\b/i.test(
     message,
   );
 };
@@ -284,6 +317,17 @@ const selectedVehicleLabel = (vehicle = {}) =>
   );
 
 const detectDirectFactLookup = (message = "") => {
+  if (/\babs\b|\banti[-\s]*lock\s+brak(?:e|ing)\b/i.test(message)) {
+    return {
+      tool: "vehicle_feature_lookup",
+      intent: "vehicle_feature_answer",
+      feature: "ABS",
+      output: {
+        inlineType: "feature_answer_card",
+      },
+    };
+  }
+
   if (/\bairbags?\b/i.test(message)) {
     return {
       tool: "vehicle_feature_lookup",
@@ -344,7 +388,44 @@ const detectDirectFactLookup = (message = "") => {
   return null;
 };
 
+const directFactMessageMayNameVehicle = ({ message = "", lookup = {} } = {}) => {
+  let residue = normalizeModelFeatureText(message);
+
+  const removableTerms = [
+    lookup.feature,
+    lookup.attributeLabel,
+    "abs",
+    "anti lock braking system",
+    "anti lock braking system abs",
+    "sunroof",
+    "airbag",
+    "airbags",
+    "ventilated seat",
+    "ventilated seats",
+    "mileage",
+    "boot space",
+  ];
+
+  for (const term of removableTerms) {
+    const normalized = normalizeModelFeatureText(term);
+    if (!normalized) continue;
+    const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    residue = (` ${residue} `).replace(new RegExp(` ${escaped} `, "g"), " ");
+  }
+
+  residue = residue
+    .replace(
+      /\b(what|how|about|does|do|is|are|has|have|having|with|get|gets|got|which|tell|show|check|confirm|me|it|this|that|same|current|selected|one|feature|features|available|availability|in|on|for|the|a|an|please|pls|kya|hai|hain|milta|milti|milte|mein|mai|main|me)\b/g,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return Boolean(residue);
+};
+
 const detectBatch2FeatureLookup = (message = "") => {
+  if (/\babs\b|\banti[-\s]*lock\s+brak(?:e|ing)\b/i.test(message)) return { feature: "ABS" };
   if (/\bventilated\s+seats?\b/i.test(message)) return { feature: "ventilated seats" };
   if (/\b6\s*airbags?|six\s+airbags?\b/i.test(message)) return { feature: "6 airbags" };
   if (/\bairbags?\b/i.test(message)) return { feature: "airbags" };
@@ -532,6 +613,9 @@ const hasLikelyVariantResidueForModelFeatureFastPath = ({
     feature.replace(/^6\s+/, "six "),
     feature.replace(/^six\s+/, "6 "),
     "sunroof",
+    "abs",
+    "anti lock braking system",
+    "anti lock braking system abs",
     "airbags",
     "6 airbags",
     "six airbags",
@@ -600,6 +684,7 @@ const maybeReturnStandaloneModelFeatureFastPath = async ({
     anchorMake: resolvedVehicle.make,
     anchorModel: resolvedVehicle.model,
     anchorFullModel: resolvedVehicle.fullModel,
+    anchorVariant: "",
     anchorCity: city,
     selectedVehicle: {
       ...(context?.selectedVehicle || {}),
@@ -608,6 +693,10 @@ const maybeReturnStandaloneModelFeatureFastPath = async ({
       model: resolvedVehicle.model,
       fullModel: resolvedVehicle.fullModel,
       modelKey: resolvedVehicle.modelKey,
+      variant: "",
+      variantName: "",
+      selectedVariant: "",
+      variantKey: "",
       city,
       citySlug: city,
     },
@@ -912,6 +1001,14 @@ const maybeReturnContextDirectFactFastPath = async ({
   if (!lookup) return null;
   if (hasComparisonLanguage(message)) return null;
 
+  // Context-only fast paths are valid only when the user did not explicitly
+  // name a vehicle in this turn. Explicit mentions must flow through the
+  // DB-backed model resolver so they can replace stale selectedVehicle state.
+  if (directFactMessageMayNameVehicle({ message, lookup })) {
+    const explicitVehicle = await resolveStandaloneModelMentionFromSummary(message);
+    if (explicitVehicle?.model) return null;
+  }
+
   const vehicle = getSelectedVehicleFromContext(context);
   const model = selectedVehicleLabel(vehicle);
   if (!model) return null;
@@ -1101,6 +1198,77 @@ const maybeReturnActiveComparisonFollowUpFastPath = async ({
   if (targets.filter((target) => target.model || target.fullModel).length < 2) return null;
 
   const city = getComparisonCityFromContext(context);
+  const featureLookup = detectBatch2FeatureLookup(message);
+
+  if (featureLookup?.feature) {
+    const featureMessage = `${targets
+      .map((target) => target.fullModel || target.model)
+      .filter(Boolean)
+      .join(" vs ")} ${featureLookup.feature}`;
+    const featureResult = await maybeRunAciFeatureComparisonAnswer({
+      message: featureMessage,
+      toolPlan: {
+        tool: "vehicle_feature_comparison",
+        intent: "vehicle_feature_comparison",
+        toolIntent: "vehicle_feature_comparison",
+        input: {
+          message: featureMessage,
+          query: featureMessage,
+          feature: featureLookup.feature,
+          features: [featureLookup.feature],
+        },
+        entities: {
+          comparisonVehicles: targets,
+          models: targets.map((target) => target.fullModel || target.model),
+          feature: featureLookup.feature,
+          features: [featureLookup.feature],
+        },
+        filters: {
+          city,
+          mustHaveFeatures: [featureLookup.feature],
+        },
+        output: {
+          canvasType: "feature_comparison_canvas",
+          inlineType: "feature_comparison_summary",
+        },
+      },
+      context: {
+        ...context,
+        activeComparison: {
+          ...(context.activeComparison || {}),
+          vehicles: targets,
+          city,
+        },
+      },
+    });
+
+    if (featureResult) {
+      const bridge = {
+        enabled: true,
+        durationMs: startedAt ? Date.now() - startedAt : 0,
+        selectedParser: "",
+        usedGemini: false,
+        primaryTask: "vehicle_feature_comparison",
+        tool: "vehicle_feature_comparison",
+        planMode: "single_tool",
+        contextIsolation: "active_comparison_feature_follow_up_fast_path",
+        originalMessage: originalMessage || message,
+        effectiveMessage: message,
+        routingReason: "active_comparison_feature_follow_up",
+      };
+      const composed = composeAciAnswer({
+        ...featureResult,
+        aciCoreBridge: bridge,
+        meta: {
+          ...(featureResult.meta || {}),
+          aciCoreBridge: bridge,
+        },
+      });
+
+      return attachDecisionRuntimeEnvelope(composed, { bridge, context });
+    }
+  }
+
   const toolPlan = {
     tool: "vehicle_compare",
     input: {
@@ -1242,6 +1410,43 @@ const parseExplicitComparisonTargetsFromMessage = (message = "") => {
   return [];
 };
 
+const resolveExplicitComparisonVehicle = async ({
+  label = "",
+  city = "new-delhi",
+} = {}) => {
+  const resolved = await resolveStandaloneModelMentionFromSummary(label).catch(
+    () => null,
+  );
+  if (!resolved?.model) return resolved;
+
+  const make = cleanText(resolved.make || resolved.brand || "");
+  const model = cleanText(resolved.model || "");
+  const fullModel = cleanText(
+    resolved.fullModel || [make, model].filter(Boolean).join(" "),
+  );
+  const variantResolution = await resolveModelScopedVariantFromMessage({
+    message: label,
+    make,
+    model,
+    fullModel,
+    modelKey: resolved.modelKey || "",
+    citySlug: city,
+  });
+
+  if (variantResolution?.status !== "exact" || !variantResolution.selected) {
+    return resolved;
+  }
+
+  return {
+    ...resolved,
+    variant: variantResolution.selected.variant,
+    variantName: variantResolution.selected.variant,
+    variantKey: variantResolution.selected.variantKey,
+    fullVariant: variantResolution.selected.fullVariant,
+    variantResolutionStatus: "exact",
+  };
+};
+
 const maybeReturnExplicitComparisonFastPath = async ({
   message = "",
   context = {},
@@ -1256,15 +1461,77 @@ const maybeReturnExplicitComparisonFastPath = async ({
   if (hasScoreDiagnosticComparisonLanguage(message)) return null;
   if (hasExplicitUnsupportedComparisonCity(message)) return null;
 
-  const parsedTargets = parseExplicitComparisonTargetsFromMessage(message);
+  let parsedTargets = parseExplicitComparisonTargetsFromMessage(message);
+  let contextualComparison = false;
+  let contextualTargetVehicles = [];
+
+  if (parsedTargets.length < 2) {
+    const contextualMatch = cleanText(message).match(
+      /^(?:compare\s+)?(?:it|this|that|same|current|selected|one)?\s*(?:vs|v\/s|versus|against|with)\s+(.+)$/i,
+    );
+    const selectedVehicle = getSelectedVehicleFromContext(context);
+    const selectedLabel = selectedVehicleLabel(selectedVehicle);
+
+    if (contextualMatch?.[1] && selectedLabel) {
+      const rightVehicle = await resolveStandaloneModelMentionFromSummary(contextualMatch[1]);
+      const rightLabel = cleanText(
+        rightVehicle?.fullModel ||
+          [rightVehicle?.make || rightVehicle?.brand, rightVehicle?.model]
+            .filter(Boolean)
+            .join(" "),
+      );
+
+      if (
+        rightLabel &&
+        normalizeModelFeatureText(rightLabel) !== normalizeModelFeatureText(selectedLabel)
+      ) {
+        parsedTargets = [selectedLabel, rightLabel];
+        contextualComparison = true;
+        contextualTargetVehicles = [selectedVehicle, rightVehicle];
+      }
+    }
+  }
+
   if (parsedTargets.length < 2) return null;
 
   const city = detectExplicitComparisonCity(message, context);
-  const targets = parsedTargets.slice(0, 2).map((label) => ({
-    model: label,
-    fullModel: label,
-    city,
-  }));
+  const resolvedTargetVehicles = contextualTargetVehicles.length >= 2
+    ? contextualTargetVehicles
+    : await Promise.all(
+        parsedTargets.slice(0, 2).map((label) =>
+          resolveExplicitComparisonVehicle({ label, city }),
+        ),
+      );
+  let targets = parsedTargets.slice(0, 2).map((label, index) => {
+    const resolved = resolvedTargetVehicles[index] || {};
+    const model = cleanText(resolved.model || label);
+    const make = cleanText(resolved.make || resolved.brand || "");
+
+    return {
+      ...resolved,
+      make,
+      brand: cleanText(resolved.brand || make),
+      model,
+      fullModel: cleanText(
+        resolved.fullModel || [make, model].filter(Boolean).join(" ") || label,
+      ),
+      city,
+      citySlug: city,
+    };
+  });
+  const relativeComparison = resolveRelativeComparisonFromLedger({
+    message,
+    previousContext: context,
+    explicitRightVehicle: targets[1] || {},
+  });
+
+  if (relativeComparison?.vehicles?.length >= 2) {
+    targets = relativeComparison.vehicles.slice(0, 2).map((vehicle) => ({
+      ...vehicle,
+      city: vehicle.city || city,
+      citySlug: vehicle.citySlug || city,
+    }));
+  }
 
   const comparisonVehicles = dedupeComparisonVehicles(
     pruneSubstringComparisonTargets({ vehicles: targets, message }),
@@ -1292,9 +1559,18 @@ const maybeReturnExplicitComparisonFastPath = async ({
       inlineType: "",
     },
     resolution: {
-      comparisonLevel: "model",
-      variantSelectionMode: "not_required",
-      selectedVariants: [],
+      comparisonLevel: comparisonVehicles.every((vehicle) => vehicle.variant)
+        ? "variant"
+        : "model",
+      variantSelectionMode: comparisonVehicles.every((vehicle) => vehicle.variant)
+        ? "exact"
+        : "not_required",
+      selectedVariants: comparisonVehicles
+        .filter((vehicle) => vehicle.variant)
+        .map((vehicle) => ({
+          model: vehicle.model || vehicle.fullModel,
+          variant: vehicle.variant,
+        })),
       selectedModels: comparisonVehicles.map((target) => ({
         model: target.model || target.fullModel,
       })),
@@ -1363,10 +1639,18 @@ const maybeReturnExplicitComparisonFastPath = async ({
     primaryTask: "vehicle_comparison",
     tool: "vehicle_compare",
     planMode: "single_tool",
-    contextIsolation: "explicit_comparison_fast_path",
+    contextIsolation: relativeComparison
+      ? "relative_comparison_fast_path"
+      : contextualComparison
+        ? "contextual_comparison_fast_path"
+        : "explicit_comparison_fast_path",
     originalMessage: originalMessage || message,
     effectiveMessage: message,
-    routingReason: "explicit_comparison_fast_path",
+    routingReason: relativeComparison
+      ? "context_turn_ledger_relative_reference"
+      : contextualComparison
+        ? "contextual_comparison_fast_path"
+        : "explicit_comparison_fast_path",
   };
 
   return composeAciAnswer({
@@ -1394,29 +1678,223 @@ const parseBudgetRupeesFromBuyerMessage = (message = "") => {
   return 0;
 };
 
+const contextualDiscoveryFeatureTerms = (message = "") => {
+  const normalized = cleanText(message).toLowerCase();
+  const features = [];
+  if (/\bpanoramic\s+sunroof\b/.test(normalized)) features.push("panoramic sunroof");
+  else if (/\bsunroof\b/.test(normalized)) features.push("sunroof");
+  if (/\badas\b/.test(normalized)) features.push("ADAS");
+  if (/\b6\s*airbags?\b|\bsix\s+airbags?\b/.test(normalized)) features.push("6 airbags");
+  else if (/\bairbags?\b/.test(normalized)) features.push("airbags");
+  if (/\b360\s*(?:degree)?\s*camera\b|\b360\s+camera\b/.test(normalized)) features.push("360 camera");
+  if (/\bventilated\s+seats?\b/.test(normalized)) features.push("ventilated seats");
+  if (/\bwireless\s+charging\b/.test(normalized)) features.push("wireless charging");
+  if (/\bcruise\s+control\b/.test(normalized)) features.push("cruise control");
+  if (/\bturbo(?:\s*charged|charged)?\b/.test(normalized)) features.push("turbo charger");
+  return uniqueKeys(features);
+};
+
+const getContextualDiscoveryState = (context = {}) => {
+  const state = context?.contextState || context?.aciContextState || {};
+  const buyerContext = state?.buyerContext || state?.buyerIntent || context?.buyerContext || {};
+  const requested = state?.requested || {};
+  const budget = Number(
+    buyerContext.budgetTarget ||
+      buyerContext.statedBudget ||
+      requested?.budget?.target ||
+      requested?.budget?.stated ||
+      buyerContext.maxBudget ||
+      buyerContext.budgetOrPriceCeiling ||
+      requested?.budget?.max ||
+      requested?.budget?.budgetMax ||
+      context?.filters?.budgetMax ||
+      0,
+  );
+
+  return {
+    state,
+    buyerContext,
+    requested,
+    budget: Number.isFinite(budget) && budget > 0 ? budget : 0,
+  };
+};
+
+const buildRecommendationBudgetWindow = (budgetTarget = 0) => {
+  const target = Number(budgetTarget || 0);
+  if (!Number.isFinite(target) || target <= 0) {
+    return { target: 0, previewMin: 0, resultMax: 0 };
+  }
+
+  const roundTo = 5000;
+  const rounded = (value) => Math.round(value / roundTo) * roundTo;
+  return {
+    target: Math.round(target),
+    previewMin: rounded(target * 0.7),
+    resultMax: rounded(target * 1.1),
+  };
+};
+
+const getExplicitContextualRefinement = (message = "") => {
+  const normalized = cleanText(message).toLowerCase();
+  const transmission = /\bmanual\b|\bmt\b/.test(normalized)
+    ? "manual"
+    : /\bautomatic\b|\bauto\b|\bamt\b|\bcvt\b|\bdct\b|\bivt\b|\bat\b|\bdsg\b/.test(normalized)
+      ? "automatic"
+      : "";
+  const fuelType = /\belectric\b|\bev\b/.test(normalized)
+    ? "electric"
+    : /\bcng\b/.test(normalized)
+      ? "cng"
+      : /\bhybrid\b/.test(normalized)
+        ? "hybrid"
+        : /\bdiesel\b/.test(normalized)
+          ? "diesel"
+          : /\bpetrol\b/.test(normalized)
+            ? "petrol"
+            : "";
+  const bodyType = /\bsuvs?\b/.test(normalized)
+    ? "suv"
+    : /\bsedans?\b/.test(normalized)
+      ? "sedan"
+      : /\bhatchbacks?\b/.test(normalized)
+        ? "hatchback"
+        : /\b(?:mpvs?|muvs?)\b/.test(normalized)
+          ? "mpv"
+          : "";
+  return {
+    transmission,
+    fuelType,
+    bodyType,
+    features: contextualDiscoveryFeatureTerms(normalized),
+  };
+};
+
+const isStandaloneDiscoveryRefinement = (message = "") => {
+  const normalized = cleanText(message).toLowerCase();
+  if (!normalized || normalized.length > 90) return false;
+
+  const refinement = getExplicitContextualRefinement(normalized);
+  if (!refinement.transmission && !refinement.fuelType && !refinement.bodyType && !refinement.features.length) {
+    return false;
+  }
+
+  const residue = normalized
+    .replace(/\bpanoramic\s+sunroof\b|\b360\s*(?:degree)?\s*camera\b|\bventilated\s+seats?\b|\bwireless\s+charging\b|\bcruise\s+control\b|\bturbo\s*charger\b/g, " ")
+    .replace(/\bautomatic\b|\bmanual\b|\bauto\b|\bamt\b|\bcvt\b|\bdct\b|\bivt\b|\bdsg\b|\bat\b|\bmt\b/g, " ")
+    .replace(/\bpetrol\b|\bdiesel\b|\bcng\b|\belectric\b|\bev\b|\bhybrid\b/g, " ")
+    .replace(/\bsuvs?\b|\bsedans?\b|\bhatchbacks?\b|\bmpvs?\b|\bmuvs?\b/g, " ")
+    .replace(/\bsunroof\b|\badas\b|\bsix\b|\b6\b|\bairbags?\b|\bturbo\b/g, " ")
+    .replace(/\b(?:what|how|about|show|find|give|me|only|option|options|car|cars|vehicle|vehicles|model|models|please|now|also|and|with|in|the|same|budget|ones?)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  return !residue;
+};
+
+const expandContextualBroadDiscoveryRefinement = ({ message = "", context = {} } = {}) => {
+  const original = cleanText(message);
+  if (!original || parseBudgetRupeesFromBuyerMessage(original) > 0) {
+    return { message: original, inherited: false };
+  }
+
+  const { state, buyerContext, requested, budget } = getContextualDiscoveryState(context);
+  if (!budget || state?.selectedVehicle?.model || !isStandaloneDiscoveryRefinement(original)) {
+    return { message: original, inherited: false };
+  }
+
+  const explicit = getExplicitContextualRefinement(original);
+  const previousScope = cleanText(buyerContext.shortlistedModelsOrDiscoveryScope).toLowerCase();
+  const previousBody = cleanText(buyerContext.bodyPreferenceOrPrimaryUseCase).toLowerCase();
+  const bodyType = explicit.bodyType ||
+    (/\bsuv\b/.test(`${previousBody} ${previousScope}`) ? "suv" :
+      /\bsedan\b/.test(`${previousBody} ${previousScope}`) ? "sedan" :
+        /\bhatchback\b/.test(`${previousBody} ${previousScope}`) ? "hatchback" :
+          /\b(?:mpv|muv)\b/.test(`${previousBody} ${previousScope}`) ? "mpv" : "");
+  const previousTransmission = cleanText(buyerContext.transmissionPreference).toLowerCase();
+  const previousFuel = cleanText(buyerContext.fuelPreference).toLowerCase();
+  const transmission = explicit.transmission || (/automatic/.test(previousTransmission) ? "automatic" : /manual/.test(previousTransmission) ? "manual" : "");
+  const fuelType = explicit.fuelType || (/electric|\bev\b/.test(previousFuel) ? "electric" : /cng/.test(previousFuel) ? "cng" : /hybrid/.test(previousFuel) ? "hybrid" : /diesel/.test(previousFuel) ? "diesel" : /petrol/.test(previousFuel) ? "petrol" : "");
+  const features = uniqueKeys([
+    ...asArray(buyerContext.featurePriority),
+    ...asArray(requested.features),
+    ...explicit.features,
+  ]);
+  const budgetLakh = Number((budget / 100000).toFixed(2));
+  const vehicleScope = bodyType === "suv"
+    ? "SUVs"
+    : bodyType === "sedan"
+      ? "sedans"
+      : bodyType === "hatchback"
+        ? "hatchbacks"
+        : bodyType === "mpv"
+          ? "MPVs"
+          : "cars";
+  const filterTerms = uniqueKeys([fuelType, transmission]);
+  const expanded = [
+    filterTerms.join(" "),
+    vehicleScope,
+    `under ${budgetLakh} lakh`,
+    features.length ? `with ${features.join(" and ")}` : "",
+  ].filter(Boolean).join(" ");
+
+  return {
+    message: expanded,
+    inherited: true,
+    originalMessage: original,
+    inheritedBudget: budget,
+  };
+};
+
 const detectBatch4BroadDiscoveryRequest = (message = "") => {
   const normalized = String(message || "").toLowerCase();
-  const budgetMax = parseBudgetRupeesFromBuyerMessage(message);
-  const hasBudget = budgetMax > 0;
+  const statedBudget = parseBudgetRupeesFromBuyerMessage(message);
+  const budgetWindow = buildRecommendationBudgetWindow(statedBudget);
+  const hasBudget = statedBudget > 0;
   const hasBroadCar = /\b(cars?|vehicles?|models?|options?|suvs?|sedans?|hatchbacks?|mpvs?|muvs?)\b/i.test(normalized);
   const wantsFamily = /\bfamily\b|\bpractical\b|\bspacious\b|\bspace\b/i.test(normalized);
   const wantsElectric = /\belectric\b|\bev\b/i.test(normalized);
+  const wantsPetrol = /\bpetrol\b/i.test(normalized);
+  const wantsDiesel = /\bdiesel\b/i.test(normalized);
+  const wantsCng = /\bcng\b/i.test(normalized);
+  const wantsHybrid = /\bhybrid\b/i.test(normalized);
   const wantsSuv = /\bsuvs?\b/i.test(normalized);
-  const wantsAutomatic = /\bautomatic\b|\bauto\b|\bat\b|\bdct\b|\bcvt\b|\bamt\b/i.test(normalized);
+  const wantsAutomatic = /\bautomatic\b|\bauto\b|\bdct\b|\bcvt\b|\bamt\b|\bivt\b|\bdsg\b|\btorque[\s-]*converter\b/i.test(normalized);
   const wantsTurbo = /\bturbo(?:\s*charged|charged)?\b|\bturbo\s+charger\b/i.test(normalized);
 
   if (!hasBudget || (!hasBroadCar && !wantsFamily && !wantsElectric && !wantsSuv && !wantsAutomatic && !wantsTurbo)) {
     return null;
   }
 
-  if (/\b(price|on road|on-road|insurance|service cost|service|offer|discount)\b/i.test(normalized)) {
+  const recommendationRequest = /\b(recommend|best|options?|cars?|vehicles?|models?|suvs?|sedans?|hatchbacks?|mpvs?|muvs?)\b/i.test(normalized);
+  if (/\b(insurance|service cost|service|offer|discount)\b/i.test(normalized)) {
+    return null;
+  }
+  if (/\bprice\b/i.test(normalized) && !recommendationRequest) {
     return null;
   }
 
+  const fuelType = wantsElectric
+    ? "electric"
+    : wantsCng
+      ? "cng"
+      : wantsHybrid
+        ? "hybrid"
+        : wantsDiesel
+          ? "diesel"
+          : wantsPetrol
+            ? "petrol"
+            : "";
+
   return {
-    budgetMax,
+    budgetTarget: budgetWindow.target,
+    statedBudget: budgetWindow.target,
+    previewBudgetMin: budgetWindow.previewMin,
+    budgetMin: 0,
+    budgetMax: budgetWindow.resultMax,
+    budgetWindowMode: "target_band",
+    budgetBasis: /\bon[\s-]*road\b/i.test(normalized) ? "on_road" : "ex_showroom",
     bodyType: wantsSuv ? "suv" : "",
-    fuelType: wantsElectric ? "electric" : "",
+    fuelType,
     transmission: wantsAutomatic ? "automatic" : "",
     buyerUseCase: wantsFamily ? "family" : "",
     mustHaveFeatures: wantsTurbo ? ["turbo charger"] : [],
@@ -1810,6 +2288,195 @@ const maybeReturnBatch4BareClarificationFastPath = ({
 };
 
 
+const FEATURE_BUDGET_SHORTLIST_CACHE_TTL_MS = 5 * 60 * 1000;
+const FEATURE_BUDGET_SHORTLIST_CACHE_MAX = 120;
+const featureBudgetShortlistCache = new Map();
+
+const cloneFeatureBudgetShortlist = (value) => ({
+  ...value,
+  rows: asArray(value?.rows).map((row) => ({
+    ...row,
+    fuelTypes: [...asArray(row.fuelTypes)],
+    transmissions: [...asArray(row.transmissions)],
+    imageFrame: row.imageFrame && typeof row.imageFrame === "object"
+      ? { ...row.imageFrame }
+      : {},
+  })),
+});
+
+const buildFeatureBudgetShortlist = async ({
+  filters = {},
+  requestedFeatures = [],
+} = {}) => {
+  const db = getFastPathDb();
+  const featureKeys = uniqueKeys(requestedFeatures).map(keyify).filter(Boolean);
+  if (!db || !featureKeys.length) return null;
+
+  const citySlug = keyify(filters.citySlug || filters.city || "new-delhi").replace(/_/g, "-");
+  const budgetMax = Number(filters.budgetMax || filters.maxBudget || 0);
+  const cacheKey = JSON.stringify({
+    citySlug,
+    budgetMax,
+    bodyType: keyify(filters.bodyType || filters.bodyStyle),
+    featureKeys: [...featureKeys].sort(),
+  });
+  const cached = featureBudgetShortlistCache.get(cacheKey);
+  if (cached?.expiresAt > Date.now()) {
+    return cloneFeatureBudgetShortlist(cached.value);
+  }
+  if (cached) featureBudgetShortlistCache.delete(cacheKey);
+
+  const featureLists = await Promise.all(
+    featureKeys.map((featureKey) =>
+      db.collection("aci_vehicle_model_feature_summary_v1")
+        .find(
+          { allFeatures: { $elemMatch: { key: featureKey, count: { $gt: 0 } } } },
+          {
+            projection: {
+              make: 1,
+              brand: 1,
+              model: 1,
+              fullModel: 1,
+              modelKey: 1,
+              allFeatures: { $elemMatch: { key: featureKey } },
+            },
+          },
+        )
+        .limit(240)
+        .toArray(),
+    ),
+  );
+  const featureModels = featureLists[0]
+    .filter((row) => featureLists.every((list) => list.some((item) => item.modelKey === row.modelKey)))
+    .map((row) => ({
+      ...row,
+      allFeatures: featureLists.flatMap((list) =>
+        asArray(list.find((item) => item.modelKey === row.modelKey)?.allFeatures),
+      ),
+    }));
+  if (!featureModels.length) return null;
+
+  const featureByModel = new Map(featureModels.map((row) => [row.modelKey, row]));
+  const summaryQuery = {
+    citySlug,
+    modelKey: { $in: [...featureByModel.keys()] },
+    ...(budgetMax ? { minExShowroomPrice: { $lte: budgetMax } } : {}),
+    ...(filters.bodyType === "suv"
+      ? { $or: [{ bodyTypeKey: /suv|sport|utility/i }, { bodyType: /suv|sport|utility/i }] }
+      : {}),
+  };
+  const summaries = await db.collection("aci_vehicle_model_summary")
+    .find(summaryQuery, {
+      projection: {
+        make: 1, model: 1, fullModel: 1, displayName: 1, modelKey: 1,
+        bodyType: 1, bodyTypeKey: 1, city: 1, citySlug: 1, hero: 1,
+        minExShowroomPrice: 1, maxExShowroomPrice: 1, priceRangeLabel: 1,
+        fuels: 1, transmissions: 1, variantCount: 1,
+      },
+    })
+    .sort({ minExShowroomPrice: 1, make: 1, model: 1 })
+    .limit(40)
+    .toArray();
+  if (!summaries.length) return null;
+
+  const allowedVariantsByModel = new Map();
+  for (const summary of summaries) {
+    const featureDoc = featureByModel.get(summary.modelKey) || {};
+    const variantSets = featureKeys.map((featureKey) =>
+      new Set(
+        asArray(featureDoc.allFeatures)
+          .filter((feature) => feature.key === featureKey)
+          .flatMap((feature) => asArray(feature.variants))
+          .map(keyify),
+      ),
+    );
+    const [firstSet = new Set(), ...remainingSets] = variantSets;
+    allowedVariantsByModel.set(
+      summary.modelKey,
+      new Set([...firstSet].filter((variantKey) => remainingSets.every((set) => set.has(variantKey)))),
+    );
+  }
+
+  const priceRows = await db.collection("aci_vehicle_price_rows")
+    .find(
+      {
+        citySlug,
+        modelKey: { $in: summaries.map((row) => row.modelKey) },
+        exShowroomPrice: { $gt: 0, ...(budgetMax ? { $lte: budgetMax } : {}) },
+      },
+      {
+        projection: {
+          make: 1, model: 1, modelKey: 1, variant: 1, variantKey: 1,
+          fuelType: 1, transmission: 1, exShowroomPrice: 1,
+          exShowroomPriceLabel: 1, onRoadPrice: 1, onRoadPriceLabel: 1,
+        },
+      },
+    )
+    .sort({ exShowroomPrice: 1 })
+    .limit(2500)
+    .toArray();
+
+  const qualifyingByModel = new Map();
+  for (const row of priceRows) {
+    const allowed = allowedVariantsByModel.get(row.modelKey);
+    if (!allowed?.has(keyify(row.variantKey || row.variant))) continue;
+    const current = qualifyingByModel.get(row.modelKey) || [];
+    current.push(row);
+    qualifyingByModel.set(row.modelKey, current);
+  }
+
+  const rows = summaries
+    .map((summary) => {
+      const variants = qualifyingByModel.get(summary.modelKey) || [];
+      const entry = variants[0];
+      if (!entry) return null;
+      return {
+        make: summary.make,
+        brand: summary.make,
+        model: summary.model,
+        modelKey: summary.modelKey,
+        fullModel: summary.fullModel || summary.displayName,
+        displayName: summary.displayName || summary.fullModel,
+        bodyType: summary.bodyType,
+        bodyTypeKey: summary.bodyTypeKey,
+        city: summary.city,
+        citySlug: summary.citySlug,
+        startsFromVariant: entry.variant,
+        startsFromPrice: entry.exShowroomPrice,
+        startsFromPriceLabel: entry.exShowroomPriceLabel,
+        bestUnderBudgetVariant: variants[variants.length - 1]?.variant,
+        bestUnderBudgetPrice: variants[variants.length - 1]?.exShowroomPrice,
+        bestUnderBudgetPriceLabel: variants[variants.length - 1]?.exShowroomPriceLabel,
+        qualifyingVariantCount: variants.length,
+        fuelTypes: uniqueKeys(variants.map((variant) => variant.fuelType)),
+        transmissions: uniqueKeys(variants.map((variant) => variant.transmission)),
+        priceRangeLabel: variants.length > 1
+          ? `${entry.exShowroomPriceLabel} – ${variants[variants.length - 1]?.exShowroomPriceLabel}`
+          : entry.exShowroomPriceLabel,
+        imageUrl: summary.hero?.imageUrl || summary.hero?.normalizedImageUrl || "",
+        normalizedImageUrl: summary.hero?.normalizedImageUrl || summary.hero?.imageUrl || "",
+        imageFrame: summary.hero?.imageFrame || {},
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.startsFromPrice - right.startsFromPrice)
+    .slice(0, 8);
+
+  if (!rows.length) return null;
+
+  const value = { rows, matched: rows.length };
+  featureBudgetShortlistCache.set(cacheKey, {
+    expiresAt: Date.now() + FEATURE_BUDGET_SHORTLIST_CACHE_TTL_MS,
+    value,
+  });
+  if (featureBudgetShortlistCache.size > FEATURE_BUDGET_SHORTLIST_CACHE_MAX) {
+    featureBudgetShortlistCache.delete(featureBudgetShortlistCache.keys().next().value);
+  }
+
+  return cloneFeatureBudgetShortlist(value);
+};
+
+
 const maybeReturnBatch4BroadDiscoveryFastPath = async ({
   message = "",
   context = {},
@@ -1819,20 +2486,57 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
   meta = {},
   originalMessage = "",
   effectiveMessage = "",
+  contextualDiscoveryRefinement = {},
   startedAt = 0,
 } = {}) => {
   const discovery = detectBatch4BroadDiscoveryRequest(effectiveMessage || message);
   if (!discovery) return null;
 
+  const discoveryMessage = cleanText(effectiveMessage || message)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const explicitModel = await resolveAciExplicitMessageModelEntity(effectiveMessage || message);
+  const explicitModelName = cleanText(explicitModel?.model)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (
+    explicitModelName &&
+    ` ${discoveryMessage} `.includes(` ${explicitModelName} `)
+  ) return null;
+
   const evRequested = discovery.fuelType === "electric";
   const fuelKey = evRequested ? "ev" : discovery.fuelType;
+  const requestedFeatureExplainers = /\b(must\s+have|need|want|require|with|priority)\b/i.test(effectiveMessage || message)
+    ? await resolveAciFeatureExplainersFromText(effectiveMessage || message, { limit: 8 })
+    : [];
+  const requestedFeatures = uniqueKeys([
+    ...(discovery.mustHaveFeatures || []),
+    ...requestedFeatureExplainers.map((feature) => feature.displayName || feature.canonicalKey),
+  ]);
+  const budgetBasis = discovery.budgetBasis === "on_road" ? "on_road" : "ex_showroom";
 
   const filters = {
+    budgetTarget: discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax,
+    statedBudget: discovery.statedBudget || discovery.budgetTarget || discovery.budgetMax,
+    previewBudgetMin: discovery.previewBudgetMin || 0,
+    budgetMin: discovery.budgetMin || 0,
     budgetMax: discovery.budgetMax,
     maxBudget: discovery.budgetMax,
     maxPrice: discovery.budgetMax,
-    maxExShowroomPrice: discovery.budgetMax,
+    ...(budgetBasis === "on_road"
+      ? { maxOnRoadPrice: discovery.budgetMax }
+      : { maxExShowroomPrice: discovery.budgetMax }),
+    budgetBasis,
+    priceBasis: budgetBasis,
+    requireExactVariants: /\b(recommend|best|decide|which\s+(?:car|one|model|variant)\s+should)\b/i.test(
+      effectiveMessage || message,
+    ),
     budgetMaxLakh: Math.round(discovery.budgetMax / 100000),
+    budgetWindowMode: discovery.budgetWindowMode || "strict_ceiling",
+    sortDirection: "desc",
+    previewFuelType: discovery.fuelType || "petrol",
     ...(discovery.transmission ? {
       transmission: discovery.transmission,
       transmissionType: discovery.transmission,
@@ -1855,13 +2559,94 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
       useCase: discovery.buyerUseCase,
       buyerIntent: discovery.buyerUseCase,
     } : {}),
-    ...(Array.isArray(discovery.mustHaveFeatures) && discovery.mustHaveFeatures.length ? {
-      mustHaveFeatures: discovery.mustHaveFeatures,
-      compareFeatures: discovery.mustHaveFeatures,
-      feature: discovery.mustHaveFeatures[0],
+    ...(requestedFeatures.length ? {
+      mustHaveFeatures: requestedFeatures,
+      compareFeatures: requestedFeatures,
+      feature: requestedFeatures[0],
       ranking: "feature_match",
     } : {}),
   };
+  const baseDiscoveryContextState = createEmptyAciContextState(
+    contextState && typeof contextState === "object" ? contextState : {},
+  );
+  const extractedDiscoveryContextState = applyBuyerContextToContextState({
+    message: effectiveMessage || message,
+    contextState: baseDiscoveryContextState,
+  });
+  const previousBuyerContext = extractedDiscoveryContextState.buyerContext || {};
+  const discoveryScopeLabel = [
+    discovery.bodyType || "cars",
+    discovery.fuelType,
+    discovery.transmission,
+    requestedFeatures.length ? `with ${requestedFeatures.join(", ")}` : "",
+    discovery.budgetWindowMode === "target_band"
+      ? `around ${discovery.budgetTarget || discovery.statedBudget}`
+      : `under ${discovery.budgetMax}`,
+  ].filter(Boolean).join(", ");
+  const durableDiscoveryContextState = createEmptyAciContextState({
+    ...extractedDiscoveryContextState,
+    selectedVehicle: createEmptySelectedVehicleState({
+      city: baseDiscoveryContextState.selectedVehicle?.city || "",
+      citySlug: baseDiscoveryContextState.selectedVehicle?.citySlug || "",
+    }),
+    activeComparison: {},
+    requested: {
+      ...(extractedDiscoveryContextState.requested || {}),
+      features: requestedFeatures,
+      topic: requestedFeatures[0] || "",
+      budget: {
+        min: discovery.previewBudgetMin || 0,
+        max: discovery.budgetMax,
+        target: discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax,
+        stated: discovery.statedBudget || discovery.budgetTarget || discovery.budgetMax,
+        budgetMax: discovery.budgetMax,
+        previewMin: discovery.previewBudgetMin || 0,
+        resultMax: discovery.budgetMax,
+        mode: discovery.budgetWindowMode || "strict_ceiling",
+        basis: budgetBasis,
+        currency: "INR",
+      },
+    },
+    buyerContext: {
+      ...previousBuyerContext,
+      budgetTarget: discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax,
+      statedBudget: discovery.statedBudget || discovery.budgetTarget || discovery.budgetMax,
+      budgetOrPriceCeiling: discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax,
+      maxBudget: discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax,
+      ...(discovery.bodyType ? {
+        bodyPreferenceOrPrimaryUseCase: discovery.bodyType,
+        primaryUseCase: discovery.bodyType,
+      } : {}),
+      ...(discovery.fuelType ? {
+        fuelPreferenceOrMonthlyRunning: discovery.fuelType,
+        fuelPreference: discovery.fuelType,
+      } : {}),
+      ...(discovery.transmission ? {
+        transmissionPreference: discovery.transmission,
+      } : {}),
+      featurePriority: requestedFeatures,
+      shortlistedModelsOrDiscoveryScope: discoveryScopeLabel,
+      source: contextualDiscoveryRefinement?.inherited
+        ? "contextual_discovery_refinement_v1"
+        : "broad_discovery_fast_path_v1",
+      confidence: contextualDiscoveryRefinement?.inherited ? 0.93 : 0.9,
+      extractedAt: new Date().toISOString(),
+    },
+    provenance: {
+      ...(extractedDiscoveryContextState.provenance || {}),
+      sources: uniqueKeys([
+        ...asArray(extractedDiscoveryContextState.provenance?.sources),
+        "broad_discovery_fast_path_v1",
+        contextualDiscoveryRefinement?.inherited
+          ? "contextual_discovery_refinement_v1"
+          : "",
+      ]),
+      isolation: contextualDiscoveryRefinement?.inherited
+        ? "contextual_discovery_refinement"
+        : "broad_discovery_without_model",
+      updatedBy: "broad_discovery_fast_path_v1",
+    },
+  });
 
   const toolPlan = {
     tool: "vehicle_recommend",
@@ -1894,30 +2679,59 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     },
   };
 
-  const plan = {
+  const featureShortlist = requestedFeatures.length
+    ? await buildFeatureBudgetShortlist({ filters, requestedFeatures })
+    : null;
+  const discoveryResult = featureShortlist || await runtimeBudgetVehicleDiscovery({
+    toolPlan,
+    context: getContextForToolPlan(durableDiscoveryContextState),
+  });
+  const requestedFeature = requestedFeatures[0] || "";
+  const budgetTarget = discovery.budgetTarget || discovery.statedBudget || discovery.budgetMax;
+  const budgetLabel = `₹${Math.round(budgetTarget / 100000)}L`;
+  const resultRows = asArray(discoveryResult.rows || discoveryResult.items);
+  const executed = {
+    ...discoveryResult,
     intent: "vehicle_recommendation",
-    mode: "single_tool",
-    conversationMode: "direct_answer",
-    tools: [toolPlan],
-    output: {
-      canvasType: filters.mustHaveFeatures?.length
-        ? "feature_match_builder_canvas"
-        : "recommendation_results_canvas",
+    tool: "vehicle_recommend",
+    displayMode: "canvas",
+    canvasType: toolPlan.output.canvasType,
+    inlineType: toolPlan.output.inlineType,
+    title: requestedFeature
+      ? `${requestedFeature} matches around ${budgetLabel}`
+      : `${discovery.buyerUseCase === "family" ? "Family cars" : "Cars"} around ${budgetLabel}`,
+    answer: resultRows.length
+      ? `I found ${resultRows.length} strong matches for your current budget and preferences.`
+      : "I could not find a confident match for those filters yet.",
+    rows: resultRows,
+    items: resultRows,
+    data: {
+      ...discoveryResult,
+      rows: resultRows,
+      items: resultRows,
+      filters,
+      feature: requestedFeature,
+      featureName: requestedFeature,
+      features: requestedFeatures,
+      mustHaveFeatures: requestedFeatures,
+    },
+    widget: {
+      type: toolPlan.output.canvasType,
+      intent: "vehicle_recommendation",
+      displayMode: "canvas",
+      canvasType: toolPlan.output.canvasType,
+      inlineType: toolPlan.output.inlineType,
+      rows: resultRows,
+      items: resultRows,
+      filters,
+      feature: requestedFeature,
+      featureName: requestedFeature,
     },
   };
 
-  const executed = await executeAciPlannerPlan({
-    plan,
-    userMessage: message,
-    context: getContextForToolPlan(contextState || {}),
-    user,
-    session,
-    meta,
-  });
-
   const normalized = await normalizeAciFinalResponse(executed, {
     message,
-    context: getContextForToolPlan(contextState || {}),
+    context: getContextForToolPlan(durableDiscoveryContextState),
   });
 
   if (evRequested) {
@@ -1951,21 +2765,94 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     primaryTask: "vehicle_recommendation",
     tool: "vehicle_recommend",
     planMode: "single_tool",
-    contextIsolation: "broad_discovery_without_model",
+    contextIsolation: contextualDiscoveryRefinement?.inherited
+      ? "contextual_discovery_refinement"
+      : "broad_discovery_without_model",
     originalMessage: originalMessage || message,
     effectiveMessage: effectiveMessage || message,
-    routingReason: discovery.reason,
+    routingReason: contextualDiscoveryRefinement?.inherited
+      ? "contextual_shortlist_refinement"
+      : discovery.reason,
   };
 
   const composed = composeAciAnswer({
     ...normalized,
-    intent: normalized.intent || "vehicle_recommendation",
+    intent: "vehicle_recommendation",
+    tool: "vehicle_recommend",
     aciCoreBridge: bridge,
     meta: {
       ...(normalized.meta || {}),
       aciCoreBridge: bridge,
     },
   });
+
+  const broadContextPatch = composed.contextPatch || {};
+  composed.contextPatch = {
+    ...broadContextPatch,
+    selectedVehicle: null,
+    anchorMake: "",
+    anchorModel: "",
+    anchorFullModel: "",
+    anchorVariant: "",
+    clearSelectedVehicle: true,
+    contextState: {
+      ...durableDiscoveryContextState,
+      ...(broadContextPatch.contextState || {}),
+      requested: {
+        ...(broadContextPatch.contextState?.requested || {}),
+        ...(durableDiscoveryContextState.requested || {}),
+      },
+      buyerContext: {
+        ...(broadContextPatch.contextState?.buyerContext || {}),
+        ...(durableDiscoveryContextState.buyerContext || {}),
+      },
+      selectedVehicle: createEmptySelectedVehicleState({
+        city: durableDiscoveryContextState.selectedVehicle?.city || "",
+        citySlug: durableDiscoveryContextState.selectedVehicle?.citySlug || "",
+      }),
+      anchors: {
+        ...(durableDiscoveryContextState.anchors || {}),
+        ...(broadContextPatch.contextState?.anchors || {}),
+        primaryVehicle: {},
+      },
+    },
+    aciContextState: {
+      ...durableDiscoveryContextState,
+      ...(broadContextPatch.aciContextState || broadContextPatch.contextState || {}),
+      requested: {
+        ...(broadContextPatch.aciContextState?.requested || broadContextPatch.contextState?.requested || {}),
+        ...(durableDiscoveryContextState.requested || {}),
+      },
+      buyerContext: {
+        ...(broadContextPatch.aciContextState?.buyerContext || broadContextPatch.contextState?.buyerContext || {}),
+        ...(durableDiscoveryContextState.buyerContext || {}),
+      },
+      selectedVehicle: createEmptySelectedVehicleState({
+        city: durableDiscoveryContextState.selectedVehicle?.city || "",
+        citySlug: durableDiscoveryContextState.selectedVehicle?.citySlug || "",
+      }),
+      anchors: {
+        ...(durableDiscoveryContextState.anchors || {}),
+        ...(broadContextPatch.aciContextState?.anchors || broadContextPatch.contextState?.anchors || {}),
+        primaryVehicle: {},
+      },
+    },
+  };
+
+  const bodyLabel = discovery.bodyType === "suv" ? "SUVs" : "cars";
+  const shortlistScope = requestedFeature
+    ? `${bodyLabel} with ${requestedFeature}`
+    : bodyLabel;
+  const shortlistAnswer = resultRows.length
+    ? `I found ${resultRows.length} ${shortlistScope} under ${budgetLabel}. These are the best starting points from what you have shared so far, and we can narrow them by fuel, gearbox or daily use.`
+    : `I could not find a confident match under ${budgetLabel} with the current filters.`;
+  composed.answer = shortlistAnswer;
+  if (composed.data && typeof composed.data === "object") {
+    composed.data.answer = shortlistAnswer;
+  }
+  if (composed.widget && typeof composed.widget === "object") {
+    composed.widget.answer = shortlistAnswer;
+  }
 
   if (evRequested) {
     const title = cleanText(composed.title || composed.data?.title || normalized.title || "");
@@ -2001,7 +2888,7 @@ const maybeReturnBatch4BroadDiscoveryFastPath = async ({
     }
   }
 
-  return attachDecisionRuntimeEnvelope(composed, { bridge, context: getContextForToolPlan(contextState || {}) });
+  return composed;
 };
 
 const maybeReturnBatch4ExplainerFastPath = async ({
@@ -2038,6 +2925,210 @@ const maybeReturnBatch4ExplainerFastPath = async ({
   }
 
   return null;
+};
+
+const hasStandaloneFeatureExplanationIntent = (message = "") =>
+  /\b(?:what\s+(?:is|are|does)|explain|how\s+(?:does|do)|meaning\s+of|tell\s+me\s+about|is\s+.+\s+worth(?:\s+it)?|worth\s+it|why\s+(?:is|does)|do\s+i\s+need|should\s+i\s+(?:prioriti[sz]e|look\s+for)|how\s+important)\b/i.test(
+    String(message || ""),
+  );
+
+const maybeReturnStandaloneFeatureExplainerFastPath = async ({
+  message = "",
+  context = {},
+  originalMessage = "",
+  effectiveMessage = "",
+  startedAt = 0,
+} = {}) => {
+  const text = effectiveMessage || message;
+  const explicitExplanationIntent = hasStandaloneFeatureExplanationIntent(text);
+  const selectedVehicle =
+    context?.selectedVehicle ||
+    context?.contextState?.selectedVehicle ||
+    context?.aciContextState?.selectedVehicle ||
+    {};
+  const hasVehicleContext = Boolean(
+    selectedVehicle.model ||
+    selectedVehicle.fullModel ||
+    context?.anchorModel ||
+    context?.contextState?.anchors?.primaryVehicle?.model ||
+    context?.aciContextState?.anchors?.primaryVehicle?.model,
+  );
+  if (!explicitExplanationIntent && hasVehicleContext) return null;
+
+  const explainer = await resolveAciFeatureExplainerFromText(text);
+  if (!explainer) return null;
+  if (
+    !explicitExplanationIntent &&
+    keyify(text) !== keyify(explainer.matchedAlias)
+  ) {
+    return null;
+  }
+
+  const buyerContext =
+    context?.contextState?.buyerContext ||
+    context?.aciContextState?.buyerContext ||
+    context?.buyerContext ||
+    {};
+  const composed = composeAciFeatureDecisionExplanation({
+    explainer,
+    message: text,
+    buyerContext,
+  });
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "deterministic",
+    usedGemini: false,
+    primaryTask: "feature_explanation",
+    tool: "feature_explainer",
+    planMode: "single_tool",
+    contextIsolation: "standalone_feature_explainer_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: text,
+    routingReason: "explicit_feature_explanation_request",
+  };
+  const publicFeature = {
+    ...explainer,
+  };
+  delete publicFeature.matchedAlias;
+
+  return {
+    intent: "vehicle_feature_explanation",
+    tool: "feature_explainer",
+    displayMode: "inline",
+    canvasType: "",
+    inlineType: "feature_explainer",
+    title: explainer.displayName,
+    answer: composed.answer,
+    matched: 1,
+    count: 1,
+    rows: [],
+    items: [],
+    featureExplanation: publicFeature,
+    data: {
+      title: explainer.displayName,
+      answer: composed.answer,
+      rows: [],
+      items: [],
+      featureExplanation: publicFeature,
+      contextAdvice: composed.contextAdvice,
+      matchedAlias: explainer.matchedAlias,
+    },
+    sourceTransparency: {
+      modulesChecked: ["feature_explainer"],
+      matched: 1,
+      dataSource: ACI_FEATURE_EXPLAINER_COLLECTION,
+      recordCount: 1,
+      sourceRefs: explainer.sourceRefs || [],
+    },
+    aciCoreBridge: bridge,
+    meta: {
+      aciCoreBridge: bridge,
+    },
+  };
+};
+
+const maybeReturnFeatureComparisonExplainerFastPath = async ({
+  message = "",
+  context = {},
+  originalMessage = "",
+  effectiveMessage = "",
+  startedAt = 0,
+} = {}) => {
+  const text = effectiveMessage || message;
+  if (!hasExplicitFeatureComparisonLanguage(text)) return null;
+
+  const explainers = await resolveAciFeatureExplainersFromText(text, { limit: 4 });
+  if (explainers.length < 2) return null;
+
+  const selected = explainers.slice(0, 2);
+  const buyerContext =
+    context?.contextState?.buyerContext ||
+    context?.aciContextState?.buyerContext ||
+    context?.buyerContext ||
+    {};
+  const contextualAdvice = selected
+    .map((explainer) => {
+      const advice = composeAciFeatureDecisionExplanation({
+        explainer,
+        message: text,
+        buyerContext,
+      }).contextAdvice;
+      return advice ? { displayName: explainer.displayName, advice } : null;
+    })
+    .filter(Boolean);
+  const sharedAdvice = contextualAdvice.length === 2 &&
+    contextualAdvice[0].advice === contextualAdvice[1].advice
+    ? contextualAdvice[0].advice
+        .replace("this is worth treating as a top-priority feature", "both are worth treating as top-priority features")
+        .replace("this is worth prioritising", "both are worth prioritising")
+        .replace("this is useful, but it need not decide the purchase on its own", "both are useful, but neither should decide the purchase on its own")
+        .replace("this is usually a lower priority", "both are usually lower priorities")
+    : "";
+  const contextAdvice = sharedAdvice
+    ? [sharedAdvice]
+    : contextualAdvice.map(({ displayName, advice }) => `${displayName}: ${advice}`);
+  const [first, second] = selected;
+  const answer = uniqueKeys([
+    `${first.displayName}: ${first.buyerSummary}`,
+    `${second.displayName}: ${second.buyerSummary}`,
+    `${first.displayName} in practice: ${first.whenItMattersSummary}`,
+    `${second.displayName} in practice: ${second.whenItMattersSummary}`,
+    ...contextAdvice,
+    `When comparing variants, check the exact implementation and limitations of both features. Use their different roles to spot a meaningful omission; do not treat similar-sounding features as interchangeable.`,
+  ]).join(" ");
+  const bridge = {
+    enabled: true,
+    durationMs: startedAt ? Date.now() - startedAt : 0,
+    selectedParser: "deterministic",
+    usedGemini: false,
+    primaryTask: "feature_comparison_explanation",
+    tool: "feature_explainer",
+    planMode: "single_tool",
+    contextIsolation: "feature_comparison_explainer_fast_path",
+    originalMessage: originalMessage || message,
+    effectiveMessage: text,
+    routingReason: "two_catalogued_features_with_comparison_language",
+  };
+  const publicFeatures = selected.map((explainer) => {
+    const value = { ...explainer };
+    delete value.matchedAlias;
+    return value;
+  });
+
+  return {
+    intent: "vehicle_feature_comparison_explanation",
+    tool: "feature_explainer",
+    displayMode: "inline",
+    canvasType: "",
+    inlineType: "feature_comparison_explainer",
+    title: `${first.displayName} vs ${second.displayName}`,
+    answer,
+    matched: 2,
+    count: 2,
+    rows: [],
+    items: publicFeatures,
+    featureExplanations: publicFeatures,
+    data: {
+      title: `${first.displayName} vs ${second.displayName}`,
+      answer,
+      rows: [],
+      items: publicFeatures,
+      featureExplanations: publicFeatures,
+      contextAdvice,
+    },
+    sourceTransparency: {
+      modulesChecked: ["feature_explainer"],
+      matched: 2,
+      dataSource: ACI_FEATURE_EXPLAINER_COLLECTION,
+      recordCount: 2,
+      sourceRefs: publicFeatures.flatMap((feature) => feature.sourceRefs || []),
+    },
+    aciCoreBridge: bridge,
+    meta: {
+      aciCoreBridge: bridge,
+    },
+  };
 };
 
 const hasBroadVehicleLanguage = (message = "") =>
@@ -2145,7 +3236,7 @@ const hasExplicitUncoveredComparisonMention = ({ messageTokens = [], candidatePa
 
 const pruneSubstringComparisonTargets = ({ vehicles = [], message = "" } = {}) => {
   const list = asArray(vehicles).filter(Boolean);
-  if (list.length <= 2) return list;
+  if (list.length <= 1) return list;
 
   const messageTokens = normalizeComparisonModelText(message).split(/\s+/).filter(Boolean);
   if (!messageTokens.length) return list;
@@ -3172,7 +4263,7 @@ const buildExactUnavailableVariantFastPathResponse = ({
 } = {}) => {
   const requestedVariant = resolution.requestedVariantText || "that exact variant";
   const fullModel = [resolved.make, resolved.model].filter(Boolean).join(" ") || resolved.model || "";
-  const answer = renderAciLanguageText("decision_exact_variant_unavailable_recovery", { modelLabel: fullModel || "this model", requestedVariant }, { seed: buildAciLanguageSeed("decision_exact_variant_unavailable_recovery", fullModel, requestedVariant, message) }) || `I found ${fullModel || "this model"}, but ${requestedVariant} does not match an exact current variant in the DB-backed catalog. I can continue with listed variants, model-level price, and features.`;
+  const answer = renderAciLanguageText("decision_exact_variant_unavailable_recovery", { modelLabel: fullModel || "this model", requestedVariant }, { seed: buildAciLanguageSeed("decision_exact_variant_unavailable_recovery", fullModel, requestedVariant, message) }) || `I found ${fullModel || "this model"}, but I could not match ${requestedVariant} to a current variant I can verify. I can continue with available variants, model-level price, and features.`;
   const selectedVehicle = {
     make: resolved.make || "",
     brand: resolved.make || "",
@@ -3593,6 +4684,56 @@ const maybeReturnExactSingleFeatureFastPath = async ({
   }
 
   const variant = variantResolution.selected.variant;
+  const fullModel = [resolved.make, resolved.model].filter(Boolean).join(" ");
+  const selectedVehicle = {
+    make: resolved.make,
+    brand: resolved.make,
+    model: resolved.model,
+    fullModel,
+    makeKey: normalizeFastPathSlug(resolved.make),
+    modelKey: resolved.modelKey || normalizeFastPathSlug(fullModel),
+    shortModelKey: normalizeFastPathSlug(resolved.model),
+    variant,
+    variantName: variant,
+    selectedVariant: variant,
+    variantKey: variantResolution.selected.variantKey || normalizeFastPathSlug(variant),
+    city: citySlug,
+    citySlug,
+    source: "exact_single_feature_fast_path",
+    confidence: 0.95,
+  };
+  const fastPathContext = {
+    ...context,
+    anchorMake: resolved.make,
+    anchorBrand: resolved.make,
+    anchorModel: resolved.model,
+    anchorFullModel: fullModel,
+    anchorVariant: variant,
+    anchorCity: citySlug,
+    selectedVehicle,
+    activeComparison: {},
+    selectedComparisonSet: null,
+    contextState: {
+      ...(context.contextState || {}),
+      selectedVehicle,
+      activeComparison: {},
+      anchors: {
+        ...(context.contextState?.anchors || {}),
+        primaryVehicle: selectedVehicle,
+        comparisonTargets: [],
+      },
+    },
+    aciContextState: {
+      ...(context.aciContextState || {}),
+      selectedVehicle,
+      activeComparison: {},
+      anchors: {
+        ...(context.aciContextState?.anchors || {}),
+        primaryVehicle: selectedVehicle,
+        comparisonTargets: [],
+      },
+    },
+  };
   const toolPlan = {
     tool: "vehicle_feature_lookup",
     input: {
@@ -3630,13 +4771,13 @@ const maybeReturnExactSingleFeatureFastPath = async ({
     userMessage: text,
     message: text,
     query: text,
-    context,
+    context: fastPathContext,
     toolPlan,
   });
 
   const normalized = await normalizeAciFinalResponse(toolResult, {
     message: text,
-    context,
+    context: fastPathContext,
   });
 
   const bridge = {
@@ -3869,7 +5010,14 @@ const buildBuyerGuidanceSubjectLabel = ({ facts = {}, evidencePack = {}, respons
 
   if (scope === "make_scope") return cleanText(subject.make || extractMakeLabelFromBuyerMessage(bridge.effectiveMessage || bridge.originalMessage || "") || facts.make || facts.brand || "this make");
   if (scope === "discovery_scope" && messageComparisonLabel) return messageComparisonLabel;
-  if (scope === "discovery_scope") return cleanText(subject.discoveryLabel || response.title || "your car search");
+  if (scope === "discovery_scope") {
+    const responseTitle = /^(?:need one detail|practical guidance|diagnostic shortlist)$/i.test(
+      cleanText(response.title),
+    )
+      ? ""
+      : cleanText(response.title);
+    return cleanText(subject.discoveryLabel || responseTitle || "your car search");
+  }
   if (scope === "variant_scope" && (facts.variant || subject.variant)) {
     return cleanText(
       [facts.make || facts.brand || subject.make, facts.model || subject.model, facts.variant || subject.variant].filter(Boolean).join(" "),
@@ -3942,6 +5090,15 @@ const BUYER_GUIDANCE_UPPER_TOKENS = new Set([
   "MUV",
 ]);
 
+const cleanBuyerGuidanceFinalIntentSubject = (value = "") =>
+  String(value || "")
+    .replace(/\?.*$/g, "")
+    .replace(/\b(?:give\s+me\s+)?(?:the\s+)?final\s+(?:answer|recommendation|verdict)\b.*$/i, "")
+    .replace(/\b(?:decide\s+for\s+me|which\s+car\s+should\s+i\s+buy|should\s+i\s+buy)\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+(?:or|vs|versus)\s*$/i, "")
+    .trim();
+
 const titleCaseBuyerGuidanceLabelSide = (value = "") => {
   return cleanText(value)
     .split(/\s+/)
@@ -3987,16 +5144,16 @@ const buildBuyerGuidanceOpeningLine = ({ scope = "", model = "" } = {}) => {
     return `For ${model}, I would not treat this as a final yes/no yet; I would first check features, price gap, and regret-risk evidence.`;
   }
   if (scope === "comparison_scope") {
-    return `For ${model}, treat this as a trade-off check, not a single winner yet.`;
+    return `For ${cleanBuyerGuidanceFinalIntentSubject(model) || "these options"}, treat this as a trade-off check, not a single winner yet.`;
   }
   if (scope === "upgrade_scope") {
     return `For ${model}, treat this as an upgrade-value call: the added benefits need to justify the extra spend for your use case.`;
   }
   if (scope === "discovery_scope" && /\s+vs\s+/i.test(model)) {
-    return `For ${model}, treat this as a trade-off check, not a single winner yet.`;
+    return `For ${cleanBuyerGuidanceFinalIntentSubject(model) || "these options"}, treat this as a trade-off check, not a single winner yet.`;
   }
   if (scope === "discovery_scope") {
-    return `For ${model}, I can keep this as provisional discovery guidance around budget, use case, and shortlist quality.`;
+    return "I can narrow this down, but I need a little more context before naming one car.";
   }
   return `For ${model}, I would not treat this as a final yes/no yet.`;
 };
@@ -4011,7 +5168,7 @@ const buildBuyerGuidanceUsefulViewLine = ({ factsLine = "", buyerContextLine = "
   }
 
   if (scope === "discovery_scope") {
-    return "The next step is to compare shortlisted options on safety, features, value, running cost, and family practicality once those signals are available.";
+    return "Once I have that, I'll compare the shortlist on safety, features, value, running costs, and family practicality.";
   }
 
   if (buyerContextLine) {
@@ -4373,6 +5530,191 @@ const buildBuyerGuidanceAnswer = ({ eligibility = {}, bridge = {}, response = {}
   ));
 };
 
+const parseDecisionPrice = (value = "") => {
+  if (Number.isFinite(Number(value)) && Number(value) > 0) return Number(value);
+  const text = cleanText(value).replace(/[,\s₹]/g, "").toLowerCase();
+  const match = text.match(/(\d+(?:\.\d+)?)(cr|crore|l|lakh)?/i);
+  if (!match) return 0;
+  const amount = Number(match[1] || 0);
+  if (!amount) return 0;
+  if (/^(cr|crore)$/i.test(match[2] || "")) return amount * 10000000;
+  if (/^(l|lakh)$/i.test(match[2] || "")) return amount * 100000;
+  return amount;
+};
+
+const buildConditionalComparisonDecisionGuidance = ({
+  eligibility = {},
+  response = {},
+} = {}) => {
+  const guidance = eligibility.buyerGuidanceContext || {};
+  if (guidance.scope !== "comparison_scope") return null;
+
+  const summary = response.comparisonSummary || response.data?.comparisonSummary || {};
+  const differenceSummary = response.differenceSummary || response.data?.differenceSummary || {};
+  const compared = asArray(summary.comparedVehicles).slice(0, 2);
+  if (compared.length < 2) return null;
+
+  const normalizedInputs = eligibility.buyerDecisionInput?.normalizedBuyerInputs || {};
+  const inputStatus = eligibility.buyerDecisionInput?.inputStatus || {};
+  const useCaseText = keyify(
+    `${normalizedInputs.bodyPreferenceOrPrimaryUseCase || ""} ${
+      normalizedInputs.familySizeOrOccupancyUse || ""
+    }`,
+  );
+  const featurePriorities = asArray(normalizedInputs.featurePriority)
+    .map(keyify)
+    .filter(Boolean);
+  const safetyPriority = keyify(normalizedInputs.safetyPriority || "");
+  const transmissionPreference = keyify(normalizedInputs.transmissionPreference || "");
+  const fuelSource = cleanText(inputStatus.fuelPreferenceOrMonthlyRunning?.source || "");
+  const fuelPreference = /fuel/i.test(fuelSource) && !/monthly|running/i.test(fuelSource)
+    ? keyify(normalizedInputs.fuelPreferenceOrMonthlyRunning || "")
+    : "";
+  const budget = Number(normalizedInputs.budgetOrPriceCeiling || 0);
+  const uniqueByVehicle = asArray(differenceSummary.uniqueAvailableByVehicle);
+
+  const scored = compared.map((vehicle, index) => {
+    const label = cleanText(vehicle.model || vehicle.label || `Option ${index + 1}`);
+    const fullLabel = cleanText(vehicle.label || label);
+    const uniqueEntry = uniqueByVehicle.find((entry) =>
+      keyify(entry.label || "").includes(keyify(fullLabel)),
+    ) || uniqueByVehicle[index] || {};
+    const uniqueFeatures = asArray(uniqueEntry.uniqueAvailableFeatures);
+    const featureBlob = keyify(
+      uniqueFeatures
+        .map((feature) => `${feature.featureKey || ""} ${feature.feature || ""} ${feature.value || ""}`)
+        .join(" "),
+    );
+    const reasons = [];
+    let score = 0;
+
+    const matchingFeatures = (pattern) => uniqueFeatures
+      .filter((feature) => pattern.test(keyify(`${feature.featureKey || ""} ${feature.feature || ""}`)))
+      .map((feature) => cleanText(feature.feature || String(feature.featureKey || "").replace(/_/g, " ")))
+      .filter(Boolean);
+
+    for (const priority of featurePriorities) {
+      if (priority && featureBlob.includes(priority)) {
+        score += 3;
+        reasons.push(`the compared data includes ${priority.replace(/_/g, " ")}`);
+      }
+    }
+
+    if (safetyPriority && !/^(low|none|not important)$/.test(safetyPriority)) {
+      const safetyFeatures = matchingFeatures(/airbag|tpms|abs|brak|esc|stability|isofix|ncap|hill/);
+      if (safetyFeatures.length) {
+        score += Math.min(4, safetyFeatures.length);
+        reasons.push(`${safetyFeatures.slice(0, 2).join(" and ")} support your safety priority`);
+      }
+    }
+
+    if (/family|city|commute|daily|comfort|highway/.test(useCaseText)) {
+      const practicalFeatures = matchingFeatures(
+        /airbag|tpms|rear[_ ]seat|arm[_ ]?rest|usb|isofix|camera|parking|climate|headrest|seat[_ ]belt/,
+      );
+      if (practicalFeatures.length) {
+        score += Math.min(4, practicalFeatures.length);
+        reasons.push(`${practicalFeatures.slice(0, 2).join(" and ")} suit everyday or family use`);
+      }
+    }
+
+    if (/off road|offroad|rough road|mountain|adventure|4x4|four wheel/.test(useCaseText)) {
+      const offRoadFeatures = matchingFeatures(
+        /4wd|4x4|hill[_ ]descent|terrain|differential|low[_ ]range|side[_ ]step|ground[_ ]clearance/,
+      );
+      if (offRoadFeatures.length) {
+        score += Math.min(5, offRoadFeatures.length + 1);
+        reasons.push(`${offRoadFeatures.slice(0, 2).join(" and ")} support rough-road use`);
+      }
+    }
+
+    const transmission = keyify(vehicle.transmission || "");
+    const transmissionMatches = !transmissionPreference || transmission.includes(transmissionPreference);
+    if (transmissionPreference && transmissionMatches) {
+      score += 2;
+      reasons.push(`${vehicle.transmission} matches your transmission preference`);
+    }
+
+    const fuel = keyify(vehicle.fuelType || "");
+    const fuelMatches = !fuelPreference || fuel.includes(fuelPreference);
+    if (fuelPreference && fuelMatches) {
+      score += 2;
+      reasons.push(`${vehicle.fuelType} matches your fuel preference`);
+    }
+
+    const onRoadPrice = parseDecisionPrice(vehicle.onRoadPrice || vehicle.onRoadPriceLabel);
+    if (budget && onRoadPrice) {
+      if (onRoadPrice <= budget) {
+        score += 1;
+        reasons.push("the shown variant stays within your budget");
+      } else {
+        score -= 3;
+      }
+    }
+
+    if (summary.cheaperVehicle && keyify(summary.cheaperVehicle).includes(keyify(fullLabel))) {
+      score += 1;
+    }
+
+    return {
+      label,
+      fullLabel,
+      score,
+      reasons: [...new Set(reasons)].slice(0, 3),
+      transmission: cleanText(vehicle.transmission),
+      transmissionMatches,
+      fuelType: cleanText(vehicle.fuelType),
+      fuelMatches,
+    };
+  }).sort((left, right) => right.score - left.score);
+
+  if (!scored.some((item) => item.reasons.length)) return null;
+
+  const [leader, other] = scored;
+  const hasClearLean = leader.score > other.score;
+  const reasons = leader.reasons.length
+    ? leader.reasons.slice(0, 2).join("; ")
+    : "it fits more of the priorities you shared";
+  const caveats = [];
+
+  if (
+    transmissionPreference &&
+    scored.every((item) => !item.transmissionMatches)
+  ) {
+    const shownTransmissions = [...new Set(scored.map((item) => item.transmission).filter(Boolean))];
+    caveats.push(
+      `The variants currently shown use ${shownTransmissions.join(" and ") || "a different transmission"}, while you asked for ${transmissionPreference.replace(/_/g, " ")}; compare matching trims before making the final call.`,
+    );
+  }
+  if (fuelPreference && scored.every((item) => !item.fuelMatches)) {
+    caveats.push(
+      `The shown variants do not match your ${fuelPreference.replace(/_/g, " ")} preference, so I would line up matching fuel variants next.`,
+    );
+  }
+
+  const answer = hasClearLean
+    ? `For the priorities you shared, I would lean toward ${leader.label}. The strongest reasons are: ${reasons}. ${other.label} remains worth considering if its different strengths matter more to you.${caveats.length ? ` ${caveats.join(" ")}` : ""}`
+    : `This is genuinely close for the priorities you shared. ${leader.label} and ${other.label} currently score evenly on the evidence available, so I would compare the matching fuel and transmission variants before choosing.${caveats.length ? ` ${caveats.join(" ")}` : ""}`;
+
+  return {
+    answer,
+    metadata: {
+      version: "aci_conditional_comparison_guidance_v1",
+      activated: true,
+      mode: "conditional_decision_guidance",
+      leader: hasClearLean ? leader.label : "",
+      scores: scored.map((item) => ({
+        label: item.label,
+        score: item.score,
+        reasons: item.reasons,
+      })),
+      caveats,
+      canUseForFinalRecommendation: false,
+      finalRecommendationEnabled: false,
+    },
+  };
+};
+
 const isWeakGenericClarificationAnswer = (response = {}) => {
   const answer = cleanText(response.answer || response.data?.answer || "");
   return (
@@ -4384,6 +5726,12 @@ const isWeakGenericClarificationAnswer = (response = {}) => {
 };
 
 const buildFinalRecommendationBlockedAnswer = ({ eligibility = {}, response = {}, bridge = {} } = {}) => {
+  const conditionalGuidance = buildConditionalComparisonDecisionGuidance({
+    eligibility,
+    response,
+  });
+  if (conditionalGuidance?.answer) return conditionalGuidance.answer;
+
   const buyerGuidanceAnswer = buildBuyerGuidanceAnswer({ eligibility, response, bridge });
   if (buyerGuidanceAnswer) return buyerGuidanceAnswer;
 
@@ -4427,7 +5775,45 @@ const normalizeDiagnosticOnlyNotes = (answer = "") => {
 const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}, bridge = {} } = {}) => {
   if (eligibility?.requestedFinalRecommendation !== true) return response;
 
-  const blockedAnswer = buildFinalRecommendationBlockedAnswer({ eligibility, bridge });
+  const existingDiagnosticShortlistComposer =
+    response.diagnosticShortlistComposer ||
+    response.data?.diagnosticShortlistComposer ||
+    response.meta?.diagnosticShortlistComposer ||
+    response.contextPatch?.diagnosticShortlistComposer ||
+    null;
+
+  const nextBuyerQuestion =
+    existingDiagnosticShortlistComposer?.buyerFacingQuestion ||
+    eligibility?.buyerInputClarification?.buyerFacingQuestions?.[0] ||
+    eligibility?.buyerInputClarification?.nextBestQuestion ||
+    null;
+
+  const hasDiagnosticShortlistComposer = Boolean(existingDiagnosticShortlistComposer?.answer);
+  const composerAnswerBase = cleanText(existingDiagnosticShortlistComposer?.answer || "");
+  const composerQuestionText = cleanText(nextBuyerQuestion?.question || "");
+  const composerAnswer =
+    hasDiagnosticShortlistComposer && composerQuestionText && !composerAnswerBase.includes(composerQuestionText)
+      ? cleanText(`${composerAnswerBase} Next best question: ${composerQuestionText}`)
+      : composerAnswerBase;
+
+  const diagnosticShortlistComposer = hasDiagnosticShortlistComposer
+    ? {
+        ...existingDiagnosticShortlistComposer,
+        title: existingDiagnosticShortlistComposer.title || "Diagnostic shortlist",
+        answer: composerAnswer,
+        buyerFacingQuestion: existingDiagnosticShortlistComposer.buyerFacingQuestion || nextBuyerQuestion || null,
+        canUseForFinalRecommendation: false,
+        finalRecommendationEnabled: false,
+        diagnosticOnly: true,
+      }
+    : null;
+
+  const conditionalDecisionGuidance = buildConditionalComparisonDecisionGuidance({
+    eligibility,
+    response,
+  });
+  const blockedAnswer = conditionalDecisionGuidance?.answer ||
+    buildFinalRecommendationBlockedAnswer({ eligibility, response, bridge });
   const existingAnswer = normalizeDiagnosticOnlyNotes(String(
     response.answer ||
     response.clarification ||
@@ -4444,14 +5830,28 @@ const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}
 
   const guidanceMode = eligibility.provisionalGuidanceMode || eligibility.buyerGuidanceContext?.guidanceMode || "";
   const effectiveShouldPreserveExisting = guidanceMode ? false : shouldPreserveExisting;
-  const answer = effectiveShouldPreserveExisting
-    ? `${blockedAnswer}\n\n${existingAnswer}`
-    : blockedAnswer;
+  const answer = conditionalDecisionGuidance
+    ? blockedAnswer
+    : hasDiagnosticShortlistComposer
+      ? diagnosticShortlistComposer.answer
+      : effectiveShouldPreserveExisting
+        ? `${blockedAnswer}\n\n${existingAnswer}`
+        : blockedAnswer;
   const decisionScope = eligibility.buyerGuidanceContext?.decisionEvidencePack?.scope || "";
-  const guidanceTitle = guidanceMode ? "Practical guidance" : "Need one detail";
+  const guidanceTitle = hasDiagnosticShortlistComposer
+    ? diagnosticShortlistComposer.title
+    : guidanceMode
+      ? decisionScope === "discovery_scope"
+        ? "Let's narrow it down"
+        : "Practical guidance"
+      : "Need one detail";
 
   const finalBlockedUx = {
-    status: guidanceMode ? "provisional_buyer_guidance" : "final_recommendation_blocked",
+    status: conditionalDecisionGuidance
+      ? "conditional_decision_guidance"
+      : guidanceMode
+        ? "provisional_buyer_guidance"
+        : "final_recommendation_blocked",
     requestedFinalRecommendation: true,
     finalRecommendationEnabled: false,
     canUseForFinalRecommendation: false,
@@ -4464,24 +5864,41 @@ const applyFinalRecommendationBlockedAnswer = (response = {}, { eligibility = {}
       "recovery_required",
       "fact_only",
     ],
+    conditionalDecisionGuidance: conditionalDecisionGuidance?.metadata || null,
   };
 
   return {
     ...response,
-    title: response.title === "Need one detail" || guidanceMode ? guidanceTitle : response.title,
+    title: response.title === "Need one detail" || guidanceMode || hasDiagnosticShortlistComposer ? guidanceTitle : response.title,
     answer,
     clarification: response.clarification || answer,
     finalBlockedUx,
+    ...(conditionalDecisionGuidance
+      ? { conditionalDecisionGuidance: conditionalDecisionGuidance.metadata }
+      : {}),
+    ...(diagnosticShortlistComposer ? { diagnosticShortlistComposer } : {}),
     data: {
       ...(response.data || {}),
-      title: response.data?.title === "Need one detail" || guidanceMode ? guidanceTitle : response.data?.title,
+      title: response.data?.title === "Need one detail" || guidanceMode || hasDiagnosticShortlistComposer ? guidanceTitle : response.data?.title,
       answer,
       clarification: response.data?.clarification || answer,
       finalBlockedUx,
+      ...(conditionalDecisionGuidance
+        ? { conditionalDecisionGuidance: conditionalDecisionGuidance.metadata }
+        : {}),
+      ...(diagnosticShortlistComposer ? { diagnosticShortlistComposer } : {}),
     },
     meta: {
       ...(response.meta || {}),
       finalBlockedUx,
+      ...(conditionalDecisionGuidance
+        ? { conditionalDecisionGuidance: conditionalDecisionGuidance.metadata }
+        : {}),
+      ...(diagnosticShortlistComposer ? { diagnosticShortlistComposer } : {}),
+    },
+    contextPatch: {
+      ...(response.contextPatch || {}),
+      ...(diagnosticShortlistComposer ? { diagnosticShortlistComposer } : {}),
     },
   };
 };
@@ -4724,8 +6141,44 @@ const isExplicitDirectPriceLookupRequest = (message = "", primaryTask = "") => {
   return normalized.length > 0;
 };
 
+const getExplicitVariantListScope = (message = "") => {
+  const raw = String(message || "");
+  const normalized = cleanText(raw);
+  const hasListLanguage =
+    /\b(show|list|see|all|available|current|which|what)\b/i.test(raw);
+  const hasPluralVariant = /\b(variants|trims)\b/i.test(raw);
+  const scopedVariant =
+    /\b(petrol|diesel|cng|electric|ev|hybrid|automatic|manual|amt|cvt|dct|ivt)\s+(variants|trims)\b/i.test(
+      raw,
+    );
+
+  if (!normalized || (!(hasListLanguage && hasPluralVariant) && !scopedVariant)) {
+    return null;
+  }
+  if (/\b(compare|comparison|vs|versus|between|difference|diff)\b/i.test(raw)) {
+    return null;
+  }
+
+  const fuel =
+    raw.match(/\b(petrol|diesel|cng|electric|ev|hybrid)\b/i)?.[1]?.toLowerCase() ||
+    "";
+  const transmission =
+    raw
+      .match(/\b(automatic|manual|amt|cvt|dct|ivt)\b/i)?.[1]
+      ?.toLowerCase() || "";
+
+  return {
+    fuelType: fuel === "ev" ? "electric" : fuel,
+    transmission,
+  };
+};
+
 const buildDirectPriceLookupOverride = ({ message = "", meaningFrame = {}, contextState = {} } = {}) => {
-  if (!isExplicitDirectPriceLookupRequest(message, meaningFrame?.primaryTask)) return null;
+  const variantListScope = getExplicitVariantListScope(message);
+  if (
+    !variantListScope &&
+    !isExplicitDirectPriceLookupRequest(message, meaningFrame?.primaryTask)
+  ) return null;
   if (
     meaningFrame?.clarification?.reason === "exact_variant_unavailable" ||
     meaningFrame?.trace?.variantResolution?.status === "exact_unavailable"
@@ -4750,12 +6203,18 @@ const buildDirectPriceLookupOverride = ({ message = "", meaningFrame = {}, conte
   return {
     tool: "vehicle_pricelist",
     intent: "vehicle_pricelist",
-    routingReason: "direct_price_lookup_overrides_comparison_context",
+    routingReason: variantListScope
+      ? "direct_variant_list_overrides_explainer_routing"
+      : "direct_price_lookup_overrides_comparison_context",
     model,
     make: vehicle.make || vehicle.brand || "",
     fullModel: vehicle.fullModel || vehicle.model || model,
-    variant: vehicle.variant || vehicle.variantName || "",
+    variant: variantListScope
+      ? ""
+      : vehicle.variant || vehicle.variantName || "",
     city: vehicle.citySlug || vehicle.city || "new-delhi",
+    fuelType: variantListScope?.fuelType || "",
+    transmission: variantListScope?.transmission || "",
   };
 };
 
@@ -4806,6 +6265,11 @@ const applyDirectPriceLookupOverride = ({ plan = {}, override = null } = {}) => 
         filters: {
           ...(baseTool.filters || {}),
           city: override.city,
+          activeOnly: true,
+          ...(override.fuelType ? { fuelType: override.fuelType } : {}),
+          ...(override.transmission
+            ? { transmission: override.transmission }
+            : {}),
         },
       },
     ],
@@ -5186,6 +6650,16 @@ const getDecisionRuntimeRows = (response = {}) => {
   return candidates.find((value) => Array.isArray(value) && value.length > 0) || [];
 };
 
+const getRecommendationRuntimeRows = (response = {}) =>
+  [
+    response.data?.allModelGroups,
+    response.allModelGroups,
+    response.data?.modelGroups,
+    response.modelGroups,
+  ]
+    .find((value) => Array.isArray(value) && value.length > 0) ||
+  getDecisionRuntimeRows(response);
+
 const getDecisionRuntimeSourceCollections = (response = {}) => {
   const collections = [
     ...listFrom(response.sourceCollections),
@@ -5203,7 +6677,9 @@ const buildDecisionRuntimeEnvelope = ({ response = {}, bridge = {} } = {}) => {
   const moduleName = getDecisionRuntimeModule({ bridge, response });
   if (!moduleName) return null;
 
-  const rows = getDecisionRuntimeRows(response);
+  const rows = moduleName === DECISION_MODULES.RECOMMENDATION
+    ? getRecommendationRuntimeRows(response)
+    : getDecisionRuntimeRows(response);
   const sourceCollections = getDecisionRuntimeSourceCollections(response);
   const dataStatus = response.dataStatus || response.data?.dataStatus || response.meta?.dataStatus || "";
   const hasUsefulRows =
@@ -5503,7 +6979,7 @@ const buildDecisionEvidencePackInputFromReadModel = async ({ context = {}, respo
 };
 
 const buildHydratedFinalChoiceResponse = async (response = {}, { bridge = {}, context = {} } = {}) => {
-  const message = bridge.effectiveMessage || bridge.originalMessage || "";
+  const message = bridge.originalMessage || bridge.effectiveMessage || "";
   if (!isFinalChoiceRequestText(message)) return response;
 
   const preliminaryEligibility = buildFinalRecommendationEligibilityRuntime({
@@ -5679,7 +7155,7 @@ const isRecommendationCandidateResolverEligible = (response = {}, bridge = {}) =
   if (!looksLikeRecommendation) return false;
   if (dataStatus && dataStatus !== "available") return false;
 
-  const rows = getDecisionRuntimeRows(response);
+  const rows = getRecommendationRuntimeRows(response);
   return rows.length > 0;
 };
 
@@ -5688,7 +7164,7 @@ const unionList = (...lists) => [...new Set(lists.flatMap((list) => Array.isArra
 const attachRecommendationCandidateResolverEvidence = async (response = {}, { bridge = {}, context = {} } = {}) => {
   if (!isRecommendationCandidateResolverEligible(response, bridge)) return response;
 
-  const rows = getDecisionRuntimeRows(response);
+  const rows = getRecommendationRuntimeRows(response);
   if (!rows.length) return response;
 
   const { buildRecommendationCandidateResolver } = await import("../candidates/aciRecommendationCandidateResolver.service.js");
@@ -5701,6 +7177,95 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     context.buyerContext ||
     context.contextState?.buyerContext ||
     {};
+
+  const { buildAciFinalRecommendation } = await import(
+    "../recommendations/aciFinalRecommendation.service.js"
+  );
+  const fastFinalRecommendation = await buildAciFinalRecommendation({
+    response,
+    rows,
+    buyerContext,
+    bridge,
+  });
+
+  if (fastFinalRecommendation?.finalRecommendationEnabled === true) {
+    const sourceCollections = unionList(
+      response.sourceCollections,
+      response.data?.sourceCollections,
+      response.meta?.sourceCollections,
+      response.sourceTransparency?.modulesChecked,
+      fastFinalRecommendation.evidence?.sourceCollections,
+    );
+    const sourceTransparency = {
+      ...(response.sourceTransparency || {}),
+      modulesChecked: sourceCollections,
+      matched: fastFinalRecommendation.evidence?.eligibleModelCount || fastFinalRecommendation.rows.length,
+      dataSource: "aci_vehicle_read_models",
+      finalRecommendation: fastFinalRecommendation.version,
+    };
+    const evidence = {
+      ...(response.evidence || {}),
+      evidenceStatus: "complete",
+      confidence: "high",
+      usableEvidenceCount: fastFinalRecommendation.evidence.evaluatedVariantCount,
+      requiredEvidenceCount: fastFinalRecommendation.evidence.evaluatedVariantCount,
+      sourceTransparency,
+    };
+
+    return {
+      ...response,
+      title: fastFinalRecommendation.title,
+      answer: fastFinalRecommendation.answer,
+      rows: fastFinalRecommendation.rows,
+      items: fastFinalRecommendation.rows,
+      modelGroups: fastFinalRecommendation.rows,
+      previewModelGroups: fastFinalRecommendation.rows,
+      finalRecommendation: fastFinalRecommendation,
+      finalRecommendationEnabled: true,
+      canUseForFinalRecommendation: true,
+      sourceCollections,
+      sourceTransparency,
+      evidence,
+      contextPatch: {
+        ...(response.contextPatch || {}),
+        finalRecommendation: fastFinalRecommendation,
+      },
+      data: {
+        ...(response.data || {}),
+        title: fastFinalRecommendation.title,
+        answer: fastFinalRecommendation.answer,
+        rows: fastFinalRecommendation.rows,
+        items: fastFinalRecommendation.rows,
+        modelGroups: fastFinalRecommendation.rows,
+        previewModelGroups: fastFinalRecommendation.rows,
+        finalRecommendation: fastFinalRecommendation,
+        finalRecommendationEnabled: true,
+        canUseForFinalRecommendation: true,
+        sourceCollections,
+        sourceTransparency,
+        evidence,
+      },
+      meta: {
+        ...(response.meta || {}),
+        finalRecommendation: {
+          version: fastFinalRecommendation.version,
+          status: fastFinalRecommendation.status,
+          finalRecommendationEnabled: true,
+        },
+        finalRecommendationEnabled: true,
+        canUseForFinalRecommendation: true,
+        sourceCollections,
+      },
+      trace: {
+        ...(response.trace || {}),
+        finalRecommendation: {
+          version: fastFinalRecommendation.version,
+          status: fastFinalRecommendation.status,
+          finalRecommendationEnabled: true,
+        },
+      },
+    };
+  }
 
   const resolved = await buildRecommendationCandidateResolver({
     rows,
@@ -5752,8 +7317,20 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     summarizeCandidateDiagnosticRanking,
   } = await import("../candidates/aciCandidateDiagnosticRanking.service.js");
 
-  const candidateDiagnosticRanking = buildCandidateDiagnosticRanking({
+const candidateSourceProvenanceSummary = await evaluateCandidateSourceProvenance({
+    response,
     rows: activeMarketRows,
+    buyerContext,
+  });
+
+  const sourceProvenanceRows = Array.isArray(candidateSourceProvenanceSummary?.rows)
+    ? candidateSourceProvenanceSummary.rows
+    : activeMarketRows;
+
+  const diagnosticSourceProvenanceRows = filterDiagnosticSourceProvenanceRows(sourceProvenanceRows);
+
+    const candidateDiagnosticRanking = buildCandidateDiagnosticRanking({
+    rows: diagnosticSourceProvenanceRows,
     buyerContext,
     bridge,
     response,
@@ -5761,7 +7338,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
   const rankedRows =
     Array.isArray(candidateDiagnosticRanking.rows) && candidateDiagnosticRanking.rows.length
       ? candidateDiagnosticRanking.rows
-      : resolved.rows;
+      : diagnosticSourceProvenanceRows;
   const candidateDiagnosticRankingSummary = summarizeCandidateDiagnosticRanking(candidateDiagnosticRanking);
 
   const {
@@ -5778,8 +7355,45 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
   const readinessRows =
     Array.isArray(candidateEvidenceReadiness.rows) && candidateEvidenceReadiness.rows.length
       ? candidateEvidenceReadiness.rows
-      : resolved.rows;
+      : rankedRows;
   const candidateEvidenceReadinessSummary = summarizeCandidateEvidenceReadiness(candidateEvidenceReadiness);
+
+  const finalRecommendation = await buildAciFinalRecommendation({
+    response,
+    rows: readinessRows,
+    buyerContext,
+    bridge,
+  });
+  const finalRecommendationReady = finalRecommendation?.finalRecommendationEnabled === true;
+  const buyerRows = finalRecommendationReady ? finalRecommendation.rows : readinessRows;
+
+  const finalEligibilityForComposer =
+    response.finalRecommendationEligibility ||
+    response.meta?.finalRecommendationEligibility ||
+    response.data?.finalRecommendationEligibility ||
+    null;
+  const buyerInputClarificationForComposer =
+    response.buyerInputClarification ||
+    response.meta?.buyerInputClarification ||
+    response.data?.buyerInputClarification ||
+    finalEligibilityForComposer?.buyerInputClarification ||
+    null;
+
+  const {
+    buildDiagnosticShortlistComposer,
+  } = await import("../candidates/aciDiagnosticShortlistComposer.service.js");
+
+  const diagnosticShortlistComposer = buildDiagnosticShortlistComposer({
+    response,
+    rows: readinessRows,
+    buyerContext,
+    finalEligibility: finalEligibilityForComposer,
+    buyerInputClarification: buyerInputClarificationForComposer,
+    candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
+    candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+    candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+    candidateSourceProvenance: candidateSourceProvenanceSummary,
+  });
 
   const sourceCollections = unionList(
     response.sourceCollections,
@@ -5787,6 +7401,7 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     response.meta?.sourceCollections,
     response.sourceTransparency?.modulesChecked,
     resolved.sourceCollections,
+    finalRecommendation?.evidence?.sourceCollections,
   );
 
   const sourceTransparency = {
@@ -5798,6 +7413,9 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
     candidateMarketConfidence: candidateMarketConfidenceSummary.version,
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary.version,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary.version,
+    candidateEvidenceReadiness: candidateEvidenceReadinessSummary.version,
+    diagnosticShortlistComposer: diagnosticShortlistComposer.version,
+    finalRecommendation: finalRecommendation.version,
   };
 
   const contextPatch = {
@@ -5807,54 +7425,87 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       evidenceStatus: resolved.evidenceStatus,
       enrichedCount: resolved.enrichedCount,
       totalCandidates: resolved.totalCandidates,
-      finalRecommendationEnabled: false,
+      finalRecommendationEnabled: finalRecommendationReady,
     },
     candidateMarketConfidence: candidateMarketConfidenceSummary,
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+    candidateSourceProvenance: candidateSourceProvenanceSummary,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+    diagnosticShortlistComposer,
+    finalRecommendation,
   };
 
   return {
     ...response,
+    title: finalRecommendationReady
+      ? finalRecommendation.title
+      : diagnosticShortlistComposer.title || response.title,
+    answer: finalRecommendationReady
+      ? finalRecommendation.answer
+      : diagnosticShortlistComposer.answer || response.answer,
     candidateMarketConfidence: candidateMarketConfidenceSummary,
     candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+    candidateSourceProvenance: candidateSourceProvenanceSummary,
     candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
     candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
-    rows: readinessRows,
-    items: readinessRows,
-    modelGroups: Array.isArray(response.modelGroups) ? readinessRows : response.modelGroups,
-    previewModelGroups: Array.isArray(response.previewModelGroups) ? readinessRows : response.previewModelGroups,
+    diagnosticShortlistComposer,
+    finalRecommendation,
+    finalRecommendationEnabled: finalRecommendationReady,
+    canUseForFinalRecommendation: finalRecommendationReady,
+    rows: buyerRows,
+    items: buyerRows,
+    modelGroups: Array.isArray(response.modelGroups) ? buyerRows : response.modelGroups,
+    previewModelGroups: Array.isArray(response.previewModelGroups) ? buyerRows : response.previewModelGroups,
     sourceCollections,
     sourceTransparency,
     contextPatch,
     evidence: {
       ...(response.evidence || {}),
-      evidenceStatus: resolved.evidenceStatus,
-      confidence: response.evidence?.confidence || "medium",
-      usableEvidenceCount: resolved.enrichedCount,
-      requiredEvidenceCount: Math.max(1, resolved.totalCandidates || resolved.rows.length),
+      evidenceStatus: finalRecommendationReady ? "complete" : resolved.evidenceStatus,
+      confidence: finalRecommendationReady ? "high" : response.evidence?.confidence || "medium",
+      usableEvidenceCount: finalRecommendationReady
+        ? finalRecommendation.evidence.evaluatedVariantCount
+        : resolved.enrichedCount,
+      requiredEvidenceCount: finalRecommendationReady
+        ? finalRecommendation.evidence.evaluatedVariantCount
+        : Math.max(1, resolved.totalCandidates || resolved.rows.length),
       sourceTransparency,
     },
     data: {
       ...(response.data || {}),
-      rows: readinessRows,
-      items: readinessRows,
-      modelGroups: Array.isArray(response.data?.modelGroups) ? readinessRows : response.data?.modelGroups,
-      previewModelGroups: Array.isArray(response.data?.previewModelGroups) ? readinessRows : response.data?.previewModelGroups,
+      rows: buyerRows,
+      items: buyerRows,
+      modelGroups: Array.isArray(response.data?.modelGroups) ? buyerRows : response.data?.modelGroups,
+      previewModelGroups: Array.isArray(response.data?.previewModelGroups) ? buyerRows : response.data?.previewModelGroups,
       sourceCollections,
       sourceTransparency,
+      title: finalRecommendationReady
+        ? finalRecommendation.title
+        : diagnosticShortlistComposer.title || response.data?.title || response.title,
+      answer: finalRecommendationReady
+        ? finalRecommendation.answer
+        : diagnosticShortlistComposer.answer || response.data?.answer || response.answer,
       recommendationCandidateResolver: resolved,
       candidateMarketConfidence: candidateMarketConfidenceSummary,
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+      candidateSourceProvenance: candidateSourceProvenanceSummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+      diagnosticShortlistComposer,
+      finalRecommendation,
+      finalRecommendationEnabled: finalRecommendationReady,
+      canUseForFinalRecommendation: finalRecommendationReady,
       evidence: {
         ...(response.data?.evidence || {}),
-        evidenceStatus: resolved.evidenceStatus,
-        confidence: response.data?.evidence?.confidence || "medium",
-        usableEvidenceCount: resolved.enrichedCount,
-        requiredEvidenceCount: Math.max(1, resolved.totalCandidates || resolved.rows.length),
+        evidenceStatus: finalRecommendationReady ? "complete" : resolved.evidenceStatus,
+        confidence: finalRecommendationReady ? "high" : response.data?.evidence?.confidence || "medium",
+        usableEvidenceCount: finalRecommendationReady
+          ? finalRecommendation.evidence.evaluatedVariantCount
+          : resolved.enrichedCount,
+        requiredEvidenceCount: finalRecommendationReady
+          ? finalRecommendation.evidence.evaluatedVariantCount
+          : Math.max(1, resolved.totalCandidates || resolved.rows.length),
         sourceTransparency,
       },
     },
@@ -5868,12 +7519,17 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
         totalCandidates: resolved.totalCandidates,
         scoreProfileCount: resolved.scoreProfileCount,
         featureSummaryCount: resolved.featureSummaryCount,
-        finalRecommendationEnabled: false,
+        finalRecommendationEnabled: finalRecommendationReady,
       },
       candidateMarketConfidence: candidateMarketConfidenceSummary,
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+      candidateSourceProvenance: candidateSourceProvenanceSummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+      diagnosticShortlistComposer,
+      finalRecommendation,
+      finalRecommendationEnabled: finalRecommendationReady,
+      canUseForFinalRecommendation: finalRecommendationReady,
     },
     trace: {
       ...(response.trace || {}),
@@ -5885,8 +7541,15 @@ const attachRecommendationCandidateResolverEvidence = async (response = {}, { br
       },
       candidateMarketConfidence: candidateMarketConfidenceSummary,
       candidateActiveMarketEligibility: candidateActiveMarketEligibilitySummary,
+      candidateSourceProvenance: candidateSourceProvenanceSummary,
       candidateDiagnosticRanking: candidateDiagnosticRankingSummary,
       candidateEvidenceReadiness: candidateEvidenceReadinessSummary,
+      diagnosticShortlistComposer,
+      finalRecommendation: {
+        version: finalRecommendation.version,
+        status: finalRecommendation.status,
+        finalRecommendationEnabled: finalRecommendationReady,
+      },
     },
   };
 };
@@ -6082,8 +7745,53 @@ const buildEligibilityContextWithExtractedBuyerContext = async ({
 };
 
 
+
+const sealDiagnosticShortlistComposerForBuyer = (response = {}) => {
+  if (
+    response.finalRecommendationEnabled === true ||
+    response.finalRecommendation?.finalRecommendationEnabled === true ||
+    response.data?.finalRecommendationEnabled === true
+  ) return response;
+  if (response.conditionalDecisionGuidance?.activated === true) return response;
+
+  const composer =
+    response.diagnosticShortlistComposer ||
+    response.data?.diagnosticShortlistComposer ||
+    response.meta?.diagnosticShortlistComposer ||
+    response.contextPatch?.diagnosticShortlistComposer ||
+    null;
+
+  if (!composer?.answer) return response;
+
+  const title = composer.title || response.title || response.data?.title || "Diagnostic shortlist";
+  const answer = composer.answer;
+
+  return {
+    ...response,
+    title,
+    answer,
+    clarification: response.clarification || answer,
+    diagnosticShortlistComposer: composer,
+    data: {
+      ...(response.data || {}),
+      title,
+      answer,
+      clarification: response.data?.clarification || answer,
+      diagnosticShortlistComposer: composer,
+    },
+    meta: {
+      ...(response.meta || {}),
+      diagnosticShortlistComposer: composer,
+    },
+    contextPatch: {
+      ...(response.contextPatch || {}),
+      diagnosticShortlistComposer: composer,
+    },
+  };
+};
+
 const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, context = {} } = {}) => {
-  const messageForEligibility = bridge.effectiveMessage || bridge.originalMessage || "";
+  const messageForEligibility = bridge.originalMessage || bridge.effectiveMessage || "";
   const rawResponseForEligibility = await buildHydratedFinalChoiceResponse(response, { bridge, context });
   const enrichedEligibilityInput = await buildEligibilityContextWithExtractedBuyerContext({
     message: messageForEligibility,
@@ -6118,14 +7826,16 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
     finalRecommendationEligibility.requestedFinalRecommendation === true;
 
   if (!envelope) {
-    if (!shouldAttachFinalRecommendationEligibility) return responseForEligibility;
+    if (!shouldAttachFinalRecommendationEligibility) return sealDiagnosticShortlistComposerForBuyer(responseForEligibility);
 
-    const responseWithFinalBlockedAnswer = applyFinalRecommendationBlockedAnswer(responseForEligibility, {
-      eligibility: finalRecommendationEligibility,
-      bridge,
-    });
+    const responseWithFinalBlockedAnswer = finalRecommendationEligibility.canUseForFinalRecommendation
+      ? responseForEligibility
+      : applyFinalRecommendationBlockedAnswer(responseForEligibility, {
+          eligibility: finalRecommendationEligibility,
+          bridge,
+        });
 
-    return {
+    return sealDiagnosticShortlistComposerForBuyer({
       ...responseWithFinalBlockedAnswer,
       finalRecommendationEligibility,
       data: {
@@ -6136,11 +7846,24 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
         ...(responseWithFinalBlockedAnswer.meta || {}),
         finalRecommendationEligibility,
       },
-    };
+    });
   }
 
-  const decisionPolicy = envelope.decisionPolicy;
-  const responseWithFinalBlockedAnswer = shouldAttachFinalRecommendationEligibility
+  const finalRecommendationReady = finalRecommendationEligibility.canUseForFinalRecommendation === true;
+  const decisionPolicy = finalRecommendationReady
+    ? {
+        ...envelope.decisionPolicy,
+        canUseForFinalRecommendation: true,
+        allowedAnswerType: ALLOWED_ANSWER_TYPES.FINAL_RECOMMENDATION_ALLOWED,
+        blockedReasons: [],
+        missingMandatoryInputs: [],
+        degradedMode: null,
+        claimType: CLAIM_TYPES.OPINION,
+        evidenceStatus: EVIDENCE_STATUS.COMPLETE,
+        confidence: CONFIDENCE_LEVELS.HIGH,
+      }
+    : envelope.decisionPolicy;
+  const responseWithFinalBlockedAnswer = shouldAttachFinalRecommendationEligibility && !finalRecommendationReady
     ? applyFinalRecommendationBlockedAnswer(responseForEligibility, {
         eligibility: finalRecommendationEligibility,
         bridge,
@@ -6148,29 +7871,42 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
     : responseForEligibility;
 
   const enrichedBuyerContext = responseForEligibility.buyerContext || responseForEligibility.data?.buyerContext || {};
-  const enrichedBuyerGuidanceContext = responseForEligibility.buyerGuidanceContext || responseForEligibility.data?.buyerGuidanceContext || {};
+  const enrichedBuyerGuidanceContext =
+    finalRecommendationEligibility.buyerGuidanceContext ||
+    responseForEligibility.buyerGuidanceContext ||
+    responseForEligibility.data?.buyerGuidanceContext ||
+    {};
   const enrichedContextPatch = responseForEligibility.contextPatch || response.contextPatch || {};
+  const effectiveEvidence = finalRecommendationReady
+    ? {
+        ...envelope.evidence,
+        ...(responseForEligibility.evidence || {}),
+        evidenceStatus: EVIDENCE_STATUS.COMPLETE,
+        confidence: CONFIDENCE_LEVELS.HIGH,
+      }
+    : envelope.evidence;
+  const effectiveDegradedMode = finalRecommendationReady ? null : envelope.degradedMode;
 
   const data = {
     ...(responseWithFinalBlockedAnswer.data || {}),
     decisionPolicy,
-    evidence: envelope.evidence,
+    evidence: effectiveEvidence,
     provenance: envelope.provenance,
-    degradedMode: envelope.degradedMode,
-    canUseForFinalRecommendation: false,
+    degradedMode: effectiveDegradedMode,
+    canUseForFinalRecommendation: finalRecommendationReady,
     ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
   };
 
-  return {
+  return sealDiagnosticShortlistComposerForBuyer({
     ...responseWithFinalBlockedAnswer,
     buyerContext: enrichedBuyerContext,
     buyerGuidanceContext: enrichedBuyerGuidanceContext,
     contextPatch: enrichedContextPatch,
     module: responseWithFinalBlockedAnswer.module || envelope.module,
     decisionPolicy,
-    evidence: envelope.evidence,
+    evidence: effectiveEvidence,
     provenance: envelope.provenance,
-    degradedMode: envelope.degradedMode,
+    degradedMode: effectiveDegradedMode,
     ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
     sourceCollections: envelope.sourceCollections.length
       ? envelope.sourceCollections
@@ -6189,13 +7925,13 @@ const attachDecisionRuntimeEnvelope = async (response = {}, { bridge = {}, conte
       buyerContext: enrichedBuyerContext,
       buyerGuidanceContext: enrichedBuyerGuidanceContext,
       decisionPolicy,
-      evidenceStatus: envelope.evidence.evidenceStatus,
-      evidenceConfidence: envelope.evidence.confidence,
+      evidenceStatus: effectiveEvidence.evidenceStatus,
+      evidenceConfidence: effectiveEvidence.confidence,
       provenance: envelope.provenance,
-      degradedMode: envelope.degradedMode,
+      degradedMode: effectiveDegradedMode,
       ...(shouldAttachFinalRecommendationEligibility ? { finalRecommendationEligibility } : {}),
     },
-  };
+  });
 };
 
 const buildScoreValueLookupOverride = ({
@@ -6464,7 +8200,7 @@ const applyExplicitScoreModelPlanOverride = ({ plan = {}, override = null, messa
 
 
 
-export const runAciCoreLiveBridge = async ({
+const runAciCoreLiveBridgeInternal = async ({
   message = "",
   context = {},
   user = null,
@@ -6482,7 +8218,29 @@ export const runAciCoreLiveBridge = async ({
     message,
     context,
   });
+  const contextualDiscoveryRefinement = expandContextualBroadDiscoveryRefinement({
+    message,
+    context,
+  });
+  message = contextualDiscoveryRefinement.message || message;
   const effectiveMessage = message;
+  const batch4BroadDiscoveryFastPath = await maybeReturnBatch4BroadDiscoveryFastPath({
+    message,
+    context,
+    contextState: context?.contextState || context?.aciContextState || {},
+    user,
+    session,
+    meta,
+    originalMessage,
+    effectiveMessage,
+    contextualDiscoveryRefinement,
+    startedAt,
+  });
+
+  if (batch4BroadDiscoveryFastPath) {
+    return batch4BroadDiscoveryFastPath;
+  }
+
   const contextDirectFactFastPath = await maybeReturnContextDirectFactFastPath({
     message,
     context,
@@ -6547,6 +8305,30 @@ export const runAciCoreLiveBridge = async ({
     return explicitComparisonFastPath;
   }
 
+  const featureComparisonExplainerFastPath = await maybeReturnFeatureComparisonExplainerFastPath({
+    message,
+    context,
+    originalMessage,
+    effectiveMessage,
+    startedAt,
+  });
+
+  if (featureComparisonExplainerFastPath) {
+    return featureComparisonExplainerFastPath;
+  }
+
+  const standaloneFeatureExplainerFastPath = await maybeReturnStandaloneFeatureExplainerFastPath({
+    message,
+    context,
+    originalMessage,
+    effectiveMessage,
+    startedAt,
+  });
+
+  if (standaloneFeatureExplainerFastPath) {
+    return standaloneFeatureExplainerFastPath;
+  }
+
   const batch4BareClarificationFastPath = maybeReturnBatch4BareClarificationFastPath({
     message,
     context,
@@ -6583,22 +8365,6 @@ export const runAciCoreLiveBridge = async ({
     return vehicleColorsFastPath;
   }
 
-  const batch4BroadDiscoveryFastPath = await maybeReturnBatch4BroadDiscoveryFastPath({
-    message,
-    context,
-    contextState: context?.contextState || context?.aciContextState || {},
-    user,
-    session,
-    meta,
-    originalMessage,
-    effectiveMessage,
-    startedAt,
-  });
-
-  if (batch4BroadDiscoveryFastPath) {
-    return batch4BroadDiscoveryFastPath;
-  }
-
   const supportedExactPriceFastPath = await maybeReturnSupportedExactPriceFastPath({
     message,
     effectiveMessage,
@@ -6611,18 +8377,9 @@ export const runAciCoreLiveBridge = async ({
     return supportedExactPriceFastPath;
   }
 
-  const exactSingleFeatureFastPath = await maybeReturnExactSingleFeatureFastPath({
-    message,
-    effectiveMessage,
-    context,
-    originalMessage,
-    startedAt,
-  });
-
-  if (exactSingleFeatureFastPath) {
-    return exactSingleFeatureFastPath;
-  }
-
+  // Resolve model-level feature questions before attempting variant matching.
+  // Variant-specific wording is rejected by the standalone fast path and then
+  // falls through to the exact-variant resolver below.
   const standaloneModelFeatureFastPath = await maybeReturnStandaloneModelFeatureFastPath({
     message,
     context,
@@ -6635,6 +8392,18 @@ export const runAciCoreLiveBridge = async ({
 
   if (standaloneModelFeatureFastPath) {
     return standaloneModelFeatureFastPath;
+  }
+
+  const exactSingleFeatureFastPath = await maybeReturnExactSingleFeatureFastPath({
+    message,
+    effectiveMessage,
+    context,
+    originalMessage,
+    startedAt,
+  });
+
+  if (exactSingleFeatureFastPath) {
+    return exactSingleFeatureFastPath;
   }
 
   const rawMessage = String(message || "");
@@ -6955,6 +8724,50 @@ export const runAciCoreLiveBridge = async ({
       candidateSnapshot: managedCandidateSnapshot,
     },
   });
+};
+
+export const runAciCoreLiveBridge = async (input = {}) => {
+  const response = await runAciCoreLiveBridgeInternal(input);
+  if (!response || typeof response !== "object") return response;
+
+  const previousContext =
+    input.context && typeof input.context === "object" ? input.context : {};
+  const bridge = response.aciCoreBridge || response.meta?.aciCoreBridge || {};
+  const contextPatch = enrichAciContextPatchWithTurnLedger({
+    previousContext,
+    contextPatch: response.contextPatch || {},
+    message: input.message || input.rawMessage || "",
+    intent: response.intent || bridge.primaryTask || "",
+    tool: response.tool || bridge.tool || "",
+    response,
+    resolvedContext:
+      response.contextPatch?.contextState ||
+      response.contextPatch?.aciContextState ||
+      {},
+    candidateSnapshot: previousContext.candidateSnapshot || {},
+  });
+
+  return {
+    ...response,
+    contextPatch,
+    meta: {
+      ...(response.meta || {}),
+      contextTrace: contextPatch.contextTrace || {},
+    },
+  };
+};
+
+export const prewarmAciLiveBridgeFastPathCaches = async () => {
+  const startedAt = Date.now();
+  const rows = await getModelFeatureSummaryRows();
+
+  return {
+    ok: rows.length > 0,
+    durationMs: Date.now() - startedAt,
+    cache: {
+      modelSummaryRows: rows.length,
+    },
+  };
 };
 
 export {

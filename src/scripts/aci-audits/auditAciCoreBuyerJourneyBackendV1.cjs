@@ -9,6 +9,11 @@ const lower = (value = "") => text(value).toLowerCase();
 const asArray = (value) => (Array.isArray(value) ? value : value ? [value] : []);
 const uniq = (items = []) => [...new Set(items.filter(Boolean))];
 
+const FAST_MODE = process.env.ACI_BUYER_JOURNEY_AUDIT_FAST === "1";
+const FAST_MODE_EXCLUDED_JOURNEY_IDS = new Set([
+  "budget-must-have-journey",
+]);
+
 const getRows = (response = {}) =>
   asArray(
     response.rows ||
@@ -454,10 +459,17 @@ async function main() {
     },
   ];
 
+  const selectedJourneys = FAST_MODE
+    ? journeys.filter((journey) => !FAST_MODE_EXCLUDED_JOURNEY_IDS.has(journey.id))
+    : journeys;
+  const skippedJourneyIds = journeys
+    .filter((journey) => !selectedJourneys.some((selected) => selected.id === journey.id))
+    .map((journey) => journey.id);
+
   const results = [];
   const startedAt = Date.now();
 
-  for (const journey of journeys) {
+  for (const journey of selectedJourneys) {
     let context = {};
     const stepResults = [];
 
@@ -517,6 +529,8 @@ async function main() {
     ok: failed.length === 0,
     backendOnly: true,
     frontendEvaluated: false,
+    fastMode: FAST_MODE,
+    skippedJourneyIds,
     totalJourneys: results.length,
     passedJourneys: results.length - failed.length,
     failedJourneys: failed.length,

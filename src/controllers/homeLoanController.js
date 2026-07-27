@@ -27,6 +27,24 @@ export async function getLoan(req, res) {
 export async function createLoan(req, res) {
   try {
     const userId = req.user?._id;
+    const numberOfCars = Number(req.body?.numberOfCars) || 1;
+
+    if (numberOfCars > 1) {
+      if (req.body?.isBulk) {
+        return err(
+          res,
+          "This loan file was created by splitting an original entry and cannot be split again.",
+          400,
+        );
+      }
+      const loans = await svc.createHomeLoanBulk(req.body, userId, numberOfCars);
+      return ok(res, {
+        data: loans,
+        count: loans.length,
+        message: `Successfully created ${loans.length} loan applications.`,
+      }, 201);
+    }
+
     const loan = await svc.createHomeLoan(req.body, userId);
     ok(res, { data: loan }, 201);
   } catch (e) {

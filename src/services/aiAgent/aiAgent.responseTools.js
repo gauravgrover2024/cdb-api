@@ -50,6 +50,7 @@ export const ACI_RESPONSE_TOOL_IDS = [
   "vehicle_similar",
   "vehicle_price_breakup",
   "vehicle_emi",
+  "vehicle_finance_knowledge",
   "vehicle_price_history",
   "vehicle_explainer",
   "aci_lead_capture",
@@ -74,6 +75,7 @@ export const RESPONSE_INTENTS = {
   vehicle_similar: "vehicle_similar",
   vehicle_price_breakup: "vehicle_price_breakup",
   vehicle_emi: "vehicle_emi_calculator",
+  vehicle_finance_knowledge: "new_car_finance_faq",
   vehicle_price_history: "vehicle_price_history",
   vehicle_explainer: "vehicle_explainer",
   aci_lead_capture: "aci_new_car_quotation",
@@ -94,6 +96,7 @@ export const RESPONSE_CANVAS_TYPES = {
   vehicle_similar: "similar_cars_canvas",
   vehicle_price_breakup: "price_breakup_canvas",
   vehicle_emi: "emi_calculator_canvas",
+  vehicle_finance_knowledge: "",
   vehicle_price_history: "price_history_canvas",
   vehicle_explainer: "explainer_canvas",
   aci_lead_capture: "aci_quotation_canvas",
@@ -114,6 +117,7 @@ export const RESPONSE_INLINE_TYPES = {
   vehicle_similar: "similar_cars_summary",
   vehicle_price_breakup: "",
   vehicle_emi: "",
+  vehicle_finance_knowledge: "finance_faq_card",
   vehicle_price_history: "",
   vehicle_explainer: "explainer_card",
   aci_lead_capture: "",
@@ -633,7 +637,7 @@ export const makeAction = ({
   tone,
 });
 
-export const normalizeActions = (actions = []) =>
+export const normalizeActions = (actions = [], { max = 6 } = {}) =>
   uniqueBy(
     asArray(actions)
       .filter((action) => action && action.label && action.query)
@@ -642,7 +646,7 @@ export const normalizeActions = (actions = []) =>
         id: action.id || searchKey(`${action.label} ${action.query}`).replace(/\s+/g, "-"),
       })),
     (action) => `${action.label} ${action.query} ${action.intent}`,
-  ).slice(0, 6);
+  ).slice(0, max);
 
 export const makeContextPatch = (toolPlan = {}, context = {}) => {
   // Internal CDrive answers must not overwrite selected car context.
@@ -1101,7 +1105,7 @@ export const buildVehiclePricelistResponse = ({
       canvasType: "",
       inlineType: "variant_ambiguity_card",
       title: `Choose exact ${model} variant`,
-      answer: `I found ${model}, but ${variantResolution.requestedVariant || variant} does not match an exact current DB-backed variant. I can continue with listed variants, model-level price/features, or you can choose the closest available DB variant.`,
+      answer: `I found ${model}, but I could not match ${variantResolution.requestedVariant || variant} to a current variant I can verify. Choose one of the available variants, or I can continue with model-level price and features.`,
       data: {
         model,
         requestedVariant: variantResolution.requestedVariant || variant,
@@ -1326,7 +1330,7 @@ export const buildVehicleColorsResponse = ({
     ? color
       ? `I found model-level colour information for ${model}. Exact variant-wise ${color} stock availability needs confirmation.`
       : `Here are the available model-level colours for ${model || "this car"}.`
-    : `I do not have confirmed colour records for ${model || "this car"} yet.`;
+    : `I cannot confirm the colour range for ${model || "this car"} yet.`;
 
   return baseResponse({
     toolPlan,
@@ -1395,8 +1399,8 @@ export const buildVehicleFeatureLookupResponse = ({
   const carLabel = cleanText(`${model}${variant ? ` ${variant}` : ""}`) || "this car";
   const hasMatch = rows.length > 0 || runtimeData.matched > 0;
   const summaryAnswer = hasMatch
-    ? `I found feature records for ${carLabel}. Use the feature card to review the available feature list because equipment can differ by fuel/transmission sub-variant.`
-    : `I found ${carLabel}, but a full feature-list summary is not available in the indexed feature records yet. I will not guess features without matching data.`;
+    ? `Here are the confirmed features for ${carLabel}. Check the exact fuel and transmission in the feature card, because equipment can vary within the same trim.`
+    : `I found ${carLabel}, but I cannot verify its full feature list yet. I would rather leave a feature open than guess.`;
 
   return baseResponse({
     toolPlan,
@@ -1410,8 +1414,8 @@ export const buildVehicleFeatureLookupResponse = ({
     answer: isFeatureSummaryRequest
       ? summaryAnswer
       : hasMatch
-        ? `Yes — ${carLabel} appears in the matching ${feature} feature records. Please confirm exact fuel/transmission sub-variant in the feature card, because features can differ within the same trim family.`
-        : `I could not confirm ${feature} for ${carLabel} from the available feature records.`,
+        ? `Yes — ${feature} is confirmed for ${carLabel}. Check the exact fuel and transmission in the feature card, because equipment can vary within the same trim.`
+        : `I could not confirm ${feature} for ${carLabel}.`,
     data: {
       model,
       variant,
@@ -1466,6 +1470,32 @@ export const buildVehicleFeatureLookupResponse = ({
     ],
   });
 };
+
+export const buildVehicleFeatureComparisonResponse = ({
+  toolPlan = {},
+  runtimeData = {},
+  context = {},
+} = {}) =>
+  baseResponse({
+    toolPlan,
+    context,
+    runtimeData,
+    intent: "vehicle_feature_comparison",
+    displayMode: "canvas",
+    canvasType: "feature_comparison_canvas",
+    inlineType: "feature_comparison_summary",
+    title: runtimeData.title || "Feature comparison",
+    answer:
+      runtimeData.answer ||
+      "I compared the requested features across both cars.",
+    data: {
+      ...(runtimeData.data || {}),
+      models: runtimeData.models || runtimeData.data?.models || [],
+      features: runtimeData.features || runtimeData.data?.features || [],
+      rows: getRuntimeRows(runtimeData),
+    },
+    actions: runtimeData.actions || [],
+  });
 
 export const buildVehicleCompareResponse = ({
   toolPlan = {},
@@ -1572,6 +1602,8 @@ export const buildVehicleCompareResponse = ({
       missingOrUnavailableEvidence: runtimeData.missingOrUnavailableEvidence || [],
       decisionHighlights: runtimeData.decisionHighlights || [],
       matrixCoverage: runtimeData.matrixCoverage || [],
+      variantSelection: runtimeData.variantSelection || [],
+      comparisonPairing: runtimeData.comparisonPairing || {},
     },
     comparisonSummary: runtimeData.comparisonSummary || {},
     differenceSummary: runtimeData.differenceSummary || {},
@@ -1580,7 +1612,20 @@ export const buildVehicleCompareResponse = ({
     missingOrUnavailableEvidence: runtimeData.missingOrUnavailableEvidence || [],
     decisionHighlights: runtimeData.decisionHighlights || [],
     matrixCoverage: runtimeData.matrixCoverage || [],
+    variantSelection: runtimeData.variantSelection || [],
+    comparisonPairing: runtimeData.comparisonPairing || {},
     actions: [
+      ...asArray(runtimeData.comparisonPairing?.choices).map((choice, index) =>
+        makeAction({
+          id: choice.id || `comparison-pairing-choice-${index + 1}`,
+          label: choice.label || "Use this pairing",
+          query: choice.query || compareLabel,
+          intent: "vehicle_comparison",
+          canvasType: "comparison_canvas",
+          filters: { city },
+          priority: 98 - index,
+        }),
+      ),
       makeAction({
         id: "change-variants",
         label: "Change variants",
@@ -1714,6 +1759,7 @@ export const buildVehicleRecommendResponse = ({
       rows: effectiveRows,
       items: effectiveRows,
       modelGroups,
+      allModelGroups: modelGroups,
       previewModelGroups: effectiveRows,
       modelGroupCount: effectiveRows.length,
       previewModelGroupCount: effectiveRows.length,
@@ -1760,6 +1806,7 @@ export const buildVehicleRecommendResponse = ({
     rows: effectiveRows,
     items: effectiveRows,
     modelGroups: isBudgetDiscovery ? effectiveRows : modelGroups,
+    allModelGroups: modelGroups,
     previewModelGroups: effectiveRows,
     modelGroupCount: effectiveRows.length,
     returnedPreviewGroups: runtimeData.budgetDiscovery?.returnedPreviewGroups || effectiveRows.length,
@@ -1990,7 +2037,7 @@ export const buildVehicleEmiResponse = ({
       canvasType: "",
       inlineType: "variant_ambiguity_card",
       title: `Choose exact ${model} variant for EMI`,
-      answer: `I found ${model}, but ${variantResolution.requestedVariant || variant} does not match an exact current DB-backed variant. I should not calculate EMI using a random model-level price; choose a listed DB variant first, or ask for model-level price/features.`,
+      answer: `I found ${model}, but I could not match ${variantResolution.requestedVariant || variant} to a current variant I can verify. I should not calculate EMI from the wrong price, so choose an available variant first or ask for model-level pricing.`,
       data: {
         model,
         requestedVariant: variantResolution.requestedVariant || variant,
@@ -2079,6 +2126,117 @@ export const buildVehicleEmiResponse = ({
         priority: 84,
       }),
     ],
+  });
+};
+
+export const buildVehicleFinanceKnowledgeResponse = ({
+  toolPlan = {},
+  runtimeData = {},
+  context = {},
+} = {}) => {
+  const records = asArray(runtimeData.records);
+  const checklist = uniqueBy(
+    records.flatMap((record) => asArray(record.checklist)),
+    (item) => item,
+  ).slice(0, 10);
+  const caveats = uniqueBy(
+    records.flatMap((record) => asArray(record.caveats)),
+    (item) => item,
+  ).slice(0, 5);
+  const summaries = records.map((record) => cleanText(record.summary)).filter(Boolean);
+  const applicantType = runtimeData.applicantType || "general";
+
+  if (!records.length) {
+    return baseResponse({
+      toolPlan,
+      context,
+      runtimeData,
+      intent: "new_car_finance_faq",
+      displayMode: "inline",
+      canvasType: "",
+      inlineType: "finance_faq_card",
+      title: "Car loan guidance",
+      answer:
+        "I can help with car-loan eligibility, documents, down payment and EMI, but the reviewed finance guide is unavailable right now. I would rather not guess lender rules. You can still calculate an EMI, or try the finance question again shortly.",
+      data: { topics: runtimeData.topics || [], checklist: [], caveats: [] },
+      actions: [
+        makeAction({
+          id: "finance-calculate-emi",
+          label: "Calculate EMI",
+          query: "Calculate car loan EMI",
+          intent: "vehicle_emi_calculator",
+          canvasType: "emi_calculator_canvas",
+          priority: 90,
+        }),
+      ],
+    });
+  }
+
+  const answer = summaries.join(" ");
+  const applicantPrompt = applicantType === "general"
+    ? "Tell me whether you are salaried or self-employed and I’ll narrow the document list."
+    : "Share the car and expected down payment when you want an EMI estimate.";
+
+  return baseResponse({
+    toolPlan,
+    context,
+    runtimeData,
+    intent: "new_car_finance_faq",
+    displayMode: "inline",
+    canvasType: "",
+    inlineType: "finance_faq_card",
+    title: records.length === 1 ? records[0].title : "Car loan guidance",
+    answer: `${answer} ${applicantPrompt}`,
+    data: {
+      topics: runtimeData.topics || [],
+      applicantType,
+      sections: records.map((record) => ({
+        key: record.key,
+        title: record.title,
+        summary: record.summary,
+        checklist: asArray(record.checklist),
+        caveats: asArray(record.caveats),
+      })),
+      checklist,
+      caveats,
+      approvalGuaranteed: false,
+      liveLenderOfferUsed: false,
+    },
+    actions: [
+      ...(applicantType === "general"
+        ? [
+            makeAction({
+              id: "finance-salaried-documents",
+              label: "I’m salaried",
+              query: "Car loan documents and eligibility for a salaried applicant",
+              intent: "new_car_finance_faq",
+              inlineType: "finance_faq_card",
+              priority: 98,
+            }),
+            makeAction({
+              id: "finance-self-employed-documents",
+              label: "I’m self-employed",
+              query: "Car loan documents and eligibility for a self-employed applicant",
+              intent: "new_car_finance_faq",
+              inlineType: "finance_faq_card",
+              priority: 97,
+            }),
+          ]
+        : []),
+      makeAction({
+        id: "finance-calculate-emi",
+        label: "Calculate EMI",
+        query: "Calculate car loan EMI for the car I am considering",
+        intent: "vehicle_emi_calculator",
+        canvasType: "emi_calculator_canvas",
+        priority: 92,
+      }),
+    ],
+    sourceTransparency: runtimeData.sourceTransparency || {},
+    meta: {
+      financeKnowledgeVersion: records.map((record) => record.version).filter(Boolean).at(-1) || "",
+      liveLenderOfferUsed: false,
+    },
   });
 };
 
@@ -2701,7 +2859,7 @@ export const buildVehicleSpecAttributeResponse = ({
     title: removeDuplicateMakePrefixFromText(runtimeData.title || "Vehicle specification"),
     answer:
       removeDuplicateMakePrefixFromText(runtimeData.answer || "") ||
-      "I found the model, but the exact requested specification is not available in the indexed data yet.",
+      "I found the model, but I cannot verify that exact specification yet.",
     data: cleanData,
     actions: runtimeData.actions || runtimeData.data?.nextActions || [],
     leadingQuestions:
@@ -2739,7 +2897,7 @@ export const buildInternalPassthroughResponse = ({
     answer:
       runtimeData.answer ||
       runtimeData.message ||
-      "I found internal CDrive records for this request.",
+      "I found a result for this request.",
     data: runtimeData.data || runtimeData,
     actions: runtimeData.actions || [],
     leadingQuestions: [],
@@ -3049,6 +3207,10 @@ export const ACI_RESPONSE_TOOLS = {
     id: "vehicle_feature_lookup",
     run: buildVehicleFeatureLookupResponse,
   },
+  vehicle_feature_comparison: {
+    id: "vehicle_feature_comparison",
+    run: buildVehicleFeatureComparisonResponse,
+  },
   vehicle_spec_attribute_lookup: {
     id: "vehicle_spec_attribute_lookup",
     run: buildVehicleSpecAttributeResponse,
@@ -3092,6 +3254,10 @@ export const ACI_RESPONSE_TOOLS = {
   vehicle_emi: {
     id: "vehicle_emi",
     run: buildVehicleEmiResponse,
+  },
+  vehicle_finance_knowledge: {
+    id: "vehicle_finance_knowledge",
+    run: buildVehicleFinanceKnowledgeResponse,
   },
   vehicle_price_history: {
     id: "vehicle_price_history",
@@ -3205,10 +3371,125 @@ export const buildMultiToolResponse = ({
   const primary = responses[0] || {};
   const secondaryResponses = responses.slice(1);
 
-  const mergedActions = normalizeActions([
+  let mergedActions = normalizeActions([
     ...asArray(primary.actions),
     ...secondaryResponses.flatMap((response) => asArray(response.actions).slice(0, 2)),
   ]);
+
+  const isCompoundResearchResult = Boolean(
+    plan.contextPatch?.compoundRequest?.version || asArray(plan.tools).length > 2,
+  );
+
+  if (isCompoundResearchResult) {
+    const openRelatedResults = secondaryResponses
+      .map((response, secondaryIndex) => {
+        const relatedToolPlan = asArray(plan.tools)[secondaryIndex + 1] || {};
+        const model = firstMeaningful(
+          asArray(response.data?.models)
+            .map((item) => item.fullModel || item.model || item)
+            .filter(Boolean)
+            .join(" vs "),
+          relatedToolPlan.entities?.primaryModel,
+          relatedToolPlan.entities?.model,
+          response.data?.model,
+          response.data?.anchorFullModel,
+          response.contextPatch?.selectedVehicle?.fullModel,
+          response.data?.rows?.[0]?.fullModel,
+          response.data?.rows?.[0]?.model,
+          response.vehicle?.fullModel,
+          response.vehicle?.model,
+        );
+        const intent = response.intent || "";
+        const config = {
+          vehicle_colors: {
+            noun: "colours",
+            query: `Show colours of ${model}`,
+            canvasType: "color_studio_canvas",
+          },
+          vehicle_pricelist: {
+            noun: "price list",
+            query: `Show price list of ${model}`,
+            canvasType: "pricelist_canvas",
+          },
+          vehicle_price_breakup: {
+            noun: "price breakup",
+            query: `Show on-road price breakup of ${model}`,
+            canvasType: "price_breakup_canvas",
+          },
+          vehicle_price_history: {
+            noun: "price history",
+            query: `Show price history of ${model}`,
+            canvasType: "price_history_canvas",
+          },
+          vehicle_emi: {
+            noun: "EMI",
+            query: `Calculate EMI for ${model}`,
+            canvasType: "emi_calculator_canvas",
+          },
+          vehicle_emi_calculator: {
+            noun: "EMI",
+            query: `Calculate EMI for ${model}`,
+            canvasType: "emi_calculator_canvas",
+          },
+          new_car_finance_faq: {
+            noun: "finance guide",
+            query: "Show car loan eligibility and documents",
+            canvasType: "",
+          },
+          vehicle_spec_attribute_answer: {
+            noun: response.data?.attributeLabel || response.data?.attributeKey || "specification",
+            query: `Show ${response.data?.attributeLabel || response.data?.attributeKey || "specification"} of ${model}`,
+            canvasType: "",
+          },
+          vehicle_feature_answer: {
+            noun: response.data?.feature || "feature details",
+            query: `Check ${response.data?.feature || "features"} in ${model}`,
+            canvasType: "",
+          },
+          vehicle_feature_comparison: {
+            noun: "feature comparison",
+            query: `Compare requested features of ${model}`,
+            canvasType: "feature_comparison_canvas",
+          },
+          vehicle_comparison: {
+            noun: "comparison",
+            query: response.actions?.[0]?.query || `Compare ${model}`,
+            canvasType: "comparison_canvas",
+          },
+          vehicle_similar: {
+            noun: "alternatives",
+            query: `Show alternatives to ${model}`,
+            canvasType: "recommendation_results_canvas",
+          },
+          vehicle_score_insight: {
+            noun: "score insights",
+            query: `Show score insights for ${model}`,
+            canvasType: "score_insight_canvas",
+          },
+        }[intent];
+
+        if (!config) return null;
+        return {
+          ...makeAction({
+          id: `compound-open-${normalizeSearchKey(config.noun)}-${normalizeSearchKey(model)}`,
+          label: `Open ${model || "car"} ${config.noun}`,
+          query: config.query,
+          intent,
+          canvasType: config.canvasType,
+          entities: { model },
+          priority: 90,
+          contextPatch: response.contextPatch || {},
+          }),
+          widget: response.widget || null,
+          payload: response.widget
+            ? { widget: response.widget, __fromBackend: true }
+            : {},
+        };
+      })
+      .filter(Boolean);
+
+    mergedActions = normalizeActions(openRelatedResults, { max: 40 });
+  }
 
   const mergedSuggestions = normalizeActions([
     ...asArray(primary.conversationSuggestions),
@@ -3259,6 +3540,23 @@ export const buildMultiToolResponse = ({
 
 export const buildMultiToolAnswer = ({ plan = {}, responses = [] } = {}) => {
   const tools = asArray(plan.tools).map((item) => item.tool);
+
+  if (
+    tools.includes("vehicle_feature_comparison") &&
+    tools.includes("vehicle_colors") &&
+    tools.includes("vehicle_pricelist")
+  ) {
+    const featureResponse = responses.find(
+      (response) => response.intent === "vehicle_feature_comparison",
+    );
+    const modelNames = asArray(featureResponse?.data?.models)
+      .map((model) => model.fullModel || model.model)
+      .filter(Boolean);
+    const featureCount = asArray(featureResponse?.data?.features).length;
+    const cars = modelNames.length ? modelNames.join(" and ") : "both cars";
+
+    return `I compared ${cars} on the ${featureCount || "requested"} features. I also checked each car's current model-level colours and ${getCity(plan.tools?.[0] || {}, {})} price list; use the related options to open either one without repeating your question.`;
+  }
 
   if (
     tools.includes("vehicle_pricelist") &&

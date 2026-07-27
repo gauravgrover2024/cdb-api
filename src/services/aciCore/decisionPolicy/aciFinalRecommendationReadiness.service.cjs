@@ -13,6 +13,7 @@ function buildFinalRecommendationPolicyReadiness({
   buyerInputClarification = {},
   evidenceGate = {},
   blockedReasons = [],
+  finalRecommendationReady = false,
 } = {}) {
   const input = asObject(buyerDecisionInput);
   const clarification = asObject(buyerInputClarification);
@@ -27,9 +28,9 @@ function buildFinalRecommendationPolicyReadiness({
     requestedFinalRecommendation: Boolean(requestedFinalRecommendation),
     buyerContextComplete,
     evidenceThresholdMet,
-    finalRecommendationPolicyReady: false,
-    finalComposerReady: false,
-    recommendationActivationEnabled: false,
+    finalRecommendationPolicyReady: Boolean(finalRecommendationReady),
+    finalComposerReady: Boolean(finalRecommendationReady),
+    recommendationActivationEnabled: Boolean(finalRecommendationReady),
     provisionalBuyerGuidanceReady: [
       'practical_first_view',
       'conditional_guidance',
@@ -49,15 +50,28 @@ function buildFinalRecommendationPolicyReadiness({
   if (!requestedFinalRecommendation) readinessBlockers.push('final_recommendation_not_requested');
   if (!buyerContextComplete) readinessBlockers.push('buyer_context_incomplete');
   if (!evidenceThresholdMet) readinessBlockers.push('evidence_threshold_not_met');
-  readinessBlockers.push('final_recommendation_policy_not_ready');
-  readinessBlockers.push('final_composer_not_ready');
-  readinessBlockers.push('recommendation_activation_disabled');
+  if (!finalRecommendationReady) {
+    readinessBlockers.push('final_recommendation_policy_not_ready');
+    readinessBlockers.push('final_composer_not_ready');
+    readinessBlockers.push('recommendation_activation_disabled');
+  }
+
+  const canActivateFinalRecommendation =
+    requestedFinalRecommendation &&
+    buyerContextComplete &&
+    evidenceThresholdMet &&
+    finalRecommendationReady &&
+    readinessBlockers.length === 0;
 
   return {
     version: READINESS_VERSION,
-    status: requestedFinalRecommendation ? 'blocked_not_ready' : 'not_requested',
-    canActivateFinalRecommendation: false,
-    activationMode: 'disabled_dry_run',
+    status: !requestedFinalRecommendation
+      ? 'not_requested'
+      : canActivateFinalRecommendation
+        ? 'ready'
+        : 'blocked_not_ready',
+    canActivateFinalRecommendation,
+    activationMode: canActivateFinalRecommendation ? 'evidence_gated_live' : 'disabled',
     gates,
     blockedReasons: unique([...asArray(blockedReasons), ...readinessBlockers]),
     missingInputs,
@@ -65,9 +79,11 @@ function buildFinalRecommendationPolicyReadiness({
     provisionalGuidanceMode: guidanceMode,
     buyerFacingQuestionCount: asArray(clarification.buyerFacingQuestions).length,
     internalMissingInputCount: asArray(clarification.internalMissingInputMap).length,
-    nextAllowedStep: buyerContextComplete
-      ? 'continue_diagnostic_decision_support'
-      : 'ask_one_next_best_question_or_learn_from_next_search',
+    nextAllowedStep: canActivateFinalRecommendation
+      ? 'render_final_recommendation'
+      : buyerContextComplete
+        ? 'continue_diagnostic_decision_support'
+        : 'ask_one_next_best_question_or_learn_from_next_search',
   };
 }
 

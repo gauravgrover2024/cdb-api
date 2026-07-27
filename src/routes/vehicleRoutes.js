@@ -18,6 +18,8 @@ import {
   getVehicleMedia,
   getPopularCars,
   getSimilarModels,
+  addVehicleSuggestionTerm,
+  reconcileVehicleSuggestionTerms,
 } from '../controllers/vehicleController.js';
 import {
   getScraperCatalog,

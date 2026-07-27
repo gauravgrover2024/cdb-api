@@ -16,6 +16,25 @@ const addressSchema = new Schema(
   { _id: false },
 );
 
+const referenceContactSchema = new Schema(
+  {
+    referenceType: { type: String, default: "Personal" }, // Personal | Trade
+    // Personal reference fields
+    name: { type: String },
+    mobile: { type: String },
+    pincode: { type: String },
+    city: { type: String },
+    relation: { type: String },
+    // Trade reference fields
+    firmName: { type: String },
+    contactPersonName: { type: String },
+    contactNumber: { type: String },
+    // Shared
+    address: { type: String },
+  },
+  { _id: false },
+);
+
 const bankDetailSchema = new Schema(
   {
     bankName: { type: String },
@@ -119,6 +138,10 @@ const personSchema = new Schema(
     applicantCategory: { type: String },
     relationship: { type: String },
     yearsAtCurrentResidence: { type: String },
+    // Firm applicants only: this person's relation to the firm (Partner,
+    // Shareholder, Director, etc), used to auto-fill the Partners/Directors
+    // (companyPartners) list so the same details don't need to be re-entered.
+    relationWithFirm: { type: String },
   },
   { _id: false },
 );
@@ -275,6 +298,12 @@ const homeLoanSchema = new Schema(
     customerName: { type: String },
     typeOfLoan: { type: String },
 
+    // ── Bulk Loan Creation ────────────────────────────────────────────────────
+    // Marks a file that was produced by splitting an original bulk entry into
+    // multiple loan files, so bulk creation can be disabled on split files.
+    isBulk: { type: Boolean, default: false },
+    bulkCount: { type: Number },
+
     // ── Applicant ────────────────────────────────────────────────────────────
     applicant: { type: personSchema },
 
@@ -283,6 +312,23 @@ const homeLoanSchema = new Schema(
       type: personSchema,
       default: undefined,
     },
+
+    // ── Additional Co-Applicants (Firm applicants only) ──────────────────────
+    // Firm cases (partnership/proprietorship) can have more than one
+    // co-applicant - e.g. multiple partners co-signing personally. This is
+    // separate from `coApplicant` above, which remains the first/primary
+    // co-applicant for every applicant type.
+    coApplicants: [
+      {
+        customerName: { type: String },
+        relationWithFirm: { type: String },
+        dob: { type: Date },
+        pan: { type: String },
+        aadhaar: { type: String },
+        primaryMobile: { type: String },
+        _id: false,
+      },
+    ],
 
     // ── Guarantor (optional) ─────────────────────────────────────────────────
     guarantor: {
@@ -317,6 +363,18 @@ const homeLoanSchema = new Schema(
       _id: false,
     },
 
+    // ── Unsecured Loan Amount (Business Loan, Personal Loan, etc.) ────────────
+    // No financed vehicle/property, so this is a plain amount + free-form
+    // breakup instead of the vehicle pricing block above.
+    unsecuredLoanAmount: { type: Number },
+    unsecuredLoanBreakup: [
+      {
+        label: { type: String },
+        amount: { type: Number },
+        _id: false,
+      },
+    ],
+
     // ── Pricing (New Car) ─────────────────────────────────────────────────────
     pricing: {
       exShowroomPrice: { type: Number },
@@ -337,6 +395,10 @@ const homeLoanSchema = new Schema(
       netLoan: { type: Number },
       _id: false,
     },
+
+    // ── References ───────────────────────────────────────────────────────────
+    reference1: { type: referenceContactSchema },
+    reference2: { type: referenceContactSchema },
 
     // ── Dealer ────────────────────────────────────────────────────────────────
     dealer: {

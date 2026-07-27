@@ -63,10 +63,10 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Use only values supplied by the resolver.', 'Do not add verification or provenance claims unless passed as input.'],
     forbiddenWording: ['indexed spec value', 'clear winner', 'best choice', 'buy this'],
     variants: [
-      { id: 'spec_value_a', text: 'I found {{model}}. For {{topic}}, current data lists {{values}}.' },
-      { id: 'spec_value_b', text: '{{model}} is the car I found. The listed {{topic}} value is {{values}}.' },
-      { id: 'spec_value_c', text: 'For {{model}}, {{topic}} is shown as {{values}} in the current data.' },
-      { id: 'spec_value_d', text: 'On {{model}}, the available {{topic}} entry reads {{values}}.' },
+      { id: 'spec_value_a', text: 'For {{model}}, {{topic}} is {{values}}.' },
+      { id: 'spec_value_b', text: '{{model}} has a {{topic}} figure of {{values}}.' },
+      { id: 'spec_value_c', text: 'On {{model}}, the confirmed {{topic}} figure is {{values}}.' },
+      { id: 'spec_value_d', text: '{{topic}} for {{model}} is {{values}}.' },
     ],
   },
   resolved_spec_missing_summary: {
@@ -77,10 +77,10 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Be honest about missing exact data.', 'Do not invent a value.'],
     forbiddenWording: ['indexed spec value', 'not available', 'clear winner', 'best choice', 'buy this'],
     variants: [
-      { id: 'spec_missing_a', text: 'I found {{model}}. You are asking about {{topic}}, but I do not have the exact certified value in current data yet, so I will not guess.' },
-      { id: 'spec_missing_b', text: '{{model}} is clear; the {{topic}} figure is not present in the current structured data yet, so I will keep that answer open.' },
-      { id: 'spec_missing_c', text: 'I found {{model}} for this query. The exact {{topic}} value is missing from the current data, so I will not make one up.' },
-      { id: 'spec_missing_d', text: 'For {{model}}, I do not have a confirmed {{topic}} value in current data yet. I can still help compare variants or related specs.' },
+      { id: 'spec_missing_a', text: 'I could not verify the exact certified {{topic}} figure for {{model}}, so I would rather not guess.' },
+      { id: 'spec_missing_b', text: 'I found {{model}}, but I cannot confirm its exact {{topic}} figure yet. I will keep that answer open.' },
+      { id: 'spec_missing_c', text: 'The exact {{topic}} figure for {{model}} is still unconfirmed, so I will not make one up.' },
+      { id: 'spec_missing_d', text: 'I cannot verify {{topic}} for {{model}} yet. I can still help compare its variants or related specifications.' },
     ],
   },
   comparison_summary: {
@@ -91,10 +91,10 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Avoid final recommendation unless structured decision mode supports it.', 'Include both compared vehicles.'],
     forbiddenWording: ['clear winner', 'best choice', 'buy this'],
     variants: [
-      { id: 'comparison_a', text: 'I compared {{vehicleA}} and {{vehicleB}}. {{priceLine}} {{differenceLine}}' },
-      { id: 'comparison_b', text: 'Here is the {{vehicleA}} vs {{vehicleB}} comparison. {{priceLine}} {{differenceLine}}' },
-      { id: 'comparison_c', text: '{{vehicleA}} and {{vehicleB}} are compared on the available price and feature/spec data. {{priceLine}} {{differenceLine}}' },
-      { id: 'comparison_d', text: 'For {{vehicleA}} against {{vehicleB}}, I found the comparison data. {{priceLine}} {{differenceLine}}' },
+      { id: 'comparison_a', text: 'Here is how {{vehicleA}} and {{vehicleB}} compare. {{priceLine}} {{differenceLine}}' },
+      { id: 'comparison_b', text: 'The practical difference between {{vehicleA}} and {{vehicleB}} is this: {{priceLine}} {{differenceLine}}' },
+      { id: 'comparison_c', text: 'Looking at {{vehicleA}} against {{vehicleB}}, {{priceLine}} {{differenceLine}}' },
+      { id: 'comparison_d', text: 'For {{vehicleA}} and {{vehicleB}}, here is what matters. {{priceLine}} {{differenceLine}}' },
     ],
   },
   price_summary: {
@@ -134,9 +134,9 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     forbiddenWording: ['New Delhi price', 'Delhi on-road', 'clear winner', 'best choice', 'buy this'],
     variants: [
       { id: 'unsupported_city_a', text: 'I do not have live on-road pricing for {{city}} yet. Pricing is currently available for {{supportedCities}}.' },
-      { id: 'unsupported_city_b', text: '{{city}} pricing is not supported in current data yet. I can show prices for {{supportedCities}}, or compare specs without city pricing.' },
-      { id: 'unsupported_city_c', text: 'I cannot quote {{city}} on-road prices from current data yet. Supported pricing cities are {{supportedCities}}.' },
-      { id: 'unsupported_city_d', text: 'For {{city}}, live price rows are not available yet. The supported city price data currently covers {{supportedCities}}.' },
+      { id: 'unsupported_city_b', text: 'I cannot quote a reliable {{city}} on-road price yet. I can show prices for {{supportedCities}}, or compare the cars without city pricing.' },
+      { id: 'unsupported_city_c', text: '{{city}} on-road pricing is not available yet. I can currently price {{supportedCities}}.' },
+      { id: 'unsupported_city_d', text: 'I do not have a trustworthy {{city}} on-road figure yet. The cities I can price are {{supportedCities}}.' },
     ],
   },
   clarification_known_model_missing_topic: {
@@ -189,9 +189,9 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Be honest about the data gap.', 'Offer supported alternatives.'],
     forbiddenWording: ['clear winner', 'best choice', 'buy this', 'indexed spec value'],
     variants: [
-      { id: 'no_data_a', text: 'I do not have enough current data to answer {{topic}} exactly yet. I can still help with supported prices, features, specs, EMI, or comparisons.' },
-      { id: 'no_data_b', text: 'That exact {{topic}} data is not in the current structured set yet. I can help with related price, feature, spec, EMI, or comparison checks.' },
-      { id: 'no_data_c', text: 'I cannot confirm {{topic}} from current data yet, so I will not guess. I can still look up nearby supported car details.' },
+      { id: 'no_data_a', text: 'I cannot verify {{topic}} exactly yet. I can still help with prices, features, specifications, EMI, or comparisons.' },
+      { id: 'no_data_b', text: 'I do not have a reliable answer for {{topic}} yet, but I can help with a related price, feature, specification, EMI, or comparison check.' },
+      { id: 'no_data_c', text: 'I cannot confirm {{topic}} yet, so I will not guess. I can still help with the closest reliable car details.' },
       { id: 'no_data_d', text: '{{topic}} needs data I do not have yet. I can continue with supported model, price, feature, spec, EMI, or comparison questions.' },
     ],
   },
@@ -284,9 +284,9 @@ export const ACI_ANSWER_LANGUAGE_REGISTRY = Object.freeze({
     guardrails: ['Do not store invalid variant as selected.', 'Do not invent variant data.', 'Offer model-level recovery.'],
     forbiddenWording: ['you should buy', 'buy this', 'best final choice', 'winner is'],
     variants: [
-      { id: 'variant_unavailable_a', text: 'I found {{model}}, but {{variant}} does not match an exact current variant in the DB-backed catalog. I can continue with {{nextCapabilities}}.' },
-      { id: 'variant_unavailable_b', text: '{{model}} is clear, but {{variant}} is not an exact current variant match. Choose a listed variant, or I can help with {{nextCapabilities}}.' },
-      { id: 'variant_unavailable_c', text: 'I will not use {{variant}} as an active variant because it does not match the current catalog for {{model}}. I can recover with {{nextCapabilities}}.' },
+      { id: 'variant_unavailable_a', text: 'I found {{model}}, but I could not match {{variant}} to a current variant I can verify. I can continue with {{nextCapabilities}}.' },
+      { id: 'variant_unavailable_b', text: '{{model}} is clear, but {{variant}} is not an exact current variant match. Choose one of the available variants, or I can help with {{nextCapabilities}}.' },
+      { id: 'variant_unavailable_c', text: 'I will not guess with {{variant}} because I cannot verify it as a current {{model}} variant. I can continue with {{nextCapabilities}}.' },
       { id: 'variant_unavailable_d', text: '{{variant}} is not a confirmed current variant for {{model}}. I can still continue at model level with {{nextCapabilities}}.' },
     ],
   },

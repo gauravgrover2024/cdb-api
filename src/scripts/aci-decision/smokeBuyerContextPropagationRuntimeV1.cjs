@@ -131,9 +131,7 @@ const assertInputPresent = (inputStatus = {}, key = '', expectedPredicate = null
       },
     ];
 
-    const nonFinalResults = [];
-
-    for (const testCase of nonFinalCases) {
+    const nonFinalResults = await Promise.all(nonFinalCases.map(async (testCase) => {
       const nonFinalResponse = await chatWithAgent({ message: testCase.message, context: {} });
       const nonFinalBlob = JSON.stringify(nonFinalResponse || {});
       const nonFinalEligibility = getEligibility(nonFinalResponse);
@@ -172,7 +170,7 @@ const assertInputPresent = (inputStatus = {}, key = '', expectedPredicate = null
         assert(lower(nonFinalBuyerContext.safetyPriority).includes('high'), `${testCase.message}: safety priority should be propagated`);
       }
 
-      nonFinalResults.push({
+      return {
         message: testCase.message,
         intent: nonFinalResponse.intent,
         budgetOrPriceCeiling: nonFinalBuyerContext.budgetOrPriceCeiling,
@@ -180,8 +178,8 @@ const assertInputPresent = (inputStatus = {}, key = '', expectedPredicate = null
         bodyPreferenceOrPrimaryUseCase: nonFinalBuyerContext.bodyPreferenceOrPrimaryUseCase,
         transmissionPreference: nonFinalBuyerContext.transmissionPreference,
         safetyPriority: nonFinalBuyerContext.safetyPriority,
-      });
-    }
+      };
+    }));
 
     console.log(JSON.stringify({
       suite: 'ACI buyer context propagation runtime smoke v1',

@@ -81,6 +81,7 @@ function createEmptyAciContextState(overrides = {}) {
     activeComparison: createEmptyActiveComparisonState(overrides.activeComparison || {}),
     requested: createEmptyRequestedState(overrides.requested || {}),
     buyerContext: createEmptyBuyerContextState(overrides.buyerContext || overrides.buyerIntent || {}),
+    contextLedger: overrides.contextLedger || {},
     buyerGuidanceContext: {
       guidanceMode: '',
       finalPurchaseVerdictEnabled: false,
@@ -140,6 +141,10 @@ function assertAciContextStateShape(state = {}) {
 
   if (!state.buyerContext || typeof state.buyerContext !== 'object') {
     throw new Error('ACI context state missing buyerContext object');
+  }
+
+  if (!state.contextLedger || typeof state.contextLedger !== 'object') {
+    throw new Error('ACI context state missing contextLedger object');
   }
 
   if (!state.buyerGuidanceContext || typeof state.buyerGuidanceContext !== 'object') {

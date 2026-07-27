@@ -1464,6 +1464,17 @@ const getPriceCityCatalog = async () => {
   return priceCityCatalogPromise;
 };
 
+export const getAvailablePricingCities = async () => {
+  const rows = await getPriceCityCatalog();
+  return rows
+    .map((row) => ({
+      city: row.city || displayCity(row.citySlug),
+      citySlug: row.citySlug,
+    }))
+    .filter((row) => row.city && row.citySlug)
+    .sort((left, right) => left.city.localeCompare(right.city));
+};
+
 const resolveRequestedCityFromMessage = async ({
   requestedCity = DEFAULT_CITY,
   userMessage = "",
@@ -2883,6 +2894,33 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
       toolPlan.input?.query,
     ),
   );
+  const broadVariantListRequest =
+    /\b(show|list|see|all|available|current|which|what)\b[^.?!]*\b(variants|trims)\b/i.test(
+      userMessage,
+    ) ||
+    /\b(petrol|diesel|cng|electric|ev|hybrid|automatic|manual|amt|cvt|dct|ivt)\s+(variants|trims)\b/i.test(
+      userMessage,
+    );
+  const requestedFuelFilter = cleanText(
+    first(
+      toolPlan.filters?.fuelType,
+      toolPlan.filters?.fuel,
+      toolPlan.input?.fuelType,
+      toolPlan.input?.fuel,
+      broadVariantListRequest
+        ? userMessage.match(/\b(petrol|diesel|cng|electric|ev|hybrid)\b/i)?.[1]
+        : "",
+    ),
+  );
+  const requestedTransmissionFilter = cleanText(
+    first(
+      toolPlan.filters?.transmission,
+      toolPlan.input?.transmission,
+      broadVariantListRequest
+        ? userMessage.match(/\b(automatic|manual|amt|cvt|dct|ivt)\b/i)?.[1]
+        : "",
+    ),
+  );
 
   const rawRequestedMake = getRequestedMake(args);
   const requestedModel = getRequestedModel(args);
@@ -2894,14 +2932,18 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     context,
   });
   const requestedVariantCandidates = [
-    toolPlan.entities?.primaryVariant,
-    toolPlan.entities?.variant,
-    toolPlan.filters?.variant,
-    toolPlan.input?.variant,
-    context?.selectedVehicle?.variant,
-    context?.anchorVariant,
-    context?.variant,
-    getRequestedVariant(args),
+    ...(broadVariantListRequest
+      ? []
+      : [
+          toolPlan.entities?.primaryVariant,
+          toolPlan.entities?.variant,
+          toolPlan.filters?.variant,
+          toolPlan.input?.variant,
+          context?.selectedVehicle?.variant,
+          context?.anchorVariant,
+          context?.variant,
+          getRequestedVariant(args),
+        ]),
   ]
     .map((item) => cleanText(item))
     .filter(Boolean);
@@ -3125,6 +3167,25 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     }
   }
 
+  if (requestedFuelFilter || requestedTransmissionFilter) {
+    const fuelKey = normalizeKey(normalizeFuelValue(requestedFuelFilter));
+    const transmissionKey = normalizeKey(
+      normalizeTransmissionValue(requestedTransmissionFilter),
+    );
+
+    rows = rows.filter((row) => {
+      const rowFuelKey = normalizeKey(normalizeFuelValue(normalizeFuel(row)));
+      const rowTransmissionKey = normalizeKey(
+        normalizeTransmissionValue(normalizeTransmission(row)),
+      );
+      const fuelMatches = !fuelKey || rowFuelKey === fuelKey;
+      const transmissionMatches =
+        !transmissionKey || rowTransmissionKey === transmissionKey;
+
+      return fuelMatches && transmissionMatches;
+    });
+  }
+
   const vehicle = buildVehicle({
     rows,
     requestedMake: effectiveRequestedMake,
@@ -3151,6 +3212,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
   const wantsOnRoadPrice =
     normalizeKey(`${requestedPriceBasis} ${userMessage}`).includes("on road");
   const asksForVariantList =
+    broadVariantListRequest ||
     /\b(price\s*list|pricelist|variants?\s+price|variant[-\s]*wise|all\s+variants?)\b/i.test(
       userMessage || "",
     );
@@ -3181,10 +3243,19 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     vehicle.displayName ||
     buildVehicleDisplayName(requestedMake, requestedModel) ||
     "Vehicle";
+  const variantScopeLabel = [
+    normalizeFuelValue(requestedFuelFilter),
+    normalizeTransmissionValue(requestedTransmissionFilter),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
   const title = displayVariant
     ? `${vehicleLabel} ${displayVariant} ${wantsOnRoadPrice ? "on-road price" : "price"}`
-    : `${vehicleLabel} price list`;
-  const subtitle = `${vehicle.city || displayCity(requestedCity)} · ${rows.length} variants · ${wantsOnRoadPrice ? "On-road" : "Ex-showroom"}`;
+    : asksForVariantList && variantScopeLabel
+      ? `${vehicleLabel} ${variantScopeLabel} variants`
+      : `${vehicleLabel} price list`;
+  const subtitle = `${vehicle.city || displayCity(requestedCity)} · ${rows.length} ${variantScopeLabel ? `${variantScopeLabel} ` : ""}variants · ${wantsOnRoadPrice ? "On-road" : "Ex-showroom"}`;
   const listAnswer = renderAciTemplate(
     "pricelist_summary",
     {
@@ -3229,6 +3300,8 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     anchorCity: vehicle.city || displayCity(requestedCity),
   };
 
+  const availableCities = await getAvailablePricingCities();
+
   const widget = {
     type: "vehicle_pricelist",
     widgetType: "vehicle_pricelist",
@@ -3254,6 +3327,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
       : `I could not find live price rows for ${requestedModel || "this model"} in ${displayCity(requestedCity)}.`,
     city: vehicle.city || displayCity(requestedCity),
     citySlug: vehicle.citySlug || slugify(requestedCity || DEFAULT_CITY),
+    availableCities,
     vehicle,
     visualGallery,
     selectedColor: selectedVisual,
@@ -3308,6 +3382,7 @@ export const runVehiclePricelistNewCarsTool = async (args = {}) => {
     rows,
     records: rows,
     variants: rows,
+    availableCities,
     totalVariants: rows.length,
     count: rows.length,
     matched: rows.length,

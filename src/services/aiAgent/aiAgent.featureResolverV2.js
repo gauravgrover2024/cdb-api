@@ -101,6 +101,9 @@ const lowerFirst = (value = "") => {
   const textValue = customerFeatureLabel(value);
   if (!textValue) return "";
 
+  if (/^anti-lock braking system \(abs\)$/i.test(textValue)) {
+    return "anti-lock braking system (ABS)";
+  }
   if (/^[0-9]/.test(textValue)) return textValue;
   if (/\bADAS\b/.test(textValue)) return textValue;
   if (/^[A-Z0-9\s()+°.-]+$/.test(textValue)) return textValue;
@@ -128,20 +131,23 @@ const customerFeatureKey = ({ featureKey = "", displayName = "" } = {}) => {
 const featurePhrase = ({ featureName = "", value = "" } = {}) => {
   const feature = clean(featureName);
   const val = clean(value);
+  const sentenceFeature = /^anti-lock braking system \(abs\)$/i.test(feature)
+    ? lowerFirst(feature)
+    : feature;
 
   if (!val || ["yes", "available"].includes(normalizeText(val))) {
-    return feature;
+    return sentenceFeature;
   }
 
   if (["no", "not available", "na", "n/a"].includes(normalizeText(val))) {
-    return feature;
+    return sentenceFeature;
   }
 
   if (normalizeText(val).includes(normalizeText(feature))) {
     return val;
   }
 
-  return `${val} ${lowerFirst(feature)}`;
+  return `${val} ${lowerFirst(sentenceFeature)}`;
 };
 
 const withPrice = (row = {}) =>
@@ -171,6 +177,26 @@ const buildFeatureModelUnavailableCopy = (model = "") => {
   return label
     ? `I don’t have current feature data for ${label} yet.`
     : "I could not identify the car model for this feature question.";
+};
+
+const featureIdentityTerms = ({ feature = "", resolvedFeature = {} } = {}) =>
+  uniq([
+    normalizeText(feature),
+    normalizeText(resolvedFeature.canonicalKey || ""),
+    normalizeText(String(resolvedFeature.canonicalKey || "").replace(/_/g, " ")),
+    normalizeText(resolvedFeature.displayName || ""),
+    ...[...String(resolvedFeature.displayName || "").matchAll(/\(([A-Za-z0-9]{2,8})\)/g)]
+      .map((match) => normalizeText(match[1])),
+  ]);
+
+const sanitizeFeatureVariant = ({ variant = "", feature = "", resolvedFeature = {} } = {}) => {
+  const requestedVariant = clean(variant);
+  if (!requestedVariant) return "";
+
+  const variantKey = normalizeText(requestedVariant);
+  return featureIdentityTerms({ feature, resolvedFeature }).includes(variantKey)
+    ? ""
+    : requestedVariant;
 };
 
 const buildFeatureAnswerCopy = ({
@@ -1163,9 +1189,18 @@ export const answerModelFeatureV2 = async ({
     };
   }
 
+  // Feature acronyms can arrive in the legacy variant slot (for example
+  // `variant: "abs"`). Never let a resolved feature identity narrow the
+  // variant query; model-level feature truth must win in that collision.
+  const effectiveVariant = sanitizeFeatureVariant({
+    variant,
+    feature,
+    resolvedFeature,
+  });
+
   const query = buildVariantMatchQuery({
     modelKey: resolvedModel.modelKey,
-    variant,
+    variant: effectiveVariant,
     includeArchived,
   });
 
@@ -1230,13 +1265,13 @@ export const answerModelFeatureV2 = async ({
     .sort((a, b) => a.priceMin - b.priceMin)[0];
   const customerModel = formatCustomerModelName(resolvedModel.model);
 
-  const targetName = variant
-    ? `${customerModel} ${clean(variant)}`
+  const targetName = effectiveVariant
+    ? `${customerModel} ${clean(effectiveVariant)}`
     : customerModel;
 
   const answer = buildFeatureAnswerCopy({
     model: customerModel,
-    variant,
+    variant: effectiveVariant,
     featureName: customerFeatureLabel(resolvedFeature.displayName),
     mapped,
     availableRows,
@@ -1247,7 +1282,7 @@ export const answerModelFeatureV2 = async ({
 
   const leadingQuestions = buildLeadingQuestionsV2({
     model: customerModel,
-    variant,
+    variant: effectiveVariant,
     city: "new-delhi",
   });
   return {
@@ -1265,7 +1300,9 @@ export const answerModelFeatureV2 = async ({
       model: customerModel,
       sourceModel: resolvedModel.model,
       modelKey: resolvedModel.modelKey,
-      requestedVariant: variant || "",
+      requestedVariant: effectiveVariant || "",
+      ignoredVariantFeatureCollision:
+        Boolean(clean(variant)) && !effectiveVariant,
       featureKey: resolvedFeature.canonicalKey,
       featureName: customerFeatureLabel(resolvedFeature.displayName),
       resolvedFeature,
@@ -1518,6 +1555,28 @@ export const compareVariantFeaturesV2 = async ({
   };
 };
 
+export const prewarmFeatureResolverV2 = async ({
+  model = "Creta",
+  feature = "ABS",
+} = {}) => {
+  const startedAt = Date.now();
+  const [resolvedModel, resolvedFeature] = await Promise.all([
+    resolveFeatureModelV2({ model }),
+    resolveFeatureKeyV2({ feature }),
+  ]);
+
+  return {
+    ok: Boolean(resolvedModel && resolvedFeature),
+    durationMs: Date.now() - startedAt,
+    cache: {
+      model: resolvedModel?.model || "",
+      modelKey: resolvedModel?.modelKey || "",
+      feature: resolvedFeature?.displayName || "",
+      featureKey: resolvedFeature?.canonicalKey || "",
+    },
+  };
+};
+
 export default {
   resolveFeatureModelV2,
   resolveFeatureKeyV2,
@@ -1525,4 +1584,5 @@ export default {
   answerModelFeatureV2,
   discoverFeatureVariantsV2,
   compareVariantFeaturesV2,
+  prewarmFeatureResolverV2,
 };

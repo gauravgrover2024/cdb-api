@@ -64,9 +64,7 @@ const bandAllowedForPriority = (band = '') => !['', 'missing', 'limited'].includ
       },
     ];
 
-    const results = [];
-
-    for (const testCase of cases) {
+    const results = await Promise.all(cases.map(async (testCase) => {
       const response = await chatWithAgent({ message: testCase.message, context: {} });
       const rows = getRows(response);
       const ranking = getRanking(response);
@@ -110,7 +108,7 @@ const bandAllowedForPriority = (band = '') => !['', 'missing', 'limited'].includ
         assert(!/final_recommendation_allowed/i.test(JSON.stringify(response)), `${testCase.id}: final allowed must not leak`);
       }
 
-      results.push({
+      return {
         id: testCase.id,
         ranking,
         top3: rows.slice(0, 3).map((row) => ({
@@ -125,8 +123,8 @@ const bandAllowedForPriority = (band = '') => !['', 'missing', 'limited'].includ
           practicalityBand: signalBand(row, 'practicality'),
           cityBand: signalBand(row, 'cityUse'),
         })),
-      });
-    }
+      };
+    }));
 
     console.log(JSON.stringify({
       suite: 'ACI candidate diagnostic ranking runtime smoke v1',

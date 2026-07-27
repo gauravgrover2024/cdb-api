@@ -47,9 +47,7 @@ const getActiveMarket = (response = {}) =>
       },
     ];
 
-    const results = [];
-
-    for (const testCase of cases) {
+    const results = await Promise.all(cases.map(async (testCase) => {
       const response = await chatWithAgent({ message: testCase.message, context: {} });
       const rows = getRows(response);
       const activeMarket = getActiveMarket(response);
@@ -95,7 +93,7 @@ const getActiveMarket = (response = {}) =>
         assert(!/final_recommendation_allowed/i.test(JSON.stringify(response)), `${testCase.id}: final allowed must not leak`);
       }
 
-      results.push({
+      return {
         id: testCase.id,
         activeMarket,
         top5: rows.slice(0, 5).map((row) => ({
@@ -112,8 +110,8 @@ const getActiveMarket = (response = {}) =>
           positiveSignals: row.diagnosticRanking?.positiveSignals,
           tradeoffs: row.diagnosticRanking?.tradeoffs,
         })),
-      });
-    }
+      };
+    }));
 
     console.log(JSON.stringify({
       suite: 'ACI candidate active-market eligibility runtime smoke v1',

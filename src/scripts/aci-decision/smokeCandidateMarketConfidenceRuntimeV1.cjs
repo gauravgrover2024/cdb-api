@@ -47,9 +47,7 @@ const getMarket = (response = {}) =>
       },
     ];
 
-    const results = [];
-
-    for (const testCase of cases) {
+    const results = await Promise.all(cases.map(async (testCase) => {
       const response = await chatWithAgent({ message: testCase.message, context: {} });
       const rows = getRows(response);
       const market = getMarket(response);
@@ -84,7 +82,7 @@ const getMarket = (response = {}) =>
         assert(!/final_recommendation_allowed/i.test(JSON.stringify(response)), `${testCase.id}: final allowed must not leak`);
       }
 
-      results.push({
+      return {
         id: testCase.id,
         market,
         top5: rows.slice(0, 5).map((row) => ({
@@ -99,8 +97,8 @@ const getMarket = (response = {}) =>
           positiveSignals: row.diagnosticRanking?.positiveSignals,
           tradeoffs: row.diagnosticRanking?.tradeoffs,
         })),
-      });
-    }
+      };
+    }));
 
     console.log(JSON.stringify({
       suite: 'ACI candidate market confidence runtime smoke v1',

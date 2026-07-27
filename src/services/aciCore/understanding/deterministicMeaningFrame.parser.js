@@ -160,9 +160,22 @@ const choosePrimaryTask = ({ candidateTasks = [], modelCount = 0, featureCount =
     ACI_TASKS.LEAD_CAPTURE,
   ];
 
-  return priority.find((task) => taskSet.has(task)) ||
-    candidateTasks.map(validTask).find(Boolean) ||
-    ACI_TASKS.CLARIFICATION;
+  const explicitTask =
+    priority.find((task) => taskSet.has(task)) ||
+    candidateTasks.map(validTask).find(Boolean);
+
+  if (explicitTask && explicitTask !== ACI_TASKS.CLARIFICATION) {
+    return explicitTask;
+  }
+
+  // A uniquely resolved model name is already a complete overview request.
+  // This keeps model-only prompts data-driven instead of requiring phrasing
+  // such as "show me" or a model-specific frontend shortcut.
+  if (modelCount === 1) {
+    return ACI_TASKS.VEHICLE_OVERVIEW;
+  }
+
+  return explicitTask || ACI_TASKS.CLARIFICATION;
 };
 
 const inferRequestedFacts = ({ primaryTask, secondaryTasks = [], featureKeys = [], hasBudget = false } = {}) => {
@@ -321,7 +334,7 @@ const applyUnavailableVariantResolution = ({ frame = {}, candidateSnapshot = {} 
 
   const requestedVariant = resolution.requestedVariantText || 'that exact variant';
   const model = frame.anchors.primaryVehicle?.fullModel || frame.anchors.primaryVehicle?.model || firstText(...frame.filters.models) || 'this model';
-  const question = `I found ${model}, but ${requestedVariant} does not match an exact current variant in the DB-backed new-car catalog. Please choose a listed variant, or ask for model-level price/features.`;
+  const question = `I found ${model}, but I could not match ${requestedVariant} to a current variant I can verify. Please choose an available variant, or ask for model-level price and features.`;
 
   frame.primaryTask = ACI_TASKS.CLARIFICATION;
   frame.secondaryTasks = unique([...(frame.secondaryTasks || [])]);
