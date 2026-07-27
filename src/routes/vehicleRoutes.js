@@ -12,6 +12,7 @@ import {
   getUniqueMakes,
   getUniqueModels,
   getUniqueVariants,
+  addSuggestionTerm,
   getVariantOptionsByModel,
   getVehicleByDetails,
   getVehicleMedia,
@@ -48,6 +49,9 @@ router.route('/distinct/variants')
 
 router.route('/distinct/variants-with-price')
   .get(getVariantOptionsByModel);
+
+router.route('/suggestions/terms')
+  .post(addSuggestionTerm);
 
 router.route('/by-details')
   .get(getVehicleByDetails);

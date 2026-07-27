@@ -1279,9 +1279,9 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
   today.setHours(0, 0, 0, 0);
 
   const filteredRows = baseRows.filter((doc) => {
-    const expiryStr = getRenewalExpiryDate(doc);
-    if (!expiryStr && (windowStr || (statusStr && statusStr !== "all"))) return false;
+    if (!isPendingRenewalWithinWindow(doc, 365, 365, today)) return false;
 
+    const expiryStr = getRenewalExpiryDate(doc);
     let diffDays = null;
     if (expiryStr) {
       const cycleAdjusted = getCycleAdjustedExpiryDate(expiryStr, today);
@@ -1368,7 +1368,9 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
     list.filter((doc) => doc.renewalOutcome === "POLICY_FROM_ELSEWHERE");
 
   let rows = [];
-  if (view === "renewed") {
+  if (view === "all") {
+    rows = mappedRows;
+  } else if (view === "renewed") {
     rows = getForRenewedTab(mappedRows);
   } else if (view === "external") {
     rows = getForExternalTab(mappedRows);
@@ -1565,12 +1567,33 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
 
   await performAutoMoveExpiredToExternal();
 
-  const rows = await InsuranceCase.find({})
+  const completionQuery = {
+    $or: [
+      { status: { $in: ["submitted", "issued", "completed"] } },
+      {
+        $and: [
+          { newInsuranceCompany: { $exists: true, $ne: "" } },
+          { newPolicyType: { $exists: true, $ne: "" } },
+          { $or: [
+              { newPolicyNumber: { $exists: true, $ne: "" } },
+              { policyNumber: { $exists: true, $ne: "" } }
+            ]
+          },
+          { newIssueDate: { $exists: true, $ne: "" } },
+          { newPolicyStartDate: { $exists: true, $ne: "" } }
+        ]
+      }
+    ]
+  };
+
+  const rows = await InsuranceCase.find({
+    policyCategory: { $not: { $regex: /^extended warranty$/i } },
+    $and: [completionQuery]
+  })
     .sort({ updatedAt: -1 })
     .allowDiskUse(true)
     .lean();
   let pendingRows = rows.filter((doc) => {
-    if (String(doc?.policyCategory || "").trim().toLowerCase() === "extended warranty") return false;
     return isPendingRenewalWithinWindow(doc, 365, 365);
   });
   pendingRows = pendingRows.map((doc) => ({
@@ -1611,6 +1634,7 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     data: {
+      allCases: scopedRows.length,
       activeCases,
       policiesPending,
       paymentPending,
