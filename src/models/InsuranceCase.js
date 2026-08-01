@@ -106,6 +106,61 @@ const customerSnapshotSchema = new mongoose.Schema(
   { _id: false },
 );
 
+// Multi-year policy tenure (e.g. "3+3" = 3yr OD + 3yr TP). Generic across any
+// N+M tenure so future products (1+3, 5+5, ...) reuse the same shape.
+const policyTenureSchema = new mongoose.Schema(
+  {
+    productType: { type: String, default: "1+1" }, // "<odYears>+<tpYears>"
+    odTenureYears: { type: Number, default: 1 },
+    tpTenureYears: { type: Number, default: 1 },
+    policyStartDate: { type: Date, default: null },
+    currentPolicyYear: { type: Number, default: 1 },
+    isMultiYearOd: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
+// One IDV snapshot per policy year, looked up by claim processing for the
+// year that was active when the claim occurred.
+const yearlyIdvScheduleSchema = new mongoose.Schema(
+  {
+    policyYear: { type: Number, required: true },
+    vehicleIdv: { type: Number, default: 0 },
+    cngIdv: { type: Number, default: 0 },
+    accessoriesIdv: { type: Number, default: 0 },
+    totalIdv: { type: Number, default: 0 },
+  },
+  { _id: false },
+);
+
+const payoutScheduleEntrySchema = new mongoose.Schema(
+  {
+    policyYear: { type: Number, required: true }, // 0 = upfront/lumpsum entry
+    percentage: { type: Number, default: 0 },
+    baseAmount: { type: Number, default: 0 },
+    amount: { type: Number, default: 0 },
+    status: {
+      type: String,
+      enum: ["Pending", "Expected", "Paid"],
+      default: "Pending",
+    },
+    dueDate: { type: Date, default: null },
+    paidDate: { type: Date, default: null },
+  },
+  { _id: false },
+);
+
+const payoutScheduleSchema = new mongoose.Schema(
+  {
+    mode: { type: String, enum: ["yearly", "lumpsum"], default: "lumpsum" },
+    tenureYears: { type: Number, default: 1 },
+    totalPayoutPercentage: { type: Number, default: 0 },
+    baseAmount: { type: Number, default: 0 },
+    entries: { type: [payoutScheduleEntrySchema], default: [] },
+  },
+  { _id: false },
+);
+
 const insuranceCaseSchema = new mongoose.Schema(
   {
     caseId: { type: String, required: true, unique: true },
@@ -240,6 +295,11 @@ const insuranceCaseSchema = new mongoose.Schema(
     ewCommencementDate: { type: String, default: "" },
     ewExpiryDate: { type: String, default: "" },
     kmsCoverage: { type: String, default: "" },
+
+    // Multi-year policy tenure (e.g. 3+3), per-year IDV, and payout schedule
+    policyTenure: { type: policyTenureSchema, default: () => ({}) },
+    yearlyIdvSchedule: { type: [yearlyIdvScheduleSchema], default: [] },
+    payoutSchedule: { type: payoutScheduleSchema, default: () => ({}) },
 
     // Step 6: documents
     documents: { type: [insuranceDocumentSchema], default: [] },

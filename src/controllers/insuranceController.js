@@ -9,6 +9,16 @@ import VehicleFeature from "../models/VehicleFeature.js";
 import VehicleRecord from "../models/VehicleRecord.js";
 import { upsertChannelPartner } from "../services/channelPartnerUpsert.js";
 import { syncVehicleFromInsurancePayload } from "../services/vehicleUpsert.js";
+import {
+  buildPolicyTenure,
+  computeCurrentPolicyYear,
+  shouldTriggerOdRenewal,
+  resolveClaimIdv,
+} from "../services/policyTenureService.js";
+import {
+  generatePayoutSchedule,
+  markPayoutEntryStatus,
+} from "../services/payoutEngine.js";
 
 const INSURANCE_COUNTER_PREFIX = "insurance_case_id_sequence_";
 const INSURANCE_ID_PREFIX = "INS";
@@ -303,6 +313,60 @@ const normalizeStep1Payload = (payload = {}, options = {}) => {
       payload.aadhaarNumber || payload.aadharNumber,
     ).trim();
     delete normalized.aadharNumber;
+  }
+
+  return normalized;
+};
+
+// Derives/refreshes policyTenure from newInsuranceDuration + newPolicyStartDate,
+// and regenerates payoutSchedule when the caller supplies payout mode/percentage/base.
+// Both are independent of each other and of premium collection.
+const normalizePolicyTenureAndPayout = (payload = {}, existingDoc = null) => {
+  const existing = existingDoc?.toObject ? existingDoc.toObject() : existingDoc || {};
+  const normalized = { ...payload };
+
+  const durationStr = safeString(
+    hasOwn(payload, "newInsuranceDuration")
+      ? payload.newInsuranceDuration
+      : existing.newInsuranceDuration,
+  ).trim();
+  const startDateRaw = hasOwn(payload, "newPolicyStartDate")
+    ? payload.newPolicyStartDate
+    : existing.newPolicyStartDate;
+
+  const touchesTenure =
+    hasOwn(payload, "newInsuranceDuration") ||
+    hasOwn(payload, "newPolicyStartDate") ||
+    hasOwn(payload, "policyTenure");
+
+  let tenureForPayout = existing.policyTenure || {};
+  if (touchesTenure && durationStr) {
+    tenureForPayout = buildPolicyTenure({
+      durationStr,
+      policyStartDate: startDateRaw || null,
+      existingTenure: existing.policyTenure || {},
+    });
+    normalized.policyTenure = tenureForPayout;
+  }
+
+  const payoutInput = payload.payoutSchedule;
+  const hasPayoutInput =
+    payoutInput &&
+    typeof payoutInput === "object" &&
+    (hasOwn(payoutInput, "mode") ||
+      hasOwn(payoutInput, "totalPayoutPercentage") ||
+      hasOwn(payoutInput, "baseAmount"));
+
+  if (hasPayoutInput) {
+    const existingSchedule = existing.payoutSchedule || {};
+    normalized.payoutSchedule = generatePayoutSchedule({
+      mode: payoutInput.mode || existingSchedule.mode,
+      tenureYears: tenureForPayout.odTenureYears || existingSchedule.tenureYears || 1,
+      totalPayoutPercentage:
+        payoutInput.totalPayoutPercentage ?? existingSchedule.totalPayoutPercentage ?? 0,
+      baseAmount: payoutInput.baseAmount ?? existingSchedule.baseAmount ?? 0,
+      policyStartDate: tenureForPayout.policyStartDate || startDateRaw || null,
+    });
   }
 
   return normalized;
@@ -1354,6 +1418,8 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
       const outcome = doc.renewalOutcome;
       if (outcome === "CAR_SOLD" || outcome === "CAR_EXPIRED") return false;
       if (outcome === "ALREADY_RENEWED") return false;
+      if (outcome === "POLICY_FROM_ELSEWHERE" || outcome === "RENEW_NEXT_YEAR")
+        return false;
       if (doc?.renewedToCaseId) return false;
       return true;
     });
@@ -1606,6 +1672,8 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
     const outcome = normalizeRenewalOutcome(doc?.renewalOutcome);
     if (outcome === "CAR_SOLD" || outcome === "CAR_EXPIRED") return false;
     if (outcome === "ALREADY_RENEWED") return false;
+    if (outcome === "POLICY_FROM_ELSEWHERE" || outcome === "RENEW_NEXT_YEAR")
+      return false;
     if (doc?.renewedToCaseId) return false;
     return true;
   });
@@ -1672,8 +1740,11 @@ export const getInsuranceCaseById = asyncHandler(async (req, res) => {
 // @route   POST /api/insurance
 // @access  Public
 export const createInsuranceCase = asyncHandler(async (req, res) => {
-  const payload = stripImmutableInsuranceFields(
-    normalizeStep1Payload(req.body || {}, { applyDefaults: true }),
+  const payload = normalizePolicyTenureAndPayout(
+    stripImmutableInsuranceFields(
+      normalizeStep1Payload(req.body || {}, { applyDefaults: true }),
+    ),
+    null,
   );
   if (hasOwn(payload, "paymentHistory") || hasOwn(payload, "payment_history")) {
     const normalizedPaymentHistory = normalizePaymentHistoryPayload(
@@ -1800,6 +1871,8 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error("Insurance case not found");
   }
+
+  Object.assign(payload, normalizePolicyTenureAndPayout(payload, existingDoc));
 
   const customerIdRaw = safeString(payload.customerId).trim();
   const parsedCustomerId = await resolveCustomerObjectId(customerIdRaw);
@@ -2229,4 +2302,101 @@ export const upsertInsurancePayoutRate = asyncHandler(async (req, res) => {
   );
 
   res.status(201).json({ success: true, data: row });
+});
+
+const findInsuranceCaseByIdOrCaseId = async (raw) =>
+  (mongoose.Types.ObjectId.isValid(raw)
+    ? await InsuranceCase.findById(raw)
+    : null) || (await InsuranceCase.findOne({ caseId: raw }));
+
+// @desc    Get current policy-year info (active year, whether OD renewal
+//          should trigger, and the IDV for the active year) for a case
+// @route   GET /api/insurance/:id/policy-year
+// @access  Public
+export const getInsurancePolicyYearInfo = asyncHandler(async (req, res) => {
+  const raw = safeString(req.params.id).trim();
+  const doc = await findInsuranceCaseByIdOrCaseId(raw);
+  if (!doc) {
+    res.status(404);
+    throw new Error("Insurance case not found");
+  }
+
+  const tenure = doc.policyTenure || {};
+  const asOfDate = req.query.onDate ? new Date(req.query.onDate) : new Date();
+  const currentPolicyYear = computeCurrentPolicyYear(
+    tenure.policyStartDate,
+    tenure.odTenureYears,
+    asOfDate,
+  );
+  const { idv } = resolveClaimIdv(doc, asOfDate);
+
+  res.json({
+    success: true,
+    data: {
+      policyTenure: tenure,
+      currentPolicyYear,
+      shouldTriggerOdRenewal: shouldTriggerOdRenewal(tenure, asOfDate),
+      activeIdv: idv,
+    },
+  });
+});
+
+// @desc    Generate/regenerate the payout schedule for a case (yearly or
+//          lumpsum mode) and persist it
+// @route   POST /api/insurance/:id/payout-schedule
+// @access  Public
+export const generateInsurancePayoutScheduleForCase = asyncHandler(async (req, res) => {
+  const raw = safeString(req.params.id).trim();
+  const doc = await findInsuranceCaseByIdOrCaseId(raw);
+  if (!doc) {
+    res.status(404);
+    throw new Error("Insurance case not found");
+  }
+
+  const { mode, totalPayoutPercentage, baseAmount } = req.body || {};
+  const tenure = doc.policyTenure || {};
+
+  const payoutSchedule = generatePayoutSchedule({
+    mode: mode || doc.payoutSchedule?.mode,
+    tenureYears: tenure.odTenureYears || doc.payoutSchedule?.tenureYears || 1,
+    totalPayoutPercentage:
+      totalPayoutPercentage ?? doc.payoutSchedule?.totalPayoutPercentage ?? 0,
+    baseAmount: baseAmount ?? doc.payoutSchedule?.baseAmount ?? 0,
+    policyStartDate: tenure.policyStartDate,
+  });
+
+  doc.payoutSchedule = payoutSchedule;
+  await doc.save();
+
+  res.json({ success: true, data: doc.payoutSchedule });
+});
+
+// @desc    Mark a payout schedule entry (by policy year, 0 = upfront) Paid/Expected
+// @route   PATCH /api/insurance/:id/payout-schedule/:policyYear
+// @access  Public
+export const updateInsurancePayoutEntryStatus = asyncHandler(async (req, res) => {
+  const raw = safeString(req.params.id).trim();
+  const policyYear = Number(req.params.policyYear);
+  const status = safeString(req.body?.status).trim();
+
+  if (!["Pending", "Expected", "Paid"].includes(status)) {
+    res.status(400);
+    throw new Error("status must be one of Pending, Expected, Paid");
+  }
+
+  const doc = await findInsuranceCaseByIdOrCaseId(raw);
+  if (!doc) {
+    res.status(404);
+    throw new Error("Insurance case not found");
+  }
+
+  doc.payoutSchedule = markPayoutEntryStatus(
+    doc.payoutSchedule,
+    policyYear,
+    status,
+    req.body?.paidDate,
+  );
+  await doc.save();
+
+  res.json({ success: true, data: doc.payoutSchedule });
 });

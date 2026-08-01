@@ -1860,7 +1860,7 @@ const getUniqueModels = asyncHandler(async (req, res) => {
       makeNormalized: normalizeLooseToken(make),
     }),
   ]);
-  const models = [
+  const scrapedModels = [
     ...new Set(
       [...rawModels, ...suggestedModels]
         .map((value) => String(value || "").trim())
@@ -1907,7 +1907,7 @@ const getUniqueVariants = asyncHandler(async (req, res) => {
       modelNormalized: normalizeLooseToken(trimLeading(model, make) || model),
     }),
   ]);
-  const variants = [
+  const scrapedVariants = [
     ...new Set(
       [...rawVariants, ...suggestedVariants]
         .map((value) => String(value || "").trim())
