@@ -17,6 +17,9 @@ import {
   getInsuranceRenewalSummary,
   assignInsuranceRenewalCases,
   updateInsuranceRenewalLead,
+  getInsurancePolicyYearInfo,
+  generateInsurancePayoutScheduleForCase,
+  updateInsurancePayoutEntryStatus,
 } from "../controllers/insuranceController.js";
 import { protect, staff } from "../middleware/authMiddleware.js";
 
@@ -60,5 +63,13 @@ router
 router.route("/:id/payments").post(appendInsurancePayment);
 
 router.route("/:id/sync-receivable").post(syncInsuranceReceivable);
+
+router.route("/:id/policy-year").get(getInsurancePolicyYearInfo);
+router
+  .route("/:id/payout-schedule")
+  .post(generateInsurancePayoutScheduleForCase);
+router
+  .route("/:id/payout-schedule/:policyYear")
+  .patch(updateInsurancePayoutEntryStatus);
 
 export default router;
