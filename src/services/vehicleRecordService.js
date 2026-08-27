@@ -274,13 +274,23 @@ export const upsertVehicleRecordFromLoan = async (loanDoc) => {
   if (loanId) {
     const existingByLoanId = await VehicleRecord.findOne({ loanId });
     if (existingByLoanId) {
-      const existingLoanReg = normalizeReg(
+      const existingLoanReg = normalizeRegNo(
         existingByLoanId.registrationNumberNormalized ||
           existingByLoanId.registrationNumber,
       );
+      // A vehicle without its permanent number yet is stored under a
+      // TEMP_REDG_ placeholder — getting its real number assigned later is
+      // the same vehicle, not a loanId reuse, so it must update in place
+      // rather than being treated as a different vehicle.
+      const existingLoanRegIsTemp = existingLoanReg.startsWith("TEMPREDG");
 
       // LoanId reused across different vehicles: preserve both records.
-      if (reg && existingLoanReg && existingLoanReg !== reg) {
+      if (
+        reg &&
+        existingLoanReg &&
+        existingLoanReg !== reg &&
+        !existingLoanRegIsTemp
+      ) {
         const createPayload = { ...payload };
         delete createPayload.loanId;
         return await VehicleRecord.create(createPayload);
