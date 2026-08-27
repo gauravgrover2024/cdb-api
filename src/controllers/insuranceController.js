@@ -14,6 +14,7 @@ import {
   computeCurrentPolicyYear,
   shouldTriggerOdRenewal,
   resolveClaimIdv,
+  parseTenureFromDuration,
 } from "../services/policyTenureService.js";
 import {
   generatePayoutSchedule,
@@ -406,27 +407,74 @@ const isInsuranceCaseReadyForSubmit = (payload = {}) => {
   };
 };
 
-const getCycleAdjustedExpiryDate = (expiryDateStr, baseDate = new Date()) => {
-  if (!expiryDateStr) return null;
-  const parsed = new Date(expiryDateStr);
+// Date-only calendar math, deliberately independent of the server's local
+// timezone: every value is read/written via the UTC getters/setters so a
+// stored "2026-08-22" always means the calendar date 22 Aug 2026, never
+// shifting by a day depending on where this process happens to run.
+const parseCalendarDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return { y: value.getUTCFullYear(), m: value.getUTCMonth(), d: value.getUTCDate() };
+  }
+  const str = String(value).trim();
+  if (!str) return null;
+  let m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) {
+    return { y: Number(m[1]), m: Number(m[2]) - 1, d: Number(m[3]) };
+  }
+  m = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (m) {
+    // DD-MM-YYYY / DD/MM/YYYY — the format the insurance wizard's date
+    // pickers fall back to.
+    return { y: Number(m[3]), m: Number(m[2]) - 1, d: Number(m[1]) };
+  }
+  const parsed = new Date(str);
   if (Number.isNaN(parsed.getTime())) return null;
+  return { y: parsed.getUTCFullYear(), m: parsed.getUTCMonth(), d: parsed.getUTCDate() };
+};
 
-  const base = new Date(baseDate);
-  base.setHours(0, 0, 0, 0);
+const calendarToUtcDate = (cal) => new Date(Date.UTC(cal.y, cal.m, cal.d));
 
-  const candidate = new Date(parsed);
-  candidate.setFullYear(base.getFullYear());
-  candidate.setHours(0, 0, 0, 0);
+const diffCalendarDays = (aCal, bCal) =>
+  Math.round((calendarToUtcDate(aCal).getTime() - calendarToUtcDate(bCal).getTime()) / 86400000);
 
-  const diffDays = Math.round((candidate.getTime() - base.getTime()) / 86400000);
+const getEffectiveOdTenureYears = (doc = {}) => {
+  const fromTenure = Number(doc?.policyTenure?.odTenureYears);
+  if (Number.isFinite(fromTenure) && fromTenure > 0) return fromTenure;
+  const parsed = parseTenureFromDuration(
+    doc?.newInsuranceDuration || doc?.previousPolicyDuration || "",
+  );
+  return parsed.odTenureYears || 1;
+};
 
-  if (diffDays < -45) {
-    candidate.setFullYear(base.getFullYear() + 1);
-  } else if (diffDays > 365) {
-    candidate.setFullYear(base.getFullYear() - 1);
+// Snaps a stored expiry into the current renewal cycle by re-basing its
+// month/day onto baseDate's year (annual policies only care about
+// month/day), nudging +/-1 year if that lands absurdly far away. Multi-year
+// OD tenures (e.g. "3+3") are exempt — their real, multi-year-out expiry
+// must NOT be forced into "this year" or they'd look due for renewal every
+// single year. This mirrors cdb-frontend/src/utils/insurancePolicyDisplay.js
+// getCycleAdjustedExpiryDate() — keep the two in sync if either changes.
+const getCycleAdjustedExpiryDate = (expiryDateStr, baseDate = new Date(), options = {}) => {
+  const parsedCal = parseCalendarDate(expiryDateStr);
+  if (!parsedCal) return null;
+
+  const baseCal = parseCalendarDate(baseDate) || parseCalendarDate(new Date());
+
+  if (Number(options.odTenureYears) > 1) {
+    return calendarToUtcDate(parsedCal);
   }
 
-  return candidate;
+  let candidateCal = { y: baseCal.y, m: parsedCal.m, d: parsedCal.d };
+  const diffDays = diffCalendarDays(candidateCal, baseCal);
+
+  if (diffDays < -45) {
+    candidateCal = { ...candidateCal, y: candidateCal.y + 1 };
+  } else if (diffDays > 365) {
+    candidateCal = { ...candidateCal, y: candidateCal.y - 1 };
+  }
+
+  return calendarToUtcDate(candidateCal);
 };
 
 const getRenewalExpiryDate = (doc = {}) =>
@@ -442,20 +490,54 @@ const getRenewalExpiryDate = (doc = {}) =>
 const isPendingRenewalWithinWindow = (doc = {}, futureDays = 30, pastDays = 45, baseDate = new Date()) => {
   const raw = getRenewalExpiryDate(doc);
   if (!raw) return false;
-  const cycleAdjusted = getCycleAdjustedExpiryDate(raw, baseDate);
+  const cycleAdjusted = getCycleAdjustedExpiryDate(raw, baseDate, {
+    odTenureYears: getEffectiveOdTenureYears(doc),
+  });
   if (!cycleAdjusted) return false;
-  const startOfToday = new Date(baseDate);
-  startOfToday.setHours(0, 0, 0, 0);
-  const expiry = new Date(cycleAdjusted);
-  expiry.setHours(0, 0, 0, 0);
-  const days = Math.round((expiry.getTime() - startOfToday.getTime()) / 86400000);
+  const baseCal = parseCalendarDate(baseDate) || parseCalendarDate(new Date());
+  const expiryCal = parseCalendarDate(cycleAdjusted);
+  const days = diffCalendarDays(expiryCal, baseCal);
   return days <= futureDays && days >= -pastDays;
+};
+
+// A case counts as a genuinely completed policy (vs. a bare draft) using the
+// exact same rule as the Mongo `completionQuery` used to fetch renewal-tab
+// candidates below — kept as a plain JS predicate so it can also be applied
+// to a renewal child fetched separately (see getCompletedChildIds).
+const isCaseCompleted = (doc = {}) => {
+  const status = String(doc?.status || "").trim().toLowerCase();
+  if (["submitted", "issued", "completed"].includes(status)) return true;
+  return Boolean(
+    safeString(doc?.newInsuranceCompany).trim() &&
+      safeString(doc?.newPolicyType).trim() &&
+      (safeString(doc?.newPolicyNumber).trim() || safeString(doc?.policyNumber).trim()) &&
+      safeString(doc?.newIssueDate).trim() &&
+      safeString(doc?.newPolicyStartDate).trim(),
+  );
+};
+
+// A renewal only "counts" once the child case it points to has actually been
+// completed — not the moment it's merely started as a draft. Batches one
+// lookup for every renewedToCaseId referenced by the given docs and returns
+// the set of child ids that are genuinely done.
+const getCompletedChildIds = async (docs = []) => {
+  const childIds = Array.from(
+    new Set(docs.map((d) => d?.renewedToCaseId).filter(Boolean).map(String)),
+  );
+  if (!childIds.length) return new Set();
+  const children = await InsuranceCase.find({ _id: { $in: childIds } })
+    .select(
+      "status newInsuranceCompany newPolicyType newPolicyNumber policyNumber newIssueDate newPolicyStartDate",
+    )
+    .lean();
+  return new Set(children.filter(isCaseCompleted).map((c) => String(c._id)));
 };
 
 const performAutoMoveExpiredToExternal = async (baseDate = new Date()) => {
   try {
-    const startOfToday = new Date(baseDate);
-    startOfToday.setHours(0, 0, 0, 0);
+    const startOfToday = calendarToUtcDate(
+      parseCalendarDate(baseDate) || parseCalendarDate(new Date()),
+    );
 
     const unrenewedCases = await InsuranceCase.find({
       policyCategory: { $not: { $regex: /^extended warranty$/i } },
@@ -470,7 +552,9 @@ const performAutoMoveExpiredToExternal = async (baseDate = new Date()) => {
       const expiryStr = getRenewalExpiryDate(doc);
       if (!expiryStr) continue;
 
-      const cycleAdjusted = getCycleAdjustedExpiryDate(expiryStr, startOfToday);
+      const cycleAdjusted = getCycleAdjustedExpiryDate(expiryStr, startOfToday, {
+        odTenureYears: getEffectiveOdTenureYears(doc),
+      });
       if (cycleAdjusted && cycleAdjusted < startOfToday) {
         await InsuranceCase.updateOne(
           { _id: doc._id },
@@ -1339,8 +1423,8 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
     .allowDiskUse(true)
     .lean();
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = calendarToUtcDate(parseCalendarDate(new Date()));
+  const todayCal = parseCalendarDate(today);
 
   const filteredRows = baseRows.filter((doc) => {
     if (!isPendingRenewalWithinWindow(doc, 365, 365, today)) return false;
@@ -1348,9 +1432,11 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
     const expiryStr = getRenewalExpiryDate(doc);
     let diffDays = null;
     if (expiryStr) {
-      const cycleAdjusted = getCycleAdjustedExpiryDate(expiryStr, today);
+      const cycleAdjusted = getCycleAdjustedExpiryDate(expiryStr, today, {
+        odTenureYears: getEffectiveOdTenureYears(doc),
+      });
       if (cycleAdjusted) {
-        diffDays = Math.round((cycleAdjusted.getTime() - today.getTime()) / 86400000);
+        diffDays = diffCalendarDays(parseCalendarDate(cycleAdjusted), todayCal);
       }
     }
 
@@ -1380,8 +1466,7 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
         if (diffDays === null || !(diffDays < 0 && diffDays >= -30)) return false;
       } else if (statusStr === "suspended" || statusStr === "cancelled") {
         const outcome = doc.renewalOutcome;
-        const isCancelled = /cancelled/i.test(outcome) || /suspended/i.test(outcome) || outcome === "CAR_SOLD" || outcome === "CAR_EXPIRED";
-        if (!isCancelled) return false;
+        if (!(outcome === "CAR_SOLD" || outcome === "CAR_EXPIRED")) return false;
       }
     }
 
@@ -1413,6 +1498,16 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
     renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
   }));
 
+  // A linked renewedToCaseId only means the case is truly renewed once that
+  // child case has itself been completed — a renewal merely started as a
+  // draft must not prematurely pull the old policy out of the pending tab.
+  const completedChildIds = await getCompletedChildIds(mappedRows);
+  const isRenewedComplete = (doc) =>
+    Boolean(doc?.renewedToCaseId) && completedChildIds.has(String(doc.renewedToCaseId));
+  mappedRows.forEach((doc) => {
+    doc.renewedComplete = isRenewedComplete(doc);
+  });
+
   const getForRenewalTab = (list) =>
     list.filter((doc) => {
       const outcome = doc.renewalOutcome;
@@ -1420,14 +1515,13 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
       if (outcome === "ALREADY_RENEWED") return false;
       if (outcome === "POLICY_FROM_ELSEWHERE" || outcome === "RENEW_NEXT_YEAR")
         return false;
-      if (doc?.renewedToCaseId) return false;
+      if (isRenewedComplete(doc)) return false;
       return true;
     });
 
   const getForRenewedTab = (list) =>
     list.filter(
-      (doc) =>
-        doc.renewalOutcome === "ALREADY_RENEWED" || Boolean(doc?.renewedToCaseId)
+      (doc) => doc.renewalOutcome === "ALREADY_RENEWED" || isRenewedComplete(doc),
     );
 
   const getForExternalTab = (list) =>
@@ -1667,6 +1761,9 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
     renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
   }));
   const scopedRows = pendingRows;
+  const completedChildIds = await getCompletedChildIds(scopedRows);
+  const isRenewedComplete = (doc) =>
+    Boolean(doc?.renewedToCaseId) && completedChildIds.has(String(doc.renewedToCaseId));
   const renewalRows = scopedRows.filter((doc) => {
     if (String(doc?.policyCategory || "").trim().toLowerCase() === "extended warranty") return false;
     const outcome = normalizeRenewalOutcome(doc?.renewalOutcome);
@@ -1674,13 +1771,13 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
     if (outcome === "ALREADY_RENEWED") return false;
     if (outcome === "POLICY_FROM_ELSEWHERE" || outcome === "RENEW_NEXT_YEAR")
       return false;
-    if (doc?.renewedToCaseId) return false;
+    if (isRenewedComplete(doc)) return false;
     return true;
   });
   const renewedRows = scopedRows.filter(
     (doc) =>
       normalizeRenewalOutcome(doc?.renewalOutcome) === "ALREADY_RENEWED" ||
-      Boolean(doc?.renewedToCaseId),
+      isRenewedComplete(doc),
   );
   const externalRows = scopedRows.filter((doc) => {
     const outcome = normalizeRenewalOutcome(doc?.renewalOutcome);
