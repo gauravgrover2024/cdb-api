@@ -385,6 +385,7 @@ const loanSchema = mongoose.Schema(
     aadhaarCardDocUrl: { type: String },
     panCardDocUrl: { type: String },
     passportDocUrl: { type: String },
+    passportBackDocUrl: { type: String },
     dlDocUrl: { type: String }, // Driver License
     gstDocUrl: { type: String },
     addressProofDocUrl: { type: String },

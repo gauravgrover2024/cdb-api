@@ -89,6 +89,7 @@ const customerSchema = mongoose.Schema(
     panCardDocUrl: { type: String },
     aadhaarCardDocUrl: { type: String },
     passportDocUrl: { type: String },
+    passportBackDocUrl: { type: String },
     gstDocUrl: { type: String },
     dlDocUrl: { type: String },
     addressProofDocUrl: { type: String },

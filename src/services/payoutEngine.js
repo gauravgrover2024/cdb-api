@@ -38,6 +38,7 @@ export const generatePayoutSchedule = ({
   mode = PAYOUT_MODES.LUMPSUM,
   tenureYears = 1,
   totalPayoutPercentage = 0,
+  yearlyPercentages = null,
   baseAmount = 0,
   policyStartDate = null,
 } = {}) => {
@@ -48,15 +49,28 @@ export const generatePayoutSchedule = ({
   const normalizedMode = mode === PAYOUT_MODES.YEARLY ? PAYOUT_MODES.YEARLY : PAYOUT_MODES.LUMPSUM;
 
   if (normalizedMode === PAYOUT_MODES.YEARLY) {
+    const configuredPercentages = Array.isArray(yearlyPercentages)
+      ? yearlyPercentages
+          .slice(0, years)
+          .map((value) => round2(Math.max(0, Number(value) || 0)))
+      : [];
+    const hasConfiguredPercentages = configuredPercentages.length === years;
     const perYearPct = round2(totalPct / years);
+    const percentages = hasConfiguredPercentages
+      ? configuredPercentages
+      : Array.from({ length: years }, () => perYearPct);
+    const resolvedTotalPct = hasConfiguredPercentages
+      ? round2(percentages.reduce((sum, value) => sum + value, 0))
+      : totalPct;
     const entries = Array.from({ length: years }, (_, idx) => {
       const dueDate = new Date(start);
       dueDate.setFullYear(dueDate.getFullYear() + idx);
+      const percentage = percentages[idx];
       return {
         policyYear: idx + 1,
-        percentage: perYearPct,
+        percentage,
         baseAmount: base,
-        amount: round2((base * perYearPct) / 100),
+        amount: round2((base * percentage) / 100),
         status: "Pending",
         dueDate,
         paidDate: null,
@@ -65,7 +79,7 @@ export const generatePayoutSchedule = ({
     return {
       mode: PAYOUT_MODES.YEARLY,
       tenureYears: years,
-      totalPayoutPercentage: totalPct,
+      totalPayoutPercentage: resolvedTotalPct,
       baseAmount: base,
       entries,
     };

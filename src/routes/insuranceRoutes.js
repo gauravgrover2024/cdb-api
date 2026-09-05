@@ -7,6 +7,8 @@ import {
   deleteInsuranceCase,
   appendInsurancePayment,
   getNextTempRegistration,
+  reserveInsuranceCaseIdHandler,
+  releaseInsuranceCaseIdHandler,
   resolveVehicleCubicCapacity,
   findPotentialVehicleMatch,
   mergeVehicleMatch,
@@ -43,6 +45,8 @@ router
   .get(getInsurancePayoutRate)
   .post(upsertInsurancePayoutRate);
 router.route("/temp-registration/next").post(getNextTempRegistration);
+router.route("/case-id/reserve").post(reserveInsuranceCaseIdHandler);
+router.route("/case-id/release").post(releaseInsuranceCaseIdHandler);
 router
   .route("/vehicle-cubic-capacity/resolve")
   .post(resolveVehicleCubicCapacity);
