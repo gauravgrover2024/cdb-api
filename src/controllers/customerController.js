@@ -2,6 +2,9 @@ import asyncHandler from 'express-async-handler';
 import Customer from '../models/Customer.js';
 import Loan from '../models/Loan.js';
 import InsuranceCase from '../models/InsuranceCase.js';
+import HomeLoan from '../models/HomeLoan.js';
+import Quotation from '../models/Quotation.js';
+import VehicleRecord from '../models/VehicleRecord.js';
 import {
   buildSearchTokenFilter,
   escapeSearchRegex,
@@ -606,6 +609,19 @@ const updateCustomer = asyncHandler(async (req, res) => {
     if (normalizedData?.aadharNumber) customer.aadharNumber = normalizedData.aadharNumber;
     
     const updatedCustomer = await customer.save();
+    const syncSummary = { errors: [] };
+    const recordSyncResult = (moduleName, result) => {
+      syncSummary[moduleName] = {
+        matched: Number(result?.matchedCount || 0),
+        updated: Number(result?.modifiedCount || 0),
+      };
+    };
+    const recordSyncError = (moduleName, error) => {
+      syncSummary.errors.push({
+        module: moduleName,
+        message: error?.message || 'Sync failed',
+      });
+    };
 
     // 🔁 Sync updated customer fields into linked loans (denormalized snapshot)
     try {
@@ -627,9 +643,11 @@ const updateCustomer = asyncHandler(async (req, res) => {
           { customerId: customer._id },
           { $set: { ...loanUpdate, updatedAt: new Date() } }
         );
+        recordSyncResult('loans', loanSyncResult);
       }
     } catch (err) {
       console.error('⚠️ Failed to sync loans with customer update:', err.message);
+      recordSyncError('loans', err);
     }
 
     // Sync linked insurance cases (denormalized customer fields + snapshot)
@@ -638,26 +656,32 @@ const updateCustomer = asyncHandler(async (req, res) => {
         String(updatedCustomer.customerType || '').trim().toLowerCase() === 'company' ||
         String(updatedCustomer.applicantType || '').trim().toLowerCase() === 'company';
 
-      const insuranceUpdate = {};
-      if (normalizedData?.customerName !== undefined) {
-        insuranceUpdate.customerName = normalizedData.customerName;
-      }
+      const insuranceUpdate = {
+        customerName: String(updatedCustomer.customerName || '').trim(),
+        mobile: String(updatedCustomer.primaryMobile || '').trim(),
+        alternatePhone: String(updatedCustomer.extraMobiles?.[0] || '').trim(),
+        email: String(updatedCustomer.email || '').trim(),
+        gender: String(updatedCustomer.gender || '').trim(),
+        panNumber: String(updatedCustomer.panNumber || '').trim(),
+        aadhaarNumber: String(
+          updatedCustomer.aadhaarNumber || updatedCustomer.aadharNumber || '',
+        ).trim(),
+        gstNumber: String(updatedCustomer.gstNumber || '').trim(),
+        residenceAddress: String(updatedCustomer.residenceAddress || '').trim(),
+        pincode: String(updatedCustomer.pincode || '').trim(),
+        city: String(updatedCustomer.city || '').trim(),
+        nomineeName: String(updatedCustomer.nomineeName || '').trim(),
+        nomineeRelationship: String(updatedCustomer.nomineeRelation || '').trim(),
+        nomineeDob: updatedCustomer.nomineeDob || '',
+      };
       if (isCorporate) {
-        if (normalizedData?.companyName !== undefined) {
-          insuranceUpdate.companyName = normalizedData.companyName;
-        }
-        if (normalizedData?.contactPersonName !== undefined) {
-          insuranceUpdate.contactPersonName = normalizedData.contactPersonName;
-        }
+        insuranceUpdate.companyName = String(updatedCustomer.companyName || '').trim();
+        insuranceUpdate.contactPersonName = String(
+          updatedCustomer.contactPersonName || '',
+        ).trim();
       } else {
         insuranceUpdate.companyName = "";
         insuranceUpdate.contactPersonName = "";
-      }
-      if (normalizedData?.primaryMobile !== undefined) {
-        insuranceUpdate.mobile = normalizedData.primaryMobile;
-      }
-      if (normalizedData?.email !== undefined) {
-        insuranceUpdate.email = normalizedData.email;
       }
       if (Object.keys(insuranceUpdate).length > 0) {
         const snap = buildInsuranceCustomerSnapshot(updatedCustomer);
@@ -668,16 +692,90 @@ const updateCustomer = asyncHandler(async (req, res) => {
           { customerId: customer._id },
           { $set: { ...insuranceUpdate, updatedAt: new Date() } },
         );
+        recordSyncResult('insurance', insuranceSyncResult);
       }
     } catch (err) {
       console.error('⚠️ Failed to sync insurance cases with customer update:', err.message);
+      recordSyncError('insurance', err);
+    }
+
+    try {
+      const homeLoanUpdate = {
+        customerName: String(updatedCustomer.customerName || '').trim(),
+        'applicant.customerName': String(updatedCustomer.customerName || '').trim(),
+        'applicant.primaryMobile': String(updatedCustomer.primaryMobile || '').trim(),
+        'applicant.extraMobiles': updatedCustomer.extraMobiles || [],
+        'applicant.email': String(updatedCustomer.email || '').trim(),
+        'applicant.dob': updatedCustomer.dob || null,
+        'applicant.gender': String(updatedCustomer.gender || '').trim(),
+        'applicant.pan': String(updatedCustomer.panNumber || '').trim(),
+        'applicant.aadhaar': String(
+          updatedCustomer.aadhaarNumber || updatedCustomer.aadharNumber || '',
+        ).trim(),
+        'applicant.address.line1': String(updatedCustomer.residenceAddress || '').trim(),
+        'applicant.address.pincode': String(updatedCustomer.pincode || '').trim(),
+        'applicant.address.city': String(updatedCustomer.city || '').trim(),
+        'postFile.passportDocUrl': String(updatedCustomer.passportDocUrl || '').trim(),
+        'postFile.passportBackDocUrl': String(
+          updatedCustomer.passportBackDocUrl || '',
+        ).trim(),
+      };
+      const homeLoanSyncResult = await HomeLoan.updateMany(
+        { customerId: customer._id },
+        { $set: { ...homeLoanUpdate, updatedAt: new Date() } },
+      );
+      recordSyncResult('homeLoans', homeLoanSyncResult);
+    } catch (err) {
+      console.error('⚠️ Failed to sync home loans with customer update:', err.message);
+      recordSyncError('homeLoans', err);
+    }
+
+    try {
+      const quotationSyncResult = await Quotation.updateMany(
+        { 'customer.customerId': customer._id },
+        {
+          $set: {
+            'customer.customerName': String(updatedCustomer.customerName || '').trim(),
+            'customer.primaryMobile': String(updatedCustomer.primaryMobile || '').trim(),
+            'customer.email': String(updatedCustomer.email || '').trim(),
+            'customer.residenceAddress': String(
+              updatedCustomer.residenceAddress || '',
+            ).trim(),
+            'customer.pincode': String(updatedCustomer.pincode || '').trim(),
+            'customer.city': String(updatedCustomer.city || '').trim(),
+            updatedAt: new Date(),
+          },
+        },
+      );
+      recordSyncResult('quotations', quotationSyncResult);
+    } catch (err) {
+      console.error('⚠️ Failed to sync quotations with customer update:', err.message);
+      recordSyncError('quotations', err);
+    }
+
+    try {
+      const vehicleSyncResult = await VehicleRecord.updateMany(
+        { customerId: customer._id },
+        {
+          $set: {
+            customerName: String(updatedCustomer.customerName || '').trim(),
+            primaryMobile: String(updatedCustomer.primaryMobile || '').trim(),
+            lastSyncedAt: new Date(),
+          },
+        },
+      );
+      recordSyncResult('vehicles', vehicleSyncResult);
+    } catch (err) {
+      console.error('⚠️ Failed to sync vehicle records with customer update:', err.message);
+      recordSyncError('vehicles', err);
     }
 
     res.json({
       success: true, 
       data: updatedCustomer,
       message: '✅ Customer profile updated with all details saved',
-      updatedFields: Object.keys(cleanedData).length
+      updatedFields: Object.keys(cleanedData).length,
+      syncSummary,
     });
   } else {
     res.status(404);

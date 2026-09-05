@@ -452,6 +452,7 @@ const homeLoanSchema = new Schema(
       aadhaarCardBackDocUrl: { type: String },
       panCardDocUrl: { type: String },
       passportDocUrl: { type: String },
+      passportBackDocUrl: { type: String },
       dlDocUrl: { type: String },
       addressProofDocUrl: { type: String },
       gstDocUrl: { type: String },

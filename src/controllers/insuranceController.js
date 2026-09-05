@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Counter from "../models/Counter.js";
 import Customer from "../models/Customer.js";
 import InsuranceCase from "../models/InsuranceCase.js";
+import InsuranceCaseIdReservation from "../models/InsuranceCaseIdReservation.js";
 import InsurancePayoutRate from "../models/InsurancePayoutRate.js";
 import Receivable from "../models/Receivable.js";
 import VehicleFeature from "../models/VehicleFeature.js";
@@ -24,6 +25,9 @@ import {
 const INSURANCE_COUNTER_PREFIX = "insurance_case_id_sequence_";
 const INSURANCE_ID_PREFIX = "INS";
 const INSURANCE_TEMP_REG_COUNTER_KEY = "insurance_temp_registration_sequence";
+// A form left open (crashed tab, closed laptop) must not hold its number
+// forever — after this window the ID goes back into the reuse pool.
+const INSURANCE_CASE_ID_RESERVATION_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_INSURANCE_PAYOUT_PERCENTAGE = 10;
 
 const syncChannelPartnerOnInsurancePayload = async (payload = {}) => {
@@ -360,14 +364,35 @@ const normalizePolicyTenureAndPayout = (payload = {}, existingDoc = null) => {
 
   if (hasPayoutInput) {
     const existingSchedule = existing.payoutSchedule || {};
-    normalized.payoutSchedule = generatePayoutSchedule({
+    const incomingEntries = Array.isArray(payoutInput.entries)
+      ? payoutInput.entries
+      : [];
+    const generatedSchedule = generatePayoutSchedule({
       mode: payoutInput.mode || existingSchedule.mode,
       tenureYears: tenureForPayout.odTenureYears || existingSchedule.tenureYears || 1,
       totalPayoutPercentage:
         payoutInput.totalPayoutPercentage ?? existingSchedule.totalPayoutPercentage ?? 0,
+      yearlyPercentages: incomingEntries.length
+        ? incomingEntries.map((entry) => entry?.percentage)
+        : null,
       baseAmount: payoutInput.baseAmount ?? existingSchedule.baseAmount ?? 0,
       policyStartDate: tenureForPayout.policyStartDate || startDateRaw || null,
     });
+    normalized.payoutSchedule = {
+      ...generatedSchedule,
+      entries: generatedSchedule.entries.map((entry) => {
+        const incoming = incomingEntries.find(
+          (row) => Number(row?.policyYear) === Number(entry.policyYear),
+        );
+        return incoming
+          ? {
+              ...entry,
+              status: incoming.status || entry.status,
+              paidDate: incoming.paidDate || entry.paidDate,
+            }
+          : entry;
+      }),
+    };
   }
 
   return normalized;
@@ -519,7 +544,8 @@ const isPendingRenewalWithinWindow = (doc = {}, futureDays = 30, pastDays = 45, 
 // to a renewal child fetched separately (see getCompletedChildIds).
 const isCaseCompleted = (doc = {}) => {
   const status = String(doc?.status || "").trim().toLowerCase();
-  if (["submitted", "issued", "completed"].includes(status)) return true;
+  if (["draft", "pending", "submitted", "cancelled"].includes(status)) return false;
+  if (["issued", "completed"].includes(status)) return true;
   return Boolean(
     safeString(doc?.newInsuranceCompany).trim() &&
       safeString(doc?.newPolicyType).trim() &&
@@ -639,17 +665,120 @@ const normalizeRenewalOutcome = (value) => {
   return RENEWAL_OUTCOMES.includes(raw) ? raw : "NONE";
 };
 
-const getNextInsuranceCaseId = async () => {
-  const year = new Date().getFullYear();
+const formatInsuranceCaseId = (year, seq) =>
+  `${INSURANCE_ID_PREFIX}-${year}-${String(seq).padStart(4, "0")}`;
+
+const bumpInsuranceCaseCounter = async (year) => {
   const key = `${INSURANCE_COUNTER_PREFIX}${year}`;
   const next = await Counter.findOneAndUpdate(
     { key },
     { $inc: { value: 1 } },
-    { upsert: true, returnDocument: 'after' },
+    { upsert: true, returnDocument: "after" },
   );
-  const seq = Number(next?.value || 0);
-  return `${INSURANCE_ID_PREFIX}-${year}-${String(seq).padStart(4, "0")}`;
+  return Number(next?.value || 0);
 };
+
+/**
+ * Claim a case ID for a form that is being opened right now.
+ *
+ * Reuse before minting: an ID freed by an abandoned case (or one whose holder
+ * went stale) is handed back out ahead of a fresh counter value, so abandoning
+ * a blank form leaves no gap in the sequence.
+ */
+const reserveInsuranceCaseId = async ({ reservedBy } = {}) => {
+  const year = new Date().getFullYear();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + INSURANCE_CASE_ID_RESERVATION_TTL_MS);
+
+  // findOneAndUpdate is the atomic claim — two users opening a form at the same
+  // instant can never walk away with the same recycled number.
+  const recycled = await InsuranceCaseIdReservation.findOneAndUpdate(
+    {
+      year,
+      $or: [
+        { status: "free" },
+        { status: "reserved", expiresAt: { $lt: now } },
+      ],
+    },
+    {
+      $set: {
+        status: "reserved",
+        reservedBy: reservedBy || undefined,
+        reservedAt: now,
+        expiresAt,
+      },
+    },
+    { sort: { sequence: 1 }, returnDocument: "after" },
+  );
+
+  if (recycled?.caseId) {
+    // A case may have been created outside the reservation flow in the
+    // meantime; never hand out an ID that is already on a real case.
+    const taken = await InsuranceCase.exists({ caseId: recycled.caseId });
+    if (!taken) return recycled.caseId;
+    await InsuranceCaseIdReservation.updateOne(
+      { _id: recycled._id },
+      { $set: { status: "consumed", consumedAt: now } },
+    );
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const seq = await bumpInsuranceCaseCounter(year);
+    const caseId = formatInsuranceCaseId(year, seq);
+    const collides =
+      (await InsuranceCase.exists({ caseId })) ||
+      (await InsuranceCaseIdReservation.exists({ caseId }));
+    if (collides) continue;
+    await InsuranceCaseIdReservation.create({
+      caseId,
+      year,
+      sequence: seq,
+      status: "reserved",
+      reservedBy: reservedBy || undefined,
+      reservedAt: now,
+      expiresAt,
+    });
+    return caseId;
+  }
+
+  throw new Error("Unable to allot an insurance case ID");
+};
+
+/** Hand a reserved ID back so the next new case picks it up. */
+const releaseInsuranceCaseId = async (caseId) => {
+  const id = safeString(caseId).trim();
+  if (!id) return false;
+  // Only a still-reserved ID can be released — a consumed one belongs to a
+  // real case and must never be recycled.
+  const res = await InsuranceCaseIdReservation.updateOne(
+    { caseId: id, status: "reserved" },
+    { $set: { status: "free", reservedBy: null, expiresAt: null } },
+  );
+  return Number(res?.modifiedCount || 0) > 0;
+};
+
+/**
+ * Turn the ID the form has been showing into this case's permanent ID.
+ * Falls back to a fresh number if the reservation went stale or was taken.
+ */
+const consumeInsuranceCaseId = async (caseId, { reservedBy } = {}) => {
+  const id = safeString(caseId).trim();
+  if (!id) return reserveInsuranceCaseId({ reservedBy });
+
+  const alreadyOnCase = await InsuranceCase.exists({ caseId: id });
+  if (alreadyOnCase) return reserveInsuranceCaseId({ reservedBy });
+
+  const claimed = await InsuranceCaseIdReservation.findOneAndUpdate(
+    { caseId: id, status: { $in: ["reserved", "free"] } },
+    { $set: { status: "consumed", consumedAt: new Date() } },
+    { returnDocument: "after" },
+  );
+  if (claimed?.caseId) return claimed.caseId;
+
+  return reserveInsuranceCaseId({ reservedBy });
+};
+
+const getNextInsuranceCaseId = async () => reserveInsuranceCaseId();
 
 const getNextCustomerId = async () => {
   const year = new Date().getFullYear();
@@ -868,6 +997,27 @@ export const getNextTempRegistration = asyncHandler(async (_req, res) => {
       sequence: seq,
     },
   });
+});
+
+// @desc    Allot a case ID for a form that is being opened
+// @route   POST /api/insurance/case-id/reserve
+// @access  Public
+export const reserveInsuranceCaseIdHandler = asyncHandler(async (req, res) => {
+  const caseId = await reserveInsuranceCaseId({ reservedBy: req.user?._id });
+  res.json({ success: true, data: { caseId } });
+});
+
+// @desc    Return an unused case ID to the pool for the next new case
+// @route   POST /api/insurance/case-id/release
+// @access  Public
+export const releaseInsuranceCaseIdHandler = asyncHandler(async (req, res) => {
+  const caseId = safeString(req.body?.caseId).trim();
+  if (!caseId) {
+    res.status(400);
+    throw new Error("caseId is required");
+  }
+  const released = await releaseInsuranceCaseId(caseId);
+  res.json({ success: true, data: { caseId, released } });
 });
 
 // @desc    Resolve cubic capacity from vehicle_features and store to vehicle_master_records
@@ -1401,6 +1551,7 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
       { status: { $in: ["submitted", "issued", "completed"] } },
       {
         $and: [
+          { status: { $nin: ["draft", "pending", "submitted", "cancelled"] } },
           { newInsuranceCompany: { $exists: true, $ne: "" } },
           { newPolicyType: { $exists: true, $ne: "" } },
           { $or: [
@@ -1763,6 +1914,7 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
       { status: { $in: ["submitted", "issued", "completed"] } },
       {
         $and: [
+          { status: { $nin: ["draft", "pending", "submitted", "cancelled"] } },
           { newInsuranceCompany: { $exists: true, $ne: "" } },
           { newPolicyType: { $exists: true, $ne: "" } },
           { $or: [
@@ -1868,12 +2020,18 @@ export const getInsuranceCaseById = asyncHandler(async (req, res) => {
 // @route   POST /api/insurance
 // @access  Public
 export const createInsuranceCase = asyncHandler(async (req, res) => {
+  const syncCustomerConfirmed = req.body?.syncCustomerConfirmed === true;
+  // The form shows this ID from the moment it is opened; honour it so the
+  // saved case keeps the number the user has been looking at.
+  const reservedCaseId = safeString(req.body?.reservedCaseId).trim();
   const payload = normalizePolicyTenureAndPayout(
     stripImmutableInsuranceFields(
       normalizeStep1Payload(req.body || {}, { applyDefaults: true }),
     ),
     null,
   );
+  delete payload.syncCustomerConfirmed;
+  delete payload.reservedCaseId;
   if (hasOwn(payload, "paymentHistory") || hasOwn(payload, "payment_history")) {
     const normalizedPaymentHistory = normalizePaymentHistoryPayload(
       hasOwn(payload, "paymentHistory")
@@ -1884,7 +2042,9 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
     delete payload.payment_history;
   }
 
-  const caseId = await getNextInsuranceCaseId();
+  const caseId = await consumeInsuranceCaseId(reservedCaseId, {
+    reservedBy: req.user?._id,
+  });
   const customerIdRaw = safeString(payload.customerId).trim();
   const customerId = await resolveCustomerObjectId(customerIdRaw);
   if (customerIdRaw && !customerId) {
@@ -1896,10 +2056,9 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
   let finalCustomerId = customerId;
 
   if (finalCustomerId) {
-    const syncedCustomer = await syncCustomerFromInsurancePayload(
-      finalCustomerId,
-      payload,
-    );
+    const syncedCustomer = syncCustomerConfirmed
+      ? await syncCustomerFromInsurancePayload(finalCustomerId, payload)
+      : await Customer.findById(finalCustomerId);
     if (syncedCustomer) customerSnapshot = buildCustomerSnapshot(syncedCustomer);
   } else if (payload.customerName) {
     // Auto-create customer if name provided but no linked ID
@@ -1963,9 +2122,11 @@ export const createInsuranceCase = asyncHandler(async (req, res) => {
 // @access  Public
 export const updateInsuranceCase = asyncHandler(async (req, res) => {
   const raw = safeString(req.params.id).trim();
+  const syncCustomerConfirmed = req.body?.syncCustomerConfirmed === true;
   const payload = stripImmutableInsuranceFields(
     normalizeStep1Payload(req.body || {}, { applyDefaults: false }),
   );
+  delete payload.syncCustomerConfirmed;
   const existingDoc =
     (mongoose.Types.ObjectId.isValid(raw)
       ? await InsuranceCase.findById(raw)
@@ -2020,10 +2181,12 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
   let finalCustomerId = customerId;
 
   if (finalCustomerId) {
-    const syncedCustomer = await syncCustomerFromInsurancePayload(finalCustomerId, {
-      ...existingDoc.toObject(),
-      ...payload,
-    });
+    const syncedCustomer = syncCustomerConfirmed
+      ? await syncCustomerFromInsurancePayload(finalCustomerId, {
+          ...existingDoc.toObject(),
+          ...payload,
+        })
+      : await Customer.findById(finalCustomerId);
     if (syncedCustomer) {
       customerSnapshot = {
         ...customerSnapshot,
