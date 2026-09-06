@@ -538,10 +538,22 @@ const isPendingRenewalWithinWindow = (doc = {}, futureDays = 30, pastDays = 45, 
   return days <= futureDays && days >= -pastDays;
 };
 
-// A case counts as a genuinely completed policy (vs. a bare draft) using the
-// exact same rule as the Mongo `completionQuery` used to fetch renewal-tab
-// candidates below — kept as a plain JS predicate so it can also be applied
-// to a renewal child fetched separately (see getCompletedChildIds).
+// Renewal candidates follow the dashboard rule: a current policy number means
+// the policy is no longer a bare draft. Keep this separate from
+// `isCaseCompleted`, because a renewal child must still be actually issued
+// before its parent can be marked as renewed.
+const buildCurrentPolicyNumberQuery = () => ({
+  $and: [
+    { status: { $ne: "cancelled" } },
+    {
+      $or: [
+        { newPolicyNumber: { $exists: true, $nin: ["", null] } },
+        { policyNumber: { $exists: true, $nin: ["", null] } },
+      ],
+    },
+  ],
+});
+
 const isCaseCompleted = (doc = {}) => {
   const status = String(doc?.status || "").trim().toLowerCase();
   if (["draft", "pending", "submitted", "cancelled"].includes(status)) return false;
@@ -1546,25 +1558,7 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
 
   await performAutoMoveExpiredToExternal();
 
-  const completionQuery = {
-    $or: [
-      { status: { $in: ["submitted", "issued", "completed"] } },
-      {
-        $and: [
-          { status: { $nin: ["draft", "pending", "submitted", "cancelled"] } },
-          { newInsuranceCompany: { $exists: true, $ne: "" } },
-          { newPolicyType: { $exists: true, $ne: "" } },
-          { $or: [
-              { newPolicyNumber: { $exists: true, $ne: "" } },
-              { policyNumber: { $exists: true, $ne: "" } }
-            ]
-          },
-          { newIssueDate: { $exists: true, $ne: "" } },
-          { newPolicyStartDate: { $exists: true, $ne: "" } }
-        ]
-      }
-    ]
-  };
+  const completionQuery = buildCurrentPolicyNumberQuery();
 
   const query = {
     policyCategory: { $not: { $regex: /^extended warranty$/i } },
@@ -1576,7 +1570,7 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
   }
 
   if (searchQ) {
-    const sr = { $regex: searchQ, $options: "i" };
+    const sr = { $regex: escapeRegex(searchQ), $options: "i" };
     query.$and.push({
       $or: [
         { caseId: sr },
@@ -1590,7 +1584,17 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
         { vehicleModel: sr },
         { vehicleVariant: sr },
         { newPolicyNumber: sr },
-        { registrationNumber: sr }
+        { policyNumber: sr },
+        { previousPolicyNumber: sr },
+        { registrationNumber: sr },
+        { vehicleRegistrationNumber: sr },
+        { source: sr },
+        { sourceOrigin: sr },
+        { sourceName: sr },
+        { policyDoneBy: sr },
+        { dealerChannelName: sr },
+        { "customerSnapshot.customerName": sr },
+        { "customerSnapshot.primaryMobile": sr },
       ]
     });
   }
@@ -1909,25 +1913,7 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
 
   await performAutoMoveExpiredToExternal();
 
-  const completionQuery = {
-    $or: [
-      { status: { $in: ["submitted", "issued", "completed"] } },
-      {
-        $and: [
-          { status: { $nin: ["draft", "pending", "submitted", "cancelled"] } },
-          { newInsuranceCompany: { $exists: true, $ne: "" } },
-          { newPolicyType: { $exists: true, $ne: "" } },
-          { $or: [
-              { newPolicyNumber: { $exists: true, $ne: "" } },
-              { policyNumber: { $exists: true, $ne: "" } }
-            ]
-          },
-          { newIssueDate: { $exists: true, $ne: "" } },
-          { newPolicyStartDate: { $exists: true, $ne: "" } }
-        ]
-      }
-    ]
-  };
+  const completionQuery = buildCurrentPolicyNumberQuery();
 
   const rows = await InsuranceCase.find({
     policyCategory: { $not: { $regex: /^extended warranty$/i } },
