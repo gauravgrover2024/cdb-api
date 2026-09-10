@@ -13,6 +13,7 @@ const userSchema = mongoose.Schema(
       enum: ['superadmin', 'admin', 'staff', 'user', 'demo'],
       default: 'staff',
     },
+    department: { type: String, default: '' },
     status: {
       type: String,
       enum: ['pending', 'active', 'rejected', 'deactivated'],

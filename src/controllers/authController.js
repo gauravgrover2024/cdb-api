@@ -1,5 +1,6 @@
 import asyncHandler from 'express-async-handler';
 import User from '../models/User.js';
+import RolePermission from '../models/RolePermission.js';
 import generateToken from '../utils/generateToken.js';
 import { verifyFirebaseToken } from '../config/firebase.js';
 
@@ -110,7 +111,7 @@ const authUser = asyncHandler(async (req, res) => {
 // @route   POST /api/auth/register
 // @access  Public
 const registerUser = asyncHandler(async (req, res) => {
-  const { name, email, password, role, firebaseIdToken } = req.body;
+  const { name, email, password, role, department, firebaseIdToken } = req.body;
 
   const userExists = await User.findOne({ email });
   if (userExists) {
@@ -143,6 +144,7 @@ const registerUser = asyncHandler(async (req, res) => {
     firebaseUid,
     avatarUrl: getAvatarUrlFromDecoded(firebaseDecoded),
     role: role || 'staff',
+    department: department || '',
   });
 
   if (user) {
@@ -278,6 +280,28 @@ const updateUserRole = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Update user department/workspace (superadmin only)
+// @route   PUT /api/auth/user/:id/department
+// @access  Private/Superadmin
+const updateUserDepartment = asyncHandler(async (req, res) => {
+  const department = String(req.body?.department || '').trim();
+  const allowed = ['', 'insurance', 'finance', 'home_loans'];
+  if (!allowed.includes(department)) {
+    res.status(400);
+    throw new Error(`Invalid department. Must be one of: ${allowed.join(', ')}`);
+  }
+  const user = await User.findByIdAndUpdate(
+    req.params.id,
+    { $set: { department } },
+    { new: true, runValidators: true },
+  ).select('_id name email role department');
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  res.json({ success: true, data: user, message: 'User department updated successfully' });
+});
+
 // @desc    Approve or reject a user (superadmin only)
 // @route   PUT /api/auth/user/:id/approve
 // @access  Private/Superadmin
@@ -363,6 +387,9 @@ const getMe = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('User not found');
   }
+  const rolePermissions = user.role === 'superadmin'
+    ? { all: true }
+    : (await RolePermission.findOne({ role: user.role }).select('permissions').lean())?.permissions || {};
   res.json({
     success: true,
     data: {
@@ -370,6 +397,8 @@ const getMe = asyncHandler(async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      department: user.department || '',
+      permissions: rolePermissions,
       status: user.status,
       avatarUrl: user.avatarUrl || "",
       createdAt: user.createdAt,
@@ -418,6 +447,7 @@ export {
   registerUser,
   googleLogin,
   updateUserRole,
+  updateUserDepartment,
   getAllUsers,
   getAssignableUsers,
   getUserById,
