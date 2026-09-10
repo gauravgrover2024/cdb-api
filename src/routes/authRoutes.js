@@ -4,6 +4,7 @@ import {
   registerUser,
   googleLogin,
   updateUserRole,
+  updateUserDepartment,
   getAllUsers,
   getAssignableUsers,
   getUserById,
@@ -14,6 +15,7 @@ import {
   changePassword,
 } from '../controllers/authController.js';
 import { protect, superadmin } from '../middleware/authMiddleware.js';
+import { getRolePermissions, updateRolePermissions } from '../controllers/rolePermissionController.js';
 
 const router = express.Router();
 
@@ -31,8 +33,13 @@ router.get('/assignable-users', protect, getAssignableUsers);
 router.get('/users', protect, superadmin, getAllUsers);
 router.get('/user/:id', protect, superadmin, getUserById);
 router.put('/user/:id/role', protect, superadmin, updateUserRole);
+router.put('/user/:id/department', protect, superadmin, updateUserDepartment);
 router.put('/user/:id/approve', protect, superadmin, approveUser);
 router.put('/user/:id/deactivate', protect, superadmin, deactivateUser);
 router.delete('/user/:id', protect, superadmin, deleteUser);
+
+// Superadmin: module, section and field-level permissions
+router.get('/role-permissions', protect, superadmin, getRolePermissions);
+router.put('/role-permissions/:role', protect, superadmin, updateRolePermissions);
 
 export default router;
