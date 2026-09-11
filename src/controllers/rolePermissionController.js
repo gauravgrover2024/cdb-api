@@ -60,6 +60,21 @@ export const PERMISSION_CATALOG = [
       { key: "documents", label: "Documents", fields: [["documents", "Documents"], ["kycDocuments", "KYC Documents"], ["propertyDocuments", "Property Documents"], ["loanAgreement", "Loan Agreement"]] },
     ],
   },
+  {
+    key: "payments",
+    label: "Payments",
+    sections: [
+      { key: "payment", label: "Payment", fields: [["paymentType", "Payment Type"], ["paymentMode", "Payment Mode"], ["paymentMadeBy", "Payment Made By"], ["paymentAmount", "Payment Amount"], ["paymentDate", "Payment Date"], ["receiptType", "Receipt Type"], ["receiptAmount", "Receipt Amount"], ["receiptDate", "Receipt Date"], ["transactionDetails", "Transaction Details"], ["bankName", "Bank Name"], ["remarks", "Remarks"], ["commission", "Commission", true], ["balance", "Balance", true]] },
+      { key: "booking", label: "Booking", fields: [["customerName", "Customer Name"], ["mobile", "Mobile Number"], ["vehicleDetails", "Vehicle Details"], ["bookingAmount", "Booking Amount"], ["bookingDate", "Booking Date"], ["bookingStatus", "Booking Status"], ["cancellationReason", "Cancellation Reason"]] },
+    ],
+  },
+  {
+    key: "bookings",
+    label: "Bookings",
+    sections: [
+      { key: "booking", label: "Booking", fields: [["customerName", "Customer Name"], ["mobile", "Mobile Number"], ["vehicleDetails", "Vehicle Details"], ["bookingAmount", "Booking Amount"], ["bookingDate", "Booking Date"], ["bookingStatus", "Booking Status"], ["cancellationReason", "Cancellation Reason"]] },
+    ],
+  },
 ];
 
 export const getRolePermissions = asyncHandler(async (req, res) => {
