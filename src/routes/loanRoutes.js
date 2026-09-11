@@ -22,12 +22,14 @@ import {
   saveBanksData,
   getNextRcInvStorageNumber,
 } from '../controllers/loanController.js';
+import { protect } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/permissionMiddleware.js';
 
 const router = express.Router();
 
 router.route('/')
   .get(getLoans)
-  .post(createLoan);
+  .post(protect, requirePermission('loans', 'loan', 'add'), createLoan);
 
 router.get('/collections/receivables', getCollectionsReceivablesSnapshot);
 router.post('/collections/receivables/upsert', upsertCollectionReceivable);
@@ -45,8 +47,8 @@ router.delete('/breakup-fields/:key', deleteLoanBreakupField);
 
 router.route('/:id')
   .get(getLoanById)
-  .put(updateLoan)
-  .delete(deleteLoan);
+  .put(protect, requirePermission('loans', 'loan', 'edit'), updateLoan)
+  .delete(protect, requirePermission('loans', 'loan', 'delete'), deleteLoan);
 
 // Disbursement endpoint - separate from regular update
 router.post('/:id/disburse', disburseLoan);

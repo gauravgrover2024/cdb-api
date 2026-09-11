@@ -24,6 +24,7 @@ import {
   updateInsurancePayoutEntryStatus,
 } from "../controllers/insuranceController.js";
 import { protect, staff } from "../middleware/authMiddleware.js";
+import { requirePermission } from "../middleware/permissionMiddleware.js";
 
 const router = express.Router();
 const RENEWAL_MANAGER_ROLES = [
@@ -39,7 +40,7 @@ const renewalManagerOnly = (req, res, next) => {
   throw new Error("Only admin/team lead can assign renewal cases");
 };
 
-router.route("/").get(getInsuranceCases).post(createInsuranceCase);
+router.route("/").get(getInsuranceCases).post(protect, requirePermission("insurance", "policy", "add"), createInsuranceCase);
 router
   .route("/payout-rates")
   .get(getInsurancePayoutRate)
@@ -62,8 +63,8 @@ router.route("/renewals/:id/lead").patch(protect, staff, updateInsuranceRenewalL
 router
   .route("/:id")
   .get(getInsuranceCaseById)
-  .put(updateInsuranceCase)
-  .delete(deleteInsuranceCase);
+  .put(protect, requirePermission("insurance", "policy", "edit"), updateInsuranceCase)
+  .delete(protect, requirePermission("insurance", "policy", "delete"), deleteInsuranceCase);
 router.route("/:id/payments").post(appendInsurancePayment);
 
 router.route("/:id/sync-receivable").post(syncInsuranceReceivable);
