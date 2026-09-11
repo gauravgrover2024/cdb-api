@@ -47,8 +47,7 @@ const isAllowedOrigin = (origin = "") => {
   if (
     origin === "https://cdb.acillp.com" ||
     origin === "https://www.cdb.acillp.com" ||
-    origin === "https://cdb-frontend-six.vercel.app" ||
-    origin === "https://aci-sandy.vercel.app"
+    origin === "https://cdb-frontend-six.vercel.app"
   ) {
     return true;
   }

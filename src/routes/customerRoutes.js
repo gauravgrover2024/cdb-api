@@ -10,6 +10,7 @@ import {
   reassignLoans,
 } from '../controllers/customerController.js';
 import { protect } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/permissionMiddleware.js';
 
 const router = express.Router();
 
@@ -24,11 +25,11 @@ router.post('/:id/reassign-loans', reassignLoans);
 
 router.route('/')
   .get(getCustomers)
-  .post(createCustomer);
+  .post(protect, requirePermission('customers', 'customer', 'add'), createCustomer);
 
 router.route('/:id')
   .get(getCustomerById)
-  .put(updateCustomer)
-  .delete(deleteCustomer);
+  .put(protect, requirePermission('customers', 'customer', 'edit'), updateCustomer)
+  .delete(protect, requirePermission('customers', 'customer', 'delete'), deleteCustomer);
 
 export default router;
