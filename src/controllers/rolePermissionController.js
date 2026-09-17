@@ -77,6 +77,31 @@ export const PERMISSION_CATALOG = [
   },
 ];
 
+const PERMISSION_ACTIONS = ["view", "add", "edit", "delete"];
+
+// Keeps only catalog modules/sections/fields and fills every field with explicit booleans
+// (missing field values inherit their section), so evaluation matches what the UI showed.
+const normalizePermissions = (permissions) => {
+  const normalized = {};
+  PERMISSION_CATALOG.forEach((moduleConfig) => {
+    const modulePermissions = permissions[moduleConfig.key];
+    if (!modulePermissions || typeof modulePermissions !== "object") return;
+    normalized[moduleConfig.key] = Object.fromEntries(moduleConfig.sections.map((section) => {
+      const sectionPermissions = modulePermissions[section.key] || {};
+      const fields = Object.fromEntries(section.fields.map(([fieldKey]) => {
+        const fieldPermissions = sectionPermissions.fields?.[fieldKey] || {};
+        return [fieldKey, Object.fromEntries(PERMISSION_ACTIONS.map((action) => [
+          action,
+          typeof fieldPermissions[action] === "boolean" ? fieldPermissions[action] : Boolean(sectionPermissions[action]),
+        ]))];
+      }));
+      const flags = Object.fromEntries(PERMISSION_ACTIONS.map((action) => [action, Boolean(sectionPermissions[action])]));
+      return [section.key, { ...flags, fields }];
+    }));
+  });
+  return normalized;
+};
+
 export const getRolePermissions = asyncHandler(async (req, res) => {
   const saved = await RolePermission.find({}).select("role permissions updatedAt").lean();
   const byRole = new Map(saved.map((item) => [item.role, item]));
@@ -104,7 +129,7 @@ export const updateRolePermissions = asyncHandler(async (req, res) => {
   }
   const saved = await RolePermission.findOneAndUpdate(
     { role },
-    { $set: { permissions, updatedBy: req.user._id } },
+    { $set: { permissions: normalizePermissions(permissions), updatedBy: req.user._id } },
     { new: true, upsert: true, setDefaultsOnInsert: true, runValidators: true },
   ).lean();
   res.json({ success: true, data: saved });

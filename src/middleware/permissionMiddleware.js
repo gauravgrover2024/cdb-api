@@ -12,9 +12,11 @@ export const canPermission = (permissions, module, section, action = "view", fie
   const modulePermissions = permissions?.[module];
   if (!modulePermissions) return true;
   let sectionPermissions = modulePermissions?.[section];
-  if (!sectionPermissions && field) {
-    sectionPermissions = Object.values(modulePermissions).find((item) => item?.fields?.[field]);
-    if (!sectionPermissions) return true;
+  // Resolve the field to the section that actually owns it (callers may pass a different section).
+  if (field && !sectionPermissions?.fields?.[field]) {
+    const matchingSection = Object.values(modulePermissions).find((item) => item?.fields?.[field]);
+    if (matchingSection) sectionPermissions = matchingSection;
+    else if (!sectionPermissions) return true;
   }
   if (!sectionPermissions) return false;
   const fieldPermission = field ? sectionPermissions.fields?.[field] : null;
