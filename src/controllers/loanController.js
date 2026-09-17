@@ -1876,6 +1876,12 @@ const ANALYTICS_DRILLDOWN_FIELDS = [
   "disbursement_date",
   "approval_disbursedDate",
   "disburse_date",
+  "disburse_status",
+  "disbursementStatus",
+  "postfile_loanAmountDisbursed",
+  "approval_loanBookedIn",
+  "panNumber",
+  "gstNumber",
 ].join(" ");
 
 const parseAnalyticsRange = (query = {}) => {
@@ -1963,27 +1969,26 @@ const stageRank = (value) => {
   return idx === -1 ? 0 : idx;
 };
 
-const normalizeStatus = (loan) => {
-  const base = String(
-    loan?.status || loan?.approval_status || "",
-  ).toLowerCase();
-  if (!base) return "pending";
-  if (base.includes("disburs")) return "disbursed";
-  if (
-    base.includes("approv") ||
-    base.includes("accept") ||
-    base.includes("sanction")
-  )
-    return "approved";
-  if (
-    base.includes("reject") ||
-    base.includes("declin") ||
-    base.includes("fail")
-  )
+const classifyStatusText = (value) => {
+  const text = String(value || "").toLowerCase();
+  if (!text) return null;
+  if (text.includes("disburs")) return "disbursed";
+  if (text.includes("cancel")) return "cancelled";
+  if (text.includes("reject") || text.includes("declin") || text.includes("fail"))
     return "rejected";
-  if (base.includes("complete") || base.includes("close")) return "completed";
-  return "pending";
+  if (text.includes("complete") || text.includes("close")) return "completed";
+  if (text.includes("approv") || text.includes("accept") || text.includes("sanction"))
+    return "approved";
+  return null;
 };
+
+// `status` defaults to "Pending" on every loan, so it must not hide the
+// disbursal and approval fields that record what actually happened.
+const normalizeStatus = (loan) =>
+  (classifyStatusText(loan?.disburse_status || loan?.disbursementStatus) === "disbursed" && "disbursed") ||
+  classifyStatusText(loan?.approval_status) ||
+  classifyStatusText(loan?.status) ||
+  "pending";
 
 const parseAmountValue = (value) => {
   if (value === null || value === undefined || value === "") return 0;
@@ -1992,19 +1997,25 @@ const parseAmountValue = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+// Amount fields default to 0, so take the first positive value rather than the first defined one.
+const firstPositiveAmount = (...values) =>
+  values.map(parseAmountValue).find((amount) => amount > 0) || 0;
+
 const pickLoanAmount = (loan) =>
-  parseAmountValue(
-    loan?.disburse_amount ??
-      loan?.approval_loanAmountDisbursed ??
-      loan?.approval_loanAmountApproved ??
-      loan?.loanAmount ??
-      loan?.financeExpectation ??
-      0,
+  firstPositiveAmount(
+    loan?.disburse_amount,
+    loan?.approval_loanAmountDisbursed,
+    loan?.postfile_loanAmountDisbursed,
+    loan?.approval_loanAmountApproved,
+    loan?.loanAmount,
+    loan?.financeExpectation,
   );
 
 const pickDisbursedAmount = (loan) =>
-  parseAmountValue(
-    loan?.disburse_amount ?? loan?.approval_loanAmountDisbursed ?? 0,
+  firstPositiveAmount(
+    loan?.disburse_amount,
+    loan?.approval_loanAmountDisbursed,
+    loan?.postfile_loanAmountDisbursed,
   );
 
 const pickBankName = (loan) =>
@@ -2214,21 +2225,29 @@ const isCashBusinessCompleted = (loan) =>
   isCashDeliveryBasedCase(loan) && Boolean(pickCashBusinessDate(loan));
 
 const isDisbursedLoan = (loan) => {
-  const status = normalizeStatus(loan);
+  if (isCashDeliveryBasedCase(loan)) return false;
   return (
-    status === "disbursed" ||
-    parseAmountValue(loan?.disburse_amount) > 0 ||
-    parseAmountValue(loan?.approval_loanAmountDisbursed) > 0 ||
+    normalizeStatus(loan) === "disbursed" ||
+    pickDisbursedAmount(loan) > 0 ||
     Boolean(pickDisbursementDate(loan))
   );
 };
 
 const isApprovedPendingDisbursal = (loan) => {
-  const approved =
-    normalizeStatus(loan) === "approved" ||
-    parseAmountValue(loan?.approval_loanAmountApproved) > 0;
-  return approved && !isDisbursedLoan(loan);
+  if (isCashDeliveryBasedCase(loan) || isDisbursedLoan(loan)) return false;
+  const status = normalizeStatus(loan);
+  if (status === "rejected" || status === "cancelled") return false;
+  return status === "approved" || parseAmountValue(loan?.approval_loanAmountApproved) > 0;
 };
+
+// Registration and delivery paperwork only exist once a car is disbursed/delivered,
+// so files still in profile/pre-file/approval are not flagged as gaps.
+const isPastDisbursalOrDelivery = (loan) =>
+  isDisbursedLoan(loan) ||
+  isCashBusinessCompleted(loan) ||
+  stageRank(loan?.currentStage) >= stageRank("delivery");
+
+const isMissingRegistration = (loan) => isPastDisbursalOrDelivery(loan) && !pickRegNo(loan);
 
 const missingDeliveryFields = (loan) => {
   const requiredFields = [
@@ -2237,14 +2256,35 @@ const missingDeliveryFields = (loan) => {
     "insurance_policy_number",
     "insurance_policy_start_date",
     "insurance_company_name",
-    "rc_redg_no",
   ];
 
-  return requiredFields.filter((field) => {
+  const missing = requiredFields.filter((field) => {
     const value = loan?.[field];
     return value === null || value === undefined || String(value).trim() === "";
   });
+  if (!pickRegNo(loan)) missing.push("rc_redg_no");
+  return missing;
 };
+
+const hasDeliveryGaps = (loan) =>
+  isPastDisbursalOrDelivery(loan) && missingDeliveryFields(loan).length > 0;
+
+const pickDealerName = (loan) =>
+  String(
+    loan?.dealerName || loan?.showroomDealerName || loan?.showroomName || "Unknown",
+  ).trim() || "Unknown";
+
+const pickVehicleSegment = (loan) =>
+  [
+    String(loan?.vehicleMake || "").trim() || "Unknown",
+    String(loan?.vehicleModel || "").trim() || "Unknown",
+    String(loan?.vehicleVariant || "").trim() || "Unknown",
+  ].join(" | ");
+
+const pickTrendDate = (loan) =>
+  isCashDeliveryBasedCase(loan)
+    ? pickCashBusinessDate(loan) || loan?.createdAt
+    : pickDisbursementDate(loan) || loan?.createdAt;
 
 const parseAnalyticsFilters = (query = {}) => ({
   stage: String(query.stage || "")
@@ -4051,6 +4091,9 @@ const ANALYTICS_OVERVIEW_FIELDS = [
   "disbursement_date",
   "approval_disbursedDate",
   "disburse_date",
+  "disburse_status",
+  "disbursementStatus",
+  "postfile_loanAmountDisbursed",
 ].join(" ");
 
 const collectRepeatedCustomerStats = (loans) => {
@@ -4090,6 +4133,7 @@ const collectRepeatedCustomerStats = (loans) => {
   return {
     repeatedIdentityCount,
     repeatedCaseCount: repeatedLoanIds.size,
+    repeatedLoanIds,
   };
 };
 
@@ -4098,7 +4142,13 @@ const buildAnalyticsOverview = (
   loans,
   { start, end, range, filters, startedAt },
 ) => {
-  const months = buildMonthBuckets(start, end);
+  const firstCreatedAt = loans.reduce((earliest, loan) => {
+    const created = asValidDate(loan?.createdAt);
+    return created && (!earliest || created < earliest) ? created : earliest;
+  }, null);
+  const bucketStart =
+    range === "all" && firstCreatedAt && firstCreatedAt > start ? firstCreatedAt : start;
+  const months = buildMonthBuckets(bucketStart, end);
   const totalLoansByMonth = new Map(months.map((m) => [m.key, 0]));
   const disbursedAmountByMonth = new Map(
     months.map((m) => [m.key, { amount: 0, count: 0 }]),
@@ -4122,6 +4172,9 @@ const buildAnalyticsOverview = (
   let cashCarDelivered = 0;
   let cashCarPending = 0;
   let cashCarAmount = 0;
+  let financedCount = 0;
+  let financedDisbursedCount = 0;
+  let financedDisbursedAmount = 0;
 
   for (const loan of loans) {
     const createdMonth = monthKey(loan?.createdAt);
@@ -4182,15 +4235,9 @@ const buildAnalyticsOverview = (
     sourceNode.total += 1;
     if (status === "approved") sourceNode.approved += 1;
     if (status === "pending") sourceNode.pending += 1;
-    if (isDisbursedLoan(loan)) sourceNode.disbursed += 1;
+    if (isDisbursedLoan(loan) || isCashBusinessCompleted(loan)) sourceNode.disbursed += 1;
 
-    const dealerName =
-      String(
-        loan?.dealerName ||
-          loan?.showroomDealerName ||
-          loan?.showroomName ||
-          "Unknown",
-      ).trim() || "Unknown";
+    const dealerName = pickDealerName(loan);
     if (!dealerMap.has(dealerName)) {
       dealerMap.set(dealerName, {
         dealerName,
@@ -4204,13 +4251,10 @@ const buildAnalyticsOverview = (
     const dealerNode = dealerMap.get(dealerName);
     dealerNode.total += 1;
     dealerNode.totalLoanAmount += pickLoanAmount(loan);
-    if (isDisbursedLoan(loan)) dealerNode.disbursed += 1;
-    const createdAt = new Date(loan?.createdAt || 0);
-    const disbursedAt = new Date(pickDisbursementDate(loan) || 0);
-    if (
-      !Number.isNaN(createdAt.getTime()) &&
-      !Number.isNaN(disbursedAt.getTime())
-    ) {
+    if (isDisbursedLoan(loan) || isCashBusinessCompleted(loan)) dealerNode.disbursed += 1;
+    const createdAt = asValidDate(loan?.createdAt);
+    const disbursedAt = isDisbursedLoan(loan) ? asValidDate(pickDisbursementDate(loan)) : null;
+    if (createdAt && disbursedAt) {
       const tat = Math.max(
         0,
         Math.round(
@@ -4221,11 +4265,7 @@ const buildAnalyticsOverview = (
       dealerNode.tatSamples += 1;
     }
 
-    const vehicleKey = [
-      String(loan?.vehicleMake || "").trim() || "Unknown",
-      String(loan?.vehicleModel || "").trim() || "Unknown",
-      String(loan?.vehicleVariant || "").trim() || "Unknown",
-    ].join(" | ");
+    const vehicleKey = pickVehicleSegment(loan);
     if (!vehicleMap.has(vehicleKey)) {
       vehicleMap.set(vehicleKey, {
         segment: vehicleKey,
@@ -4245,24 +4285,17 @@ const buildAnalyticsOverview = (
       approvalPendingAmount += pickLoanAmount(loan);
     }
 
-    if (!pickRegNo(loan)) {
-      missingRegCount += 1;
-    }
+    if (isMissingRegistration(loan)) missingRegCount += 1;
+    if (hasDeliveryGaps(loan)) missingDeliveryCount += 1;
 
-    if (
-      stageRank(loan?.currentStage) >= stageRank("delivery") ||
-      isDisbursedLoan(loan)
-    ) {
-      if (missingDeliveryFields(loan).length > 0) {
-        missingDeliveryCount += 1;
-      }
+    if (isDisbursedLoan(loan)) {
+      financedDisbursedCount += 1;
+      financedDisbursedAmount += pickDisbursedAmount(loan) || pickLoanAmount(loan);
     }
+    if (!isCashCase) financedCount += 1;
 
     if (isDisbursedLoan(loan) || isCashBusinessCompleted(loan)) {
-      const dateForTrend = isCashCase
-        ? pickCashBusinessDate(loan) || loan?.createdAt
-        : pickDisbursementDate(loan) || loan?.createdAt;
-      const dMonth = monthKey(dateForTrend);
+      const dMonth = monthKey(pickTrendDate(loan));
       if (dMonth && disbursedAmountByMonth.has(dMonth)) {
         const node = disbursedAmountByMonth.get(dMonth);
         node.amount += pickDisbursedAmount(loan) || pickLoanAmount(loan);
@@ -4341,17 +4374,23 @@ const buildAnalyticsOverview = (
     .sort((a, b) => b.total - a.total)
     .slice(0, 25);
 
-  const repeatedCustomers = collectRepeatedCustomerStats(loans);
+  const { repeatedIdentityCount, repeatedCaseCount } = collectRepeatedCustomerStats(loans);
+  const repeatedCustomers = { repeatedIdentityCount, repeatedCaseCount };
 
   const response = {
     timeframe: {
       range,
-      start: start.toISOString(),
+      start: bucketStart.toISOString(),
       end: end.toISOString(),
     },
     filters,
     totals: {
       totalCases: loans.length,
+      financedCases: financedCount,
+      disbursedCases: financedDisbursedCount,
+      disbursedLoanAmount: Math.round(financedDisbursedAmount * 100) / 100,
+      cashCases: cashCarTotal,
+      cashDeliveredCases: cashCarDelivered,
       totalLoanAmount: loans.reduce(
         (acc, loan) => acc + pickLoanAmount(loan),
         0,
@@ -4501,27 +4540,19 @@ const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
   if (widget === "total_loan_trend" && bucket) {
     filtered = loans.filter((loan) => monthKey(loan?.createdAt) === bucket);
   } else if (widget === "disbursed_amount_trend" && bucket) {
-    filtered = loans.filter((loan) => {
-      const isCashCase = isCashDeliveryBasedCase(loan);
-      const d = isCashCase
-        ? pickCashBusinessDate(loan) || loan?.createdAt
-        : pickDisbursementDate(loan) || loan?.createdAt;
-      return (
+    filtered = loans.filter(
+      (loan) =>
         (isDisbursedLoan(loan) || isCashBusinessCompleted(loan)) &&
-        monthKey(d) === bucket
-      );
-    });
+        monthKey(pickTrendDate(loan)) === bucket,
+    );
+  } else if (widget === "disbursed_loans") {
+    filtered = loans.filter((loan) => isDisbursedLoan(loan));
   } else if (widget === "approval_pending_disbursal") {
     filtered = loans.filter((loan) => isApprovedPendingDisbursal(loan));
   } else if (widget === "missing_reg_number") {
-    filtered = loans.filter((loan) => !pickRegNo(loan));
+    filtered = loans.filter((loan) => isMissingRegistration(loan));
   } else if (widget === "missing_delivery_fields") {
-    filtered = loans.filter(
-      (loan) =>
-        (stageRank(loan?.currentStage) >= stageRank("delivery") ||
-          isDisbursedLoan(loan)) &&
-        missingDeliveryFields(loan).length > 0,
-    );
+    filtered = loans.filter((loan) => hasDeliveryGaps(loan));
   } else if (widget === "stage_funnel" && key) {
     filtered = loans.filter(
       (loan) => normalizeStage(loan?.currentStage) === key,
@@ -4532,7 +4563,9 @@ const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
     (widget === "bank_pipeline" || widget === "bank_total_amount") &&
     key
   ) {
-    filtered = loans.filter((loan) => pickBankName(loan).toLowerCase() === key);
+    filtered = loans.filter(
+      (loan) => !isCashDeliveryBasedCase(loan) && pickBankName(loan).toLowerCase() === key,
+    );
   } else if (widget === "cash_car_all") {
     filtered = loans.filter((loan) => isCashDeliveryBasedCase(loan));
   } else if (widget === "cash_car_delivered") {
@@ -4544,43 +4577,15 @@ const getLoanAnalyticsDrilldown = asyncHandler(async (req, res) => {
   } else if (widget === "source_performance" && key) {
     filtered = loans.filter((loan) => pickSource(loan).toLowerCase() === key);
   } else if (widget === "dealer_performance" && key) {
-    filtered = loans.filter((loan) => {
-      const dealer = String(
-        loan?.dealerName ||
-          loan?.showroomDealerName ||
-          loan?.showroomName ||
-          "Unknown",
-      ).toLowerCase();
-      return dealer === key;
-    });
+    filtered = loans.filter((loan) => pickDealerName(loan).toLowerCase() === key);
   } else if (widget === "case_status_distribution" && key) {
     filtered = loans.filter((loan) => normalizeStatus(loan) === key);
   } else if (widget === "vehicle_segment" && key) {
-    filtered = loans.filter((loan) => {
-      const segment = [
-        String(loan?.vehicleMake || "").trim() || "Unknown",
-        String(loan?.vehicleModel || "").trim() || "Unknown",
-        String(loan?.vehicleVariant || "").trim() || "Unknown",
-      ].join(" | ");
-      return segment.toLowerCase() === key;
-    });
+    filtered = loans.filter((loan) => pickVehicleSegment(loan).toLowerCase() === key);
   } else if (widget === "repeated_customers") {
-    const duplicateMobiles = new Set();
-    const counter = new Map();
-    loans.forEach((loan) => {
-      const mobile = String(loan?.primaryMobile || "").replace(/\D/g, "");
-      if (mobile.length >= 10) {
-        counter.set(mobile, (counter.get(mobile) || 0) + 1);
-      }
-    });
-    counter.forEach((count, mobile) => {
-      if (count > 1) duplicateMobiles.add(mobile);
-    });
-    filtered = loans.filter((loan) =>
-      duplicateMobiles.has(
-        String(loan?.primaryMobile || "").replace(/\D/g, ""),
-      ),
-    );
+    // Same identity rules (mobile / PAN / GST) as the overview widget.
+    const { repeatedLoanIds } = collectRepeatedCustomerStats(loans);
+    filtered = loans.filter((loan) => repeatedLoanIds.has(String(loan?.loanId || loan?._id)));
   }
 
   filtered = filtered
