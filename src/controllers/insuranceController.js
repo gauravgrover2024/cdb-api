@@ -72,6 +72,13 @@ const resolveCustomerObjectId = async (value) => {
 const hasOwn = (obj, key) =>
   Object.prototype.hasOwnProperty.call(obj || {}, key);
 
+const toDateOrNull = (value) => {
+  const raw = safeString(value).trim();
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
 const stripImmutableInsuranceFields = (payload = {}) => {
   const cleaned = { ...(payload || {}) };
   delete cleaned._id;
@@ -911,13 +918,6 @@ const resolveCubicCapacityFromVehicleFeatures = async ({
     if (parsed != null) return parsed;
   }
   return null;
-};
-
-const toDateOrNull = (value) => {
-  const raw = safeString(value).trim();
-  if (!raw) return null;
-  const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
 const upsertVehicleRecordFromInsuranceCase = async (doc) => {
@@ -2179,29 +2179,51 @@ export const updateInsuranceCase = asyncHandler(async (req, res) => {
         ...buildCustomerSnapshot(syncedCustomer),
       };
     }
-  } else if (payload.customerName || existingDoc.customerName) {
+  } else {
+    // If no customer is linked yet, check if a customer with this mobile/PAN already exists before creating a new one
     const combined = { ...existingDoc.toObject(), ...payload };
-    const nextCustId = await getNextCustomerId();
-    const newCustomer = await Customer.create({
-      customerId: nextCustId,
-      customerName: combined.customerName,
-      companyName: combined.companyName,
-      contactPersonName: combined.contactPersonName,
-      primaryMobile: combined.mobile,
-      alternatePhone: combined.alternatePhone,
-      email: combined.email,
-      gender: combined.gender,
-      panNumber: combined.panNumber,
-      aadhaarNumber: combined.aadhaarNumber || combined.aadharNumber,
-      gstNumber: combined.gstNumber,
-      residenceAddress: combined.residenceAddress,
-      city: combined.city,
-      pincode: combined.pincode,
-      createdFrom: "INSURANCE_FORM",
-      createdBy: req.user?._id
-    });
-    finalCustomerId = newCustomer._id;
-    customerSnapshot = buildCustomerSnapshot(newCustomer);
+    const mobileToSearch = normalizeMobile10(combined.mobile);
+    const panToSearch = safeString(combined.panNumber).trim();
+
+    let existingCustomer = null;
+    if (mobileToSearch) {
+      existingCustomer = await Customer.findOne({
+        $or: [
+          { primaryMobile: mobileToSearch },
+          { extraMobiles: mobileToSearch },
+        ],
+      });
+    }
+    if (!existingCustomer && panToSearch) {
+      existingCustomer = await Customer.findOne({ panNumber: panToSearch });
+    }
+
+    if (existingCustomer) {
+      finalCustomerId = existingCustomer._id;
+      customerSnapshot = buildCustomerSnapshot(existingCustomer);
+    } else if (combined.customerName) {
+      const nextCustId = await getNextCustomerId();
+      const newCustomer = await Customer.create({
+        customerId: nextCustId,
+        customerName: combined.customerName,
+        companyName: combined.companyName,
+        contactPersonName: combined.contactPersonName,
+        primaryMobile: combined.mobile,
+        alternatePhone: combined.alternatePhone,
+        email: combined.email,
+        gender: combined.gender,
+        panNumber: combined.panNumber,
+        aadhaarNumber: combined.aadhaarNumber || combined.aadharNumber,
+        gstNumber: combined.gstNumber,
+        residenceAddress: combined.residenceAddress,
+        city: combined.city,
+        pincode: combined.pincode,
+        createdFrom: "INSURANCE_FORM",
+        createdBy: req.user?._id
+      });
+      finalCustomerId = newCustomer._id;
+      customerSnapshot = buildCustomerSnapshot(newCustomer);
+    }
   }
 
   const autoStatus = isInsuranceCaseReadyForSubmit(payload).ok ? "submitted" : "draft";
