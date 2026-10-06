@@ -545,33 +545,46 @@ const isPendingRenewalWithinWindow = (doc = {}, futureDays = 30, pastDays = 45, 
   return days <= futureDays && days >= -pastDays;
 };
 
-// Renewal candidates follow the dashboard rule: a current policy number means
-// the policy is no longer a bare draft. Keep this separate from
-// `isCaseCompleted`, because a renewal child must still be actually issued
-// before its parent can be marked as renewed.
+// Mongo twin of `isCaseCompleted`: an assigned, non-temporary policy number
+// marks the case complete (mirrors the frontend `hasCurrentPolicyNumber`).
 const buildCurrentPolicyNumberQuery = () => ({
   $and: [
     { status: { $ne: "cancelled" } },
     {
       $or: [
-        { newPolicyNumber: { $exists: true, $nin: ["", null] } },
-        { policyNumber: { $exists: true, $nin: ["", null] } },
+        {
+          newPolicyNumber: {
+            $exists: true,
+            $nin: ["", null],
+            $not: /^temp/i,
+          },
+        },
+        {
+          policyNumber: {
+            $exists: true,
+            $nin: ["", null],
+            $not: /^temp/i,
+          },
+        },
       ],
     },
   ],
 });
 
+// Placeholder numbers issued against temporary registrations start with TEMP
+// (same convention as TEMP_REDG_) — they are not an assigned policy number.
+const isTemporaryPolicyNumber = (value) =>
+  /^temp/i.test(safeString(value).trim());
+
+// A case with an assigned (non-temporary) policy number is complete, whatever
+// its workflow status — only an explicit cancellation still blocks it.
 const isCaseCompleted = (doc = {}) => {
   const status = String(doc?.status || "").trim().toLowerCase();
-  if (["draft", "pending", "submitted", "cancelled"].includes(status)) return false;
+  if (status === "cancelled") return false;
   if (["issued", "completed"].includes(status)) return true;
-  return Boolean(
-    safeString(doc?.newInsuranceCompany).trim() &&
-      safeString(doc?.newPolicyType).trim() &&
-      (safeString(doc?.newPolicyNumber).trim() || safeString(doc?.policyNumber).trim()) &&
-      safeString(doc?.newIssueDate).trim() &&
-      safeString(doc?.newPolicyStartDate).trim(),
-  );
+  const assignedNumber =
+    safeString(doc?.newPolicyNumber).trim() || safeString(doc?.policyNumber).trim();
+  return Boolean(assignedNumber) && !isTemporaryPolicyNumber(assignedNumber);
 };
 
 // A renewal only "counts" once the child case it points to has actually been
@@ -1607,15 +1620,43 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
   const today = calendarToUtcDate(parseCalendarDate(new Date()));
   const todayCal = parseCalendarDate(today);
 
+  // A linked renewedToCaseId only means the case is truly renewed once that
+  // child case has itself been completed — a renewal merely started as a
+  // draft must not prematurely pull the old policy out of the pending tab.
+  const completedChildrenById = await getCompletedChildrenById(baseRows);
+  const isRenewedComplete = (doc) =>
+    Boolean(doc?.renewedToCaseId) &&
+    completedChildrenById.has(String(doc.renewedToCaseId));
+  // Filters must evaluate the same policy the card displays: the completed
+  // renewal child once renewed, otherwise the case itself.
+  const getDisplayedPolicy = (doc) =>
+    isRenewedComplete(doc)
+      ? completedChildrenById.get(String(doc.renewedToCaseId))
+      : doc;
+  // One effective premium per case so tiers never overlap (totalPremium is
+  // often 0, and OR-ing three fields put one case in several tiers).
+  const getEffectivePremium = (policy = {}) => {
+    for (const value of [
+      policy.newTotalPremium,
+      policy.previousTotalPremium,
+      policy.totalPremium,
+    ]) {
+      const n = Number(value || 0);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return 0;
+  };
+
   const filteredRows = baseRows.filter((doc) => {
     if (!isPendingRenewalWithinWindow(doc, 365, 365, today)) return false;
 
-    const expiryStr = getRenewalExpiryDate(doc);
+    const policy = getDisplayedPolicy(doc);
+    const expiryStr = getRenewalExpiryDate(policy);
     let diffDays = null;
     if (expiryStr) {
       const cycleAdjusted = getCycleAdjustedExpiryDate(expiryStr, today, {
-        odTenureYears: getEffectiveOdTenureYears(doc),
-        policyStartDate: getRenewalStartDate(doc),
+        odTenureYears: getEffectiveOdTenureYears(policy),
+        policyStartDate: getRenewalStartDate(policy),
       });
       if (cycleAdjusted) {
         diffDays = diffCalendarDays(parseCalendarDate(cycleAdjusted), todayCal);
@@ -1653,22 +1694,13 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
     }
 
     if (tierStr && tierStr !== "all") {
-      const newPremium = Number(doc.newTotalPremium || 0);
-      const premium = Number(doc.totalPremium || 0);
-      const prevPremium = Number(doc.previousTotalPremium || 0);
-      
+      const premium = getEffectivePremium(policy);
       if (tierStr === "high-value") {
-        if (!(newPremium > 50000 || premium > 50000 || prevPremium > 50000)) return false;
+        if (!(premium > 50000)) return false;
       } else if (tierStr === "premium") {
-        const isPrem = (newPremium >= 20000 && newPremium <= 50000) ||
-                       (premium >= 20000 && premium <= 50000) ||
-                       (prevPremium >= 20000 && prevPremium <= 50000);
-        if (!isPrem) return false;
+        if (!(premium >= 20000 && premium <= 50000)) return false;
       } else if (tierStr === "basic") {
-        const isBasic = (newPremium < 20000 && newPremium > 0) ||
-                        (premium < 20000 && premium > 0) ||
-                        (prevPremium < 20000 && prevPremium > 0);
-        if (!isBasic) return false;
+        if (!(premium > 0 && premium < 20000)) return false;
       }
     }
 
@@ -1680,13 +1712,6 @@ export const getInsuranceRenewalCases = asyncHandler(async (req, res) => {
     renewalOutcome: normalizeRenewalOutcome(doc?.renewalOutcome),
   }));
 
-  // A linked renewedToCaseId only means the case is truly renewed once that
-  // child case has itself been completed — a renewal merely started as a
-  // draft must not prematurely pull the old policy out of the pending tab.
-  const completedChildrenById = await getCompletedChildrenById(mappedRows);
-  const isRenewedComplete = (doc) =>
-    Boolean(doc?.renewedToCaseId) &&
-    completedChildrenById.has(String(doc.renewedToCaseId));
   mappedRows.forEach((doc) => {
     doc.renewedComplete = isRenewedComplete(doc);
     doc.renewedPolicy = doc.renewedComplete
@@ -1959,11 +1984,13 @@ export const getInsuranceRenewalSummary = asyncHandler(async (req, res) => {
   const paymentPending = scopedRows.filter(
     (row) => normalizeRenewalLeadStatus(row?.renewalLeadStatus) === "Payment Pending",
   ).length;
+  // Same effective premium as the Tier filter on /renewals/cases.
   const highValue = scopedRows.filter((row) => {
-    const newPremium = Number(row.newTotalPremium || 0);
-    const premium = Number(row.totalPremium || 0);
-    const prevPremium = Number(row.previousTotalPremium || 0);
-    return newPremium > 50000 || premium > 50000 || prevPremium > 50000;
+    const premium =
+      [row.newTotalPremium, row.previousTotalPremium, row.totalPremium]
+        .map((value) => Number(value || 0))
+        .find((n) => Number.isFinite(n) && n > 0) || 0;
+    return premium > 50000;
   }).length;
   res.json({
     success: true,
