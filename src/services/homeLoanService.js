@@ -9,6 +9,7 @@
  */
 
 import HomeLoan from "../models/HomeLoan.js";
+import HomeLoanBreakupField from "../models/HomeLoanBreakupField.js";
 import mongoose from "mongoose";
 
 // ─── Flat → Document (inbound transform) ─────────────────────────────────────
@@ -18,22 +19,33 @@ export function flatToDoc(flat) {
   const f = flat;
 
   // ── Instruments: collapse cheque_N_* flat fields ────────────────────────
-  const instruments = [];
-  for (let i = 1; i <= 20; i++) {
-    const number = f[`cheque_${i}_number`];
-    const amount = f[`cheque_${i}_amount`];
-    if (number || amount) {
-      instruments.push({
-        tag: f[`cheque_${i}_tag`] ?? null,
-        number: number ?? null,
-        bankName: f[`cheque_${i}_bankName`] ?? null,
-        accountNumber: f[`cheque_${i}_accountNumber`] ?? null,
-        date: f[`cheque_${i}_date`] ?? null,
-        amount: amount ?? null,
-        signedBy: f[`cheque_${i}_signedBy`] ?? null,
-        favouring: f[`cheque_${i}_favouring`] ?? null,
-        imageUrl: f[`cheque_${i}_image`] ?? null,
-      });
+  // Only rebuilt when the payload actually carries cheque fields, so a
+  // partial save (notes, KYC docs, delivery patch) never wipes instruments.
+  const chequeSlots = Object.keys(f)
+    .map((key) => /^cheque_(\d+)_/.exec(key))
+    .filter(Boolean)
+    .map((match) => Number(match[1]));
+  let instruments;
+  if (chequeSlots.length) {
+    instruments = [];
+    const maxSlot = Math.max(...chequeSlots);
+    for (let i = 1; i <= maxSlot; i++) {
+      const number = f[`cheque_${i}_number`];
+      const amount = f[`cheque_${i}_amount`];
+      if (number || amount) {
+        instruments.push({
+          slot: i,
+          tag: f[`cheque_${i}_tag`] ?? null,
+          number: number ?? null,
+          bankName: f[`cheque_${i}_bankName`] ?? null,
+          accountNumber: f[`cheque_${i}_accountNumber`] ?? null,
+          date: f[`cheque_${i}_date`] ?? null,
+          amount: amount ?? null,
+          signedBy: f[`cheque_${i}_signedBy`] ?? null,
+          favouring: f[`cheque_${i}_favouring`] ?? null,
+          imageUrl: f[`cheque_${i}_image`] ?? null,
+        });
+      }
     }
   }
 
@@ -133,8 +145,6 @@ export function flatToDoc(flat) {
         dob: f.co_dob,
         gender: f.co_gender,
         maritalStatus: f.co_maritalStatus,
-        dependents: f.co_dependents,
-        education: f.co_education,
         houseType: f.co_houseType,
         pan: f.co_pan,
         aadhaar: f.co_aadhaar,
@@ -219,8 +229,10 @@ export function flatToDoc(flat) {
       ewFinance: f.approval_breakup_ewFinance,
       creditAssured: f.approval_breakup_creditAssured,
     },
-    banks: f.approval_banksData,
-    statusHistory: f.approval_statusHistory,
+    banks: Array.isArray(f.approval_banksData) ? f.approval_banksData : undefined,
+    statusHistory: Array.isArray(f.approval_statusHistory)
+      ? f.approval_statusHistory
+      : undefined,
   };
 
   // ── Post-file (postfile_ / dispatch_ / rc_ / invoice_ prefix) ───────────
@@ -288,20 +300,8 @@ export function flatToDoc(flat) {
   };
 
   // ── Pricing ─────────────────────────────────────────────────────────────
-  const exShowroom = Number(f.exShowroomPrice) || 0;
-  const insurance = Number(f.insuranceCost) || 0;
-  const roadTax = Number(f.roadTax) || 0;
-  const accessories = Number(f.accessoriesAmount) || 0;
-  const dealerDiscount = Number(f.dealerDiscount) || 0;
-  const manufacturerDiscount = Number(f.manufacturerDiscount) || 0;
-  const marginMoney = Number(f.marginMoney) || 0;
-  const advanceEmi = Number(f.advanceEmi) || 0;
-  const tradeInValue = Number(f.tradeInValue) || 0;
-  const otherDiscounts = Number(f.otherDiscounts) || 0;
-  const onRoadPrice = exShowroom + insurance + roadTax + accessories - dealerDiscount - manufacturerDiscount;
-  const grossLoan = onRoadPrice - marginMoney - advanceEmi - tradeInValue;
-  const netLoan = grossLoan - otherDiscounts;
-
+  // onRoadPrice/grossLoan/netLoan are derived from the merged document in
+  // recomputePricing(), so a partial payload can't zero them out.
   const pricing = {
     exShowroomPrice: f.exShowroomPrice,
     insuranceCost: f.insuranceCost,
@@ -315,9 +315,6 @@ export function flatToDoc(flat) {
     advanceEmi: f.advanceEmi,
     tradeInValue: f.tradeInValue,
     otherDiscounts: f.otherDiscounts,
-    onRoadPrice: onRoadPrice || undefined,
-    grossLoan: grossLoan || undefined,
-    netLoan: netLoan || undefined,
   };
 
   // ── Dealer ──────────────────────────────────────────────────────────────
@@ -329,10 +326,23 @@ export function flatToDoc(flat) {
   };
 
   // ── References ────────────────────────────────────────────────────────────
-  const reference1 =
-    f.reference1 && typeof f.reference1 === "object" ? f.reference1 : undefined;
-  const reference2 =
-    f.reference2 && typeof f.reference2 === "object" ? f.reference2 : undefined;
+  // The form sends nested reference1/reference2 objects (Personal or Trade);
+  // older clients sent flat reference<N>_* keys, which are still accepted.
+  const readReference = (n) => {
+    const nested = f[`reference${n}`];
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) return nested;
+    const legacy = {
+      name: f[`reference${n}_name`],
+      mobile: f[`reference${n}_mobile`],
+      address: f[`reference${n}_address`],
+      pincode: f[`reference${n}_pincode`],
+      city: f[`reference${n}_city`],
+      relation: f[`reference${n}_relation`],
+    };
+    return Object.values(legacy).some((v) => v !== undefined) ? legacy : undefined;
+  };
+  const reference1 = readReference(1);
+  const reference2 = readReference(2);
 
   // ── Lead / Sourcing ──────────────────────────────────────────────────────
   const lead = {
@@ -393,7 +403,7 @@ export function flatToDoc(flat) {
     typeOfLoan: f.typeOfLoan,
     unsecuredLoanAmount: f.unsecuredLoanAmount,
     unsecuredLoanBreakup: Array.isArray(f.unsecuredLoanBreakup) ? f.unsecuredLoanBreakup : undefined,
-    currentStep: f.currentStep,
+    currentStep: f.currentStep ?? f.currentStage,
     completedSteps: f.completedSteps,
     customerId: f.customerId,
     status: f.status,
@@ -437,12 +447,14 @@ export function docToFlat(doc) {
   const dv = d.delivery || {};
   const pb = d.payout || {};
   const ds = d.disbursement || {};
+  const x =
+    d.formExtras && typeof d.formExtras === "object" ? d.formExtras : {};
 
   // Expand instruments → cheque_N_* flat fields
   const chequeFlat = {};
   if (Array.isArray(pf.instruments)) {
     pf.instruments.forEach((inst, idx) => {
-      const n = idx + 1;
+      const n = inst.slot || idx + 1;
       chequeFlat[`cheque_${n}_tag`] = inst.tag;
       chequeFlat[`cheque_${n}_number`] = inst.number;
       chequeFlat[`cheque_${n}_bankName`] = inst.bankName;
@@ -455,7 +467,7 @@ export function docToFlat(doc) {
     });
   }
 
-  return {
+  const mapped = {
     _id: d._id,
     applicationNumber: d.applicationNumber,
     loanId: d.loanId,
@@ -472,8 +484,13 @@ export function docToFlat(doc) {
     approxClosureDate: d.approxClosureDate,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
+    currentStage: x.currentStage ?? d.currentStep,
     isBulk: d.isBulk,
+    isBulkOriginal: d.isBulkOriginal,
     bulkCount: d.bulkCount,
+    bulkIndex: d.bulkIndex,
+    bulkGroupId: d.bulkGroupId,
+    bulkParentId: d.bulkParentId,
 
     // Lead
     sourcingChannel: le.sourcingChannel,
@@ -570,7 +587,7 @@ export function docToFlat(doc) {
     totalTurnoverGST: a.totalTurnoverGST,
 
     // Co-Applicant (co_ prefix)
-    hasCoApplicant: !!co.customerName,
+    hasCoApplicant: x.hasCoApplicant ?? !!co.customerName,
     co_id: co.customerId,
     co_customerName: co.customerName,
     co_motherName: co.motherName,
@@ -578,8 +595,6 @@ export function docToFlat(doc) {
     co_dob: co.dob,
     co_gender: co.gender,
     co_maritalStatus: co.maritalStatus,
-    co_dependents: co.dependents,
-    co_education: co.education,
     co_houseType: co.houseType,
     co_pan: co.pan,
     co_aadhaar: co.aadhaar,
@@ -607,7 +622,7 @@ export function docToFlat(doc) {
     coApplicants: d.coApplicants,
 
     // Guarantor (gu_ prefix)
-    hasGuarantor: !!gu.customerName,
+    hasGuarantor: x.hasGuarantor ?? !!gu.customerName,
     gu_customerName: gu.customerName,
     gu_fatherName: gu.fatherName,
     gu_dob: gu.dob,
@@ -753,135 +768,561 @@ export function docToFlat(doc) {
     notes: d.notes,
     workflowHistory: d.workflowHistory,
   };
+
+  // Unmapped form fields first; structured paths are the source of truth for
+  // everything they cover.
+  return { ...x, ...mapped };
+}
+
+// ─── Unmapped form fields (formExtras) ────────────────────────────────────────
+
+// Flat keys flatToDoc reads, discovered once by running it over a proxy that
+// answers every key - so this can never drift from the mapping above.
+const MAPPED_FLAT_KEYS = (() => {
+  const seen = new Set();
+  const probe = new Proxy(
+    {},
+    {
+      get(_target, key) {
+        if (typeof key === "string") seen.add(key);
+        return "1";
+      },
+      has: () => true,
+      ownKeys: () => [],
+    },
+  );
+  flatToDoc(probe);
+  return seen;
+})();
+
+// Read by flatToDoc but also kept verbatim, because their stored value can't
+// be inferred back from the structured document.
+const ALWAYS_KEPT_FLAT_KEYS = new Set([
+  "hasCoApplicant",
+  "hasGuarantor",
+  "hasAuthorisedSignatory",
+  "currentStage",
+]);
+
+// Server-owned or derived on read - never accepted from a form payload.
+const SERVER_OWNED_FLAT_KEYS = new Set([
+  "_id",
+  "__v",
+  "id",
+  "applicationNumber",
+  "loanId",
+  "createdAt",
+  "updatedAt",
+  "createdBy",
+  "updatedBy",
+  "deletedAt",
+  "deletedBy",
+  "isBulk",
+  "isBulkOriginal",
+  "bulkCount",
+  "bulkIndex",
+  "bulkGroupId",
+  "bulkParentId",
+  "pendencies",
+  "documents",
+  "notes",
+  "workflowHistory",
+  "auditLog",
+  "formExtras",
+  "forceBulkCreate",
+]);
+
+const isChequeFlatKey = (key) => /^cheque_\d+_/.test(key);
+
+export function extractFormExtras(flat) {
+  const extras = {};
+  if (!flat || typeof flat !== "object") return extras;
+  for (const [key, value] of Object.entries(flat)) {
+    if (value === undefined) continue;
+    // Mongo field names can't contain "." or start with "$".
+    if (!key || key.includes(".") || key.startsWith("$")) continue;
+    if (SERVER_OWNED_FLAT_KEYS.has(key)) continue;
+    if (
+      (MAPPED_FLAT_KEYS.has(key) || isChequeFlatKey(key)) &&
+      !ALWAYS_KEPT_FLAT_KEYS.has(key)
+    ) {
+      continue;
+    }
+    extras[key] = value;
+  }
+  return extras;
+}
+
+// ─── Schema-aware value coercion ──────────────────────────────────────────────
+
+const SKIP = Symbol("skip");
+
+const STATUS_ALIASES = {
+  completed: "closed",
+  complete: "closed",
+  "under review": "under_review",
+  pending: "submitted",
+};
+
+// Form values arrive as whatever the UI held ("₹1,20,000", "", "Invalid Date",
+// "Completed"). Casting those straight onto typed paths throws and fails the
+// whole save, so each value is normalised to its path's type first; values
+// that still can't be represented are skipped instead of aborting the save.
+function coerceForPath(path, value) {
+  const schemaType = HomeLoan.schema.path(path);
+  if (!schemaType || value === null) return value;
+
+  switch (schemaType.instance) {
+    case "Number": {
+      if (typeof value === "number") return Number.isFinite(value) ? value : null;
+      if (typeof value === "boolean") return SKIP;
+      const text = String(value).replace(/[^0-9.-]/g, "");
+      if (text === "" || text === "-" || text === ".") return null;
+      const n = Number(text);
+      return Number.isFinite(n) ? n : null;
+    }
+    case "Date": {
+      if (value === "") return null;
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+    case "ObjectId": {
+      if (value === "") return null;
+      return mongoose.Types.ObjectId.isValid(value) ? value : SKIP;
+    }
+    case "Boolean": {
+      if (typeof value === "boolean") return value;
+      const text = String(value).trim().toLowerCase();
+      if (["true", "yes", "1"].includes(text)) return true;
+      if (["false", "no", "0", ""].includes(text)) return false;
+      return SKIP;
+    }
+    case "String": {
+      if (typeof value === "object") return SKIP;
+      const allowed = schemaType.enumValues;
+      if (Array.isArray(allowed) && allowed.length) {
+        const text = String(value).trim().toLowerCase();
+        const candidate = STATUS_ALIASES[text] || text.replace(/\s+/g, "_");
+        return allowed.includes(candidate) ? candidate : SKIP;
+      }
+      return value;
+    }
+    default:
+      return value;
+  }
+}
+
+const isPlainObject = (value) =>
+  value !== null &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  !(value instanceof Date) &&
+  !(value instanceof mongoose.Types.ObjectId);
+
+// Turns flatToDoc output into leaf paths, dropping undefined so a payload
+// only ever touches the fields it actually carries. Arrays are leaves.
+function collectLeafPaths(obj, prefix = "", out = []) {
+  for (const [key, value] of Object.entries(obj || {})) {
+    if (value === undefined) continue;
+    const path = prefix ? `${prefix}.${key}` : key;
+    const schemaType = HomeLoan.schema.path(path);
+    const isMixed = schemaType?.instance === "Mixed";
+    if (isPlainObject(value) && !isMixed) {
+      collectLeafPaths(value, path, out);
+    } else {
+      out.push([path, value]);
+    }
+  }
+  return out;
+}
+
+function recomputePricing(loan) {
+  const p = loan.pricing || {};
+  const n = (v) => Number(v) || 0;
+  const hasAny = [
+    "exShowroomPrice",
+    "insuranceCost",
+    "roadTax",
+    "accessoriesAmount",
+  ].some((k) => n(p[k]) > 0);
+  if (!hasAny) return;
+  const onRoadPrice =
+    n(p.exShowroomPrice) +
+    n(p.insuranceCost) +
+    n(p.roadTax) +
+    n(p.accessoriesAmount) -
+    n(p.dealerDiscount) -
+    n(p.manufacturerDiscount);
+  const grossLoan = onRoadPrice - n(p.marginMoney) - n(p.advanceEmi) - n(p.tradeInValue);
+  loan.set("pricing.onRoadPrice", onRoadPrice);
+  loan.set("pricing.grossLoan", grossLoan);
+  loan.set("pricing.netLoan", grossLoan - n(p.otherDiscounts));
+}
+
+// Merges a flat form payload into a HomeLoan document (new or loaded).
+// Only the fields present in the payload change; everything else on the
+// document is kept. This replaces the old `$set` of whole sub-documents,
+// which wiped applicant/approval/vehicle/etc. on every partial save.
+export function applyFlatPayload(loan, flatPayload = {}, userId) {
+  const flat = flatPayload || {};
+  const docData = flatToDoc(flat);
+
+  // Sections switched off in the form are removed rather than left stale.
+  if (flat.hasCoApplicant === false) {
+    loan.set("coApplicant", undefined);
+    delete docData.coApplicant;
+  }
+  if (flat.hasGuarantor === false) {
+    loan.set("guarantor", undefined);
+    delete docData.guarantor;
+  }
+
+  for (const [path, rawValue] of collectLeafPaths(docData)) {
+    const value = coerceForPath(path, rawValue);
+    if (value === SKIP) continue;
+    loan.set(path, value);
+  }
+
+  const extras = extractFormExtras(flat);
+  if (Object.keys(extras).length) {
+    const current =
+      loan.formExtras && typeof loan.formExtras === "object" ? loan.formExtras : {};
+    loan.formExtras = { ...current, ...extras };
+    loan.markModified("formExtras");
+  }
+
+  recomputePricing(loan);
+  if (userId) loan.updatedBy = userId;
+  return loan;
+}
+
+// Accepts the Mongo _id or the human-readable applicationNumber/loanId -
+// several screens only hold the latter.
+function buildLoanLookup(id) {
+  const safeId = String(id || "").trim();
+  if (!safeId) return null;
+  const or = [{ loanId: safeId }, { applicationNumber: safeId }];
+  if (mongoose.Types.ObjectId.isValid(safeId)) or.push({ _id: safeId });
+  return { $or: or, deletedAt: null };
+}
+
+async function findLoanDocument(id) {
+  const lookup = buildLoanLookup(id);
+  return lookup ? HomeLoan.findOne(lookup) : null;
 }
 
 // ─── CRUD helpers ─────────────────────────────────────────────────────────────
 
 export async function createHomeLoan(flatPayload, userId) {
+  const loan = new HomeLoan();
+  applyFlatPayload(loan, flatPayload, userId);
   const applicationNumber = await HomeLoan.generateApplicationNumber();
-  const docData = flatToDoc(flatPayload);
-  docData.applicationNumber = applicationNumber;
-  docData.loanId = applicationNumber;
-  if (userId) {
-    docData.createdBy = userId;
-    docData.updatedBy = userId;
-  }
-  const loan = await HomeLoan.create(docData);
+  loan.applicationNumber = applicationNumber;
+  loan.loanId = applicationNumber;
+  if (userId) loan.createdBy = userId;
+  await loan.save();
   return docToFlat(loan);
 }
 
-// Splits one submitted form into `count` independent loan files for the same
-// customer (Bulk Loan Creation). Each split file gets its own application
-// number and its own document uploads, but the bank comparison list
-// (approval.banks) is carried over from the source payload so users don't
-// have to re-add every bank for comparison on each split file. All other
-// stage-progression data (post-file, disbursement, delivery, payout,
-// pendencies, workflow history) is reset so every split starts fresh at the
-// Profile step.
-export async function createHomeLoanBulk(flatPayload, userId, count) {
-  const isSameVehicle = flatPayload.isSameVehicle !== false;
-  const baseDoc = flatToDoc(flatPayload);
-  const preservedBanks = Array.isArray(baseDoc.approval?.banks)
-    ? baseDoc.approval.banks
-    : [];
+// Property-specific data: with multiple loans each file is for its own
+// property, so these are entered per file instead of being cloned.
+const PER_FILE_PROPERTY_EXTRAS = ["propertyType"];
 
-  const createdLoans = [];
-  for (let i = 0; i < count; i++) {
-    try {
-      const applicationNumber = await HomeLoan.generateApplicationNumber();
-      const docData = JSON.parse(JSON.stringify(baseDoc));
+// Stage data that belongs to one specific loan file and must not be copied
+// onto a newly split file.
+const PER_FILE_STAGE_EXTRA_PATTERNS = [
+  /^postfile_/,
+  /^disburse_/,
+  /^disbursement_/,
+  /^delivery_/,
+  /^dispatch_/,
+  /^payout_/,
+  /^rc_/,
+  /^invoice_/,
+  /^__postfile/,
+  /^__delivery/,
+  /^si_/,
+  /^nach_/,
+  /^ecs_/,
+];
+const PER_FILE_STAGE_EXTRAS = new Set([
+  "instrumentType",
+  "loan_notes",
+  "status",
+  "completedDate",
+  "currentStage",
+  "rcInvStorageNumber",
+  "rc_inv_storage_number",
+  "loan_number",
+]);
 
-      docData.applicationNumber = applicationNumber;
-      docData.loanId = applicationNumber;
+const KYC_DOC_KEYS = [
+  "aadhaarCardDocUrl",
+  "aadhaarCardBackDocUrl",
+  "panCardDocUrl",
+  "passportDocUrl",
+  "passportBackDocUrl",
+  "dlDocUrl",
+  "addressProofDocUrl",
+  "gstDocUrl",
+  "gstDocUrlPage2",
+  "gstDocUrlPage3",
+  "incomeDocUrl",
+  "itrDocUrl",
+  "bankStatementDocUrl",
+];
 
-      // Each split file needs its own fresh document uploads.
-      docData.documents = [];
+// Bank cards carry over so the comparison doesn't have to be rebuilt on every
+// split file, but a disbursement belongs to one file only.
+function cloneBankForSplit(bank) {
+  if (!bank || typeof bank !== "object") return bank;
+  const next = { ...bank };
+  if (String(next.status || "").trim().toLowerCase() === "disbursed") {
+    next.status = "Approved";
+    next.approval_status = "Approved";
+    delete next.disbursedDate;
+    delete next.disbursalDate;
+    delete next.disbursedAmount;
+    delete next.disbursementRemarks;
+    next.statusHistory = (Array.isArray(next.statusHistory) ? next.statusHistory : [])
+      .filter((h) => String(h?.status || "").toLowerCase() !== "disbursed");
+  }
+  return next;
+}
 
-      // Vehicle/pricing are only cloned when every split shares the same
-      // vehicle; otherwise each split needs to be filled in separately.
-      if (!isSameVehicle) {
-        docData.vehicle = {};
-        docData.pricing = {};
-      }
-
-      // Reset stage-progression state so every split starts fresh, while
-      // preserving the bank comparison list.
-      docData.approval = { banks: preservedBanks };
-      docData.postFile = { instruments: [] };
-      docData.disbursement = {};
-      docData.delivery = {};
-      docData.payout = {};
-      docData.pendencies = [];
-      docData.workflowHistory = [];
-      docData.auditLog = [];
-      docData.status = "draft";
-      docData.currentStep = "profile";
-      docData.completedSteps = [];
-      docData.isBulk = true;
-      docData.bulkCount = count;
-
-      if (userId) {
-        docData.createdBy = userId;
-        docData.updatedBy = userId;
-      }
-
-      const loan = await HomeLoan.create(docData);
-      createdLoans.push(docToFlat(loan));
-    } catch (e) {
-      console.error("Failed to create bulk home loan item", e);
+function buildSplitClone(original, index, count) {
+  const src = original.toObject({ depopulate: true });
+  const extras = { ...(src.formExtras || {}) };
+  for (const key of Object.keys(extras)) {
+    if (
+      PER_FILE_PROPERTY_EXTRAS.includes(key) ||
+      PER_FILE_STAGE_EXTRAS.has(key) ||
+      PER_FILE_STAGE_EXTRA_PATTERNS.some((re) => re.test(key))
+    ) {
+      delete extras[key];
     }
   }
+  extras.currentStage = "profile";
 
-  return createdLoans;
+  const kycDocs = {};
+  for (const key of KYC_DOC_KEYS) {
+    if (src.postFile?.[key]) kycDocs[key] = src.postFile[key];
+  }
+
+  const banks = Array.isArray(src.approval?.banks)
+    ? src.approval.banks.map(cloneBankForSplit)
+    : [];
+
+  return {
+    // Customer, applicants, lead, references and pre-file data are shared.
+    customerId: src.customerId,
+    branchId: src.branchId,
+    applicantType: src.applicantType,
+    caseType: src.caseType,
+    customerType: src.customerType,
+    customerName: src.customerName,
+    lead: src.lead,
+    applicant: src.applicant,
+    coApplicant: src.coApplicant,
+    coApplicants: src.coApplicants,
+    guarantor: src.guarantor,
+    authorisedSignatory: src.authorisedSignatory,
+    reference1: src.reference1,
+    reference2: src.reference2,
+    formExtras: extras,
+    // Customer KYC documents belong to the same customer on every file.
+    postFile: { instruments: [], ...kycDocs },
+    approval: { banks },
+    // Property details (type of loan, property/loan structure) are per file.
+    status: "draft",
+    currentStep: "profile",
+    completedSteps: [],
+    isBulk: true,
+    bulkCount: count,
+    bulkIndex: index,
+    bulkGroupId: String(original._id),
+    bulkParentId: original._id,
+  };
+}
+
+// Splits an original entry into `count` loan files for the same customer
+// (Bulk Loan Creation). The original stays file #1 - keeping its id, uploads,
+// bank comparison and stage progress - and count-1 linked files are created
+// from it. Shared customer/applicant/pre-file data and the bank comparison
+// list are copied; property details and stage progress start fresh per file.
+export async function splitHomeLoan(originalId, count, userId, flatPayload) {
+  const total = Number(count);
+  if (!Number.isInteger(total) || total < 2 || total > 50) {
+    const e = new Error("Enter a number of loan files between 2 and 50.");
+    e.status = 400;
+    throw e;
+  }
+
+  const original = await findLoanDocument(originalId);
+  if (!original) return null;
+
+  if (original.isBulk) {
+    const e = new Error(
+      "This loan file was created by splitting an original entry and cannot be split again.",
+    );
+    e.status = 400;
+    throw e;
+  }
+  if (original.isBulkOriginal) {
+    const e = new Error("This entry has already been split into multiple loan files.");
+    e.status = 400;
+    throw e;
+  }
+
+  // Persist the latest form state first so nothing typed since the last save
+  // is lost from the original or its copies.
+  if (flatPayload && typeof flatPayload === "object") {
+    applyFlatPayload(original, flatPayload, userId);
+  }
+  original.isBulkOriginal = true;
+  original.bulkCount = total;
+  original.bulkIndex = 1;
+  original.bulkGroupId = String(original._id);
+  original.formExtras = {
+    ...(original.formExtras || {}),
+    isMultipleCars: true,
+    numberOfCars: total,
+  };
+  original.markModified("formExtras");
+  if (userId) original.updatedBy = userId;
+  await original.save();
+
+  const created = [];
+  try {
+    for (let index = 2; index <= total; index++) {
+      const clone = new HomeLoan(buildSplitClone(original, index, total));
+      const applicationNumber = await HomeLoan.generateApplicationNumber();
+      clone.applicationNumber = applicationNumber;
+      clone.loanId = applicationNumber;
+      if (userId) {
+        clone.createdBy = userId;
+        clone.updatedBy = userId;
+      }
+      await clone.save();
+      created.push(clone);
+    }
+  } catch (e) {
+    // All-or-nothing: roll back partial splits and re-open the original.
+    await HomeLoan.deleteMany({ _id: { $in: created.map((c) => c._id) } });
+    await HomeLoan.updateOne(
+      { _id: original._id },
+      { $set: { isBulkOriginal: false }, $unset: { bulkCount: 1, bulkIndex: 1, bulkGroupId: 1 } },
+    );
+    throw e;
+  }
+
+  return {
+    original: docToFlat(original),
+    loans: [original, ...created].map(docToFlat),
+  };
 }
 
 export async function updateHomeLoan(id, flatPayload, userId) {
-  const docData = flatToDoc(flatPayload);
-  if (userId) docData.updatedBy = userId;
+  const loan = await findLoanDocument(id);
+  if (!loan) return null;
 
-  // Record workflow step change
-  const existing = await HomeLoan.findById(id, { currentStep: 1, status: 1 });
-  const workflowEntry =
-    docData.currentStep && existing?.currentStep !== docData.currentStep
-      ? {
-          stage: docData.currentStep,
-          fromStatus: existing?.status,
-          toStatus: docData.status || existing?.status,
-          action: "step_change",
-          actionBy: String(userId || "system"),
-          actionAt: new Date(),
-        }
-      : null;
+  const previousStep = loan.currentStep;
+  applyFlatPayload(loan, flatPayload, userId);
 
-  const update = { $set: docData };
-  if (workflowEntry) {
-    update.$push = { workflowHistory: workflowEntry };
+  if (loan.currentStep !== previousStep) {
+    loan.workflowHistory.push({
+      stage: loan.currentStep,
+      fromStatus: loan.status,
+      toStatus: loan.status,
+      action: "step_change",
+      actionBy: String(userId || "system"),
+      actionAt: new Date(),
+    });
   }
 
-  const loan = await HomeLoan.findByIdAndUpdate(id, update, { new: true });
+  await loan.save();
+  return docToFlat(loan);
+}
+
+const bankMatches = (bank, { bankId, bankName }) => {
+  const ids = [bank?.id, bank?._id, bank?.bankId, bank?.applicationId]
+    .map((v) => String(v ?? "").trim())
+    .filter(Boolean);
+  if (bankId && ids.includes(String(bankId).trim())) return true;
+  if (!bankId && bankName) {
+    return (
+      String(bank?.bankName || "").trim().toLowerCase() ===
+      String(bankName).trim().toLowerCase()
+    );
+  }
+  return false;
+};
+
+// Records a disbursement against one bank card without touching any other
+// part of the file.
+export async function disburseHomeLoan(id, body = {}, userId) {
+  const loan = await findLoanDocument(id);
   if (!loan) return null;
+
+  const disbursedAt = body.disbursedDate ? new Date(body.disbursedDate) : new Date();
+  const when = Number.isNaN(disbursedAt.getTime()) ? new Date() : disbursedAt;
+  const amount = coerceForPath("approval.loanAmountDisbursed", body.disburseAmount);
+  const remarks = body.remarks || "";
+
+  const banks = Array.isArray(loan.approval?.banks) ? [...loan.approval.banks] : [];
+  const target = { bankId: body.bankId, bankName: body.disbursedBankName };
+  let matched = false;
+  const nextBanks = banks.map((bank) => {
+    if (matched || !bankMatches(bank, target)) return bank;
+    matched = true;
+    const history = Array.isArray(bank.statusHistory) ? bank.statusHistory : [];
+    const alreadyDisbursed = history.some(
+      (h) => String(h?.status || "").toLowerCase() === "disbursed",
+    );
+    return {
+      ...bank,
+      status: "Disbursed",
+      approval_status: "Disbursed",
+      disbursedDate: when.toISOString(),
+      disbursementRemarks: remarks,
+      statusHistory: alreadyDisbursed
+        ? history
+        : [
+            ...history,
+            { status: "Disbursed", changedAt: when.toISOString(), note: remarks || "Loan disbursed" },
+          ],
+    };
+  });
+
+  loan.set("approval.banks", nextBanks);
+  loan.set("approval.status", "Disbursed");
+  if (body.disbursedBankName) loan.set("approval.bankName", body.disbursedBankName);
+  if (amount !== SKIP && amount !== null) {
+    loan.set("approval.loanAmountDisbursed", amount);
+    loan.set("disbursement.amount", amount);
+  }
+  loan.set("approval.disbursedDate", when);
+  loan.set("disbursement.date", when);
+  if (remarks) loan.set("disbursement.remarks", remarks);
+  loan.status = "disbursed";
+  loan.approval.statusHistory.push({
+    status: "Disbursed",
+    updatedAt: when,
+    updatedBy: String(userId || "system"),
+    remarks,
+  });
+  if (userId) loan.updatedBy = userId;
+
+  await loan.save();
   return docToFlat(loan);
 }
 
 export async function getHomeLoanById(id) {
-  const safeId = String(id || "").trim();
-  if (!safeId) return null;
-
   // The view modal tries several candidate identifiers (loanId, loan_number,
-  // Mongo _id) in sequence, so this must resolve by whichever one matches
-  // instead of only _id — otherwise every non-ObjectId candidate throws a
-  // CastError and the modal has to fail its way through to the right one.
-  const orConditions = [{ loanId: safeId }, { applicationNumber: safeId }];
-  if (mongoose.Types.ObjectId.isValid(safeId)) {
-    orConditions.push({ _id: safeId });
-  }
-
-  const loan = await HomeLoan.findOne({
-    $or: orConditions,
-    deletedAt: null,
-  });
-  if (!loan) return null;
-  return docToFlat(loan);
+  // Mongo _id) in sequence, so this resolves by whichever one matches
+  // instead of only _id.
+  const loan = await findLoanDocument(id);
+  return loan ? docToFlat(loan) : null;
 }
 
 export async function listHomeLoans(query = {}) {
@@ -1063,9 +1504,12 @@ export async function getDashboardStats() {
 }
 
 export async function saveBanksData(loanId, banksData) {
-  const loan = await HomeLoan.findByIdAndUpdate(
-    loanId,
-    { $set: { "approval.banks": banksData } },
+  const lookup = buildLoanLookup(loanId);
+  if (!lookup) return null;
+  const banks = Array.isArray(banksData) ? banksData : [];
+  const loan = await HomeLoan.findOneAndUpdate(
+    lookup,
+    { $set: { "approval.banks": banks } },
     { new: true },
   );
   if (!loan) return null;
@@ -1073,7 +1517,9 @@ export async function saveBanksData(loanId, banksData) {
 }
 
 export async function getBanksData(loanId) {
-  const loan = await HomeLoan.findById(loanId, { "approval.banks": 1 });
+  const lookup = buildLoanLookup(loanId);
+  if (!lookup) return [];
+  const loan = await HomeLoan.findOne(lookup, { "approval.banks": 1 });
   return loan?.approval?.banks || [];
 }
 
@@ -1090,4 +1536,203 @@ export async function getNextRcInvStorageNumber() {
     seq = (parseInt(parts[parts.length - 1], 10) || 0) + 1;
   }
   return `${prefix}${String(seq).padStart(4, "0")}`;
+}
+
+// ─── Loan amount breakup fields ───────────────────────────────────────────────
+
+// Must match DEFAULT_LOAN_BREAKUP_FIELDS in the frontend's loanBreakupFields.js.
+const DEFAULT_BREAKUP_FIELDS = [
+  { key: "netLoanApproved", label: "Net Loan Amount Approved", order: 1 },
+  { key: "creditAssuredFinance", label: "Credit Assured Finance", order: 2 },
+  { key: "insuranceFinance", label: "Insurance Finance", order: 3 },
+  { key: "extendedWarrantyFinance", label: "Extended Warranty Finance", order: 4 },
+];
+const DEFAULT_BREAKUP_KEYS = new Set(DEFAULT_BREAKUP_FIELDS.map((f) => f.key.toLowerCase()));
+
+// Same key normalisation as the frontend (sanitizeKey): "Stamp Duty" -> "stampDuty".
+export function normalizeBreakupKey(value = "") {
+  const cleaned = String(value || "")
+    .trim()
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!cleaned) return "";
+  return cleaned
+    .split(/\s+/)
+    .map((part, i) => (i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join("");
+}
+
+const escapeRegex = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// key (lowercased) -> number of home loans holding a non-zero value for it,
+// across bank cards and the approval/post-file breakup snapshots.
+async function getBreakupUsageMap() {
+  const rows = await HomeLoan.aggregate([
+    { $match: { deletedAt: null } },
+    {
+      $project: {
+        rows: {
+          $concatArrays: [
+            { $ifNull: ["$formExtras.approval_breakup_custom", []] },
+            { $ifNull: ["$formExtras.postfile_disbursed_custom", []] },
+            {
+              $reduce: {
+                input: { $ifNull: ["$approval.banks", []] },
+                initialValue: [],
+                in: {
+                  $concatArrays: [
+                    "$$value",
+                    {
+                      $cond: [
+                        { $isArray: "$$this.breakupCustomFields" },
+                        "$$this.breakupCustomFields",
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+    { $unwind: "$rows" },
+    {
+      $project: {
+        key: { $toLower: { $trim: { input: { $toString: { $ifNull: ["$rows.key", ""] } } } } },
+        value: {
+          $convert: { input: "$rows.value", to: "double", onError: 0, onNull: 0 },
+        },
+      },
+    },
+    { $match: { key: { $ne: "" }, value: { $gt: 0 } } },
+    { $group: { _id: { key: "$key", loan: "$_id" } } },
+    { $group: { _id: "$_id.key", count: { $sum: 1 } } },
+  ]);
+  return new Map(rows.map((r) => [String(r._id), Number(r.count || 0)]));
+}
+
+export async function listBreakupFields() {
+  const [custom, usage] = await Promise.all([
+    HomeLoanBreakupField.find({ active: { $ne: false } })
+      .sort({ order: 1, createdAt: 1, label: 1 })
+      .lean(),
+    getBreakupUsageMap(),
+  ]);
+
+  const merged = DEFAULT_BREAKUP_FIELDS.map((f) => ({
+    ...f,
+    isDefault: true,
+    canDelete: false,
+    inUseCount: 0,
+  }));
+  const seen = new Set(DEFAULT_BREAKUP_KEYS);
+  for (const field of custom) {
+    const lower = String(field.key || "").toLowerCase();
+    if (!lower || seen.has(lower)) continue;
+    seen.add(lower);
+    const inUseCount = usage.get(lower) || 0;
+    merged.push({
+      key: field.key,
+      label: field.label,
+      order: field.order,
+      isDefault: false,
+      canDelete: inUseCount === 0,
+      inUseCount,
+    });
+  }
+  return merged.sort(
+    (a, b) =>
+      Number(a.order || 0) - Number(b.order || 0) ||
+      String(a.label || "").localeCompare(String(b.label || "")),
+  );
+}
+
+export async function createBreakupField({ label, key } = {}, userId) {
+  const cleanLabel = String(label || "").replace(/\s+/g, " ").trim();
+  if (!cleanLabel) {
+    const e = new Error("Field label is required");
+    e.status = 400;
+    throw e;
+  }
+  const baseKey = normalizeBreakupKey(key || cleanLabel);
+  if (!baseKey) {
+    const e = new Error("Invalid field label");
+    e.status = 400;
+    throw e;
+  }
+  if (DEFAULT_BREAKUP_KEYS.has(baseKey.toLowerCase())) {
+    const e = new Error("This field already exists as a default breakup field");
+    e.status = 400;
+    throw e;
+  }
+
+  const existing = await HomeLoanBreakupField.findOne({
+    $or: [
+      { key: baseKey },
+      { label: { $regex: `^${escapeRegex(cleanLabel)}$`, $options: "i" } },
+    ],
+  }).lean();
+  if (existing) {
+    if (existing.active === false) {
+      await HomeLoanBreakupField.updateOne({ _id: existing._id }, { $set: { active: true } });
+    }
+    return {
+      created: false,
+      field: { key: existing.key, label: existing.label, order: existing.order, isDefault: false },
+    };
+  }
+
+  const last = await HomeLoanBreakupField.findOne({}).sort({ order: -1 }).select("order").lean();
+  const order = Math.max(Number(last?.order || 1000) + 1, 1005);
+  const doc = await HomeLoanBreakupField.create({
+    key: baseKey,
+    label: cleanLabel,
+    order,
+    createdBy: String(userId || "user"),
+  });
+  return {
+    created: true,
+    field: {
+      key: doc.key,
+      label: doc.label,
+      order: doc.order,
+      isDefault: false,
+      canDelete: true,
+      inUseCount: 0,
+    },
+  };
+}
+
+export async function deleteBreakupField(rawKey) {
+  const key = normalizeBreakupKey(rawKey);
+  if (!key) {
+    const e = new Error("Field key is required");
+    e.status = 400;
+    throw e;
+  }
+  if (DEFAULT_BREAKUP_KEYS.has(key.toLowerCase())) {
+    const e = new Error("Default breakup fields cannot be deleted");
+    e.status = 400;
+    throw e;
+  }
+  const field = await HomeLoanBreakupField.findOne({ key });
+  if (!field) {
+    const e = new Error("Breakup field not found");
+    e.status = 404;
+    throw e;
+  }
+  const usage = await getBreakupUsageMap();
+  if ((usage.get(key.toLowerCase()) || 0) > 0) {
+    const e = new Error(
+      "This field has data in existing home loan cases and cannot be deleted.",
+    );
+    e.status = 409;
+    throw e;
+  }
+  await HomeLoanBreakupField.deleteOne({ _id: field._id });
+  return { deleted: true, key };
 }

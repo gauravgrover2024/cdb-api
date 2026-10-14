@@ -22,6 +22,11 @@ router.get("/analytics/drilldown", ctrl.getAnalyticsDrilldown);
 router.post("/analytics/custom-widget", ctrl.createCustomWidget);
 router.post("/analytics/custom-report", ctrl.createCustomReport);
 
+// ── Loan amount breakup fields ────────────────────────────────────────────────
+router.get("/breakup-fields", ctrl.getBreakupFields);
+router.post("/breakup-fields", ctrl.createBreakupField);
+router.delete("/breakup-fields/:key", ctrl.deleteBreakupField);
+
 // ── Counters ──────────────────────────────────────────────────────────────────
 router.get("/counters/rc-inv/next", ctrl.getNextRcInvNumber);
 
@@ -35,6 +40,7 @@ router.delete("/:id", ctrl.deleteLoan);
 
 // ── Per-loan sub-resources ────────────────────────────────────────────────────
 router.post("/:id/disburse", ctrl.disburseLoan);
+router.post("/:id/split", ctrl.splitLoan);
 router.get("/:id/banks", ctrl.getBanks);
 router.put("/:id/banks", ctrl.saveBanks);
 

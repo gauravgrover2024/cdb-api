@@ -26,29 +26,33 @@ export async function getLoan(req, res) {
 
 export async function createLoan(req, res) {
   try {
-    const userId = req.user?._id;
-    const numberOfCars = Number(req.body?.numberOfCars) || 1;
-
-    if (numberOfCars > 1) {
-      if (req.body?.isBulk) {
-        return err(
-          res,
-          "This loan file was created by splitting an original entry and cannot be split again.",
-          400,
-        );
-      }
-      const loans = await svc.createHomeLoanBulk(req.body, userId, numberOfCars);
-      return ok(res, {
-        data: loans,
-        count: loans.length,
-        message: `Successfully created ${loans.length} loan applications.`,
-      }, 201);
-    }
-
-    const loan = await svc.createHomeLoan(req.body, userId);
+    // Always a single file. Splitting an original entry into multiple loan
+    // files is an explicit action (POST /:id/split) on the saved original, so
+    // a plain save never fans out into copies before the entry is complete.
+    const loan = await svc.createHomeLoan(req.body, req.user?._id);
     ok(res, { data: loan }, 201);
   } catch (e) {
-    err(res, e.message, 500);
+    err(res, e.message, e.status || 500);
+  }
+}
+
+export async function splitLoan(req, res) {
+  try {
+    const { count, payload } = req.body || {};
+    const result = await svc.splitHomeLoan(req.params.id, count, req.user?._id, payload);
+    if (!result) return err(res, "Home loan not found", 404);
+    ok(
+      res,
+      {
+        data: result.loans,
+        original: result.original,
+        count: result.loans.length,
+        message: `Split into ${result.loans.length} loan files.`,
+      },
+      201,
+    );
+  } catch (e) {
+    err(res, e.message, e.status || 500);
   }
 }
 
@@ -59,7 +63,7 @@ export async function updateLoan(req, res) {
     if (!loan) return err(res, "Home loan not found", 404);
     ok(res, { data: loan });
   } catch (e) {
-    err(res, e.message, 500);
+    err(res, e.message, e.name === "ValidationError" ? 400 : 500);
   }
 }
 
@@ -77,17 +81,11 @@ export async function deleteLoan(req, res) {
 
 export async function disburseLoan(req, res) {
   try {
-    const userId = req.user?._id;
-    const patch = {
-      ...req.body,
-      status: "disbursed",
-      "approval.status": "Disbursed",
-    };
-    const loan = await svc.updateHomeLoan(req.params.id, patch, userId);
+    const loan = await svc.disburseHomeLoan(req.params.id, req.body, req.user?._id);
     if (!loan) return err(res, "Home loan not found", 404);
     ok(res, { data: loan });
   } catch (e) {
-    err(res, e.message, 500);
+    err(res, e.message, e.status || 500);
   }
 }
 
@@ -282,6 +280,34 @@ export async function createCustomWidget(req, res) {
 
 export async function createCustomReport(req, res) {
   ok(res, { data: { message: "Report created" } }, 201);
+}
+
+// ─── Loan amount breakup fields ───────────────────────────────────────────────
+
+export async function getBreakupFields(req, res) {
+  try {
+    ok(res, { data: await svc.listBreakupFields() });
+  } catch (e) {
+    err(res, e.message, 500);
+  }
+}
+
+export async function createBreakupField(req, res) {
+  try {
+    const { created, field } = await svc.createBreakupField(req.body, req.user?._id);
+    ok(res, { created, data: field }, created ? 201 : 200);
+  } catch (e) {
+    err(res, e.message, e.status || 500);
+  }
+}
+
+export async function deleteBreakupField(req, res) {
+  try {
+    const result = await svc.deleteBreakupField(req.params.key);
+    ok(res, result);
+  } catch (e) {
+    err(res, e.message, e.status || 500);
+  }
 }
 
 // ─── Counters ─────────────────────────────────────────────────────────────────
