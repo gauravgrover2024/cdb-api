@@ -51,6 +51,9 @@ const bankDetailSchema = new Schema(
 // Replaces cheque_N_* flat fields (20 cheques × 9 fields = 180 → 1 array)
 const instrumentSchema = new Schema(
   {
+    // 1-based cheque slot in the form (cheque_<slot>_*), so a blank slot in
+    // the middle doesn't shift every later cheque down on reload.
+    slot: { type: Number },
     tag: { type: String },           // PDC, Security, Advance, etc.
     number: { type: String },
     bankName: { type: String },
@@ -131,6 +134,11 @@ const personSchema = new Schema(
         panNumber: String,
         contactNumber: String,
         dateOfBirth: String,
+        // Role on the register (Director / Partner / Shareholder / Proprietor).
+        designation: String,
+        // "co-applicant" when the row was auto-filled from a co-applicant
+        // marked Partner/Director, so the form can refresh/remove it later.
+        source: String,
         _id: false,
       },
     ],
@@ -138,54 +146,11 @@ const personSchema = new Schema(
     applicantCategory: { type: String },
     relationship: { type: String },
     yearsAtCurrentResidence: { type: String },
-    // Firm applicants only: this person's relation to the firm (Partner,
-    // Shareholder, Director, etc), used to auto-fill the Partners/Directors
-    // (companyPartners) list so the same details don't need to be re-entered.
+    // Company/firm applicants only: this person's relation to the applicant
+    // entity (Director, Partner, Shareholder, etc). Partner/Director auto-fill
+    // the Partners/Directors (companyPartners) list so the same details don't
+    // need to be re-entered.
     relationWithFirm: { type: String },
-  },
-  { _id: false },
-);
-
-const bankApprovalSchema = new Schema(
-  {
-    bankId: { type: String },
-    bankName: { type: String },
-    status: { type: String },  // Pending | Applied | Approved | Rejected | Disbursed
-    roi: { type: Number },
-    tenureMonths: { type: Number },
-    loanAmountApproved: { type: Number },
-    loanAmountDisbursed: { type: Number },
-    processingFees: { type: Number },
-    approvalDate: { type: Date },
-    disbursedDate: { type: Date },
-    breakup: {
-      netLoanApproved: { type: Number },
-      insuranceFinance: { type: Number },
-      ewFinance: { type: Number },
-      creditAssured: { type: Number },
-      _id: false,
-    },
-    // Record details per bank
-    receivingDate: { type: Date },
-    receivingTime: { type: String },
-    recordSource: { type: String },
-    sourceName: { type: String },
-    dealerMobile: { type: String },
-    dealerAddress: { type: String },
-    payoutApplicable: { type: String },
-    payoutPercentage: { type: Number },
-    referenceDetails: { type: String },
-    dealtBy: { type: String },
-    docsPreparedBy: { type: String },
-    statusHistory: [
-      {
-        status: String,
-        updatedAt: Date,
-        updatedBy: String,
-        remarks: String,
-        _id: false,
-      },
-    ],
   },
   { _id: false },
 );
@@ -302,7 +267,14 @@ const homeLoanSchema = new Schema(
     // Marks a file that was produced by splitting an original bulk entry into
     // multiple loan files, so bulk creation can be disabled on split files.
     isBulk: { type: Boolean, default: false },
+    // Set on the original entry once it has been split, so it can't be split
+    // a second time either. The original stays file #1 of the group.
+    isBulkOriginal: { type: Boolean, default: false },
     bulkCount: { type: Number },
+    bulkIndex: { type: Number },
+    // Shared by the original and every file split from it (the original's _id).
+    bulkGroupId: { type: String },
+    bulkParentId: { type: Schema.Types.ObjectId, ref: "HomeLoan" },
 
     // ── Applicant ────────────────────────────────────────────────────────────
     applicant: { type: personSchema },
@@ -428,8 +400,11 @@ const homeLoanSchema = new Schema(
         creditAssured: { type: Number },
         _id: false,
       },
-      // All bank submissions for this loan
-      banks: [bankApprovalSchema],
+      // All bank cards for this loan. Stored free-form: the approval UI keeps
+      // its own per-bank shape (id, applicationId, interestRate, loanAmount,
+      // breakup*, breakupCustomFields, recordDetails, statusHistory, ...) and
+      // a strict sub-schema silently stripped everything it didn't list.
+      banks: [{ type: Schema.Types.Mixed }],
       statusHistory: [
         {
           status: String,
@@ -550,6 +525,14 @@ const homeLoanSchema = new Schema(
     // ── Audit log ─────────────────────────────────────────────────────────────
     auditLog: [auditEntrySchema],
 
+    // ── Form fields without a dedicated path ──────────────────────────────────
+    // The loan form is far wider than the structured paths above (property
+    // type, bulk-entry answers, SI/NACH/ECS instruments, post-file ledgers,
+    // payout rows, notes...). Anything the service doesn't map onto a
+    // structured path is kept here verbatim and merged back on read, so no
+    // user input is silently dropped on save or when a file is split.
+    formExtras: { type: Schema.Types.Mixed, default: () => ({}) },
+
     // ── Soft delete ───────────────────────────────────────────────────────────
     deletedAt: { type: Date, default: null },
     deletedBy: { type: String },
@@ -573,6 +556,7 @@ homeLoanSchema.index({ "applicant.pan": 1 });
 homeLoanSchema.index({ "vehicle.regNo": 1 });
 homeLoanSchema.index({ "approval.bankName": 1 });
 homeLoanSchema.index({ typeOfLoan: 1, status: 1 });
+homeLoanSchema.index({ bulkGroupId: 1 });
 
 // ─── Application number generator ────────────────────────────────────────────
 
@@ -592,5 +576,6 @@ homeLoanSchema.statics.generateApplicationNumber = async function () {
   return `${prefix}${String(seq).padStart(4, "0")}`;
 };
 
-const HomeLoan = mongoose.model("HomeLoan", homeLoanSchema);
+const HomeLoan = mongoose.models.HomeLoan || mongoose.model("HomeLoan", homeLoanSchema);
+export { HomeLoan };
 export default HomeLoan;
