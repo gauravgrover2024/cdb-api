@@ -1,4 +1,5 @@
 import * as svc from "../services/homeLoanService.js";
+import * as overview from "../services/productOverviewService.js";
 
 const ok = (res, data, status = 200) => res.status(status).json({ success: true, ...data });
 const err = (res, message, status = 400) => res.status(status).json({ success: false, message });
@@ -224,43 +225,10 @@ export async function deleteCollectionReceivable(req, res) {
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
+// Business Overview → Home Loan tab (shared shape with the Insurance tab).
 export async function getAnalyticsOverview(req, res) {
   try {
-    const { HomeLoan } = await import("../models/HomeLoan.js");
-    const { fromDate, toDate } = req.query;
-    const match = { deletedAt: null };
-    if (fromDate || toDate) {
-      match.createdAt = {};
-      if (fromDate) match.createdAt.$gte = new Date(fromDate);
-      if (toDate) match.createdAt.$lte = new Date(toDate);
-    }
-    const [byStatus, byLoanType, totalDisbursed] = await Promise.all([
-      HomeLoan.aggregate([
-        { $match: match },
-        { $group: { _id: "$status", count: { $sum: 1 } } },
-      ]),
-      HomeLoan.aggregate([
-        { $match: match },
-        { $group: { _id: "$typeOfLoan", count: { $sum: 1 } } },
-      ]),
-      HomeLoan.aggregate([
-        { $match: { ...match, status: "disbursed" } },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: "$approval.loanAmountDisbursed" },
-            count: { $sum: 1 },
-          },
-        },
-      ]),
-    ]);
-    ok(res, {
-      data: {
-        byStatus,
-        byLoanType,
-        totalDisbursed: totalDisbursed[0] || { total: 0, count: 0 },
-      },
-    });
+    ok(res, { data: await overview.getHomeLoanOverview(req.query) });
   } catch (e) {
     err(res, e.message, 500);
   }
@@ -268,7 +236,8 @@ export async function getAnalyticsOverview(req, res) {
 
 export async function getAnalyticsDrilldown(req, res) {
   try {
-    ok(res, { data: [] });
+    const { data, total } = await overview.getHomeLoanDrilldown(req.query);
+    ok(res, { data, total });
   } catch (e) {
     err(res, e.message, 500);
   }
