@@ -25,6 +25,7 @@ import {
 } from "../controllers/insuranceController.js";
 import { protect, staff } from "../middleware/authMiddleware.js";
 import { requirePermission } from "../middleware/permissionMiddleware.js";
+import { getInsuranceDrilldown, getInsuranceOverview } from "../services/productOverviewService.js";
 
 const router = express.Router();
 const RENEWAL_MANAGER_ROLES = [
@@ -53,6 +54,22 @@ router
   .post(resolveVehicleCubicCapacity);
 router.route("/vehicle-match/potential").post(findPotentialVehicleMatch);
 router.route("/vehicle-match/merge").post(mergeVehicleMatch);
+// Business Overview → Insurance tab (registered before "/:id").
+router.route("/analytics/overview").get(protect, staff, async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await getInsuranceOverview(req.query) });
+  } catch (e) {
+    next(e);
+  }
+});
+router.route("/analytics/drilldown").get(protect, staff, async (req, res, next) => {
+  try {
+    const { data, total } = await getInsuranceDrilldown(req.query);
+    res.json({ success: true, data, total });
+  } catch (e) {
+    next(e);
+  }
+});
 router.route("/renewals/cases").get(protect, staff, getInsuranceRenewalCases);
 router.route("/renewals/summary").get(protect, staff, getInsuranceRenewalSummary);
 router
